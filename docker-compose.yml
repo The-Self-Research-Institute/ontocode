@@ -130,7 +130,15 @@ services:
       - "8086:8086"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
-      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      BASE_URL: ${BASE_URL:-http://localhost:3000}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO_MONTHLY: ${STRIPE_PRICE_PRO_MONTHLY:-}
+      STRIPE_PRICE_PRO_YEARLY: ${STRIPE_PRICE_PRO_YEARLY:-}
+      STRIPE_PRICE_ENTERPRISE_MONTHLY: ${STRIPE_PRICE_ENTERPRISE_MONTHLY:-}
+      STRIPE_PRICE_ENTERPRISE_YEARLY: ${STRIPE_PRICE_ENTERPRISE_YEARLY:-}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m -XX:+UseG1GC
@@ -153,7 +161,7 @@ services:
       - "80:80"
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       # Gateway buffers large file uploads (224MB+) in memory - needs generous heap
@@ -194,7 +202,7 @@ services:
       JIRA_ENABLED: ${JIRA_ENABLED:-true}
       JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
       JIRA_USER_EMAIL: ${JIRA_USER_EMAIL:-uma@coretopia.com}
-      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-ATATT3xFfGF0fhZLilL7hxxMAXQcjCEQXmkcVVMIk50av6aSqaDwoY6HOqhuriEGAL7uSwL3oFh6p4n9Vssrq6u67kAKi6nxUAICruIUtJDTKyUhM0ibNyq-S3DJVM88v-VkOX5jYc-yCCjIH7hQ9NYNWbQQLnPJngbbCLGOuzii6WkIL9s4G7g=6CEB1011}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
       JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
       JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
@@ -263,7 +271,7 @@ services:
     environment:
       SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
-      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
@@ -325,6 +333,9 @@ services:
 
   # Web Application (React Frontend)
   webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp
     image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-web:${VERSION:-latest}
     container_name: ontocode-web
     restart: unless-stopped

@@ -94,6 +94,7 @@ public class WorkspaceService {
 
         // Set default plan
         workspace.setSubscriptionPlan("FREE");
+        workspace.setBillingStatus("ACTIVE");
         workspace.setMaxWorkspaces(3);
         workspace.setMaxMembers(10);
         workspace.setCollaborationEnabled(false);
@@ -107,6 +108,14 @@ public class WorkspaceService {
      */
     public List<Workspace> getUserWorkspaces(String userId) {
         return workspaceRepository.findAllActiveUserWorkspaces(userId);
+    }
+
+    /**
+     * Get workspaces owned by this user (excludes workspaces they are just members of).
+     * Used for workspace creation limit checks — members-of do not count against the owner's quota.
+     */
+    public List<Workspace> getOwnedWorkspaces(String userId) {
+        return workspaceRepository.findActiveByOwnerId(userId);
     }
     
     /**

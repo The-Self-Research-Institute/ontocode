@@ -16,17 +16,25 @@ COPY ontology-plugin-service/ ./ontology-plugin-service/
 
 # Build shared modules first (these are dependencies for all services)
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -Dhttp.keepAlive=false \
-        -Dmaven.wagon.http.retryHandler.count=10 \
-        -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
-        clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp
+    sh -c 'for attempt in 1 2 3; do \
+        mvn -Dhttp.keepAlive=false \
+            -Dmaven.wagon.http.retryHandler.count=10 \
+            -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
+            clean install -pl shared/common-models,shared/common-utils -Dmaven.test.skip=true -B -ntp && exit 0; \
+        echo "Shared module build failed, retrying ($$attempt/3)..."; \
+    done; \
+    exit 1'
 
 # Build gateway module - package goal includes spring-boot:repackage automatically
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -Dhttp.keepAlive=false \
-        -Dmaven.wagon.http.retryHandler.count=10 \
-        -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
-        clean package -pl ontology-gateway -DskipTests -B -ntp
+    sh -c 'for attempt in 1 2 3; do \
+        mvn -Dhttp.keepAlive=false \
+            -Dmaven.wagon.http.retryHandler.count=10 \
+            -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
+            clean package -pl ontology-gateway -Dmaven.test.skip=true -B -ntp && exit 0; \
+        echo "Gateway module build failed, retrying ($$attempt/3)..."; \
+    done; \
+    exit 1'
 
 # Runtime stage
 FROM eclipse-temurin:21-jre

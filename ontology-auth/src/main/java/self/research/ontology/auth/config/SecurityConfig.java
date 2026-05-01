@@ -70,11 +70,12 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Always allow preflight
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
+                        .requestMatchers("/api/billing/webhook").permitAll() // Stripe webhook — signature-verified, no JWT
                         .requestMatchers("/api/invitations/details/**").permitAll() // Allow public access to view invitation details
                         .requestMatchers("/api/invitations/request-resend/**").permitAll() // Allow public access to request invitation resend
                         .requestMatchers("/invite").permitAll() // Allow public access to web invitation redirect page
                         .requestMatchers("/error").permitAll()
-                        .requestMatchers("/actuator/**").permitAll() // Allow actuator endpoints for health checks
+                        .requestMatchers("/actuator/health", "/actuator/health/**").permitAll() // Only health endpoints are public
                         .anyRequest().authenticated() // All other requests require authentication
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // Stateless sessions

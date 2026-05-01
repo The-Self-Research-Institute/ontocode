@@ -543,4 +543,215 @@ public class EmailService {
             throw new RuntimeException("Failed to send password change email", e);
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Billing / Subscription emails
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public void sendTrialStartedEmail(String to, String username, String planName, String trialEndDate, String billingPortalUrl) {
+        String plan = toDisplayName(planName);
+        String html = billingHtml(
+            "🎉 Your 14-day free trial has started!",
+            String.format("""
+                <p>Hi <strong>%s</strong>,</p>
+                <p>Welcome to OntoCode <span class="badge">%s</span>. Your free trial is now active — your card has been saved securely but <strong>will not be charged</strong> until the trial ends.</p>
+                <div class="info-box">
+                  <strong>Trial summary</strong>
+                  <table style="margin-top:10px;width:100%%;border-collapse:collapse;">
+                    <tr><td style="padding:4px 0;color:#6b7280;">Plan</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Trial ends</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">First charge</td><td style="padding:4px 0;font-weight:600;">After %s (only if not cancelled)</td></tr>
+                  </table>
+                </div>
+                <p>Explore every feature — live collaboration, advanced SPARQL, full ontology tooling. Cancel before <strong>%s</strong> and you'll never be billed.</p>
+                <a href="%s" class="button">Manage your subscription</a>
+                """,
+                username, plan, plan, trialEndDate, trialEndDate, trialEndDate, billingPortalUrl),
+            "Questions? Contact <a href='mailto:support@ontocode.com'>support@ontocode.com</a>"
+        );
+        sendHtml(to, "Your OntoCode " + plan + " trial has started — 14 days free", html);
+    }
+
+    public void sendTrialEndingReminderEmail(String to, String username, String planName,
+                                             long daysLeft, String trialEndDate, String billingPortalUrl) {
+        String plan = toDisplayName(planName);
+        String daysLabel = daysLeft == 1 ? "1 day" : daysLeft + " days";
+        String html = billingHtml(
+            "⏰ Your free trial ends in " + daysLabel,
+            String.format("""
+                <p>Hi <strong>%s</strong>,</p>
+                <p>Your OntoCode <span class="badge">%s</span> trial ends on <strong>%s</strong>. After that your saved payment method will be charged and your subscription will continue uninterrupted.</p>
+                <div class="warning-box">
+                  <strong>What happens on %s:</strong>
+                  <ul style="margin:8px 0 0 0;padding-left:20px;">
+                    <li>Your trial ends</li>
+                    <li>Your payment method is charged for the first billing period</li>
+                    <li>Full %s features remain available</li>
+                  </ul>
+                </div>
+                <p>Not ready to continue? You can cancel before <strong>%s</strong> — no charge, no hassle.</p>
+                <a href="%s" class="button">Review or cancel your subscription</a>
+                """,
+                username, plan, trialEndDate, trialEndDate, plan, trialEndDate, billingPortalUrl),
+            "You're receiving this because you have an active trial on OntoCode."
+        );
+        sendHtml(to, "Your OntoCode trial ends in " + daysLabel + " — " + trialEndDate, html);
+    }
+
+    public void sendPaymentSucceededEmail(String to, String username, String planName,
+                                          String amountFormatted, String nextBillingDate, String invoiceUrl) {
+        String plan = toDisplayName(planName);
+        String html = billingHtml(
+            "✅ Payment received — thank you!",
+            String.format("""
+                <p>Hi <strong>%s</strong>,</p>
+                <p>We successfully processed your payment for OntoCode <span class="badge">%s</span>.</p>
+                <div class="info-box">
+                  <strong>Payment details</strong>
+                  <table style="margin-top:10px;width:100%%;border-collapse:collapse;">
+                    <tr><td style="padding:4px 0;color:#6b7280;">Amount charged</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Plan</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Next billing date</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                  </table>
+                </div>
+                %s
+                """,
+                username, plan, amountFormatted, plan, nextBillingDate,
+                invoiceUrl != null ? "<a href=\"" + invoiceUrl + "\" class=\"button-outline\">View invoice</a>" : ""),
+            "Manage your subscription at any time from the OntoCode billing portal."
+        );
+        sendHtml(to, "Payment confirmed — OntoCode " + plan, html);
+    }
+
+    public void sendPaymentFailedEmail(String to, String username, String planName,
+                                       String amountFormatted, String updatePaymentUrl) {
+        String plan = toDisplayName(planName);
+        String html = billingHtml(
+            "⚠️ Action required: payment failed",
+            String.format("""
+                <p>Hi <strong>%s</strong>,</p>
+                <p>We were unable to process your payment of <strong>%s</strong> for your OntoCode <span class="badge">%s</span> subscription.</p>
+                <div class="warning-box">
+                  <strong>What you need to do:</strong>
+                  <p style="margin:8px 0 0 0;">Update your payment method as soon as possible to avoid losing access to your workspace. Stripe will automatically retry the charge — updating your card before the next retry ensures no interruption.</p>
+                </div>
+                <a href="%s" class="button">Update payment method</a>
+                <p>If you believe this is an error or need help, please contact <a href="mailto:support@ontocode.com">support@ontocode.com</a> right away.</p>
+                """,
+                username, amountFormatted, plan, updatePaymentUrl),
+            "Your access remains active during the retry period. Please update your payment method promptly."
+        );
+        sendHtml(to, "Action required: OntoCode payment failed — update your card", html);
+    }
+
+    public void sendSubscriptionCancelledEmail(String to, String username, String planName, String accessEndDate) {
+        String plan = toDisplayName(planName);
+        String html = billingHtml(
+            "Your subscription has been cancelled",
+            String.format("""
+                <p>Hi <strong>%s</strong>,</p>
+                <p>Your OntoCode <span class="badge">%s</span> subscription has been cancelled. We're sorry to see you go.</p>
+                <div class="info-box">
+                  <strong>Access details</strong>
+                  <table style="margin-top:10px;width:100%%;border-collapse:collapse;">
+                    <tr><td style="padding:4px 0;color:#6b7280;">Plan cancelled</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Access until</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">After that</td><td style="padding:4px 0;font-weight:600;">Workspace moves to Free plan</td></tr>
+                  </table>
+                </div>
+                <p>Your data is safe — everything stays in your workspace on the Free plan. If you change your mind, you can resubscribe at any time.</p>
+                <a href="%s" class="button">Resubscribe</a>
+                <p>If you cancelled by mistake or have questions, please reach out to <a href="mailto:support@ontocode.com">support@ontocode.com</a>.</p>
+                """,
+                username, plan, plan, accessEndDate, baseUrl),
+            "Your workspace and all data are retained on the Free plan after cancellation."
+        );
+        sendHtml(to, "Your OntoCode " + plan + " subscription has been cancelled", html);
+    }
+
+    public void sendRenewalReminderEmail(String to, String username, String planName,
+                                        String renewalDate, String amountFormatted, String billingPortalUrl) {
+        String plan = toDisplayName(planName);
+        String html = billingHtml(
+            "📅 Your subscription renews in 3 days",
+            String.format("""
+                <p>Hi <strong>%s</strong>,</p>
+                <p>Just a heads-up — your OntoCode <span class="badge">%s</span> subscription will automatically renew on <strong>%s</strong>.</p>
+                <div class="info-box">
+                  <strong>Renewal details</strong>
+                  <table style="margin-top:10px;width:100%%;border-collapse:collapse;">
+                    <tr><td style="padding:4px 0;color:#6b7280;">Plan</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Renewal date</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Amount</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                  </table>
+                </div>
+                <p>No action needed if you'd like to continue. To cancel or update your payment method before renewal, visit billing settings.</p>
+                <a href="%s" class="button">Manage billing</a>
+                """,
+                username, plan, renewalDate, plan, renewalDate, amountFormatted, billingPortalUrl),
+            "You're receiving this renewal reminder because you have an active OntoCode subscription."
+        );
+        sendHtml(to, "OntoCode " + plan + " renews on " + renewalDate + " — " + amountFormatted, html);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private String toDisplayName(String planName) {
+        if (planName == null) return "Professional";
+        return switch (planName.toUpperCase()) {
+            case "ENTERPRISE" -> "Enterprise";
+            default -> "Professional";
+        };
+    }
+
+    private String billingHtml(String heading, String body, String footerNote) {
+        return """
+            <!DOCTYPE html><html><head><style>
+            body{font-family:Arial,sans-serif;line-height:1.6;color:#333;margin:0;}
+            .container{max-width:600px;margin:0 auto;padding:20px;background:#f9f9f9;}
+            .content{background:white;padding:30px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,.1);}
+            .button{display:inline-block;background:#8B5CF6;color:white!important;padding:12px 28px;
+                    text-decoration:none;border-radius:6px;margin:20px 0;font-weight:600;}
+            .button-outline{display:inline-block;border:2px solid #8B5CF6;color:#8B5CF6!important;
+                            padding:10px 24px;text-decoration:none;border-radius:6px;margin:10px 0;font-weight:600;}
+            .badge{display:inline-block;background:#ede9fe;color:#6d28d9;padding:3px 10px;
+                   border-radius:12px;font-size:13px;font-weight:600;}
+            .info-box{background:#f5f3ff;border-left:4px solid #8B5CF6;padding:15px;border-radius:6px;margin:20px 0;}
+            .warning-box{background:#fffbeb;border-left:4px solid #f59e0b;padding:15px;border-radius:6px;margin:20px 0;}
+            .footer{margin-top:24px;font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;}
+            </style></head><body>
+            <div class="container"><div class="content">
+            <div style="margin-bottom:24px;">
+              <span style="font-size:13px;font-weight:700;color:#8B5CF6;letter-spacing:1px;text-transform:uppercase;">OntoCode</span>
+            </div>
+            <h1 style="color:#111827;font-size:22px;margin:0 0 20px 0;">""" + heading + """
+            </h1>
+            """ + body + """
+            <div class="footer">""" + footerNote + """
+            <br>OntoCode · <a href="mailto:support@ontocode.com">support@ontocode.com</a>
+            </div>
+            </div></div></body></html>
+            """;
+    }
+
+    private void sendHtml(String to, String subject, String html) {
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(fromEmail, "OntoCode");
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(html, true);
+            mailSender.send(message);
+            log.info("Sent '{}' to {}", subject, to);
+        } catch (MessagingException e) {
+            log.error("Failed to send '{}' to {}: {}", subject, to, e.getMessage());
+            throw new RuntimeException("Failed to send email: " + subject, e);
+        } catch (Exception e) {
+            log.error("Failed to send '{}' to {}: {}", subject, to, e.getMessage());
+            throw new RuntimeException("Failed to send email: " + subject, e);
+        }
+    }
 }

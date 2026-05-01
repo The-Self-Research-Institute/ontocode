@@ -279,6 +279,12 @@ body {
   color: var(--text-primary) !important;
 }
 
+/* Preserve text-white inside intentionally dark containers (.dark-surface).
+   Higher specificity (extra class) beats the rule above even with !important. */
+:root:not(.dark) .dark-surface :where(div, span, p, li, td, th, label, small, code, pre, h1, h2, h3, h4, h5, h6).text-white {
+  color: #ffffff !important;
+}
+
 /* Fix hover states - ensure text remains visible */
 :root:not(.dark) .hover\:bg-slate-100:hover,
 :root:not(.dark) .hover\:bg-gray-100:hover,

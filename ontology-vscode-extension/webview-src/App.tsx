@@ -20,6 +20,7 @@ import ForgotPasswordForm from "./components/ForgotPasswordForm";
 import ResetPasswordForm from "./components/ResetPasswordForm";
 import { Loader2 } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
+import ManageSubscriptionModal from "./components/ManageSubscriptionModal";
 
 const getInitialInvitationFromLocation = (): { token: string | null; email: string | null } => {
   const pathname = window.location.pathname;
@@ -96,6 +97,8 @@ const AppContent = () => {
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string>("");
   const [showSubscriptionPlan, setShowSubscriptionPlan] = useState(false);
+  const [workspaceBillingStatus, setWorkspaceBillingStatus] = useState<string | null>(null);
+  const [showManageSubscription, setShowManageSubscription] = useState(false);
   const [inviteToken, setInviteToken] = useState<string | null>(initialInvitation.token);
   const [inviteEmail, setInviteEmail] = useState<string | null>(initialInvitation.email);
   const [pendingFile, setPendingFile] = useState<{ fileName: string; fileContent: string; fileSize: number } | null>(
@@ -124,11 +127,16 @@ const AppContent = () => {
   const [forceShowWorkspace, setForceShowWorkspace] = useState(false);
   const [skipWorkspaceRequested, setSkipWorkspaceRequested] = useState(false);
   const [restoredRoute, setRestoredRoute] = useState<RouteState | null>(null);
+  // Initialize reset-password state directly from the URL (same pattern as verify-email below).
+  const _resetPath = window.location.pathname.startsWith("/reset-password");
+  const _resetTokenFromUrl = _resetPath
+    ? new URLSearchParams(window.location.search).get("token")
+    : null;
   const [authSubView, setAuthSubView] = useState<
     "login" | "signup" | "forgotPassword" | "resetPassword" | "verifyEmail"
-  >("login");
+  >(_resetTokenFromUrl ? "resetPassword" : "login");
   const [verificationEmail, setVerificationEmail] = useState("");
-  const [resetToken, setResetToken] = useState<string | null>(null);
+  const [resetToken, setResetToken] = useState<string | null>(_resetTokenFromUrl);
   // Initialize verify-email state directly from the URL so the verify screen
   // shows immediately on the first render — before the auth loading spinner.
   const _verifyPath = window.location.pathname.startsWith("/verify-email");
@@ -197,6 +205,38 @@ const AppContent = () => {
       setSkipWorkspaceRequested(false);
     }
   }, [user]);
+
+  // Keep a live billing status for the active workspace so the UI can hard-block pending workspaces.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!user?.workspaceId) {
+      setWorkspaceBillingStatus(null);
+      return;
+    }
+
+    apiClient
+      .get(`/api/workspaces/${user.workspaceId}`)
+      .then((response: any) => {
+        if (cancelled) return;
+        const data = response?.data || response;
+        setWorkspaceBillingStatus(data?.billingStatus || null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWorkspaceBillingStatus(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.workspaceId]);
+
+  const isWorkspacePaymentPending =
+    !!user?.workspaceId &&
+    (workspaceBillingStatus || "").toUpperCase() === "PENDING" &&
+    (user?.subscriptionPlan || "FREE").toUpperCase() !== "FREE";
 
   // Auto-restore last project + file when workspace becomes available (e.g. after login with auto-select)
   const autoRestoredRef = useRef(false);
@@ -299,7 +339,7 @@ const AppContent = () => {
     if (!deploymentType) {
       return { view: "deployment", deploymentType };
     }
-    if (user && shouldShowWorkspaceSelection()) {
+    if (user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending)) {
       return { view: "workspace" };
     }
     if (user && user.isAdmin && user.workspaceId && showSubscriptionPlan) {
@@ -351,6 +391,7 @@ const AppContent = () => {
     showAuthForInvitation,
     showSubscriptionPlan,
     pendingFile,
+    isWorkspacePaymentPending,
     shouldShowWorkspaceSelection,
   ]);
 
@@ -546,20 +587,12 @@ const AppContent = () => {
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Detect /reset-password?token=... URL and show reset form
+  // Clear /reset-password URL on first render (token already captured in state above).
   useEffect(() => {
-    const pathname = window.location.pathname;
-    if (pathname.startsWith("/reset-password")) {
-      const params = new URLSearchParams(window.location.search);
-      const token = params.get("token");
-      if (token) {
-        console.log("[App] 🔑 Found reset-password token in URL");
-        setResetToken(token);
-        setAuthSubView("resetPassword");
-        window.history.replaceState({}, "", "/");
-      }
+    if (_resetTokenFromUrl) {
+      window.history.replaceState({}, "", "/");
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // Check for invitation parameters in URL (query params, pathname routes, and hash-based routes)
@@ -1096,13 +1129,28 @@ const AppContent = () => {
     );
   }
 
+  // Show reset-password form immediately when accessed via email link,
+  // bypassing the deployment-type guard (user has no context yet).
+  if (!user && authSubView === "resetPassword" && resetToken) {
+    return (
+      <ResetPasswordForm
+        onBackToLogin={() => {
+          setAuthSubView("login");
+          setIsLoginView(true);
+          setResetToken(null);
+        }}
+        initialToken={resetToken}
+      />
+    );
+  }
+
   // Show deployment selector if user hasn't selected deployment type yet (regardless of login state)
   if (!deploymentType) {
     return <DeploymentSelector onSelect={handleDeploymentSelected} />;
   }
 
   // Show workspace selection if user is logged in but hasn't selected a workspace
-  const showWorkspaceSelectionScreen = user && shouldShowWorkspaceSelection();
+  const showWorkspaceSelectionScreen = user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending);
   console.log("[App] Render decision - showWorkspaceSelectionScreen:", showWorkspaceSelectionScreen);
 
   if (showWorkspaceSelectionScreen) {
@@ -1178,17 +1226,38 @@ const AppContent = () => {
       "pendingFile:",
       !!pendingFile,
     );
+    const workspacePlan = (user.subscriptionPlan || "FREE").toUpperCase();
+    const hasPaidPlan = workspacePlan === "PRO" || workspacePlan === "ENTERPRISE";
     return (
-      <ProjectDashboard
-        onSelectProject={handleProjectSelected}
-        pendingFile={pendingFile}
-        onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined}
-        onOpenEditor={() => {
-          console.log("[App] Opening editor from Project Dashboard (no file)");
-          setSelectedFileId("__editor__");
-          setSelectedFileName("");
-        }}
-      />
+      <>
+        <ProjectDashboard
+          onSelectProject={handleProjectSelected}
+          pendingFile={pendingFile}
+          onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined}
+          onOpenEditor={() => {
+            console.log("[App] Opening editor from Project Dashboard (no file)");
+            setSelectedFileId("__editor__");
+            setSelectedFileName("");
+          }}
+          onManageSubscription={hasPaidPlan ? () => setShowManageSubscription(true) : undefined}
+        />
+        {showManageSubscription && user.workspaceId && (
+          <ManageSubscriptionModal
+            workspace={{
+              workspaceId: user.workspaceId,
+              name: user.workspaceName || "Workspace",
+              subscriptionPlan: user.subscriptionPlan || "FREE",
+              billingStatus: workspaceBillingStatus || "ACTIVE",
+              billingInterval: (user as any).billingInterval || "monthly",
+            }}
+            onClose={() => setShowManageSubscription(false)}
+            onCancelled={() => {
+              setShowManageSubscription(false);
+              setForceShowWorkspace(true);
+            }}
+          />
+        )}
+      </>
     );
   }
 

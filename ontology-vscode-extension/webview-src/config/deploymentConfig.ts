@@ -8,6 +8,10 @@
 // ─── Deployment Types ────────────────────────────────────────────────────────
 export type DeploymentType = 'self-hosted' | 'cloud';
 
+declare const __ONTOCODE_CONFIG__:
+    | Record<string, string>
+    | undefined;
+
 // ─── Detect where we're running ─────────────────────────────────────────────
 const isViteDevServer = typeof window !== 'undefined' && window.location.port === '3001';
 const isLocalhost = typeof window !== 'undefined' &&
@@ -28,6 +32,9 @@ const DEFAULTS = {
 
 // ─── Read the __ONTOCODE_CONFIG__ injected by extension / vite ───────────────
 function getConfig(): Record<string, string> | undefined {
+    if (typeof __ONTOCODE_CONFIG__ !== 'undefined' && __ONTOCODE_CONFIG__) {
+        return __ONTOCODE_CONFIG__;
+    }
     return (window as any).__ONTOCODE_CONFIG__;
 }
 
@@ -53,6 +60,9 @@ export function getStoredDeploymentType(): DeploymentType {
 export function getGatewayUrl(type?: DeploymentType): string {
     const deploymentType = type ?? getStoredDeploymentType();
     const config = getConfig();
+    if (isLocalhost) {
+        return config?.SELF_HOSTED_GATEWAY_URL || DEFAULTS.SELF_HOSTED_GATEWAY_URL;
+    }
     if (deploymentType === 'cloud') {
         return config?.CLOUD_GATEWAY_URL || DEFAULTS.CLOUD_GATEWAY_URL;
     }

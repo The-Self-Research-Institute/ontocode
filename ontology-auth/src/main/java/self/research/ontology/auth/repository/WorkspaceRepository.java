@@ -40,4 +40,8 @@ public interface WorkspaceRepository extends MongoRepository<Workspace, String> 
     List<Workspace> findDeletedUserWorkspaces(String userId);
 
     boolean existsByWorkspaceId(String workspaceId);
+
+    Optional<Workspace> findByStripeSubscriptionId(String stripeSubscriptionId);
+
+    Optional<Workspace> findByPendingCheckoutSessionId(String pendingCheckoutSessionId);
 }

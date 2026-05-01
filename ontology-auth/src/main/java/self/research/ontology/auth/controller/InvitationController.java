@@ -88,14 +88,55 @@ public class InvitationController {
             if (wsMember.getRole() != Workspace.WorkspaceRole.OWNER && wsMember.getRole() != Workspace.WorkspaceRole.ADMIN) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only workspace owners and admins can invite members"));
             }
-            
-            // Check if user is already an active member
-            Workspace.WorkspaceMember existingMember = workspace.getMemberByEmail(request.email);
-            if (existingMember != null && existingMember.getStatus() == Workspace.MemberStatus.ACTIVE) {
-                return ResponseEntity.badRequest().body(Map.of(
-                    "error", "This user is already a member of this workspace",
-                    "success", false
+
+            // ── Plan enforcement: collaboration gate ─────────────────────────
+            if (!Boolean.TRUE.equals(workspace.getCollaborationEnabled())) {
+                String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+                if ("FREE".equalsIgnoreCase(plan)) {
+                    return ResponseEntity.status(402).body(Map.of(
+                        "error", "Team collaboration is not available on the Free plan. Upgrade to Pro to invite members.",
+                        "requiresUpgrade", true,
+                        "currentPlan", "FREE"
+                    ));
+                }
+                return ResponseEntity.status(402).body(Map.of(
+                    "error", "Collaboration is not yet activated for this workspace. Please complete your subscription payment first.",
+                    "requiresPayment", true
                 ));
+            }
+
+            // ── Plan enforcement: member seat limit ───────────────────────────
+            // Count both ACTIVE and PENDING to prevent over-inviting before accepts
+            long usedSeats = workspace.getMembers().stream()
+                .filter(m -> m.getStatus() == Workspace.MemberStatus.ACTIVE
+                          || m.getStatus() == Workspace.MemberStatus.PENDING)
+                .count();
+            int maxSeats = maxMembersForPlan(workspace);
+            if (usedSeats >= maxSeats) {
+                return ResponseEntity.status(402).body(Map.of(
+                    "error", "Member limit reached (" + maxSeats + "/" + maxSeats + " seats used). Upgrade your plan to add more members.",
+                    "requiresUpgrade", true,
+                    "currentCount", usedSeats,
+                    "maxAllowed", maxSeats
+                ));
+            }
+
+            // Check if user is already an active or pending member
+            Workspace.WorkspaceMember existingMember = workspace.getMemberByEmail(request.email);
+            if (existingMember != null) {
+                if (existingMember.getStatus() == Workspace.MemberStatus.ACTIVE) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "error", "This user is already a member of this workspace",
+                        "success", false
+                    ));
+                }
+                if (existingMember.getStatus() == Workspace.MemberStatus.PENDING) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "error", "An invitation has already been sent to this email address. Use 'Resend Invitation' if they haven't received it.",
+                        "success", false,
+                        "alreadyPending", true
+                    ));
+                }
             }
             
             Invitation invitation = invitationService.createInvitation(
@@ -237,6 +278,18 @@ public class InvitationController {
                 ));
             }
             
+            // Re-validate member limit before activating (guards against concurrent accepts filling the workspace)
+            if (existingMember == null || existingMember.getStatus() != Workspace.MemberStatus.PENDING) {
+                long activeCount = workspace.getMembers().stream()
+                    .filter(m -> m.getStatus() == Workspace.MemberStatus.ACTIVE).count();
+                if (activeCount >= maxMembersForPlan(workspace)) {
+                    return ResponseEntity.status(402).body(Map.of(
+                        "error", "This workspace has reached its member limit. Please ask the workspace owner to upgrade.",
+                        "requiresUpgrade", true
+                    ));
+                }
+            }
+
             // Activate pending member or add new member
             if (existingMember != null && existingMember.getStatus() == Workspace.MemberStatus.PENDING) {
                 // Activate the pending member - change status from PENDING to ACTIVE
@@ -528,6 +581,19 @@ public class InvitationController {
         dto.put("subscriptionPlan", workspace.getSubscriptionPlan());
         dto.put("collaborationEnabled", workspace.getCollaborationEnabled());
         return dto;
+    }
+
+    /** Returns the effective member seat cap for a workspace, with plan fallback. */
+    private int maxMembersForPlan(Workspace workspace) {
+        if (workspace.getMaxMembers() != null && workspace.getMaxMembers() > 0) {
+            return workspace.getMaxMembers();
+        }
+        String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+        return switch (plan.toUpperCase()) {
+            case "PRO" -> 10;
+            case "ENTERPRISE" -> Integer.MAX_VALUE;
+            default -> 3; // FREE
+        };
     }
 
     // Request DTOs

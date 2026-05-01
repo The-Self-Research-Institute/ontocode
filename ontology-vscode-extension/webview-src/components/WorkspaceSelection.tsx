@@ -1,9 +1,39 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Settings, Trash, AlertTriangle, Bug } from "lucide-react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Trash, AlertTriangle, Bug, CheckCircle, Shield, CreditCard } from "lucide-react";
+import { loadStripe, StripeElementsOptions } from "@stripe/stripe-js";
+import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import apiClient from "../services/apiClient";
 import SubscriptionPlanSelection from "./SubscriptionPlanSelection";
+import PaymentSetupModal from "./PaymentSetupModal";
+import ManageSubscriptionModal from "./ManageSubscriptionModal";
+import { getGatewayUrl } from "../config/deploymentConfig";
 import { ReportIssueModal } from "./ReportIssueModal";
-import { validateWorkspaceName, validateDescription, getMaxWorkspacesForPlan } from "../utils/validation";
+import { validateWorkspaceName, validateDescription } from "../utils/validation";
+
+// ─── Payment edge-case helpers ────────────────────────────────────────────────
+
+function safeGetStorage(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function safeSetStorage(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch {}
+}
+function safeRemoveStorage(key: string): void {
+  try { localStorage.removeItem(key); } catch {}
+}
+
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === "AbortError") throw new Error("Request timed out. Check your internet connection and try again.");
+    throw err;
+  } finally {
+    clearTimeout(id);
+  }
+}
 
 interface WorkspaceMember {
   userId: string;
@@ -21,11 +51,131 @@ interface Workspace {
   ownerId: string;
   memberCount: number;
   subscriptionPlan: string;
+  billingStatus?: string;
+  billingInterval?: string;
   collaborationEnabled: boolean;
   members: WorkspaceMember[];
   createdAt: string;
   updatedAt: string;
 }
+
+const isPendingPaidWorkspace = (workspace: Workspace) => {
+  const plan = (workspace.subscriptionPlan || "FREE").toUpperCase();
+  if (plan === "FREE") return false;
+  const status = (workspace.billingStatus || "").toUpperCase();
+  if (status === "PENDING" || status === "PAYMENT_FAILED") return true;
+  return workspace.collaborationEnabled === false;
+};
+
+// Model B: billing is account-level, not per-workspace. Workspace-level plan/status fields
+// are legacy data from Model A. Do not show per-workspace billing badges.
+// Account billing status is shown via the "Manage Billing" / "Upgrade Plan" button in the header.
+function workspaceStatusBadge(_workspace: Workspace): { label: string; cls: string } | null {
+  return null;
+}
+
+function planDisplayPrice(plan: string, interval: string): string {
+  const prices: Record<string, Record<string, string>> = {
+    PRO:        { monthly: "$29/mo", annual: "$290/yr", yearly: "$290/yr" },
+    ENTERPRISE: { monthly: "$99/mo", annual: "$990/yr", yearly: "$990/yr" },
+  };
+  return prices[plan.toUpperCase()]?.[interval?.toLowerCase()] ?? "";
+}
+
+// ─── Inline payment form rendered inside the create-workspace dialog ──────────
+const InlinePaymentStep: React.FC<{
+  planName: string;
+  interval: "monthly" | "annual";
+  workspaceName: string;
+  workspaceId: string;
+  onConfirmed: (setupIntentId: string) => void;
+  onSkip: () => void;
+}> = ({ planName, interval, workspaceName, workspaceId, onConfirmed, onSkip }) => {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const price = planDisplayPrice(planName, interval);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+    setSubmitting(true);
+    setError(null);
+    // Save sub params before confirmSetup in case of a 3DS redirect (page unloads)
+    safeSetStorage("pendingSubscription", JSON.stringify({ workspaceId, planName, interval }));
+    const { error: confirmError, setupIntent } = await stripe.confirmSetup({
+      elements,
+      confirmParams: { return_url: window.location.href.split("?")[0] },
+      redirect: "if_required",
+    });
+    if (confirmError) {
+      const isExpired =
+        confirmError.code === "setup_intent_unexpected_state" ||
+        (confirmError.message ?? "").toLowerCase().includes("expired");
+      setError(isExpired
+        ? "Payment session expired. Please close and try again."
+        : (confirmError.message ?? "Payment setup failed. Please try again."));
+      setSubmitting(false);
+      safeRemoveStorage("pendingSubscription");
+      return;
+    }
+    if (setupIntent?.status === "succeeded") {
+      // Combine all recovery data into one key so a page reload can retry /subscribe
+      safeSetStorage("pendingPaymentRecovery", JSON.stringify({ setupIntentId: setupIntent.id, workspaceId, planName, interval }));
+      safeRemoveStorage("pendingSubscription");
+      onConfirmed(setupIntent.id);
+    } else {
+      setError("Card setup did not complete. Please try again.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="flex items-center gap-3 bg-green-500/10 border border-green-500/20 rounded-xl px-4 py-3">
+        <CheckCircle size={18} className="text-green-400 flex-shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-white">"{workspaceName}" created</p>
+          <p className="text-xs text-gray-400">Now set up payment to activate your plan</p>
+        </div>
+      </div>
+      <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+        <div>
+          <p className="text-[11px] uppercase tracking-widest text-gray-400 mb-0.5">Plan</p>
+          <p className="text-white font-semibold">{planName.charAt(0) + planName.slice(1).toLowerCase()} · {interval}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-purple-300 font-semibold">{price}</p>
+          <p className="text-[11px] text-green-400">First 14 days free</p>
+        </div>
+      </div>
+      <div>
+        <p className="flex items-center gap-2 text-sm text-gray-300 mb-2">
+          <CreditCard size={15} /> Card details
+        </p>
+        <PaymentElement options={{ layout: "tabs" }} />
+      </div>
+      {error && (
+        <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-xl text-sm">{error}</div>
+      )}
+      <div className="flex items-center gap-2 text-[11px] text-gray-400">
+        <Shield size={13} className="text-green-400 flex-shrink-0" />
+        <span>Card saved securely — not charged for 14 days — cancel any time</span>
+      </div>
+      <div className="flex gap-3">
+        <button type="button" onClick={onSkip} disabled={submitting}
+          className="flex-1 py-3 rounded-xl border border-white/20 bg-white/5 text-gray-300 font-medium hover:bg-white/10 transition-all disabled:opacity-40 text-sm">
+          Skip for now
+        </button>
+        <button type="submit" disabled={submitting || !stripe || !elements}
+          className="flex-[2] py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold hover:from-purple-700 hover:to-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm shadow-lg shadow-purple-600/30">
+          {submitting ? <><Loader2 size={16} className="animate-spin" />Setting up…</> : <><CheckCircle size={16} />Start free trial</>}
+        </button>
+      </div>
+    </form>
+  );
+};
 
 interface WorkspaceSelectionProps {
   username: string;
@@ -52,8 +202,42 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [newWorkspaceDescription, setNewWorkspaceDescription] = useState("");
   const [selectedPlan, setSelectedPlan] = useState("FREE");
+  const [billingInterval, setBillingInterval] = useState<"monthly" | "annual">("monthly");
   const [showPlanSelection, setShowPlanSelection] = useState(false);
+  const [showAccountPlanSelection, setShowAccountPlanSelection] = useState(false);
+  const [setupClientSecret, setSetupClientSecret] = useState<string | null>(null);
+  const [setupPublishableKey, setSetupPublishableKey] = useState<string>("");
+  const [pendingSubParams, setPendingSubParams] = useState<{ planName: string; interval: "monthly" | "annual"; workspaceId: string } | null>(null);
   const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
+  const [openingPortal, setOpeningPortal] = useState<string | null>(null);
+  const [managingWorkspace, setManagingWorkspace] = useState<Workspace | null>(null);
+  const [createStep, setCreateStep] = useState<"details" | "payment">("details");
+  const [pendingCreateWorkspaceId, setPendingCreateWorkspaceId] = useState<string | null>(null);
+  const [pendingCreateWorkspaceName, setPendingCreateWorkspaceName] = useState<string>("");
+
+  const stripePromise = useMemo(
+    () => (setupPublishableKey ? loadStripe(setupPublishableKey) : null),
+    [setupPublishableKey],
+  );
+  const inlineElementsOptions: StripeElementsOptions | undefined = setupClientSecret
+    ? {
+        clientSecret: setupClientSecret,
+        appearance: {
+          theme: "night",
+          variables: {
+            colorPrimary: "#8b5cf6", colorBackground: "#1e1b4b", colorText: "#e2e8f0",
+            colorTextSecondary: "#94a3b8", colorDanger: "#f87171", borderRadius: "10px",
+          },
+          rules: {
+            ".Input": { backgroundColor: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#e2e8f0", boxShadow: "none" },
+            ".Input:focus": { border: "1px solid #8b5cf6", boxShadow: "0 0 0 3px rgba(139,92,246,0.25)" },
+            ".Label": { color: "#94a3b8", fontWeight: "500" },
+            ".Tab": { backgroundColor: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", color: "#94a3b8" },
+            ".Tab--selected": { backgroundColor: "rgba(139,92,246,0.15)", border: "1px solid rgba(139,92,246,0.5)", color: "#c4b5fd" },
+          },
+        },
+      }
+    : undefined;
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<{ id: string; name: string } | null>(null);
 
@@ -62,6 +246,12 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     null,
   );
   const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
+  const autoRetryAttempted = useRef(false);
+  const firstTimePlanShown = useRef(false);
+
+  // Account-level subscription state (Model B)
+  const [accountSubscription, setAccountSubscription] = useState<{ planName: string; status: string; billingInterval: string } | null>(null);
+  const [showManageAccount, setShowManageAccount] = useState(false);
 
   // Report Issue modal state — available in workspace selection screen
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
@@ -84,6 +274,92 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   useEffect(() => {
     loadWorkspaces();
   }, []);
+
+  useEffect(() => {
+    apiClient.get("/api/billing/subscription")
+      .then((res: any) => {
+        const d = res?.data || res;
+        setAccountSubscription({ planName: d.planName || "FREE", status: d.status || "", billingInterval: d.billingInterval || "monthly" });
+      })
+      .catch(() => {
+        // Failed to fetch — treat as FREE/no subscription
+        setAccountSubscription({ planName: "FREE", status: "", billingInterval: "monthly" });
+      });
+  }, []);
+
+  // First-time user: show plan selection automatically when login reveals no workspaces
+  useEffect(() => {
+    if (firstTimePlanShown.current) return;
+    if (loading) return;
+    if (accountSubscription === null) return;
+    if (workspaces.length > 0) return;
+    const hasActivePlan = accountSubscription.status === "active" || accountSubscription.status === "trialing";
+    if (!hasActivePlan) {
+      firstTimePlanShown.current = true;
+      setShowAccountPlanSelection(true);
+    }
+  }, [loading, workspaces, accountSubscription]);
+
+  // Recover from a 3DS redirect: URL contains ?setup_intent=si_xxx&redirect_status=...
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const setupIntentId = params.get("setup_intent");
+    const redirectStatus = params.get("redirect_status");
+    if (!setupIntentId) return;
+
+    // Always clear URL so a page reload doesn't re-trigger
+    window.history.replaceState({}, "", window.location.pathname);
+
+    if (redirectStatus !== "succeeded") {
+      safeRemoveStorage("pendingSubscription");
+      safeRemoveStorage("pendingPaymentRecovery");
+      const msg =
+        redirectStatus === "failed"
+          ? "Card authentication failed. Please try again."
+          : redirectStatus === "canceled"
+          ? "Payment was canceled. Click the workspace again to retry."
+          : "Payment did not complete. Please try again.";
+      setError(msg);
+      return;
+    }
+
+    const stored = safeGetStorage("pendingSubscription");
+    safeRemoveStorage("pendingSubscription");
+    if (stored) {
+      try {
+        const { planName, interval, workspaceId } = JSON.parse(stored);
+        // Combine all recovery data so a subsequent network cut can still recover on reload
+        safeSetStorage("pendingPaymentRecovery", JSON.stringify({ setupIntentId, workspaceId, planName, interval }));
+        handlePaymentConfirmed(setupIntentId, planName, interval, workspaceId);
+      } catch {
+        setError("Failed to resume subscription after authentication. Please try again.");
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-retry: if a previous session stored pendingPaymentRecovery but /subscribe never completed
+  useEffect(() => {
+    if (loading || autoRetryAttempted.current) return;
+    const recoveryRaw = safeGetStorage("pendingPaymentRecovery");
+    if (!recoveryRaw) return;
+
+    autoRetryAttempted.current = true;
+    try {
+      const { setupIntentId, workspaceId, planName, interval } = JSON.parse(recoveryRaw);
+      const ws = workspaces.find((w) => w.workspaceId === workspaceId);
+      if (ws && (!ws.billingStatus || ws.billingStatus === "PENDING" || ws.billingStatus === "PAYMENT_FAILED")) {
+        safeRemoveStorage("pendingPaymentRecovery");
+        handlePaymentConfirmed(setupIntentId, planName, interval, workspaceId);
+      } else {
+        // Already active or workspace gone — clear stale data
+        safeRemoveStorage("pendingPaymentRecovery");
+      }
+    } catch {
+      safeRemoveStorage("pendingPaymentRecovery");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, workspaces]);
 
   const loadWorkspaces = async () => {
     try {
@@ -160,6 +436,18 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       setSelecting(true);
       setError("");
 
+      const workspace = workspaces.find((item) => item.workspaceId === workspaceId);
+      if (workspace && isPendingPaidWorkspace(workspace)) {
+        const interval =
+          workspace.billingInterval === "annual" ||
+          workspace.billingInterval === "yearly" ||
+          workspace.billingInterval === "year"
+            ? "annual"
+            : "monthly";
+        await startBillingCheckout(workspaceId, workspace.subscriptionPlan, interval);
+        return;
+      }
+
       const response = await apiClient.post(`/api/workspaces/${workspaceId}/select`);
       console.log("[WorkspaceSelection] 📥 Select workspace response:", response);
       console.log("[WorkspaceSelection] Response type:", typeof response);
@@ -185,8 +473,9 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     }
   };
 
-  const handlePlanSelected = (planId: string) => {
+  const handlePlanSelected = (planId: string, interval: "monthly" | "annual") => {
     setSelectedPlan(planId);
+    setBillingInterval(interval);
     setShowPlanSelection(false);
     // Return to create workspace modal instead of creating immediately
     setShowCreateDialog(true);
@@ -200,6 +489,131 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     // Close modal and show plan selection screen
     setShowCreateDialog(false);
     setShowPlanSelection(true);
+  };
+
+  const startBillingCheckout = async (workspaceId: string, planName: string, interval: "monthly" | "annual" = "monthly") => {
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${safeGetStorage("authToken") ?? ""}`,
+    };
+
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/setup`, { method: "POST", headers });
+      if (!response.ok && response.status === 404) {
+        response = await fetchWithTimeout(`${window.location.origin}/api/billing/setup`, { method: "POST", headers });
+      }
+    } catch (err: any) {
+      throw new Error(err.message || "Network error. Please check your connection and try again.");
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      setError("Your session has expired. Please sign in again.");
+      onLogout();
+      return;
+    }
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const errMsg = (data?.error ?? "").toLowerCase();
+      if (errMsg.includes("already") && (errMsg.includes("active") || errMsg.includes("subscription"))) {
+        // Already active — just refresh to show current status
+        await loadWorkspaces();
+        return;
+      }
+      throw new Error(data?.error || "Failed to create payment setup");
+    }
+
+    if (!data?.clientSecret || !data?.stripePublishableKey) {
+      throw new Error("Missing payment configuration from server");
+    }
+
+    setPendingSubParams({ planName, interval, workspaceId });
+    setSetupPublishableKey(data.stripePublishableKey);
+    setSetupClientSecret(data.clientSecret);
+  };
+
+  const handlePaymentConfirmed = async (
+    setupIntentId: string,
+    planName?: string,
+    interval?: string,
+    workspaceId?: string,
+  ) => {
+    const resolvedPlan = planName ?? pendingSubParams?.planName ?? "";
+    const resolvedInterval = interval ?? pendingSubParams?.interval ?? "monthly";
+    const resolvedWorkspace = workspaceId ?? pendingSubParams?.workspaceId ?? "";
+
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${safeGetStorage("authToken") ?? ""}`,
+    };
+
+    try {
+      const payload = JSON.stringify({
+        setupIntentId,
+        planName: resolvedPlan,
+        interval: resolvedInterval,
+        workspaceId: resolvedWorkspace,
+      });
+
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/subscribe`, { method: "POST", headers, body: payload });
+        if (!res.ok && res.status === 404) {
+          res = await fetchWithTimeout(`${window.location.origin}/api/billing/subscribe`, { method: "POST", headers, body: payload });
+        }
+      } catch (err: any) {
+        // Network/timeout — setupIntentId still in localStorage, reload will auto-retry
+        setError(err.message || "Network error. Your card was saved — reload the page to complete activation.");
+        return;
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        setError("Your session has expired. Please sign in again.");
+        onLogout();
+        return;
+      }
+
+      const result = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const errMsg = (result?.error ?? "").toLowerCase();
+        // Duplicate tab / retry race — already subscribed, treat as success
+        if (errMsg.includes("already") && (errMsg.includes("active") || errMsg.includes("subscription"))) {
+          safeRemoveStorage("pendingPaymentRecovery");
+          setSetupClientSecret(null);
+          setPendingSubParams(null);
+          apiClient.get("/api/billing/subscription").then((r: any) => {
+            const d = r?.data || r;
+            setAccountSubscription({ planName: d.planName || "FREE", status: d.status || "active", billingInterval: d.billingInterval || "monthly" });
+          }).catch(() => {});
+          await loadWorkspaces();
+          if (resolvedWorkspace) {
+            await handleSelectWorkspace(resolvedWorkspace);
+          }
+          return;
+        }
+        setError(result?.error || "Failed to activate subscription. Please contact support.");
+        return;
+      }
+
+      // Success — refresh account subscription state and workspaces
+      safeRemoveStorage("pendingPaymentRecovery");
+      setSetupClientSecret(null);
+      setPendingSubParams(null);
+      // Refresh account subscription so button switches to "Manage Billing"
+      apiClient.get("/api/billing/subscription").then((r: any) => {
+        const d = r?.data || r;
+        setAccountSubscription({ planName: d.planName || "FREE", status: d.status || "active", billingInterval: d.billingInterval || "monthly" });
+      }).catch(() => {});
+      await loadWorkspaces();
+      if (resolvedWorkspace) {
+        await handleSelectWorkspace(resolvedWorkspace);
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to activate subscription");
+    }
   };
 
   const handleCreateWorkspace = async (e: React.FormEvent) => {
@@ -219,15 +633,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         setCreateDialogError(descValidation.error || "Invalid description");
         return;
       }
-    }
-
-    // Check workspace limit before creating
-    const maxWorkspaces = getMaxWorkspacesForPlan(selectedPlan);
-    if (workspaces.length >= maxWorkspaces) {
-      setCreateDialogError(
-        `Maximum workspace limit reached (${maxWorkspaces} for ${selectedPlan.toUpperCase()} plan). Please upgrade your subscription or delete existing workspaces.`,
-      );
-      return;
     }
 
     try {
@@ -285,18 +690,20 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       const response = await apiClient.post("/api/workspaces", {
         name: newWorkspaceName.trim(),
         description: newWorkspaceDescription.trim(),
-        subscriptionPlan: selectedPlan,
       });
       console.log("[WorkspaceSelection] Create workspace response:", response);
 
       // Handle both direct response (VS Code proxy) and response.data (axios browser) formats
       const data = response?.data || response;
       if (data?.workspace) {
+        const createdWorkspace = data.workspace;
+
         setShowCreateDialog(false);
         setNewWorkspaceName("");
         setNewWorkspaceDescription("");
-        setSelectedPlan("FREE");
+
         await loadWorkspaces();
+        await handleSelectWorkspace(createdWorkspace.workspaceId);
       }
     } catch (err: any) {
       console.error("Error creating workspace:", err);
@@ -322,7 +729,16 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       setWorkspaceToDelete(null);
     } catch (err: any) {
       console.error("Error deleting workspace:", err);
-      setError(err.response?.data?.error || err.message || "Failed to delete workspace");
+      const errorMsg = err.response?.data?.error || err.message || "Failed to delete workspace";
+      const requiresAction = err.response?.data?.requiresAction;
+      const actions = err.response?.data?.actions;
+      
+      // Check if this is a billing-related deletion error
+      if (err.response?.status === 402) {
+        setError(`❌ ${errorMsg}\n\n📋 ${requiresAction}`);
+      } else {
+        setError(errorMsg);
+      }
     } finally {
       setDeletingWorkspace(null);
     }
@@ -376,22 +792,131 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+    <div className="dark-surface min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+
+      {/* Account-level Manage Billing Modal (for existing PRO/ENTERPRISE subscribers) */}
+      {showManageAccount && accountSubscription && (
+        <ManageSubscriptionModal
+          workspace={{
+            workspaceId: "",
+            name: "Your Account",
+            subscriptionPlan: accountSubscription.planName,
+            billingStatus: accountSubscription.status?.toUpperCase(),
+            billingInterval: accountSubscription.billingInterval,
+          }}
+          onClose={() => setShowManageAccount(false)}
+          onCancelled={() => {
+            setShowManageAccount(false);
+            setAccountSubscription({ planName: "FREE", status: "canceled", billingInterval: "monthly" });
+            loadWorkspaces();
+          }}
+        />
+      )}
+
+      {/* Account-level Plan Upgrade / First-time Setup Screen */}
+      {showAccountPlanSelection && (
+        <div className="fixed inset-0 z-50">
+          <SubscriptionPlanSelection
+            username={username}
+            workspaceId=""
+            workspaceName="Your Account"
+            onPlanSelected={(planId, interval) => {
+              setShowAccountPlanSelection(false);
+              if (planId === "FREE") {
+                // FREE plan — no payment needed, go straight to workspace creation
+                setAccountSubscription({ planName: "FREE", status: "active", billingInterval: interval });
+                setShowCreateDialog(true);
+              } else {
+                startBillingCheckout("", planId, interval).catch((err) =>
+                  setError(err.message || "Failed to start payment setup"),
+                );
+              }
+            }}
+            onSkip={() => {
+              setShowAccountPlanSelection(false);
+              setShowCreateDialog(true);
+            }}
+            onLogout={onLogout}
+          />
+        </div>
+      )}
+
+      {/* Manage Subscription Modal */}
+      {managingWorkspace && (
+        <ManageSubscriptionModal
+          workspace={managingWorkspace}
+          onClose={() => setManagingWorkspace(null)}
+          onCancelled={() => {
+            setManagingWorkspace(null);
+            loadWorkspaces();
+          }}
+          onCompletePayment={() => {
+            const ws = managingWorkspace;
+            setManagingWorkspace(null);
+            const interval: "monthly" | "annual" =
+              ws.billingInterval === "annual" || ws.billingInterval === "yearly" ? "annual" : "monthly";
+            startBillingCheckout(ws.workspaceId, ws.subscriptionPlan, interval).catch((err) =>
+              setError(err.message || "Failed to start payment setup"),
+            );
+          }}
+        />
+      )}
+
+      {/* Native Stripe Payment Modal — only for retry flow (not inline create) */}
+      {setupClientSecret && setupPublishableKey && pendingSubParams && !showCreateDialog && (
+        <PaymentSetupModal
+          publishableKey={setupPublishableKey}
+          clientSecret={setupClientSecret}
+          planName={pendingSubParams.planName}
+          interval={pendingSubParams.interval}
+          workspaceId={pendingSubParams.workspaceId}
+          onConfirmed={(setupIntentId) => handlePaymentConfirmed(setupIntentId)}
+          onClose={() => {
+            setSetupClientSecret(null);
+            setPendingSubParams(null);
+            loadWorkspaces();
+          }}
+        />
+      )}
+
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-pulse"></div>
         <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-pulse delay-1000"></div>
       </div>
 
       <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-4xl max-h-[90vh] flex flex-col">
-        <button
-          type="button"
-          onClick={() => setIsReportIssueModalOpen(true)}
-          className="absolute top-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
-          title="Report an issue or request a feature"
-        >
-          <Bug size={14} />
-          Report Issue
-        </button>
+        <div className="absolute top-4 right-4 flex items-center gap-2">
+          {accountSubscription && (accountSubscription.status === "active" || accountSubscription.status === "trialing") && accountSubscription.planName !== "FREE" ? (
+            <button
+              type="button"
+              onClick={() => setShowManageAccount(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
+              title={`${accountSubscription.planName} plan — manage billing`}
+            >
+              <CreditCard size={14} />
+              Manage Billing
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAccountPlanSelection(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600/80 hover:bg-purple-600 border border-purple-500/50 text-xs font-medium text-white transition-colors backdrop-blur-sm"
+              title="Upgrade your account to PRO or ENTERPRISE"
+            >
+              <CreditCard size={14} />
+              Upgrade Plan
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setIsReportIssueModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
+            title="Report an issue or request a feature"
+          >
+            <Bug size={14} />
+            Report Issue
+          </button>
+        </div>
 
         <div className="text-center mb-8">
           <h2 className="text-3xl font-bold text-white mb-2">Select a Workspace</h2>
@@ -458,7 +983,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                               {workspace.memberCount} member{workspace.memberCount !== 1 ? "s" : ""}
                             </span>
                           </span>
-                          <span className="text-xs px-2 py-1 bg-white/5 rounded">{workspace.subscriptionPlan}</span>
+                          <span className="text-xs px-2 py-1 bg-white/5 rounded">FREE</span>
                         </div>
                       </div>
                     </div>
@@ -514,11 +1039,24 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       {showCreateDialog && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-800 border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-md">
-            <h3 className="text-2xl font-bold text-gray-200 mb-6 text-center">Create New Workspace</h3>
+            <h3 className="text-2xl font-bold text-gray-200 mb-6 text-center">
+              Create New Workspace
+            </h3>
 
+            <>
             {createDialogError && (
               <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-lg mb-4 text-sm backdrop-blur-sm">
-                {createDialogError}
+                <p>{createDialogError}</p>
+                {createDialogError.includes("Workspace limit reached") && (
+                  <button
+                    type="button"
+                    onClick={() => { setShowCreateDialog(false); setShowAccountPlanSelection(true); }}
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium rounded-lg transition-colors"
+                  >
+                    <CreditCard size={13} />
+                    Upgrade Account
+                  </button>
+                )}
               </div>
             )}
 
@@ -567,27 +1105,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                   </span>
                 </div>
               </div>
-              <div>
-                <label className="block text-sm text-gray-200 mb-3">Subscription Plan *</label>
-                <button
-                  type="button"
-                  onClick={handleOpenPlanSelection}
-                  disabled={creating}
-                  className="w-full p-4 rounded-lg border-2 border-white/20 bg-white/5 hover:border-purple-500 hover:bg-purple-500/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed group"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="text-left">
-                      <h4 className="font-semibold text-sm text-gray-200 group-hover:text-purple-400 transition-colors">
-                        {selectedPlan === "FREE" && "Free Plan"}
-                        {selectedPlan === "PRO" && "Professional Plan"}
-                        {selectedPlan === "ENTERPRISE" && "Enterprise Plan"}
-                      </h4>
-                      <p className="text-sm text-gray-400">Click to select a different plan</p>
-                    </div>
-                    <ChevronRight size={20} className="text-gray-400 group-hover:text-purple-400 transition-colors" />
-                  </div>
-                </button>
-              </div>
               <div className="flex space-x-3 pt-4">
                 <button
                   type="button"
@@ -596,7 +1113,11 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                     setNewWorkspaceName("");
                     setNewWorkspaceDescription("");
                     setSelectedPlan("FREE");
+                    setBillingInterval("monthly");
                     setCreateDialogError("");
+                    setCreateStep("details");
+                    setPendingCreateWorkspaceId(null);
+                    setPendingCreateWorkspaceName("");
                   }}
                   disabled={creating}
                   className="flex-1 px-4 py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-white/10 transition-all disabled:opacity-50"
@@ -622,6 +1143,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                 </button>
               </div>
             </form>
+            </>
           </div>
         </div>
       )}
@@ -636,23 +1158,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             <h2 className="text-2xl font-bold text-white mb-3">Entering Workspace</h2>
             <p className="text-gray-300">Please wait...</p>
           </div>
-        </div>
-      )}
-
-      {/* Subscription Plan Selection Screen */}
-      {showPlanSelection && (
-        <div className="fixed inset-0 z-50">
-          <SubscriptionPlanSelection
-            username={username}
-            workspaceId=""
-            workspaceName={newWorkspaceName || "New Workspace"}
-            onPlanSelected={handlePlanSelected}
-            onSkip={() => {
-              setShowPlanSelection(false);
-              setShowCreateDialog(true);
-            }}
-            onLogout={onLogout}
-          />
         </div>
       )}
 
