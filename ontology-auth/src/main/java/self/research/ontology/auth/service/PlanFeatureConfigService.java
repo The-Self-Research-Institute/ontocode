@@ -52,7 +52,7 @@ public class PlanFeatureConfigService {
                 "Community support"
             ),
             List.of(
-                "No team collaboration",
+                "Invited members are view-only",
                 "No shared editing"
             )
         );
