@@ -41,6 +41,7 @@ const PLANS: Plan[] = [
         features: [
             'Up to 3 workspaces',
             'Up to 3 workspace members',
+            '10 GB storage',
             'OWL/RDF ontology editing',
             'Class hierarchy & properties',
             'SPARQL query execution',
@@ -68,6 +69,7 @@ const PLANS: Plan[] = [
         features: [
             'Up to 10 workspaces',
             'Up to 10 team members',
+            '100 GB storage',
             'Everything in Free',
             'Team collaboration enabled',
             'Invite & manage members',
@@ -90,6 +92,7 @@ const PLANS: Plan[] = [
         features: [
             'Unlimited team members',
             'Unlimited workspaces',
+            'Unlimited storage',
             'Everything in Professional',
             'Priority support channel',
             'Early access to new features',
