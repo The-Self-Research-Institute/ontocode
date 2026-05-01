@@ -122,6 +122,13 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
         return (plan.monthlyPrice - plan.annualPrice) * 12;
     };
 
+    const getDiscountPercent = (plan: Plan) => {
+        if (plan.monthlyPrice === 0) return 0;
+        return Math.round((plan.monthlyPrice - plan.annualPrice) / plan.monthlyPrice * 100);
+    };
+
+    const maxDiscount = Math.max(...PLANS.filter(p => p.monthlyPrice > 0).map(getDiscountPercent));
+
     const handleContinue = () => {
         onPlanSelected(selectedPlan, billingInterval);
     };
@@ -202,7 +209,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                     ? 'bg-green-500 text-white'
                                     : 'bg-green-600/30 text-green-400'
                             }`}>
-                                Save 20%
+                                Save up to {maxDiscount}%
                             </span>
                         </button>
                     </div>
@@ -270,9 +277,11 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                             </div>
                                             {billingInterval === 'annual' && plan.monthlyPrice > 0 && (
                                                 <p className="text-xs text-slate-400 mt-0.5">
-                                                    Billed annually
+                                                    ${plan.annualPrice * 12}/yr
                                                     {savings > 0 && (
-                                                        <span className="ml-1.5 text-green-400 font-semibold">— save ${savings}/yr</span>
+                                                        <span className="ml-1.5 text-green-400 font-semibold">
+                                                            · saves ${savings} ({getDiscountPercent(plan)}% off)
+                                                        </span>
                                                     )}
                                                 </p>
                                             )}
