@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
 import { X, Loader2, Shield, CheckCircle, CreditCard } from 'lucide-react';
+import { usePlanPricing } from '../hooks/usePlanPricing';
 
 function safeRemoveStorage(key: string): void { try { localStorage.removeItem(key); } catch {} }
 function safeSetStorage(key: string, value: string): void { try { localStorage.setItem(key, value); } catch {} }
@@ -14,14 +15,6 @@ interface PaymentSetupModalProps {
     workspaceId: string;
     onConfirmed: (setupIntentId: string) => void;
     onClose: () => void;
-}
-
-function planDisplayPrice(planName: string, interval: 'monthly' | 'annual'): string {
-    const prices: Record<string, Record<string, string>> = {
-        PRO:        { monthly: '$29/month', annual: '$290/year' },
-        ENTERPRISE: { monthly: '$99/month', annual: '$990/year' },
-    };
-    return prices[planName.toUpperCase()]?.[interval] ?? '';
 }
 
 // ─── Inner form — must live inside <Elements> ────────────────────────────────
@@ -40,7 +33,8 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const price = planDisplayPrice(planName, interval);
+    const { getDisplayPrice } = usePlanPricing();
+    const price = getDisplayPrice(planName, interval);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

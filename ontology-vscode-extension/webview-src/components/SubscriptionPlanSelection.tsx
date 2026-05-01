@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Check, X, Sparkles, Zap, Crown, ArrowRight, LogOut, Bug, Star, Shield, Gift } from 'lucide-react';
 import ReportIssueModal from './ReportIssueModal';
+import { usePlanPricing } from '../hooks/usePlanPricing';
 
 interface SubscriptionPlanSelectionProps {
     username: string;
@@ -114,6 +115,12 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     const [billingInterval, setBillingInterval] = useState<BillingInterval>('annual');
     const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
 
+    const { getPricing } = usePlanPricing();
+    const plans = PLANS.map(plan => {
+        const live = getPricing(plan.id);
+        return { ...plan, monthlyPrice: live.monthlyPrice, annualPrice: live.annualPrice };
+    });
+
     const getDisplayPrice = (plan: Plan) =>
         billingInterval === 'annual' ? plan.annualPrice : plan.monthlyPrice;
 
@@ -127,13 +134,15 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
         return Math.round((plan.monthlyPrice - plan.annualPrice) / plan.monthlyPrice * 100);
     };
 
-    const maxDiscount = Math.max(...PLANS.filter(p => p.monthlyPrice > 0).map(getDiscountPercent));
+    const maxDiscount = Math.max(...plans.filter(p => p.monthlyPrice > 0).map(getDiscountPercent));
 
     const handleContinue = () => {
         onPlanSelected(selectedPlan, billingInterval);
     };
 
-    const selectedPlanData = PLANS.find(p => p.id === selectedPlan);
+    const selectedPlanData = plans.find(p => p.id === selectedPlan);
+    const selectedDiscount = selectedPlanData ? getDiscountPercent(selectedPlanData) : 0;
+    const badgeDiscount = selectedDiscount > 0 ? selectedDiscount : maxDiscount;
 
     return (
         <div className="dark-surface h-screen bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 relative overflow-y-auto">
@@ -209,7 +218,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                     ? 'bg-green-500 text-white'
                                     : 'bg-green-600/30 text-green-400'
                             }`}>
-                                Save up to {maxDiscount}%
+                                Save {badgeDiscount}%
                             </span>
                         </button>
                     </div>

@@ -12,7 +12,9 @@ import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.service.StripeService;
 import self.research.ontology.auth.service.WorkspaceService;
 
+import org.springframework.beans.factory.annotation.Value;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -25,6 +27,18 @@ public class SubscriptionController {
 
     private static final Logger log = LoggerFactory.getLogger(SubscriptionController.class);
 
+    @Value("${plan.pro.monthly.price:29}")
+    private int planProMonthlyPrice;
+
+    @Value("${plan.pro.annual.price:24}")
+    private int planProAnnualPrice;
+
+    @Value("${plan.enterprise.monthly.price:99}")
+    private int planEnterpriseMonthlyPrice;
+
+    @Value("${plan.enterprise.annual.price:79}")
+    private int planEnterpriseAnnualPrice;
+
     private final StripeService stripeService;
     private final UserRepository userRepository;
     private final WorkspaceService workspaceService;
@@ -33,6 +47,19 @@ public class SubscriptionController {
         this.stripeService = stripeService;
         this.userRepository = userRepository;
         this.workspaceService = workspaceService;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GET /api/billing/plans — plan pricing (public, no auth required)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @GetMapping("/plans")
+    public ResponseEntity<?> getPlans() {
+        return ResponseEntity.ok(Map.of("plans", List.of(
+            Map.of("id", "FREE",       "monthlyPrice", 0,                       "annualPrice", 0),
+            Map.of("id", "PRO",        "monthlyPrice", planProMonthlyPrice,      "annualPrice", planProAnnualPrice),
+            Map.of("id", "ENTERPRISE", "monthlyPrice", planEnterpriseMonthlyPrice, "annualPrice", planEnterpriseAnnualPrice)
+        )));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
