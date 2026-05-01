@@ -63,13 +63,7 @@ public class ProjectService {
             }
         }
         
-        // Verify workspace exists
-        Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
-        if (workspaceOpt.isEmpty()) {
-            throw new IllegalArgumentException("Workspace not found");
-        }
-        
-        Workspace workspace = workspaceOpt.get();
+        Workspace workspace = getWorkspaceForUsage(workspaceId);
         
         // Check if user has access to workspace
         if (!workspace.isMember(userId)) {
@@ -95,6 +89,7 @@ public class ProjectService {
      * Get all projects in a workspace
      */
     public List<Project> getWorkspaceProjects(String workspaceId) {
+        getWorkspaceForUsage(workspaceId);
         return projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE");
     }
 
@@ -105,6 +100,7 @@ public class ProjectService {
         return projectRepository.findByMembers_UserId(userId)
             .stream()
             .filter(p -> "ACTIVE".equals(p.getStatus()))
+            .filter(p -> isWorkspaceAccessibleForUsage(p.getWorkspaceId()))
             .collect(Collectors.toList());
     }
 
@@ -112,6 +108,7 @@ public class ProjectService {
      * Get all projects for a user in a specific workspace
      */
     public List<Project> getUserProjectsInWorkspace(String userId, String workspaceId) {
+        getWorkspaceForUsage(workspaceId);
         return projectRepository.findByMembers_UserId(userId)
             .stream()
             .filter(p -> "ACTIVE".equals(p.getStatus()))
@@ -123,7 +120,11 @@ public class ProjectService {
      * Get a specific project
      */
     public Optional<Project> getProject(String projectId) {
-        return projectRepository.findActiveByProjectId(projectId);
+        Optional<Project> projectOpt = projectRepository.findActiveByProjectId(projectId);
+        if (projectOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        return isWorkspaceAccessibleForUsage(projectOpt.get().getWorkspaceId()) ? projectOpt : Optional.empty();
     }
 
     /**
@@ -384,6 +385,9 @@ public class ProjectService {
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
         if (workspaceOpt.isPresent()) {
             Workspace workspace = workspaceOpt.get();
+            if (!canUseWorkspace(workspace)) {
+                return false;
+            }
             Workspace.WorkspaceMember wsMember = workspace.getMember(userId);
             if (wsMember != null) {
                 Workspace.WorkspaceRole role = wsMember.getRole();
@@ -410,6 +414,9 @@ public class ProjectService {
         // Workspace owners/admins also have edit permission
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
         if (workspaceOpt.isPresent()) {
+            if (!canUseWorkspace(workspaceOpt.get())) {
+                return false;
+            }
             Workspace.WorkspaceMember wsMember = workspaceOpt.get().getMember(userId);
             if (wsMember != null) {
                 Workspace.WorkspaceRole wsRole = wsMember.getRole();
@@ -431,7 +438,9 @@ public class ProjectService {
      */
     private boolean isWorkspaceOwner(String workspaceId, String userId) {
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
-        return workspaceOpt.isPresent() && workspaceOpt.get().getOwnerId().equals(userId);
+        return workspaceOpt.isPresent()
+                && canUseWorkspace(workspaceOpt.get())
+                && workspaceOpt.get().getOwnerId().equals(userId);
     }
 
     /**
@@ -462,6 +471,9 @@ public class ProjectService {
         }
         
         Project project = projectOpt.get();
+        if (!isWorkspaceAccessibleForUsage(project.getWorkspaceId())) {
+            throw new SecurityException("Workspace payment is pending. Complete payment to continue.");
+        }
         
         // Check if user has access to this project
         if (!project.hasMember(userId)) {
@@ -485,7 +497,39 @@ public class ProjectService {
         return projectRepository.findByMembers_UserId(userId)
             .stream()
             .filter(p -> "ACTIVE".equals(p.getStatus()) && !userId.equals(p.getOwnerId()))
+            .filter(p -> isWorkspaceAccessibleForUsage(p.getWorkspaceId()))
             .collect(Collectors.toList());
+    }
+
+    private Workspace getWorkspaceForUsage(String workspaceId) {
+        Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found"));
+        requireWorkspaceUsable(workspace);
+        return workspace;
+    }
+
+    private void requireWorkspaceUsable(Workspace workspace) {
+        if (!canUseWorkspace(workspace)) {
+            throw new SecurityException("Workspace payment is pending. Complete payment to continue.");
+        }
+    }
+
+    private boolean isWorkspaceAccessibleForUsage(String workspaceId) {
+        return workspaceRepository.findByWorkspaceId(workspaceId)
+                .map(this::canUseWorkspace)
+                .orElse(false);
+    }
+
+    private boolean canUseWorkspace(Workspace workspace) {
+        String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+        if ("FREE".equalsIgnoreCase(plan)) {
+            return true;
+        }
+        String billingStatus = workspace.getBillingStatus();
+        if (billingStatus == null || billingStatus.isBlank()) {
+            return Boolean.TRUE.equals(workspace.getCollaborationEnabled());
+        }
+        return "ACTIVE".equalsIgnoreCase(billingStatus);
     }
 
     /**

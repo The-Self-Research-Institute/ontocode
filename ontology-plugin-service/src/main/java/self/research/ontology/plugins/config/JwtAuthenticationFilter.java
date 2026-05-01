@@ -4,6 +4,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -29,6 +30,28 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Value("${jwt.secret}")
     private String jwtSecret;
+
+    @PostConstruct
+    public void validateSecrets() {
+        if (jwtSecret == null || jwtSecret.isBlank()) {
+            throw new IllegalStateException(
+                "[SECURITY] jwt.secret (JWT_SECRET) must be set in the plugin service. " +
+                "Generate one with: openssl rand -base64 48");
+        }
+        byte[] decoded;
+        try {
+            decoded = Decoders.BASE64.decode(jwtSecret);
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                "[SECURITY] jwt.secret is not valid Base64 in plugin service.");
+        }
+        if (decoded.length < 32) {
+            throw new IllegalStateException(
+                "[SECURITY] jwt.secret must decode to at least 256 bits (32 bytes). " +
+                "Current length: " + decoded.length + " bytes.");
+        }
+        log.info("Plugin service JWT secret validated \u2014 {} bytes.", decoded.length);
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
