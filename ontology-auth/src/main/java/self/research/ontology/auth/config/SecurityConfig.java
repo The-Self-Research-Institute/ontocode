@@ -71,6 +71,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Always allow preflight
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
                         .requestMatchers("/api/billing/webhook").permitAll() // Stripe webhook — signature-verified, no JWT
+                        .requestMatchers("/api/billing/plans").permitAll() // Plan pricing — public, no auth needed
                         .requestMatchers("/api/invitations/details/**").permitAll() // Allow public access to view invitation details
                         .requestMatchers("/api/invitations/request-resend/**").permitAll() // Allow public access to request invitation resend
                         .requestMatchers("/invite").permitAll() // Allow public access to web invitation redirect page

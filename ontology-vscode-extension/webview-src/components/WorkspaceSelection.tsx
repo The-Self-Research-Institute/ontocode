@@ -7,6 +7,7 @@ import SubscriptionPlanSelection from "./SubscriptionPlanSelection";
 import PaymentSetupModal from "./PaymentSetupModal";
 import ManageSubscriptionModal from "./ManageSubscriptionModal";
 import { getGatewayUrl } from "../config/deploymentConfig";
+import { usePlanPricing } from "../hooks/usePlanPricing";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { validateWorkspaceName, validateDescription } from "../utils/validation";
 
@@ -74,13 +75,6 @@ function workspaceStatusBadge(_workspace: Workspace): { label: string; cls: stri
   return null;
 }
 
-function planDisplayPrice(plan: string, interval: string): string {
-  const prices: Record<string, Record<string, string>> = {
-    PRO:        { monthly: "$29/mo", annual: "$290/yr", yearly: "$290/yr" },
-    ENTERPRISE: { monthly: "$99/mo", annual: "$990/yr", yearly: "$990/yr" },
-  };
-  return prices[plan.toUpperCase()]?.[interval?.toLowerCase()] ?? "";
-}
 
 // ─── Inline payment form rendered inside the create-workspace dialog ──────────
 const InlinePaymentStep: React.FC<{
@@ -95,7 +89,8 @@ const InlinePaymentStep: React.FC<{
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const price = planDisplayPrice(planName, interval);
+  const { getShortPrice } = usePlanPricing();
+  const price = getShortPrice(planName, interval);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
