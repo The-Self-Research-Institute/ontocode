@@ -59,7 +59,7 @@ public class WorkspaceMigration implements CommandLineRunner {
                     // Set default plan
                     defaultWorkspace.setSubscriptionPlan("FREE");
                     defaultWorkspace.setMaxWorkspaces(3);
-                    defaultWorkspace.setMaxMembers(10);
+                    defaultWorkspace.setMaxMembers(3);
                     defaultWorkspace.setCollaborationEnabled(false);
                     
                     workspaceRepository.save(defaultWorkspace);
