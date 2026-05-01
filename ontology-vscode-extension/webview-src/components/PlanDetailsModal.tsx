@@ -4,6 +4,7 @@ import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
 import { X, Check, Crown, Zap, Sparkles, Users, HardDrive, Shield, Rocket, Loader2, CreditCard, CheckCircle, ArrowLeft } from 'lucide-react';
 import { useSubscription } from '../hooks/useSubscription';
 import { getGatewayUrl } from '../config/deploymentConfig';
+import { usePlanPricing } from '../hooks/usePlanPricing';
 
 function safeGetStorage(key: string): string | null { try { return localStorage.getItem(key); } catch { return null; } }
 
@@ -184,6 +185,15 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
     workspaceId = '',
 }) => {
     const subscription = useSubscription();
+    const { getPricing } = usePlanPricing();
+    const plans = PLANS.map(plan => {
+        const live = getPricing(plan.id);
+        return {
+            ...plan,
+            monthlyPrice: live.monthlyPrice,
+            features: live.features.length ? live.features : plan.features,
+        };
+    });
     const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
     const [view, setView] = useState<View>('plans');
     const [setupClientSecret, setSetupClientSecret] = useState<string | null>(null);
@@ -224,7 +234,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
 
     if (!isOpen) return null;
 
-    const currentPlan = PLANS.find(p => p.id === subscription.plan) || PLANS[0];
+    const currentPlan = plans.find(p => p.id === subscription.plan) || plans[0];
 
     const handleClose = () => {
         setView('plans');
@@ -362,7 +372,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                             <div>
                                 <h3 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-widest">Compare Plans</h3>
                                 <div className="grid md:grid-cols-3 gap-4">
-                                    {PLANS.map((plan) => {
+                                    {plans.map((plan) => {
                                         const isCurrent = plan.id === subscription.plan;
                                         return (
                                             <div
