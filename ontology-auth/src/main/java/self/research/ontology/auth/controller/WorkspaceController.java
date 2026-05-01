@@ -130,26 +130,31 @@ public class WorkspaceController {
 
             User user = userOpt.get();
             
-            // Get subscription plan from validated request (already validated by @Pattern)
-            String subscriptionPlan = request.getSubscriptionPlan();
-            if (subscriptionPlan == null || subscriptionPlan.isEmpty()) {
-                subscriptionPlan = "FREE";
-            }
-            
-            // Check workspace limit based on current subscription
-            List<Workspace> userWorkspaces = workspaceService.getUserWorkspaces(user.getId());
-            int maxWorkspaces = getMaxWorkspacesForPlan(subscriptionPlan);
-            if (userWorkspaces.size() >= maxWorkspaces) {
+            // Model B: billing is account-level; workspaces always start FREE.
+            String rawAccountPlan = user.getSubscriptionPlanName() != null
+                    ? user.getSubscriptionPlanName().toUpperCase() : "FREE";
+            String accountStatus = user.getSubscriptionStatus();
+            String activeAccountPlan = ("active".equalsIgnoreCase(accountStatus)
+                    || "trialing".equalsIgnoreCase(accountStatus))
+                    ? rawAccountPlan : "FREE";
+
+            // Only count workspaces the user OWNS — being a member of others' workspaces
+            // must not consume the owner's creation quota.
+            List<Workspace> ownedWorkspaces = workspaceService.getOwnedWorkspaces(user.getId());
+            int maxWorkspaces = getMaxWorkspacesForPlan(activeAccountPlan);
+            log.info("createWorkspace: user={} planName={} status={} activePlan={} ownedCount={} maxAllowed={}",
+                    username, rawAccountPlan, accountStatus, activeAccountPlan, ownedWorkspaces.size(), maxWorkspaces);
+            if (ownedWorkspaces.size() >= maxWorkspaces) {
                 return ResponseEntity.badRequest().body(Map.of(
-                    "error", "Workspace limit reached for your subscription plan",
-                    "currentCount", userWorkspaces.size(),
+                    "error", "Workspace limit reached (" + maxWorkspaces + " workspaces on " + activeAccountPlan + " plan). Upgrade your account to create more.",
+                    "currentCount", ownedWorkspaces.size(),
                     "maxAllowed", maxWorkspaces,
-                    "plan", subscriptionPlan
+                    "accountPlan", activeAccountPlan
                 ));
             }
-            
-            // Check for duplicate workspace name
-            boolean nameExists = userWorkspaces.stream()
+
+            // Check for duplicate workspace name (among owned workspaces only)
+            boolean nameExists = ownedWorkspaces.stream()
                 .anyMatch(w -> w.getName().equalsIgnoreCase(request.getName()));
             if (nameExists) {
                 return ResponseEntity.badRequest().body(Map.of(
@@ -163,28 +168,14 @@ public class WorkspaceController {
                 request.getDescription()
             );
             
-            // Set subscription plan and apply limits
-            workspace.setSubscriptionPlan(subscriptionPlan);
+            // Model B: workspaces are always FREE; features come from user's account plan
+            workspace.setSubscriptionPlan("FREE");
+            workspace.setBillingStatus("ACTIVE");
             workspace.setSubscriptionStartDate(LocalDateTime.now());
-            
-            // Apply plan-specific limits
-            switch (subscriptionPlan.toUpperCase()) {
-                case "FREE":
-                    workspace.setMaxMembers(10);
-                    workspace.setMaxWorkspaces(3);
-                    workspace.setCollaborationEnabled(false);
-                    break;
-                case "PRO":
-                    workspace.setMaxMembers(50);
-                    workspace.setMaxWorkspaces(10);
-                    workspace.setCollaborationEnabled(true);
-                    break;
-                case "ENTERPRISE":
-                    workspace.setMaxMembers(Integer.MAX_VALUE);
-                    workspace.setMaxWorkspaces(Integer.MAX_VALUE);
-                    workspace.setCollaborationEnabled(true);
-                    break;
-            }
+            boolean hasPaidPlan = "PRO".equals(activeAccountPlan) || "ENTERPRISE".equals(activeAccountPlan);
+            workspace.setCollaborationEnabled(hasPaidPlan);
+            workspace.setMaxMembers(hasPaidPlan ? ("ENTERPRISE".equals(activeAccountPlan) ? Integer.MAX_VALUE : 10) : 3);
+            workspace.setMaxWorkspaces(maxWorkspaces);
             
             // Save updated workspace with subscription plan
             workspace = workspaceService.updateWorkspace(workspace);
@@ -312,15 +303,16 @@ public class WorkspaceController {
             workspace.setSubscriptionPlan(plan);
             workspace.setUpdatedAt(LocalDateTime.now());
             
-            // Update collaboration and limits based on plan
-            switch (plan) {
+            // Update collaboration and limits based on plan (must match getMaxMembersForPlan/getMaxWorkspacesForPlan)
+            switch (plan.toUpperCase()) {
                 case "FREE":
-                    workspace.setMaxMembers(10);
+                    workspace.setMaxMembers(3);
                     workspace.setMaxWorkspaces(3);
                     workspace.setCollaborationEnabled(false);
+                    workspace.setBillingStatus("ACTIVE");
                     break;
                 case "PRO":
-                    workspace.setMaxMembers(50);
+                    workspace.setMaxMembers(10);
                     workspace.setMaxWorkspaces(10);
                     workspace.setCollaborationEnabled(true);
                     break;
@@ -381,6 +373,11 @@ public class WorkspaceController {
 
             Workspace workspace = workspaceOpt.get();
             WorkspaceRole role = workspaceService.getMemberRole(workspaceId, user.getId());
+            String billingStatus = resolveBillingStatus(workspace);
+
+            // Model B: account-level plan check — if account subscription has expired,
+            // collaboration features are off but workspace access is still allowed (downgraded to FREE limits).
+            // No hard block here; features are gated by workspace.collaborationEnabled.
 
             // Generate workspace-scoped JWT token with subscription plan
             Map<String, Object> claims = new HashMap<>();
@@ -392,6 +389,7 @@ public class WorkspaceController {
             claims.put("roles", user.getRoles());
             claims.put("isAdmin", user.getRoles().contains("ROLE_ADMIN"));
             claims.put("subscriptionPlan", workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "free");
+            claims.put("billingStatus", billingStatus);
 
             String token = jwtUtil.generateToken(username, claims);
 
@@ -401,7 +399,8 @@ public class WorkspaceController {
                 "workspaceId", workspaceId,
                 "workspaceName", workspace.getName(),
                 "role", role.toString(),
-                "subscriptionPlan", workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "free"
+                "subscriptionPlan", workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "free",
+                "billingStatus", billingStatus
             ));
         } catch (Exception e) {
             log.error("Error selecting workspace", e);
@@ -468,6 +467,69 @@ public class WorkspaceController {
                 return ResponseEntity.status(403).body(Map.of(
                     "error", "Only workspace owner can delete the workspace"
                 ));
+            }
+
+            // BILLING CHECK: Prevent deletion of paid workspaces during validity period
+            String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+            String billingStatus = resolveBillingStatus(workspace);
+            
+            // Only check validity period for PRO/ENTERPRISE plans that have an active Stripe subscription
+            if (("PRO".equalsIgnoreCase(plan) || "ENTERPRISE".equalsIgnoreCase(plan)) && workspace.getStripeSubscriptionId() != null) {
+                LocalDateTime currentPeriodEnd = workspace.getSubscriptionCurrentPeriodEnd();
+                LocalDateTime now = LocalDateTime.now();
+                
+                // If we're within the validity period AND subscription is active/pending, block deletion
+                if (currentPeriodEnd != null && currentPeriodEnd.isAfter(now)) {
+                    // Still within validity period - cannot delete
+                    String billingInterval = workspace.getBillingInterval() != null ? workspace.getBillingInterval() : "monthly";
+                    String renewalDate = currentPeriodEnd.toString().substring(0, 10); // YYYY-MM-DD format
+                    
+                    return ResponseEntity.status(402).body(Map.of(
+                        "error", "Cannot delete workspace during active subscription period.",
+                        "billingStatus", billingStatus,
+                        "subscriptionPlan", plan,
+                        "billingInterval", billingInterval,
+                        "validityPeriodEnd", renewalDate,
+                        "requiresAction", "Cancel your subscription in Billing Settings to stop the renewal. Workspace can be deleted after the current " + billingInterval + " cycle ends.",
+                        "actions", Map.of(
+                            "cancelSubscription", "/api/billing/cancel?workspaceId=" + workspaceId,
+                            "manageSubscription", "/api/billing/portal?workspaceId=" + workspaceId,
+                            "currentStatus", billingStatus
+                        )
+                    ));
+                }
+                
+                // If validity period has ended but subscription hasn't been cancelled
+                if (currentPeriodEnd != null && !currentPeriodEnd.isAfter(now) && 
+                    !"CANCELLED".equalsIgnoreCase(billingStatus) && !"EXPIRED".equalsIgnoreCase(billingStatus)) {
+                    
+                    return ResponseEntity.status(402).body(Map.of(
+                        "error", "Subscription period has ended. Please cancel your subscription or renew it.",
+                        "billingStatus", billingStatus,
+                        "subscriptionPlan", plan,
+                        "requiresAction", "Cancel or renew your subscription in Billing Settings before deleting this workspace.",
+                        "actions", Map.of(
+                            "cancelSubscription", "/api/billing/cancel?workspaceId=" + workspaceId,
+                            "manageSubscription", "/api/billing/portal?workspaceId=" + workspaceId
+                        )
+                    ));
+                }
+                
+                // If subscription is explicitly cancelled, allow deletion
+                if ("CANCELLED".equalsIgnoreCase(billingStatus) || "EXPIRED".equalsIgnoreCase(billingStatus)) {
+                    // Proceed to deletion below
+                    log.info("Allowing deletion of cancelled/expired {} workspace {}", plan, workspaceId);
+                } else if (!"PENDING".equalsIgnoreCase(billingStatus)) {
+                    // Unexpected state - be cautious
+                    return ResponseEntity.status(402).body(Map.of(
+                        "error", "Cannot delete workspace. Billing status unclear. Please contact support or manage subscription.",
+                        "billingStatus", billingStatus,
+                        "subscriptionPlan", plan,
+                        "actions", Map.of(
+                            "manageSubscription", "/api/billing/portal?workspaceId=" + workspaceId
+                        )
+                    ));
+                }
             }
 
             // Soft delete the workspace (cascade to projects and files)
@@ -612,6 +674,79 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Update a workspace member's role (owner or admin only; can't demote self if owner)
+     */
+    @PutMapping("/{workspaceId}/members/{userId}/role")
+    public ResponseEntity<?> updateMemberRole(
+            @PathVariable String workspaceId,
+            @PathVariable String userId,
+            @RequestBody Map<String, String> body) {
+        try {
+            String newRole = body.get("role");
+            if (newRole == null || newRole.isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "role is required"));
+            }
+            Workspace.WorkspaceRole role;
+            try {
+                role = Workspace.WorkspaceRole.valueOf(newRole.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Invalid role. Must be OWNER, ADMIN, or MEMBER"));
+            }
+
+            String username = getCurrentUsername();
+            Optional<User> callerOpt = userRepository.findByUsername(username);
+            if (callerOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+            User caller = callerOpt.get();
+
+            Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
+            if (workspaceOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+            }
+            Workspace workspace = workspaceOpt.get();
+
+            Workspace.WorkspaceMember callerMember = workspace.getMember(caller.getId());
+            if (callerMember == null) {
+                return ResponseEntity.status(403).body(Map.of("error", "You don't have access to this workspace"));
+            }
+            boolean callerIsOwner = callerMember.getRole() == Workspace.WorkspaceRole.OWNER;
+            boolean callerIsAdmin = callerMember.getRole() == Workspace.WorkspaceRole.ADMIN;
+            if (!callerIsOwner && !callerIsAdmin) {
+                return ResponseEntity.status(403).body(Map.of("error", "Only workspace owners and admins can change member roles"));
+            }
+            // Admins can't assign OWNER role — only owners can
+            if (role == Workspace.WorkspaceRole.OWNER && !callerIsOwner) {
+                return ResponseEntity.status(403).body(Map.of("error", "Only the workspace owner can transfer ownership"));
+            }
+            // Owner can't demote themselves via this endpoint
+            if (userId.equals(caller.getId()) && callerIsOwner) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Use the transfer ownership flow to change the owner's role"));
+            }
+
+            Workspace.WorkspaceMember target = workspace.getMember(userId);
+            if (target == null) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Member not found in workspace"));
+            }
+            // If promoting to OWNER, demote previous owner to ADMIN
+            if (role == Workspace.WorkspaceRole.OWNER) {
+                workspace.getMembers().stream()
+                    .filter(m -> m.getRole() == Workspace.WorkspaceRole.OWNER)
+                    .forEach(m -> m.setRole(Workspace.WorkspaceRole.ADMIN));
+                workspace.setOwnerId(userId);
+            }
+            target.setRole(role);
+            workspaceService.updateWorkspace(workspace);
+
+            log.info("Member {} role changed to {} in workspace {} by {}", userId, role, workspaceId, username);
+            return ResponseEntity.ok(Map.of("message", "Role updated successfully", "role", role.name()));
+        } catch (Exception e) {
+            log.error("Error updating member role", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     // Helper methods
     private String getCurrentUsername() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -629,6 +764,7 @@ public class WorkspaceController {
         
         String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
         dto.put("subscriptionPlan", plan);
+        dto.put("billingStatus", resolveBillingStatus(workspace));
         dto.put("collaborationEnabled", workspace.getCollaborationEnabled());
         dto.put("collaborationLevel", getCollaborationLevel(plan));
         dto.put("hasBasicCollaboration", hasBasicCollaboration(plan));
@@ -654,6 +790,38 @@ public class WorkspaceController {
         dto.put("members", members);
 
         return dto;
+    }
+
+    private String resolveBillingStatus(Workspace workspace) {
+        String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+
+        // FREE workspaces are always active
+        if ("FREE".equalsIgnoreCase(plan)) {
+            return "ACTIVE";
+        }
+
+        String stored = workspace.getBillingStatus();
+
+        // If stored status is ACTIVE or TRIALING, double-check the subscription period hasn't expired.
+        // Stripe should send webhooks, but this is a safety net for missed/delayed webhooks.
+        if ("ACTIVE".equalsIgnoreCase(stored) || "TRIALING".equalsIgnoreCase(stored)) {
+            LocalDateTime periodEnd = workspace.getSubscriptionCurrentPeriodEnd();
+            if (periodEnd != null && periodEnd.isBefore(LocalDateTime.now())) {
+                // Period has passed — mark the workspace as requiring payment and persist
+                workspace.setBillingStatus("PAYMENT_FAILED");
+                workspace.setCollaborationEnabled(false);
+                try { workspaceService.updateWorkspace(workspace); } catch (Exception ignored) {}
+                log.warn("Workspace {} subscription period ended ({}), auto-set to PAYMENT_FAILED",
+                    workspace.getWorkspaceId(), periodEnd);
+                return "PAYMENT_FAILED";
+            }
+        }
+
+        if (stored != null && !stored.isBlank()) {
+            return stored;
+        }
+
+        return Boolean.TRUE.equals(workspace.getCollaborationEnabled()) ? "ACTIVE" : "PENDING";
     }
     
     // Helper methods for subscription validation
@@ -708,9 +876,9 @@ public class WorkspaceController {
      */
     private boolean hasAdvancedCollaboration(String plan) {
         return switch (plan.toUpperCase()) {
-            case "FREE" -> false;      // No real-time collaboration
-            case "PRO" -> false;       // No collaboration
-            case "ENTERPRISE" -> false; // Only basic, no real-time
+            case "FREE" -> false;
+            case "PRO" -> false;
+            case "ENTERPRISE" -> true;
             default -> false;
         };
     }

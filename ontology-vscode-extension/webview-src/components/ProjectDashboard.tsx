@@ -32,6 +32,7 @@ import {
   Code2,
   ArrowLeft,
   HelpCircle,
+  CreditCard,
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
@@ -84,6 +85,7 @@ interface ProjectDashboardProps {
   pendingFile?: { fileName: string; fileContent: string; fileSize: number } | null;
   onOpenLocalFile?: () => void;
   onOpenEditor?: () => void;
+  onManageSubscription?: () => void;
 }
 
 const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
@@ -91,6 +93,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   pendingFile,
   onOpenLocalFile,
   onOpenEditor,
+  onManageSubscription,
 }) => {
   const { user, logout, switchWorkspace, updateSubscriptionPlan } = useAuth();
   console.log("[ProjectDashboard] Rendered with user:", {
@@ -873,6 +876,15 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               >
                 <Bug size={20} />
               </button>
+              {onManageSubscription && (
+                <button
+                  onClick={onManageSubscription}
+                  className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg"
+                  title="Manage subscription"
+                >
+                  <CreditCard size={20} />
+                </button>
+              )}
               <button
                 onClick={() => setShowSettings(true)}
                 className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
@@ -1058,11 +1070,19 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 Team Members
                 <span className="text-sm font-normal text-gray-500">({teamMembers.length})</span>
               </h2>
-              {(isWorkspaceOwner || isWorkspaceAdmin) ? (
+              {!subscription.canAccessFeature("hasBasicCollaboration") ? (
+                // FREE plan — collaboration locked
+                <div
+                  className="flex items-center gap-2 px-3 py-2 text-sm border border-purple-200 rounded-lg bg-purple-50 text-purple-500 cursor-not-allowed"
+                  title="Upgrade to Professional to invite team members"
+                >
+                  <UserPlus size={16} />
+                  Invite Member
+                  <span className="bg-purple-500 text-white text-[10px] px-1.5 py-0.5 rounded">PRO</span>
+                </div>
+              ) : (isWorkspaceOwner || isWorkspaceAdmin) ? (
                 <button
-                  onClick={() => {
-                    setShowInviteMember(true);
-                  }}
+                  onClick={() => setShowInviteMember(true)}
                   className={`flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 ${
                     !subscription.isWithinLimit(teamMembers.length, "maxTeamMembers")
                       ? "border-amber-300 bg-amber-50"
@@ -1070,7 +1090,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   }`}
                   title={
                     !subscription.isWithinLimit(teamMembers.length, "maxTeamMembers")
-                      ? `Limit reached (${subscription.limits.maxTeamMembers} members). Click to see upgrade options.`
+                      ? `Limit reached (${subscription.limits.maxTeamMembers} members). Upgrade to add more.`
                       : "Invite a new team member"
                   }
                 >
@@ -1598,6 +1618,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         onClose={() => setShowPlanDetails(false)}
         onUpgrade={handleUpgradePlan}
         isUpgrading={upgradingPlan}
+        workspaceId={user?.workspaceId || ''}
       />
 
       {/* User Guide Modal */}

@@ -188,7 +188,7 @@ MONGODB_DATABASE=ontocode
 GRAPHDB_REPOSITORY=ontocode
 
 # JWT Secret (base64 encoded)
-JWT_SECRET=b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==
+JWT_SECRET=<generate_a_unique_base64_secret_min_32_bytes>
 
 # Logging
 LOGGING_LEVEL_ROOT=INFO

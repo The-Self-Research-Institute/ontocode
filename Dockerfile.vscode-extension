@@ -13,7 +13,7 @@ RUN npm config set fetch-retries 10 && \
     npm config set fetch-retry-maxtimeout 300000 && \
     npm config set fetch-timeout 300000 && \
     npm config set maxsockets 15 && \
-    npm ci
+  sh -c 'for attempt in 1 2 3; do npm ci && exit 0; echo "npm ci failed, retrying ($$attempt/3)..."; done; exit 1'
 
 # Copy source code
 COPY ontology-vscode-extension ./
@@ -25,7 +25,7 @@ RUN cd webview-src && \
     npm config set fetch-retry-maxtimeout 300000 && \
     npm config set fetch-timeout 300000 && \
     npm config set maxsockets 15 && \
-    npm ci
+  sh -c 'for attempt in 1 2 3; do npm ci && exit 0; echo "webview npm ci failed, retrying ($$attempt/3)..."; done; exit 1'
 
 # Build the extension and webview
 RUN npm run bundle:all

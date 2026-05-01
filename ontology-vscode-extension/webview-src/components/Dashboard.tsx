@@ -888,6 +888,8 @@ const TopMenuBar = ({
   const [searchFile, setSearchFile] = useState("");
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [showExportFormats, setShowExportFormats] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<string | null>(null);
 
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -920,6 +922,7 @@ const TopMenuBar = ({
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setOpenMenu(null);
+        setShowExportFormats(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -1199,28 +1202,76 @@ const TopMenuBar = ({
                       Save {draftCount && draftCount > 0 ? `(${draftCount})` : ""}
                       {hasUnsavedChanges && <span className="text-orange-600 text-lg leading-none">•</span>}
                     </button>
+                    {/* Export As submenu */}
                     <button
                       onClick={(e) => {
                         e.preventDefault();
-                        if (window.vscode && currentProjectId) {
-                          window.vscode.postMessage({
-                            type: "downloadOntology",
-                            url: `/api/ontology/export/${currentProjectId}`,
-                            filename: `${currentProjectId}.owl`,
-                          });
-                        } else if (window.vscode) {
-                          window.vscode.postMessage({
-                            type: "error",
-                            value: "No ontology loaded. Please open a file first.",
-                          });
-                        }
-                        setOpenMenu(null);
+                        if (currentProjectId) setShowExportFormats((v) => !v);
                       }}
                       disabled={!currentProjectId}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
                     >
-                      Download
+                      <span className="flex items-center gap-2">
+                        <Download size={14} />
+                        Export As…
+                      </span>
+                      {showExportFormats ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                     </button>
+                    {showExportFormats && currentProjectId && (
+                      <div className="pl-4 pb-1">
+                        {([
+                          { label: "RDF/XML (.owl)", format: "rdfxml", ext: "owl" },
+                          { label: "Turtle (.ttl)", format: "turtle", ext: "ttl" },
+                          { label: "JSON-LD (.jsonld)", format: "jsonld", ext: "jsonld" },
+                          { label: "OWL/XML (.owlxml)", format: "owlxml", ext: "owlxml" },
+                          { label: "Manchester (.omn)", format: "manchester", ext: "omn" },
+                          { label: "Functional (.ofn)", format: "functional", ext: "ofn" },
+                        ] as { label: string; format: string; ext: string }[]).map(({ label, format, ext }) => (
+                          <button
+                            key={format}
+                            disabled={exportingFormat === format}
+                            onClick={async (e) => {
+                              e.preventDefault();
+                              if (!currentProjectId) return;
+                              setExportingFormat(format);
+                              const filename = `${currentProjectId}.${ext}`;
+                              const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(currentProjectId)}?format=${format}`;
+                              try {
+                                if (window.vscode) {
+                                  window.vscode.postMessage({ type: "downloadOntology", url, filename });
+                                } else {
+                                  const res = await fetch(url, {
+                                    headers: { Authorization: `Bearer ${localStorage.getItem("authToken") ?? ""}` },
+                                  });
+                                  if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+                                  const blob = await res.blob();
+                                  const blobUrl = URL.createObjectURL(blob);
+                                  const a = document.createElement("a");
+                                  a.href = blobUrl;
+                                  a.download = filename;
+                                  a.click();
+                                  URL.revokeObjectURL(blobUrl);
+                                }
+                              } catch (err: any) {
+                                console.error("Export failed:", err);
+                              } finally {
+                                setExportingFormat(null);
+                                setShowExportFormats(false);
+                                setOpenMenu(null);
+                              }
+                            }}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 disabled:opacity-50 flex items-center gap-2"
+                          >
+                            {exportingFormat === format ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <FileCode size={12} />
+                            )}
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div className="border-t border-gray-100 my-1" />
                     <button
                       onClick={(e) => {

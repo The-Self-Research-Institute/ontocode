@@ -5,6 +5,9 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
@@ -21,11 +24,36 @@ import java.util.stream.Collectors;
 @Component
 public class JwtUtil {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtUtil.class);
+
     @Value("${jwt.secret}")
     private String SECRET_KEY;
 
     @Value("${jwt.expiration}")
     private long EXPIRATION_TIME; // in milliseconds
+
+    @PostConstruct
+    public void validateSecrets() {
+        if (SECRET_KEY == null || SECRET_KEY.isBlank()) {
+            throw new IllegalStateException(
+                "[SECURITY] jwt.secret (JWT_SECRET) must be set. " +
+                "Generate one with: openssl rand -base64 48");
+        }
+        byte[] decoded;
+        try {
+            decoded = Decoders.BASE64.decode(SECRET_KEY);
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                "[SECURITY] jwt.secret is not valid Base64. " +
+                "Generate one with: openssl rand -base64 48");
+        }
+        if (decoded.length < 32) {
+            throw new IllegalStateException(
+                "[SECURITY] jwt.secret must decode to at least 256 bits (32 bytes). " +
+                "Current length: " + decoded.length + " bytes.");
+        }
+        log.info("JWT secret validated — {} bytes.", decoded.length);
+    }
 
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);

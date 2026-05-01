@@ -138,7 +138,7 @@ const defaultDarkColors: ThemeColors = {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [themeMode, setThemeModeState] = useState<ThemeMode>('light');
+  const [themeMode, setThemeModeState] = useState<ThemeMode>('dark');
   const [customLightColors, setCustomLightColors] = useState<Partial<ThemeColors>>({});
   const [customDarkColors, setCustomDarkColors] = useState<Partial<ThemeColors>>({});
 
