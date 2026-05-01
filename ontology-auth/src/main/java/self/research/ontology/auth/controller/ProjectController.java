@@ -202,6 +202,10 @@ public class ProjectController {
             log.info("[createProject] User: {}, userId: {}, email: {}, workspaceId: {}", 
                 username, user.getId(), user.getEmail(), request.workspaceId);
             
+            // FREE plan members are view-only — only the workspace owner can create projects
+            var viewOnlyBlock = checkFreeViewOnly(request.workspaceId, user.getId());
+            if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+
             // Check for duplicate project name in workspace
             List<Project> workspaceProjects = projectService.getWorkspaceProjects(request.workspaceId);
             boolean nameExists = workspaceProjects.stream()
@@ -211,7 +215,7 @@ public class ProjectController {
                     "error", "A project with this name already exists in the workspace"
                 ));
             }
-            
+
             Project project = projectService.createProject(
                 request.workspaceId,
                 user.getId(),
@@ -749,6 +753,13 @@ public class ProjectController {
             }
 
             User user = userOpt.get();
+
+            Optional<Project> projectForCheck = projectService.getProject(projectId);
+            if (projectForCheck.isPresent()) {
+                var viewOnlyBlock = checkFreeViewOnly(projectForCheck.get().getWorkspaceId(), user.getId());
+                if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+            }
+
             projectService.archiveProject(projectId, user.getId());
 
             return ResponseEntity.ok(Map.of("message", "Project archived successfully"));
@@ -775,6 +786,13 @@ public class ProjectController {
             }
 
             User user = userOpt.get();
+
+            // FREE plan members are view-only
+            Optional<Project> projectForCheck = projectRepository.findByProjectId(projectId);
+            if (projectForCheck.isPresent()) {
+                var viewOnlyBlock = checkFreeViewOnly(projectForCheck.get().getWorkspaceId(), user.getId());
+                if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+            }
 
             // Delete from GraphDB first (best-effort) for each file in the project
             try {
@@ -841,6 +859,13 @@ public class ProjectController {
             }
 
             User user = userOpt.get();
+
+            Optional<Project> projectForCheck = projectService.getProject(projectId);
+            if (projectForCheck.isPresent()) {
+                var viewOnlyBlock = checkFreeViewOnly(projectForCheck.get().getWorkspaceId(), user.getId());
+                if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+            }
+
             projectService.restoreProject(projectId, user.getId(), restoreFiles);
 
             return ResponseEntity.ok(Map.of(
@@ -1303,11 +1328,16 @@ public class ProjectController {
             
             Workspace workspace = workspaceOpt.get();
             String subscriptionPlan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
-            
-            // Calculate current storage usage for workspace
-            long currentStorageBytes = calculateWorkspaceStorageUsage(workspaceId);
+            String ownerId = workspace.getOwnerId();
+
+            // FREE plan members are view-only
+            var viewOnlyBlock = checkFreeViewOnly(workspaceId, user.getId());
+            if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+
+            // Storage quota is shared across ALL workspaces owned by the same account.
+            long currentStorageBytes = calculateOwnerStorageUsage(ownerId);
             long newFileSize = file.getSize();
-            
+
             // If replacing, subtract old file size
             if (replaceFileId != null && !replaceFileId.isEmpty()) {
                 Optional<FileMetadata> oldFile = fileMetadataRepository.findById(replaceFileId);
@@ -1315,27 +1345,27 @@ public class ProjectController {
                     currentStorageBytes -= oldFile.get().getFileSize();
                 }
             }
-            
+
             // Get storage limit for subscription plan (convert GB to bytes)
             double storageLimitGB = getStorageLimitForPlan(subscriptionPlan);
             long storageLimitBytes = (long) (storageLimitGB * 1024 * 1024 * 1024);
-            
+
             // Check if upload would exceed limit
             if (currentStorageBytes + newFileSize > storageLimitBytes) {
                 double currentStorageMB = currentStorageBytes / (1024.0 * 1024.0);
                 double newFileSizeMB = newFileSize / (1024.0 * 1024.0);
                 double limitMB = storageLimitGB * 1024;
-                
-                log.warn("Storage limit exceeded for workspace {}. Current: {:.2f} MB, New file: {:.2f} MB, Limit: {:.2f} MB",
-                    workspaceId, currentStorageMB, newFileSizeMB, limitMB);
-                
+
+                log.warn("Storage limit exceeded for owner {}. Current: {} MB, New file: {} MB, Limit: {} MB",
+                    ownerId, String.format("%.2f", currentStorageMB), String.format("%.2f", newFileSizeMB), String.format("%.2f", limitMB));
+
                 return ResponseEntity.status(413).body(Map.of(
                     "error", "Storage limit exceeded for " + subscriptionPlan + " plan",
                     "currentStorageMB", String.format("%.2f", currentStorageMB),
                     "newFileSizeMB", String.format("%.2f", newFileSizeMB),
                     "storageLimitMB", String.format("%.2f", limitMB),
                     "plan", subscriptionPlan,
-                    "message", String.format("Your workspace has used %.2f MB of %.2f MB. This file (%.2f MB) would exceed your storage limit. Please upgrade your plan or delete existing files.",
+                    "message", String.format("Your account has used %.2f MB of %.2f MB across all workspaces. This file (%.2f MB) would exceed your storage limit. Please upgrade your plan or delete existing files.",
                         currentStorageMB, limitMB, newFileSizeMB)
                 ));
             }
@@ -1432,7 +1462,14 @@ public class ProjectController {
             }
 
             User user = userOpt.get();
-            
+
+            // FREE plan members are view-only — resolve workspace via project
+            Optional<Project> projectForCheck = projectService.getProject(projectId);
+            if (projectForCheck.isPresent()) {
+                var viewOnlyBlock = checkFreeViewOnly(projectForCheck.get().getWorkspaceId(), user.getId());
+                if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+            }
+
             // DELETE FROM GRAPHDB FIRST (hierarchical project ID: parentProject/fileId)
             // This removes all RDF triples for this file from the GraphDB named graph
             String graphDbProjectId = projectId + "/" + fileId;
@@ -1501,7 +1538,14 @@ public class ProjectController {
             }
 
             User user = userOpt.get();
-            
+
+            // FREE plan members are view-only
+            Optional<Project> projectForCheck = projectService.getProject(projectId);
+            if (projectForCheck.isPresent()) {
+                var viewOnlyBlock = checkFreeViewOnly(projectForCheck.get().getWorkspaceId(), user.getId());
+                if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+            }
+
             // Restore file metadata
             Optional<FileMetadata> fileMetaOpt = fileMetadataRepository.findByFileId(fileId);
             if (fileMetaOpt.isPresent()) {
@@ -1558,6 +1602,10 @@ public class ProjectController {
             }
 
             Project project = projectOpt.get();
+
+            var viewOnlyBlock = checkFreeViewOnly(project.getWorkspaceId(), user.getId());
+            if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+
             if (!project.getOwnerId().equals(user.getId())) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only project owner can update project settings"));
             }
@@ -1609,10 +1657,14 @@ public class ProjectController {
             }
             
             Project project = projectOpt.get();
+
+            var viewOnlyBlock = checkFreeViewOnly(project.getWorkspaceId(), user.getId());
+            if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+
             if (!project.getOwnerId().equals(user.getId())) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only project owner can rename"));
             }
-            
+
             // Update project name
             project.setName(newName.trim());
             project.setUpdatedAt(java.time.LocalDateTime.now());
@@ -1654,6 +1706,39 @@ public class ProjectController {
         public String role; // ADMIN, EDITOR, VIEWER
     }
     
+    /**
+     * Returns 403 if the workspace is FREE and the caller is not the owner.
+     * FREE plan members get view-only access — they cannot create, modify, or delete content.
+     */
+    private Optional<ResponseEntity<?>> checkFreeViewOnly(String workspaceId, String userId) {
+        Optional<self.research.ontology.auth.model.Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
+        if (wsOpt.isEmpty()) return Optional.empty();
+        self.research.ontology.auth.model.Workspace ws = wsOpt.get();
+        String plan = ws.getSubscriptionPlan() != null ? ws.getSubscriptionPlan() : "FREE";
+        if ("FREE".equalsIgnoreCase(plan) && !ws.getOwnerId().equals(userId)) {
+            return Optional.of(ResponseEntity.status(403).body(Map.of(
+                "error", "Members have view-only access on the Free plan. The workspace owner must upgrade to Pro to allow members to edit.",
+                "requiresUpgrade", true
+            )));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Calculate total storage used across all workspaces owned by this user (in bytes).
+     * Storage quota is account-wide, not per-workspace.
+     */
+    private long calculateOwnerStorageUsage(String ownerId) {
+        try {
+            return workspaceService.getOwnedWorkspaces(ownerId).stream()
+                .mapToLong(ws -> calculateWorkspaceStorageUsage(ws.getWorkspaceId()))
+                .sum();
+        } catch (Exception e) {
+            log.error("Error calculating owner storage usage for {}", ownerId, e);
+            return 0;
+        }
+    }
+
     /**
      * Calculate total storage usage for a workspace (in bytes)
      */
