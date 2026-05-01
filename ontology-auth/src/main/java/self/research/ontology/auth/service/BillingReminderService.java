@@ -32,17 +32,28 @@ public class BillingReminderService {
     @Value("${app.base-url}")
     private String baseUrl;
 
+    @Value("${billing.reminder.enabled:true}")
+    private boolean reminderEnabled;
+
+    @Value("${billing.reminder.days-before:3}")
+    private int reminderDaysBefore;
+
     public BillingReminderService(UserRepository userRepository, EmailService emailService) {
         this.userRepository = userRepository;
         this.emailService = emailService;
     }
 
-    @Scheduled(cron = "0 0 9 * * *")
+    @Scheduled(cron = "${billing.reminder.cron:0 0 9 * * *}")
     public void sendBillingReminders() {
+        if (!reminderEnabled) {
+            log.debug("[BillingReminder] Reminders disabled — skipping");
+            return;
+        }
+
         LocalDateTime now = LocalDateTime.now();
-        // Window: period end is between 2.5 and 3.5 days from now
-        LocalDateTime windowStart = now.plusDays(2).plusHours(12);
-        LocalDateTime windowEnd   = now.plusDays(3).plusHours(12);
+        // Window: ±12 hours around the configured days-before mark
+        LocalDateTime windowStart = now.plusDays(reminderDaysBefore - 1).plusHours(12);
+        LocalDateTime windowEnd   = now.plusDays(reminderDaysBefore).plusHours(12);
 
         List<User> users = userRepository.findAll();
         int trialReminders = 0;
@@ -63,7 +74,7 @@ public class BillingReminderService {
             try {
                 if ("trialing".equalsIgnoreCase(status)) {
                     emailService.sendTrialEndingReminderEmail(
-                            user.getEmail(), user.getUsername(), planName, 3, endDate, portalUrl);
+                            user.getEmail(), user.getUsername(), planName, reminderDaysBefore, endDate, portalUrl);
                     trialReminders++;
                     log.info("[BillingReminder] Trial ending reminder sent to {}", user.getUsername());
                 } else if ("active".equalsIgnoreCase(status)) {

@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -39,6 +40,12 @@ import java.util.stream.Collectors;
 public class ProjectController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectController.class);
+
+    @Value("${storage.limit.free.gb:10}")
+    private double storageLimitFreeGb;
+
+    @Value("${storage.limit.pro.gb:100}")
+    private double storageLimitProGb;
 
     private final ProjectService projectService;
     private final UserRepository userRepository;
@@ -1682,10 +1689,10 @@ public class ProjectController {
      */
     private double getStorageLimitForPlan(String plan) {
         return switch (plan.toUpperCase()) {
-            case "FREE" -> 10.0;              // 10 GB
-            case "PRO" -> 100.0;              // 100 GB
-            case "ENTERPRISE" -> Double.MAX_VALUE;  // Unlimited
-            default -> 10.0;                  // Default to FREE plan
+            case "FREE" -> storageLimitFreeGb;
+            case "PRO" -> storageLimitProGb;
+            case "ENTERPRISE" -> Double.MAX_VALUE;
+            default -> storageLimitFreeGb;
         };
     }
 }

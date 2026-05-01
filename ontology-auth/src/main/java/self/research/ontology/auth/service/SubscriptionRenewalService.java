@@ -6,6 +6,7 @@ import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import com.stripe.exception.StripeException;
@@ -36,6 +37,12 @@ public class SubscriptionRenewalService {
 
     @Autowired
     private StripeService stripeService;
+
+    @Value("${billing.expiry-check.enabled:true}")
+    private boolean expiryCheckEnabled;
+
+    @Value("${billing.autorenewal.enabled:true}")
+    private boolean autoRenewalEnabled;
 
     /**
      * Calculates the next renewal date based on billing interval
@@ -155,8 +162,12 @@ public class SubscriptionRenewalService {
      * Scheduled task: Check all workspaces for expired subscriptions
      * Runs every 6 hours to mark expired subscriptions
      */
-    @Scheduled(fixedRate = 6 * 60 * 60 * 1000) // 6 hours
+    @Scheduled(fixedRateString = "${billing.expiry-check.interval-ms:21600000}")
     public void checkAndMarkExpiredSubscriptions() {
+        if (!expiryCheckEnabled) {
+            log.debug("[ExpiryCheck] Disabled — skipping");
+            return;
+        }
         log.info("Running subscription expiry check...");
         
         try {
@@ -188,8 +199,12 @@ public class SubscriptionRenewalService {
      * Scheduled task: Auto-renew subscriptions where auto-renewal is enabled
      * Runs daily at 2 AM to renew expiring subscriptions
      */
-    @Scheduled(cron = "0 0 2 * * ?") // Daily at 2 AM
+    @Scheduled(cron = "${billing.autorenewal.cron:0 0 2 * * ?}")
     public void autoRenewSubscriptions() {
+        if (!autoRenewalEnabled) {
+            log.debug("[AutoRenewal] Disabled — skipping");
+            return;
+        }
         log.info("Running auto-renewal check...");
         
         try {
