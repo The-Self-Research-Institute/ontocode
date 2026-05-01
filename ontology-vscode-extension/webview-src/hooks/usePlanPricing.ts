@@ -5,14 +5,40 @@ export interface PlanPricing {
     id: string;
     monthlyPrice: number;
     annualPrice: number;
+    features: string[];
+    limitations: string[];
 }
 
 type PricingMap = Record<string, PlanPricing>;
 
 const FALLBACK: PricingMap = {
-    FREE:       { id: 'FREE',       monthlyPrice: 0,  annualPrice: 0  },
-    PRO:        { id: 'PRO',        monthlyPrice: 29, annualPrice: 24 },
-    ENTERPRISE: { id: 'ENTERPRISE', monthlyPrice: 99, annualPrice: 79 },
+    FREE: {
+        id: 'FREE', monthlyPrice: 0, annualPrice: 0,
+        features: [
+            'Up to 3 workspaces', 'Up to 3 workspace members', '10 GB storage',
+            'OWL/RDF ontology editing', 'Class hierarchy & properties',
+            'SPARQL query execution', 'SWRL rule editor', 'DL Query & reasoning',
+            'Import OWL/TTL/RDF files', 'Custom plugin support', 'Community support',
+        ],
+        limitations: ['No team collaboration', 'No shared editing'],
+    },
+    PRO: {
+        id: 'PRO', monthlyPrice: 29, annualPrice: 24,
+        features: [
+            'Up to 10 workspaces', 'Up to 10 team members', '100 GB storage',
+            'Everything in Free', 'Team collaboration enabled',
+            'Invite & manage members', 'Priority email support', 'Export to multiple formats',
+        ],
+        limitations: [],
+    },
+    ENTERPRISE: {
+        id: 'ENTERPRISE', monthlyPrice: 99, annualPrice: 79,
+        features: [
+            'Unlimited team members', 'Unlimited workspaces', 'Unlimited storage',
+            'Everything in Professional', 'Priority support channel', 'Early access to new features',
+        ],
+        limitations: [],
+    },
 };
 
 // Module-level cache — only one HTTP request regardless of how many components mount.
