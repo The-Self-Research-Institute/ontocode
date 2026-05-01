@@ -22,12 +22,12 @@ export interface SubscriptionLimits {
 
 export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
     free: {
-        maxTeamMembers: 3,
+        maxTeamMembers: 3,       // 3 total including owner; invited members are view-only
         storageGB: 10,
-        hasBasicCollaboration: false,
+        hasBasicCollaboration: true,  // FREE can invite up to 3 members (view-only)
         hasAdvancedCollaboration: false,
         hasVersionControl: false,
-        hasCustomPlugins: false,
+        hasCustomPlugins: true,   // plan description includes custom plugin support
         hasAdvancedReasoning: false,
         hasAPIAccess: false,
         hasPrioritySupport: false,

@@ -96,7 +96,7 @@ public class WorkspaceService {
         workspace.setSubscriptionPlan("FREE");
         workspace.setBillingStatus("ACTIVE");
         workspace.setMaxWorkspaces(3);
-        workspace.setMaxMembers(10);
+        workspace.setMaxMembers(3);
         workspace.setCollaborationEnabled(false);
         workspace.setSubscriptionStartDate(LocalDateTime.now());
 

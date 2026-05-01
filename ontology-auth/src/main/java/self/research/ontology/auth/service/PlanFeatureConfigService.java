@@ -40,9 +40,9 @@ public class PlanFeatureConfigService {
         seedIfAbsent("FREE", 0, 0,
             List.of(
                 "Up to 3 workspaces",
-                "Up to 3 workspace members",
-                "10 GB storage",
-                "OWL/RDF ontology editing",
+                "Up to 3 workspace members (owner + 2 guests)",
+                "10 GB storage shared across workspaces",
+                "Full ontology editing for workspace owner",
                 "Class hierarchy & properties",
                 "SPARQL query execution",
                 "SWRL rule editor",
@@ -53,16 +53,16 @@ public class PlanFeatureConfigService {
             ),
             List.of(
                 "Invited members are view-only",
-                "No shared editing"
+                "No shared editing for members"
             )
         );
         seedIfAbsent("PRO", defaultProMonthlyPrice, defaultProAnnualDiscountPercent,
             List.of(
                 "Up to 10 workspaces",
                 "Up to 10 team members",
-                "100 GB storage",
+                "100 GB storage shared across workspaces",
                 "Everything in Free",
-                "Team collaboration enabled",
+                "Full editing access for all members",
                 "Invite & manage members",
                 "Priority email support",
                 "Export to multiple formats"
