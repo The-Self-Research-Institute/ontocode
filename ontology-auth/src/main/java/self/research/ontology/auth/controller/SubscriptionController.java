@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.*;
 import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.UserRepository;
+import self.research.ontology.auth.model.PlanFeatureConfig;
+import self.research.ontology.auth.service.PlanFeatureConfigService;
 import self.research.ontology.auth.service.StripeService;
 import self.research.ontology.auth.service.WorkspaceService;
 
@@ -42,11 +44,14 @@ public class SubscriptionController {
     private final StripeService stripeService;
     private final UserRepository userRepository;
     private final WorkspaceService workspaceService;
+    private final PlanFeatureConfigService planFeatureConfigService;
 
-    public SubscriptionController(StripeService stripeService, UserRepository userRepository, WorkspaceService workspaceService) {
+    public SubscriptionController(StripeService stripeService, UserRepository userRepository,
+                                  WorkspaceService workspaceService, PlanFeatureConfigService planFeatureConfigService) {
         this.stripeService = stripeService;
         this.userRepository = userRepository;
         this.workspaceService = workspaceService;
+        this.planFeatureConfigService = planFeatureConfigService;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -55,11 +60,25 @@ public class SubscriptionController {
 
     @GetMapping("/plans")
     public ResponseEntity<?> getPlans() {
-        return ResponseEntity.ok(Map.of("plans", List.of(
-            Map.of("id", "FREE",       "monthlyPrice", 0,                       "annualPrice", 0),
-            Map.of("id", "PRO",        "monthlyPrice", planProMonthlyPrice,      "annualPrice", planProAnnualPrice),
-            Map.of("id", "ENTERPRISE", "monthlyPrice", planEnterpriseMonthlyPrice, "annualPrice", planEnterpriseAnnualPrice)
-        )));
+        var configs = planFeatureConfigService.getAllByPlanId();
+        var plans = List.of(
+            buildPlanResponse("FREE",       0,                       0,                    configs.get("FREE")),
+            buildPlanResponse("PRO",        planProMonthlyPrice,     planProAnnualPrice,   configs.get("PRO")),
+            buildPlanResponse("ENTERPRISE", planEnterpriseMonthlyPrice, planEnterpriseAnnualPrice, configs.get("ENTERPRISE"))
+        );
+        return ResponseEntity.ok(Map.of("plans", plans));
+    }
+
+    private Map<String, Object> buildPlanResponse(String id, int monthlyPrice, int annualPrice, PlanFeatureConfig config) {
+        List<String> features   = config != null ? config.getFeatures()    : List.of();
+        List<String> limitations = config != null ? config.getLimitations() : List.of();
+        return Map.of(
+            "id", id,
+            "monthlyPrice", monthlyPrice,
+            "annualPrice", annualPrice,
+            "features", features,
+            "limitations", limitations
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────

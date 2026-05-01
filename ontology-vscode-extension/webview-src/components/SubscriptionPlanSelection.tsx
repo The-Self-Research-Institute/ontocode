@@ -118,7 +118,13 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     const { getPricing } = usePlanPricing();
     const plans = PLANS.map(plan => {
         const live = getPricing(plan.id);
-        return { ...plan, monthlyPrice: live.monthlyPrice, annualPrice: live.annualPrice };
+        return {
+            ...plan,
+            monthlyPrice: live.monthlyPrice,
+            annualPrice: live.annualPrice,
+            features: live.features.length ? live.features : plan.features,
+            limitations: live.limitations.length ? live.limitations : (plan.limitations ?? []),
+        };
     });
 
     const getDisplayPrice = (plan: Plan) =>
