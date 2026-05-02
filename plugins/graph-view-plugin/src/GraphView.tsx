@@ -218,19 +218,42 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
       edges: visEdges
     };
 
+    // Circular/radial layout: position nodes evenly on a circle
+    if (settings.layout === 'circular' || settings.layout === 'radial') {
+      const r = Math.max(200, visNodes.length * 40);
+      visNodes.forEach((node, i) => {
+        const angle = (2 * Math.PI * i) / visNodes.length;
+        node.x = Math.round(r * Math.cos(angle));
+        node.y = Math.round(r * Math.sin(angle));
+      });
+    }
+
+    const isHierarchical = settings.layout === 'hierarchical' || settings.layout === 'tree';
+    const isHorizontalTree = settings.layout === 'layered' || settings.layout === 'organic';
+    const isFixed = settings.layout === 'circular' || settings.layout === 'radial';
+
     const options: Options = {
-      layout: settings.layout === 'hierarchical' ? {
+      layout: isHierarchical ? {
         hierarchical: {
+          enabled: true,
           direction: 'UD',
           sortMethod: 'directed',
           levelSeparation: 150,
           nodeSpacing: 200
         }
-      } : settings.layout === 'circular' ? {
-        randomSeed: 2
-      } : {},
+      } : isHorizontalTree ? {
+        hierarchical: {
+          enabled: true,
+          direction: 'LR',
+          sortMethod: 'directed',
+          levelSeparation: 180,
+          nodeSpacing: 150
+        }
+      } : {
+        hierarchical: { enabled: false }
+      },
       physics: {
-        enabled: settings.physics,
+        enabled: isFixed ? false : settings.physics,
         barnesHut: {
           gravitationalConstant: -8000,
           springConstant: 0.04,
@@ -527,9 +550,10 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
                   fontSize: '13px'
                 }}
               >
-                <option value="force">Force-Directed</option>
-                <option value="hierarchical">Hierarchical</option>
-                <option value="circular">Circular</option>
+                <option value="force">Spring / Force-Directed</option>
+                <option value="hierarchical">Tree (Top → Bottom)</option>
+                <option value="layered">Tree (Left → Right)</option>
+                <option value="circular">Circular / Radial</option>
               </select>
             </div>
 

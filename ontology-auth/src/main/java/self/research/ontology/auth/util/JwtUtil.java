@@ -81,20 +81,22 @@ public class JwtUtil {
     }
 
     public String generateToken(UserDetails userDetails, String email, String userId) {
+        return generateToken(userDetails, email, userId, null);
+    }
+
+    public String generateToken(UserDetails userDetails, String email, String userId, String planName) {
         Map<String, Object> claims = new HashMap<>();
-        // Add roles to claims
         List<String> roles = userDetails.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .collect(Collectors.toList());
         claims.put("roles", roles);
-        // Add email to claims
         claims.put("email", email);
-        // Add isAdmin flag for easy frontend checking
         claims.put("isAdmin", roles.contains("ROLE_ADMIN"));
-        // Add userId to claims so frontend always has it
         if (userId != null) {
             claims.put("userId", userId);
         }
+        // Include plan so downstream services can enforce access without a DB call
+        claims.put("plan", planName != null ? planName.toUpperCase() : "FREE");
         return createToken(claims, userDetails.getUsername());
     }
 

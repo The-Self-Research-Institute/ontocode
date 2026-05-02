@@ -2127,12 +2127,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     [isNonWorkspaceMode],
   );
 
-  // Keep mutation service aware of workspace so the editor-side FREE plan interceptor
-  // can use the fast workspaceId query-param path instead of the project-document lookup.
-  useEffect(() => {
-    ontologyMutationService.setWorkspaceId(user?.workspaceId || null);
-  }, [user?.workspaceId]);
-
   // Helper function to encode project ID for use in URL paths
   // Handles hierarchical project IDs like "project-123/file-456"
   const encodeProjectId = (id: string | null | undefined): string => {
@@ -5652,7 +5646,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           // Only update projectId if it's different (ignoring timestamp suffixes)
           const currentBaseId = projectId?.replace(/-\d+$/, "");
           const newBaseId = message.projectId?.replace(/-\d+$/, "");
-          if (currentBaseId !== newBaseId) {
+          const isSameFile = currentBaseId === newBaseId;
+          if (!isSameFile) {
             console.log("[Dashboard] Updating projectId from", projectId, "to", message.projectId);
             setProjectId(message.projectId);
           } else {
@@ -5672,6 +5667,19 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log(message, "message=====>", projId);
           setLoadingProjectName(message.uploadedFileName);
           userLoadingChoice.current = null; // Reset choice for new loading
+
+          // If the same file is already loaded, skip the blocking loading dialog — the data
+          // is already in state. A silent background refresh keeps counts up to date.
+          if (isSameFile && hasUserSelectedFile) {
+            console.log("[Dashboard] Same file already loaded — skipping loading dialog, doing silent refresh");
+            if (!loadingPromiseRef.current) {
+              loadingPromiseRef.current = fetchData(message.projectId, false)
+                .then(() => { loadingPromiseRef.current = null; })
+                .catch(() => { loadingPromiseRef.current = null; });
+            }
+            break;
+          }
+
           setShowLoadingChoice(true);
 
           // Start loading in background and store the promise (only if not already loading)
@@ -6612,6 +6620,42 @@ const Dashboard: React.FC<DashboardProps> = ({
             // Still refresh hierarchy for subclass changes
             refreshClassHierarchy();
           }
+          break;
+
+        case "IMPORT_ADDED":
+        case "IMPORT_REMOVED":
+          console.log("[Dashboard] 📦 Import changed by remote user, refreshing imports");
+          refreshOntologyImports();
+          break;
+
+        case "ONTOLOGY_ANNOTATION_ADDED":
+        case "ONTOLOGY_ANNOTATION_MODIFIED":
+        case "ONTOLOGY_ANNOTATION_DELETED":
+          console.log("[Dashboard] 📝 Ontology annotation changed by remote user, refreshing");
+          refreshOntologyAnnotations();
+          break;
+
+        case "GCI_ADDED":
+        case "GCI_REMOVED":
+          console.log("[Dashboard] 🔢 GCI changed by remote user, refreshing GCIs");
+          apiClient
+            .get(`/api/ontology/metadata/${projectId}/gci`)
+            .then((response) => {
+              const raw = response?.data?.data || response?.data?.axioms || response?.axioms || response?.data || response;
+              const gcis = Array.isArray(raw)
+                ? raw.map((axiom: any) => ({
+                    value: axiom.value,
+                    subClass: axiom.subClass || axiom.definition || "",
+                    superClass: axiom.superClass || axiom.superClassIri || "",
+                    definition: axiom.subClass || axiom.definition || "",
+                    superClassIri: axiom.superClass || axiom.superClassIri || "",
+                    subExpression: axiom.subClass || axiom.subExpression || "",
+                  }))
+                : [];
+              setGeneralClassAxioms(gcis);
+              console.log("[Dashboard] ✅ GCIs refreshed");
+            })
+            .catch((error) => console.error("[Dashboard] Failed to refresh GCIs:", error));
           break;
 
         default:

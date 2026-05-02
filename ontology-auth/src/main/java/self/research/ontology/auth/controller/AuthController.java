@@ -181,7 +181,7 @@ public class AuthController {
 
         // Generate JWT token
         UserDetails userDetails = userDetailsService.loadUserByUsername(request.getUsername());
-        String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId());
+        String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
 
         // Clear rate limit on successful login
         rateLimitService.clearLimit(clientIp);
@@ -287,7 +287,7 @@ public class AuthController {
 
         // Generate JWT for auto-login
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getUsername());
-        String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId());
+        String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
 
         boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
 
@@ -548,7 +548,7 @@ public class AuthController {
             // Generate new JWT token with updated roles
             try {
                 UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-                String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId());
+                String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
                 
                 boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
                 

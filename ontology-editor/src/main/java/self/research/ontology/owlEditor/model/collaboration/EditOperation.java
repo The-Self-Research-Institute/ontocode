@@ -121,10 +121,19 @@ public class EditOperation {
         EQUIVALENT_ADDED,
         EQUIVALENT_REMOVED,
         
+        // Metadata operations (annotations, imports, GCIs)
+        IMPORT_ADDED,
+        IMPORT_REMOVED,
+        ONTOLOGY_ANNOTATION_ADDED,
+        ONTOLOGY_ANNOTATION_MODIFIED,
+        ONTOLOGY_ANNOTATION_DELETED,
+        GCI_ADDED,
+        GCI_REMOVED,
+
         // SPARQL and special operations
         SPARQL_UPDATE,
         CHANGE_REVERTED,
-        
+
         // Bulk operations
         BULK_IMPORT,
         BULK_DELETE
