@@ -16,6 +16,9 @@ export interface MutationOp {
 // When false: changes save as drafts (for private files)
 let realTimeSyncEnabled = false;
 
+// Workspace ID for server-side role enforcement (FREE plan view-only check)
+let currentWorkspaceId: string | null = null;
+
 export const ontologyMutationService = {
   /**
    * Enable or disable real-time sync mode
@@ -24,6 +27,10 @@ export const ontologyMutationService = {
   setRealTimeSync(enabled: boolean) {
     realTimeSyncEnabled = enabled;
     console.log(`[MutationService] Real-time sync ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  },
+
+  setWorkspaceId(workspaceId: string | null) {
+    currentWorkspaceId = workspaceId;
   },
 
   /**
@@ -35,24 +42,32 @@ export const ontologyMutationService = {
    * @param username - Username for tracking
    * @param sessionId - Session ID for tracking related operations
    */
-  async applyMutations(projectId: string, ops: MutationOp[], draft?: boolean, 
+  async applyMutations(projectId: string, ops: MutationOp[], draft?: boolean,
                       userId?: string, username?: string, sessionId?: string): Promise<void> {
     // Use the draft parameter if explicitly provided, otherwise use the inverse of realTimeSyncEnabled
     const useDraft = draft !== undefined ? draft : !realTimeSyncEnabled;
-    
+
     console.log(`[MutationService] 🔄 Applying mutations to ${projectId}`,ops, {
       opsCount: ops.length,
       draft: useDraft,
       realTimeSyncEnabled,
       ops: ops.map(o => o.type)
     });
-    
-    await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${useDraft}`, { 
-      ops,
-      userId: userId || 'anonymous',
-      username: username || 'Anonymous',
-      sessionId: sessionId || `session_${Date.now()}`
-    });
+
+    const wsParam = currentWorkspaceId ? `&workspaceId=${encodeURIComponent(currentWorkspaceId)}` : '';
+    try {
+      await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${useDraft}${wsParam}`, {
+        ops,
+        userId: userId || 'anonymous',
+        username: username || 'Anonymous',
+        sessionId: sessionId || `session_${Date.now()}`
+      });
+    } catch (err: any) {
+      if (err?.status === 403 && err?.data?.requiresUpgrade) {
+        throw new Error('Members have view-only access on the Free plan. The workspace owner must upgrade to Pro to allow members to edit.');
+      }
+      throw err;
+    }
   },
 
   /**

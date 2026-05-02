@@ -307,24 +307,24 @@ public class ProjectController {
             User user = userOpt.get();
             List<Project> projects = projectService.getWorkspaceProjects(workspaceId);
             
-            // Filter projects based on workspace role and project privacy:
-            // Workspace owners and admins see all projects EXCEPT private projects they don't own.
-            // A private project is one where the only member is the project owner.
+            // Filter projects based on workspace role and project privacy.
+            // Workspace OWNER sees all non-private projects (private = only the project owner is a member).
+            // Workspace ADMIN and regular members only see projects they are explicitly a member of.
             Optional<Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
-            boolean isOwnerOrAdmin = false;
+            boolean isWsOwner = false;
             if (wsOpt.isPresent()) {
                 Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
                 if (wsMember != null) {
-                    Workspace.WorkspaceRole wsRole = wsMember.getRole();
-                    isOwnerOrAdmin = wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
+                    isWsOwner = wsMember.getRole() == Workspace.WorkspaceRole.OWNER;
                 }
             }
-            if (isOwnerOrAdmin) {
-                // Admins/Owners see all projects except other users' private projects
+            if (isWsOwner) {
+                // Workspace owner sees all shared projects (> 1 member) plus their own
                 projects = projects.stream()
                         .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
                         .collect(Collectors.toList());
             } else {
+                // Admins and regular members only see projects they are explicitly added to
                 projects = projects.stream()
                         .filter(p -> p.hasMember(user.getId()))
                         .collect(Collectors.toList());
@@ -456,28 +456,26 @@ public class ProjectController {
                         p.getProjectId(), p.getName(), p.getOwnerId(), p.getMembers().size(), p.getActiveFiles().size());
                 }
                 
-                // Filter projects based on workspace role and project privacy:
-                // Workspace owners and admins see all projects EXCEPT other users' private projects.
+                // Workspace OWNER sees all shared projects plus their own.
+                // Admins and regular members only see projects they are explicitly a member of.
                 Optional<Workspace> wsOpt = workspaceService.getWorkspace(effectiveWorkspaceId);
-                boolean isOwnerOrAdmin = false;
+                boolean isWsOwner = false;
                 if (wsOpt.isPresent()) {
                     Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
                     if (wsMember != null) {
-                        Workspace.WorkspaceRole wsRole = wsMember.getRole();
-                        isOwnerOrAdmin = wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
+                        isWsOwner = wsMember.getRole() == Workspace.WorkspaceRole.OWNER;
                     }
                 }
-                if (isOwnerOrAdmin) {
-                    // Admins/Owners see all projects except other users' private projects
+                if (isWsOwner) {
                     projects = projects.stream()
                             .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
                             .collect(Collectors.toList());
-                    log.info("[getMyProjects] Filtered to {} projects for owner/admin user {} (excluding others' private projects)", projects.size(), username);
+                    log.info("[getMyProjects] Filtered to {} projects for workspace owner {}", projects.size(), username);
                 } else {
                     projects = projects.stream()
                             .filter(p -> p.hasMember(user.getId()))
                             .collect(Collectors.toList());
-                    log.info("[getMyProjects] Filtered to {} projects for non-owner/admin user {}", projects.size(), username);
+                    log.info("[getMyProjects] Filtered to {} projects for user {}", projects.size(), username);
                 }
             }
             
