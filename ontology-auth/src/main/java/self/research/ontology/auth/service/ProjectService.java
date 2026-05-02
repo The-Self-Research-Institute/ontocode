@@ -381,7 +381,8 @@ public class ProjectService {
         if (project.hasMember(userId)) {
             return true;
         }
-        // Workspace owners and admins have access to all projects in their workspace
+        // Only workspace OWNERs can bypass explicit project membership.
+        // Admins see only the projects they are explicitly a member of.
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
         if (workspaceOpt.isPresent()) {
             Workspace workspace = workspaceOpt.get();
@@ -390,8 +391,7 @@ public class ProjectService {
             }
             Workspace.WorkspaceMember wsMember = workspace.getMember(userId);
             if (wsMember != null) {
-                Workspace.WorkspaceRole role = wsMember.getRole();
-                return role == Workspace.WorkspaceRole.OWNER || role == Workspace.WorkspaceRole.ADMIN;
+                return wsMember.getRole() == Workspace.WorkspaceRole.OWNER;
             }
         }
         return false;
