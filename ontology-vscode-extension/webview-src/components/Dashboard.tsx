@@ -1442,8 +1442,7 @@ const OpenFileDialog = ({
       importMode,
       partition: partitionStrategy,
     });
-    // Don't close dialog - let it stay open so user can see the new file appear
-    // onClose();
+    onClose();
   };
 
   // console.log('[OpenFileDialog] Rendered with myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length, 'isOpen:', isOpen);
@@ -2127,6 +2126,12 @@ const Dashboard: React.FC<DashboardProps> = ({
     },
     [isNonWorkspaceMode],
   );
+
+  // Keep mutation service aware of workspace so the editor-side FREE plan interceptor
+  // can use the fast workspaceId query-param path instead of the project-document lookup.
+  useEffect(() => {
+    ontologyMutationService.setWorkspaceId(user?.workspaceId || null);
+  }, [user?.workspaceId]);
 
   // Helper function to encode project ID for use in URL paths
   // Handles hierarchical project IDs like "project-123/file-456"
