@@ -477,6 +477,14 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       DISJOINT_REMOVED: "removed disjoint axiom",
       EQUIVALENT_ADDED: "added equivalent class",
       EQUIVALENT_REMOVED: "removed equivalent class",
+      // Metadata notifications
+      IMPORT_ADDED: "added an import",
+      IMPORT_REMOVED: "removed an import",
+      ONTOLOGY_ANNOTATION_ADDED: "added an ontology annotation",
+      ONTOLOGY_ANNOTATION_MODIFIED: "modified an ontology annotation",
+      ONTOLOGY_ANNOTATION_DELETED: "deleted an ontology annotation",
+      GCI_ADDED: "added a general class axiom",
+      GCI_REMOVED: "removed a general class axiom",
       // SPARQL and revert notifications
       SPARQL_UPDATE: "executed a SPARQL update",
       CHANGE_REVERTED: "reverted a change",

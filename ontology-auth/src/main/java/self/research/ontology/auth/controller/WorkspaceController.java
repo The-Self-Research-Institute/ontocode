@@ -388,7 +388,9 @@ public class WorkspaceController {
             claims.put("email", user.getEmail());
             claims.put("roles", user.getRoles());
             claims.put("isAdmin", user.getRoles().contains("ROLE_ADMIN"));
-            claims.put("subscriptionPlan", workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "free");
+            String userPlan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName().toUpperCase() : "FREE";
+            claims.put("plan", userPlan);
+            claims.put("subscriptionPlan", userPlan); // keep for frontend backward compat
             claims.put("billingStatus", billingStatus);
 
             String token = jwtUtil.generateToken(username, claims);
@@ -399,7 +401,7 @@ public class WorkspaceController {
                 "workspaceId", workspaceId,
                 "workspaceName", workspace.getName(),
                 "role", role.toString(),
-                "subscriptionPlan", workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "free",
+                "subscriptionPlan", userPlan,
                 "billingStatus", billingStatus
             ));
         } catch (Exception e) {

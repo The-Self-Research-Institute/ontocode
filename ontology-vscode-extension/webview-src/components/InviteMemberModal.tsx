@@ -91,6 +91,9 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
 
       setInvitationLinks({ webLink: "", vscodeLink: "" });
       setSent(true);
+      setInviting(false);
+      // Auto-close after showing success message
+      setTimeout(() => onClose(), 1500);
     } catch (error: any) {
       console.error("Error inviting member:", error);
       // Extract error message from various possible error structures

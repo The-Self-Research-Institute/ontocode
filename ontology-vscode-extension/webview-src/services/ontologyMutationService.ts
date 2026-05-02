@@ -16,21 +16,10 @@ export interface MutationOp {
 // When false: changes save as drafts (for private files)
 let realTimeSyncEnabled = false;
 
-// Workspace ID for server-side role enforcement (FREE plan view-only check)
-let currentWorkspaceId: string | null = null;
-
 export const ontologyMutationService = {
-  /**
-   * Enable or disable real-time sync mode
-   * Should be enabled for shared files, disabled for private files
-   */
   setRealTimeSync(enabled: boolean) {
     realTimeSyncEnabled = enabled;
     console.log(`[MutationService] Real-time sync ${enabled ? 'ENABLED' : 'DISABLED'}`);
-  },
-
-  setWorkspaceId(workspaceId: string | null) {
-    currentWorkspaceId = workspaceId;
   },
 
   /**
@@ -54,9 +43,8 @@ export const ontologyMutationService = {
       ops: ops.map(o => o.type)
     });
 
-    const wsParam = currentWorkspaceId ? `&workspaceId=${encodeURIComponent(currentWorkspaceId)}` : '';
     try {
-      await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${useDraft}${wsParam}`, {
+      await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${useDraft}`, {
         ops,
         userId: userId || 'anonymous',
         username: username || 'Anonymous',
@@ -64,7 +52,7 @@ export const ontologyMutationService = {
       });
     } catch (err: any) {
       if (err?.status === 403 && err?.data?.requiresUpgrade) {
-        throw new Error('Members have view-only access on the Free plan. The workspace owner must upgrade to Pro to allow members to edit.');
+        throw new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
       }
       throw err;
     }

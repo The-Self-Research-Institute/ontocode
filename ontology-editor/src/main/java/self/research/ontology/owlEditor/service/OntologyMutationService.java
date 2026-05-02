@@ -200,14 +200,22 @@ public class OntologyMutationService {
         }, metadataExecutor);
     }
 
+    // These operation types use classIri() as their subject instead of iri()
+    private static final java.util.Set<String> CLASS_IRI_OPS = java.util.Set.of(
+        "addAxiom", "addObjectRestriction", "addDataRestriction",
+        "deleteObjectRestriction", "deleteDataRestriction"
+    );
+
     private String toUpdate(String projectId, MutationOp op) {
-        // Validate IRI is not null for operations that require it
-        if (op.iri() == null || op.iri().isBlank() || "null".equals(op.iri())) {
-            log.error("[MUTATION] Invalid IRI for operation {}: iri={}", op.type(), op.iri());
-            throw new IllegalArgumentException("IRI cannot be null or empty for operation: " + op.type());
+        String type = op.type();
+        // Skip iri() validation for ops that use classIri() as their subject
+        if (!CLASS_IRI_OPS.contains(type)) {
+            if (op.iri() == null || op.iri().isBlank() || "null".equals(op.iri())) {
+                log.error("[MUTATION] Invalid IRI for operation {}: iri={}", type, op.iri());
+                throw new IllegalArgumentException("IRI cannot be null or empty for operation: " + type);
+            }
         }
 
-        String type = op.type();
         if (type == null) throw new IllegalArgumentException("Unsupported op " + type);
 
         if (type.equals("createClass")) {

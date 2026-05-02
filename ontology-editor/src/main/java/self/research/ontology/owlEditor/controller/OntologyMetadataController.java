@@ -1,10 +1,17 @@
 package self.research.ontology.owlEditor.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.owlEditor.model.collaboration.EditOperation;
 import self.research.ontology.owlEditor.service.OntologyMetadataService;
 
+import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -17,10 +24,42 @@ import java.util.Map;
 @CrossOrigin
 public class OntologyMetadataController {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
     private final OntologyMetadataService metadataService;
+    private final SimpMessagingTemplate messagingTemplate;
 
-    public OntologyMetadataController(OntologyMetadataService metadataService) {
+    public OntologyMetadataController(OntologyMetadataService metadataService,
+                                      SimpMessagingTemplate messagingTemplate) {
         this.metadataService = metadataService;
+        this.messagingTemplate = messagingTemplate;
+    }
+
+    private void broadcastMetadataChange(String projectId, EditOperation.OperationType opType,
+                                         String nodeId, HttpServletRequest request) {
+        try {
+            String userId = "anonymous";
+            String username = "Anonymous";
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                String[] parts = authHeader.substring(7).split("\\.");
+                if (parts.length == 3) {
+                    byte[] decoded = Base64.getUrlDecoder().decode(parts[1]);
+                    JsonNode claims = MAPPER.readTree(decoded);
+                    if (claims.has("userId")) userId = claims.get("userId").asText();
+                    if (claims.has("sub")) username = claims.get("sub").asText();
+                }
+            }
+            Map<String, Object> msg = new HashMap<>();
+            msg.put("type", opType.name());
+            msg.put("projectId", projectId);
+            msg.put("nodeId", nodeId);
+            msg.put("userId", userId);
+            msg.put("username", username);
+            msg.put("timestamp", System.currentTimeMillis());
+            messagingTemplate.convertAndSend("/topic/ontology/" + projectId, msg);
+        } catch (Exception e) {
+            log.debug("Failed to broadcast metadata change: {}", e.getMessage());
+        }
     }
 
     @GetMapping("/{projectId:.+}")
@@ -49,13 +88,15 @@ public class OntologyMetadataController {
 
     @PostMapping("/{projectId}/annotations")
     public ResponseEntity<?> addAnnotation(@PathVariable String projectId,
-                                          @RequestBody Map<String, String> request) {
+                                          @RequestBody Map<String, String> request,
+                                          HttpServletRequest httpRequest) {
         try {
             String propertyIri = request.get("propertyIri");
             String value = request.get("value");
             String language = request.get("language");
             String datatype = request.get("datatype");
             metadataService.addOntologyAnnotation(projectId, propertyIri, value, language, datatype);
+            broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_ADDED, propertyIri, httpRequest);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error adding annotation", e);
@@ -65,7 +106,8 @@ public class OntologyMetadataController {
 
     @PutMapping("/{projectId}/annotations")
     public ResponseEntity<?> updateAnnotation(@PathVariable String projectId,
-                                             @RequestBody Map<String, String> request) {
+                                             @RequestBody Map<String, String> request,
+                                             HttpServletRequest httpRequest) {
         try {
             String propertyIri = request.get("propertyIri");
             String originalPropertyIri = request.getOrDefault("originalPropertyIri", propertyIri);
@@ -74,6 +116,7 @@ public class OntologyMetadataController {
             String language = request.get("language");
             String datatype = request.get("datatype");
             metadataService.updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype, originalPropertyIri);
+            broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_MODIFIED, propertyIri, httpRequest);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error updating annotation", e);
@@ -85,9 +128,11 @@ public class OntologyMetadataController {
     public ResponseEntity<?> deleteAnnotation(@PathVariable String projectId,
                                              @RequestParam String propertyIri,
                                              @RequestParam String value,
-                                             @RequestParam(required = false) String language) {
+                                             @RequestParam(required = false) String language,
+                                             HttpServletRequest httpRequest) {
         try {
             metadataService.deleteOntologyAnnotation(projectId, propertyIri, value, language);
+            broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_DELETED, propertyIri, httpRequest);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error deleting annotation", e);
@@ -110,10 +155,12 @@ public class OntologyMetadataController {
 
     @PostMapping("/{projectId}/imports")
     public ResponseEntity<?> addImport(@PathVariable String projectId,
-                                       @RequestBody Map<String, String> request) {
+                                       @RequestBody Map<String, String> request,
+                                       HttpServletRequest httpRequest) {
         try {
             String importIri = request.get("importIri");
             metadataService.addOntologyImport(projectId, importIri);
+            broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_ADDED, importIri, httpRequest);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error adding import", e);
@@ -123,9 +170,11 @@ public class OntologyMetadataController {
 
     @DeleteMapping("/{projectId}/imports")
     public ResponseEntity<?> deleteImport(@PathVariable String projectId,
-                                         @RequestParam String importIri) {
+                                         @RequestParam String importIri,
+                                         HttpServletRequest httpRequest) {
         try {
             metadataService.deleteOntologyImport(projectId, importIri);
+            broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_REMOVED, importIri, httpRequest);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error deleting import", e);
@@ -164,11 +213,13 @@ public class OntologyMetadataController {
 
     @PostMapping("/{projectId}/gci")
     public ResponseEntity<?> addGCI(@PathVariable String projectId,
-                                   @RequestBody Map<String, String> request) {
+                                   @RequestBody Map<String, String> request,
+                                   HttpServletRequest httpRequest) {
         try {
             String subClass = request.get("subClass");
             String superClass = request.get("superClass");
             metadataService.addGCI(projectId, subClass, superClass);
+            broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_ADDED, subClass, httpRequest);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error adding GCI", e);
@@ -179,17 +230,18 @@ public class OntologyMetadataController {
     @PutMapping("/{projectId}/gci/{index}")
     public ResponseEntity<?> updateGCI(@PathVariable String projectId,
                                       @PathVariable int index,
-                                      @RequestBody Map<String, String> request) {
+                                      @RequestBody Map<String, String> request,
+                                      HttpServletRequest httpRequest) {
         try {
             String oldValue = request.get("oldValue");
             String subClass = request.get("subClass");
             String superClass = request.get("superClass");
-            
+
             if (oldValue != null) {
                 metadataService.deleteGCI(projectId, oldValue);
             }
             metadataService.addGCI(projectId, subClass, superClass);
-            
+            broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_ADDED, subClass, httpRequest);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error updating GCI", e);
@@ -199,9 +251,11 @@ public class OntologyMetadataController {
 
     @DeleteMapping("/{projectId}/gci")
     public ResponseEntity<?> deleteGCI(@PathVariable String projectId,
-                                      @RequestParam String value) {
+                                      @RequestParam String value,
+                                      HttpServletRequest httpRequest) {
         try {
             metadataService.deleteGCI(projectId, value);
+            broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_REMOVED, value, httpRequest);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error deleting GCI", e);
