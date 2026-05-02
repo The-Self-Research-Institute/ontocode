@@ -227,53 +227,36 @@ public class ProjectController {
             
             // Handle member sharing - add members before final save
             boolean membersAdded = false;
-            
-            // If creator is not workspace owner, add workspace owner as ADMIN
-            Optional<self.research.ontology.auth.model.Workspace> workspaceOpt = 
+
+            Optional<self.research.ontology.auth.model.Workspace> workspaceOpt =
                 projectService.getWorkspace(request.workspaceId);
-            if (workspaceOpt.isPresent()) {
-                self.research.ontology.auth.model.Workspace workspace = workspaceOpt.get();
-                String wsOwnerId = workspace.getOwnerId();
-                if (wsOwnerId != null && !wsOwnerId.equals(user.getId())) {
-                    Optional<User> wsOwnerOpt = userRepository.findById(wsOwnerId);
-                    if (wsOwnerOpt.isPresent()) {
-                        User wsOwner = wsOwnerOpt.get();
-                        project.addMember(wsOwner.getId(), wsOwner.getUsername(), wsOwner.getEmail(), "ADMIN");
-                        membersAdded = true;
-                    }
-                }
-            }
-            
+
             if ("all".equals(request.shareWith)) {
-                // Add all active workspace members as viewers (matching UI: "All members will have view access")
-                // Workspace owner is already added as ADMIN above; skip project creator and ws owner
+                // Add all active workspace members as VIEWER (matching UI: "All members will have view access")
+                // Skip the project creator — they are already added as OWNER
                 if (workspaceOpt.isPresent()) {
                     self.research.ontology.auth.model.Workspace workspace = workspaceOpt.get();
                     for (self.research.ontology.auth.model.Workspace.WorkspaceMember member : workspace.getMembers()) {
-                        if (member.getUserId() != null 
+                        if (member.getUserId() != null
                                 && !member.getUserId().equals(user.getId())
-                                && !member.getUserId().equals(workspace.getOwnerId())
                                 && member.getStatus() == self.research.ontology.auth.model.Workspace.MemberStatus.ACTIVE) {
-                            // Use the role from request if provided, otherwise default to VIEWER
-                            String memberRole = request.memberRole != null ? request.memberRole : "VIEWER";
-                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), memberRole);
+                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), "VIEWER");
                             membersAdded = true;
                         }
                     }
                 }
             } else if ("specific".equals(request.shareWith) && request.memberUsernames != null) {
-                // Add specific members with the role specified in the request (default: VIEWER)
-                String memberRole = request.memberRole != null ? request.memberRole : "VIEWER";
+                // Add specific members as VIEWER (matching UI: "Choose who can view this project")
                 for (String memberUsername : request.memberUsernames) {
                     Optional<User> memberOpt = userRepository.findByUsername(memberUsername);
                     if (memberOpt.isPresent() && !memberOpt.get().getId().equals(user.getId())) {
                         User member = memberOpt.get();
-                        project.addMember(member.getId(), member.getUsername(), member.getEmail(), memberRole);
+                        project.addMember(member.getId(), member.getUsername(), member.getEmail(), "VIEWER");
                         membersAdded = true;
                     }
                 }
             }
-            
+
             if (membersAdded) {
                 projectService.updateProject(project);
             }
@@ -1709,13 +1692,17 @@ public class ProjectController {
      * FREE plan members get view-only access — they cannot create, modify, or delete content.
      */
     private Optional<ResponseEntity<?>> checkFreeViewOnly(String workspaceId, String userId) {
-        Optional<self.research.ontology.auth.model.Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
-        if (wsOpt.isEmpty()) return Optional.empty();
-        self.research.ontology.auth.model.Workspace ws = wsOpt.get();
-        String plan = ws.getSubscriptionPlan() != null ? ws.getSubscriptionPlan() : "FREE";
-        if ("FREE".equalsIgnoreCase(plan) && !ws.getOwnerId().equals(userId)) {
+        Optional<User> userOpt = userRepository.findById(userId);
+        if (userOpt.isEmpty()) return Optional.empty();
+        String plan = userOpt.get().getSubscriptionPlanName();
+        if (plan == null || "FREE".equalsIgnoreCase(plan)) {
+            // Workspace owner can always edit their own workspace content on any plan
+            Optional<self.research.ontology.auth.model.Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
+            if (wsOpt.isPresent() && userId.equals(wsOpt.get().getOwnerId())) {
+                return Optional.empty();
+            }
             return Optional.of(ResponseEntity.status(403).body(Map.of(
-                "error", "Members have view-only access on the Free plan. The workspace owner must upgrade to Pro to allow members to edit.",
+                "error", "Your current plan is Free. Upgrade to Pro to edit ontologies.",
                 "requiresUpgrade", true
             )));
         }

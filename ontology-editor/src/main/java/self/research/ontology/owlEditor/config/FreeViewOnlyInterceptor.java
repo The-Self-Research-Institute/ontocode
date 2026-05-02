@@ -21,11 +21,9 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Blocks write operations for FREE plan workspace members.
- * FREE plan members get view-only access — they can browse and query
- * ontologies but cannot create, modify, or delete any content.
- *
- * Read-only POST operations (queries, reasoning, validation) are whitelisted.
+ * Blocks write operations for FREE plan non-owner users.
+ * Plan is read from the JWT claim (fast path). For FREE plan users only,
+ * workspace ownership is verified via DB to allow owners to edit their own content.
  */
 @Component
 public class FreeViewOnlyInterceptor implements HandlerInterceptor {
@@ -34,15 +32,15 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final AntPathMatcher PATH = new AntPathMatcher();
 
-    // POST paths that are purely read-only — always allowed for FREE members
-    private static final List<String> ALLOWED_WRITE_PATTERNS = List.of(
+    // POST paths that are read-only — always allowed regardless of plan
+    private static final List<String> READ_ONLY_POST_PATTERNS = List.of(
         "/**/dl-query",
         "/api/sparql/**",
         "/api/sqwrl/**",
         "/**/reasoner/**",
         "/**/validate",
         "/**/reload/**",
-        "/**/code-view-cache"   // cache update, not persisted ontology change
+        "/**/code-view-cache"
     );
 
     private final ProjectRepository projectRepository;
@@ -59,84 +57,77 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
                              Object handler) throws Exception {
         String method = request.getMethod();
 
-        // GET/HEAD/OPTIONS are always safe
         if ("GET".equals(method) || "HEAD".equals(method) || "OPTIONS".equals(method)) {
             return true;
         }
 
         String path = request.getRequestURI();
 
-        // Whitelisted read-only POST operations
         if ("POST".equals(method)) {
-            for (String pattern : ALLOWED_WRITE_PATTERNS) {
+            for (String pattern : READ_ONLY_POST_PATTERNS) {
                 if (PATH.match(pattern, path)) return true;
             }
         }
 
-        // Extract userId from JWT — no token means unauthenticated, let other filters handle it
-        String userId = extractUserId(request.getHeader("Authorization"));
-        if (userId == null) return true;
+        String[] jwtClaims = extractJwtClaims(request.getHeader("Authorization"));
+        if (jwtClaims == null) return true; // unauthenticated — let security filters handle it
 
-        // Resolve workspaceId: prefer request param (faster), fall back to project lookup
-        String workspaceId = request.getParameter("workspaceId");
+        String plan = jwtClaims[0];
+        String userId = jwtClaims[1];
+
+        // PRO/ENTERPRISE users always allowed
+        if (!"FREE".equalsIgnoreCase(plan)) return true;
+
+        // FREE plan: workspace owners can edit their own content
+        if (userId != null && isWorkspaceOwner(userId, path, request.getParameter("workspaceId"))) {
+            return true;
+        }
+
+        log.debug("FREE plan write block: userId={} path={}", userId, path);
+        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        response.setContentType("application/json");
+        response.getWriter().write(
+            "{\"error\":\"Your current plan is Free. Upgrade to Pro to edit ontologies.\"," +
+            "\"requiresUpgrade\":true}"
+        );
+        return false;
+    }
+
+    private boolean isWorkspaceOwner(String userId, String path, String workspaceIdParam) {
+        String workspaceId = workspaceIdParam;
         if (workspaceId == null || workspaceId.isBlank()) {
             workspaceId = resolveWorkspaceFromPath(path);
         }
-        if (workspaceId == null) return true; // Can't determine workspace — allow
-
+        if (workspaceId == null) return false; // Can't determine workspace — deny
         Optional<WorkspaceDocument> wsOpt = workspaceRepository.findByWorkspaceId(workspaceId);
-        if (wsOpt.isEmpty()) return true;
-
-        WorkspaceDocument ws = wsOpt.get();
-        String plan = ws.getSubscriptionPlan() != null ? ws.getSubscriptionPlan() : "FREE";
-
-        if ("FREE".equalsIgnoreCase(plan) && !userId.equals(ws.getOwnerId())) {
-            log.debug("FREE view-only block: userId={} workspaceId={} path={}", userId, workspaceId, path);
-            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            response.setContentType("application/json");
-            response.getWriter().write(
-                "{\"error\":\"Members have view-only access on the Free plan. " +
-                "The workspace owner must upgrade to Pro to allow members to edit.\"," +
-                "\"requiresUpgrade\":true}"
-            );
-            return false;
-        }
-
-        return true;
+        return wsOpt.isPresent() && userId.equals(wsOpt.get().getOwnerId());
     }
 
-    private String extractUserId(String authHeader) {
+    private String[] extractJwtClaims(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
         String[] parts = authHeader.substring(7).split("\\.");
         if (parts.length != 3) return null;
         try {
             byte[] decoded = Base64.getUrlDecoder().decode(parts[1]);
             JsonNode claims = MAPPER.readTree(decoded);
-            return claims.has("userId") ? claims.get("userId").asText() : null;
+            String plan = claims.has("plan") ? claims.get("plan").asText() : "FREE";
+            String userId = claims.has("userId") ? claims.get("userId").asText() : null;
+            return new String[]{plan, userId};
         } catch (Exception e) {
             return null;
         }
     }
 
-    /**
-     * Finds the workspaceId by extracting the projectId segment from the URL path
-     * and looking up the corresponding ProjectDocument.
-     * Project IDs use the "proj-" prefix; hierarchical file IDs use "--" separator.
-     */
     private String resolveWorkspaceFromPath(String uri) {
         if (uri == null) return null;
         try {
             String decoded = URLDecoder.decode(uri, StandardCharsets.UTF_8);
             for (String segment : decoded.split("/")) {
                 if (!segment.startsWith("proj-")) continue;
-
-                // Try the full segment first (could be "proj-abc--file-xyz" for a file)
                 Optional<ProjectDocument> doc = projectRepository.findById(segment);
                 if (doc.isPresent() && doc.get().getWorkspaceId() != null) {
                     return doc.get().getWorkspaceId();
                 }
-
-                // Try the parent project part (before "--")
                 if (segment.contains("--")) {
                     String parentId = segment.substring(0, segment.indexOf("--"));
                     doc = projectRepository.findById(parentId);
