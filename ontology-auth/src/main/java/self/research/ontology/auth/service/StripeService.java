@@ -74,12 +74,14 @@ public class StripeService {
 
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final WorkspaceService workspaceService;
     private final EmailService emailService;
 
     public StripeService(UserRepository userRepository, WorkspaceRepository workspaceRepository,
-                         EmailService emailService) {
+                         WorkspaceService workspaceService, EmailService emailService) {
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
+        this.workspaceService = workspaceService;
         this.emailService = emailService;
     }
 

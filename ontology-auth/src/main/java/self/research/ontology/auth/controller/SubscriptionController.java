@@ -70,7 +70,8 @@ public class SubscriptionController {
             "annualDiscountPercent", config.getAnnualDiscountPercent(),
             "annualPrice",          config.computedAnnualPrice(),
             "features",             config.getFeatures(),
-            "limitations",          config.getLimitations()
+            "limitations",          config.getLimitations(),
+            "maxMembers",           config.getMaxMembers()
         );
     }
 
