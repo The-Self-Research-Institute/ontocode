@@ -90,24 +90,25 @@ public class GraphViewController {
             SELECT DISTINCT ?entity ?type ?label WHERE {
                 ?entity a ?type .
                 OPTIONAL { ?entity rdfs:label ?label }
-                FILTER(?type IN (owl:Class, owl:ObjectProperty, owl:DatatypeProperty, owl:NamedIndividual))
+                FILTER(?type IN (owl:Class, owl:ObjectProperty, owl:DatatypeProperty, owl:NamedIndividual, owl:AnnotationProperty))
             }
             LIMIT """ + maxNodes;
-        
+
         List<GraphGeneratingService.Node> nodes = new ArrayList<>();
         List<GraphGeneratingService.Edge> edges = new ArrayList<>();
-        
+
         try {
             var result = graphDBDatasetService.execSelect(projectId, sparql);
-            
+
             while (result.hasNext()) {
                 var binding = result.next();
                 String entityIri = binding.getValue("entity").stringValue();
                 String type = binding.getValue("type").stringValue();
-                String label = binding.hasBinding("label") ? 
+                String label = binding.hasBinding("label") ?
                     binding.getValue("label").stringValue() : getLocalName(entityIri);
-                
-                String nodeType = type.contains("Class") ? "class" :
+
+                String nodeType = type.contains("AnnotationProperty") ? "annotationProperty" :
+                                type.contains("Class") ? "class" :
                                 type.contains("ObjectProperty") ? "objectProperty" :
                                 type.contains("DatatypeProperty") ? "dataProperty" :
                                 "individual";

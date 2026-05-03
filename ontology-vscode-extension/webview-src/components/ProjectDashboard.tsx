@@ -240,23 +240,22 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     return () => clearInterval(interval);
   }, [user?.workspaceId]);
 
-  // Poll for project list changes (e.g. when owner deletes a project other members are viewing)
+  // Refresh project list on workspace events (e.g. PROJECT_DELETED broadcast via WebSocket)
   useEffect(() => {
-    if (!user?.workspaceId) return;
-    const interval = setInterval(async () => {
-      try {
-        const resp = await apiClient.get(`/api/projects/my?workspaceId=${user.workspaceId}`);
-        const data = resp?.data || resp;
-        const latest = data?.projects || [];
-        setProjects((prev) => {
-          if (JSON.stringify(prev) !== JSON.stringify(latest)) return latest;
-          return prev;
-        });
-      } catch {
-        // Silently ignore polling errors
+    const handler = async (e: Event) => {
+      const event = (e as CustomEvent).detail;
+      if (event?.type === "PROJECT_DELETED" || event?.type === "PROJECT_CREATED") {
+        try {
+          const resp = await apiClient.get(`/api/projects/my?workspaceId=${user?.workspaceId}`);
+          const data = resp?.data || resp;
+          setProjects(data?.projects || []);
+        } catch {
+          // silently ignore
+        }
       }
-    }, 30000);
-    return () => clearInterval(interval);
+    };
+    window.addEventListener("workspaceEvent", handler);
+    return () => window.removeEventListener("workspaceEvent", handler);
   }, [user?.workspaceId]);
 
   // Close menu when clicking outside

@@ -277,7 +277,14 @@ public class WorkspaceService {
 
         Workspace workspace = workspaceOpt.get();
         WorkspaceMember member = workspace.getMember(userId);
-        return member != null ? member.getRole() : null;
+        if (member != null) {
+            return member.getRole();
+        }
+        // Legacy workspaces may have the owner tracked only via ownerId, not in the members set
+        if (userId != null && userId.equals(workspace.getOwnerId())) {
+            return Workspace.WorkspaceRole.OWNER;
+        }
+        return null;
     }
 
     /**

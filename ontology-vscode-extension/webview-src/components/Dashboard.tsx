@@ -1239,11 +1239,12 @@ const TopMenuBar = ({
                               try {
                                 if (window.vscode) {
                                   window.vscode.postMessage({ type: "downloadOntology", url, filename });
+                                  notificationService.success("Export Started", `Downloading ${filename}`);
                                 } else {
                                   const res = await fetch(url, {
                                     headers: { Authorization: `Bearer ${localStorage.getItem("authToken") ?? ""}` },
                                   });
-                                  if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+                                  if (!res.ok) throw new Error(`Export failed: HTTP ${res.status}`);
                                   const blob = await res.blob();
                                   const blobUrl = URL.createObjectURL(blob);
                                   const a = document.createElement("a");
@@ -1251,9 +1252,11 @@ const TopMenuBar = ({
                                   a.download = filename;
                                   a.click();
                                   URL.revokeObjectURL(blobUrl);
+                                  notificationService.success("Export Complete", `${filename} downloaded`);
                                 }
                               } catch (err: any) {
                                 console.error("Export failed:", err);
+                                notificationService.error("Export Failed", err.message || "Could not export ontology");
                               } finally {
                                 setExportingFormat(null);
                                 setShowExportFormats(false);
@@ -1399,6 +1402,7 @@ const OpenFileDialog = ({
   onPartitionStrategyChange: (strategy: "none" | "namespace") => void;
   isWorkspaceMode?: boolean;
   onRefresh?: () => void;
+  onCreateNewFile?: () => void;
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const canOpenLocalFile = typeof window !== "undefined" && !!(window as any).vscode;
@@ -1436,6 +1440,7 @@ const OpenFileDialog = ({
       return;
     }
 
+    onCreateNewFile?.();
     window.vscode.postMessage({
       type: "createNewFile",
       projectId: parentProjectId || undefined,
@@ -2024,6 +2029,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const { actualMode } = useTheme();
   const subscription = useSubscription();
   const readonlyMode = false; // Allow editing by default
+  // FREE plan members (non-owners inside a workspace) are view-only
+  const isViewOnlyMember = subscription.isFree && user?.workspaceRole != null && user.workspaceRole !== "OWNER";
   const [showThemeSettings, setShowThemeSettings] = useState(false);
   const deploymentType = localStorage.getItem("deploymentType") as "self-hosted" | "cloud" | null;
   const isCloudDeployment = deploymentType === "cloud";
@@ -2307,6 +2314,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [loadingStatusMessage, setLoadingStatusMessage] = useState<string>(""); // Track import progress message
   const loadingPromiseRef = useRef<Promise<void> | null>(null);
   const userLoadingChoice = useRef<"wait" | "continue" | null>(null);
+  const autoLoadNewFileRef = useRef(false); // Set when user clicks "Create New File" — skip loading dialog on fileReady
+  const codeViewDirtyRef = useRef(false);
+  const metadataRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
@@ -2523,7 +2533,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   >("rdfxml");
   const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
-  const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false); // Track if user has made local modifications
+  const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false);
+  const [codeViewSyntaxError, setCodeViewSyntaxError] = useState<string | null>(null);
   const [citationJustInserted, setCitationJustInserted] = useState(false); // Track recent citation insertion for format refresh
   const [showCitationPicker, setShowCitationPicker] = useState(false);
   const [showManualCitationDialog, setShowManualCitationDialog] = useState(false);
@@ -4016,15 +4027,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       );
       console.log("[Dashboard] ✅ Valid annotations after filtering:", validAnnotations);
 
-      // Only update if we got data, or if explicitly clearing (validAnnotations.length >= 0 always true, so always update)
-      // But if backend returns empty and we have optimistic updates, keep them for a bit
-      setOntologyAnnotations((prev) => {
-        if (validAnnotations.length === 0 && prev.length > 0) {
-          console.log("[Dashboard] ⚠️ Backend returned empty annotations, keeping optimistic updates");
-          return prev;
-        }
-        return validAnnotations;
-      });
+      setOntologyAnnotations(validAnnotations);
     } catch (error) {
       console.error("[Dashboard] Failed to refresh ontology annotations:", error);
     }
@@ -4043,14 +4046,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         validImports.filter((imp: string) => !imp.startsWith("http://") && !imp.startsWith("https://")),
       );
 
-      // Don't overwrite optimistic updates with empty backend response
-      setOntologyImports((prev) => {
-        if (validImports.length === 0 && prev.length > 0) {
-          console.log("[Dashboard] ⚠️ Backend returned empty imports, keeping optimistic updates");
-          return prev;
-        }
-        return validImports;
-      });
+      setOntologyImports(validImports);
     } catch (error) {
       console.error("[Dashboard] Failed to refresh ontology imports:", error);
     }
@@ -5670,8 +5666,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           // If the same file is already loaded, skip the blocking loading dialog — the data
           // is already in state. A silent background refresh keeps counts up to date.
-          if (isSameFile && hasUserSelectedFile) {
+          // Use ref (not state) to avoid stale closure capturing the wrong value.
+          if (isSameFile && hasUserSelectedFileRef.current) {
             console.log("[Dashboard] Same file already loaded — skipping loading dialog, doing silent refresh");
+            setShowLoadingChoice(false);
+            setIsInitialLoading(false);
             if (!loadingPromiseRef.current) {
               loadingPromiseRef.current = fetchData(message.projectId, false)
                 .then(() => { loadingPromiseRef.current = null; })
@@ -5680,7 +5679,12 @@ const Dashboard: React.FC<DashboardProps> = ({
             break;
           }
 
-          setShowLoadingChoice(true);
+          // If triggered by "Create New File", skip the choice dialog and load immediately
+          if (autoLoadNewFileRef.current) {
+            autoLoadNewFileRef.current = false;
+          } else {
+            setShowLoadingChoice(true);
+          }
 
           // Start loading in background and store the promise (only if not already loading)
           if (loadingPromiseRef.current) {
@@ -6384,12 +6388,20 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      // Check if this is an edit made by the current user - skip refresh since we already updated local state
-      const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
-      const currentUserId = user?.email || user?.id;
-      if (editUserId && currentUserId && editUserId === currentUserId) {
-        console.log("[Dashboard] ⏭️ Skipping refresh - edit was made by current user");
-        return;
+      // Metadata events must ALWAYS refresh — same user on two devices must stay in sync.
+      // Only skip for entity-mutation events where local optimistic state was already applied.
+      const METADATA_EVENTS = new Set([
+        "ONTOLOGY_ANNOTATION_ADDED", "ONTOLOGY_ANNOTATION_MODIFIED", "ONTOLOGY_ANNOTATION_DELETED",
+        "IMPORT_ADDED", "IMPORT_REMOVED",
+        "GCI_ADDED", "GCI_REMOVED",
+      ]);
+      if (!METADATA_EVENTS.has(edit.type)) {
+        const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
+        const currentUserId = user?.email || user?.id;
+        if (editUserId && currentUserId && editUserId === currentUserId) {
+          console.log("[Dashboard] ⏭️ Skipping refresh - edit was made by current user");
+          return;
+        }
       }
 
       // Map edit type to which data needs refreshing
@@ -6408,15 +6420,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
 
         case "CLASS_DELETED":
-          console.log("[Dashboard] 🗑️ Class deleted, refreshing hierarchy");
-          if ((edit as any).parent) {
-            const parentId = (edit as any).parent;
-            console.log(`[Dashboard] Refreshing children of parent: ${parentId}`);
-            loadChildren(parentId);
-          } else {
-            // Fallback to full refresh
-            refreshClassHierarchy();
-          }
+          console.log("[Dashboard] 🗑️ Class deleted by remote user, refreshing hierarchy");
+          // Always do full refresh on deletion — partial refresh can leave orphaned subtrees
+          refreshClassHierarchy();
           break;
 
         case "CLASS_MODIFIED":
@@ -6473,8 +6479,12 @@ const Dashboard: React.FC<DashboardProps> = ({
               console.log(`[Dashboard] Refreshing selected item: ${entityId}`);
 
               // Use the appropriate endpoint based on entity type to ensure we get full details (including annotations)
-              let url = `/api/ontology/class/${projectId}/${encodeURIComponent(entityId)}`;
-              if (entitiesTab === "Classes") {
+              let url: string;
+              if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties" || entitiesTab === "AnnotationProperties") {
+                url = `/api/ontology/properties/detail/${projectId}?iri=${encodeURIComponent(entityId)}`;
+              } else if (entitiesTab === "Individuals") {
+                url = `/api/ontology/individuals/${projectId}?iri=${encodeURIComponent(entityId)}`;
+              } else {
                 url = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(entityId)}`;
               }
 
@@ -6633,6 +6643,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "ONTOLOGY_ANNOTATION_DELETED":
           console.log("[Dashboard] 📝 Ontology annotation changed by remote user, refreshing");
           refreshOntologyAnnotations();
+          break;
+
+        case "SWRL_RULE_ADDED":
+        case "SWRL_RULE_MODIFIED":
+        case "SWRL_RULE_DELETED":
+          console.log("[Dashboard] 📏 SWRL rule changed by remote user, notifying SWRL plugin");
+          showNotification(
+            `${(edit as any).username || "Someone"} ${
+              edit.type === "SWRL_RULE_ADDED" ? "added" : edit.type === "SWRL_RULE_MODIFIED" ? "modified" : "deleted"
+            } a SWRL rule`,
+            "info",
+          );
+          window.dispatchEvent(new CustomEvent("swrlRulesUpdated", { detail: { projectId, editType: edit.type } }));
           break;
 
         case "GCI_ADDED":
@@ -7123,12 +7146,39 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [projectId]);
 
+  // Silently refresh axiom/entity counts from backend after mutations
+  const silentRefreshMetadata = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}`);
+      const data = res?.data || res;
+      if (data) {
+        setMetadata((prev) => prev ? {
+          ...prev,
+          ...data,
+          // Flatten counts from nested structure if present
+          classCount: data.classCount || data.counts?.classes || prev.classCount,
+          objectPropertyCount: data.objectPropertyCount || data.counts?.objectProperties || prev.objectPropertyCount,
+          dataPropertyCount: data.dataPropertyCount || data.counts?.dataProperties || prev.dataPropertyCount,
+          individualCount: data.individualCount || data.counts?.individuals || prev.individualCount,
+          annotationPropertyCount: data.annotationPropertyCount || data.counts?.annotationProperties || prev.annotationPropertyCount,
+        } : prev);
+      }
+    } catch (err) {
+      console.debug("[Dashboard] Silent metadata refresh failed:", err);
+    }
+  }, [projectId]);
+
   // Mark as unsaved (called after mutations)
   const markAsUnsaved = useCallback(() => {
     console.log("[DEBUG] markAsUnsaved called");
     setHasUnsavedChanges(true);
+    codeViewDirtyRef.current = true;
     // Update draft count after a short delay
     setTimeout(() => updateDraftCount(), 500);
+    // Debounced silent stats refresh (1.5s after last mutation)
+    if (metadataRefreshTimerRef.current) clearTimeout(metadataRefreshTimerRef.current);
+    metadataRefreshTimerRef.current = setTimeout(() => silentRefreshMetadata(), 1500);
 
     // Auto-sync reasoner if enabled
     if (isReasonerSynced && isReasonerRunning && projectId) {
@@ -8032,6 +8082,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleAddObjectProperty = useCallback(
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
       if (!projectId) return;
+      if (isViewOnlyMember) {
+        showNotification("You have view-only access. Upgrade your plan to edit.", "error");
+        return;
+      }
 
       try {
         console.log("[handleAddObjectProperty] Creating property:", name, "type:", type, "parentId:", parentId);
@@ -8079,6 +8133,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleAddDataProperty = useCallback(
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
       if (!projectId) return;
+      if (isViewOnlyMember) {
+        showNotification("You have view-only access. Upgrade your plan to edit.", "error");
+        return;
+      }
 
       try {
         console.log("[handleAddDataProperty] Creating property:", name, "type:", type, "parentId:", parentId);
@@ -8126,6 +8184,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleAddClassInline = useCallback(
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
       if (!projectId) return;
+      if (isViewOnlyMember) {
+        showNotification("You have view-only access. Upgrade your plan to edit.", "error");
+        return;
+      }
 
       try {
         console.log("[handleAddClassInline] Creating class:", name, "type:", type, "parentId:", parentId);
@@ -8702,6 +8764,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("No project loaded.", "error");
         return;
       }
+      if (isViewOnlyMember) {
+        showNotification("You have view-only access. Upgrade your plan to edit.", "error");
+        return;
+      }
 
       const base = (metadata as any)?.ontologyIRI || "http://example.com/onto";
       const id = `${base}#${name.replace(/\s+/g, "_")}`;
@@ -9237,6 +9303,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     ) => {
       if (!projectId) return;
 
+      // Clear any previous syntax error when loading new content
+      setCodeViewSyntaxError(null);
+
       // If clicking same format without force refresh/reload, just return (prevents unnecessary reloads)
       if (format === codeViewFormat && !forceRefresh && !forceReload && codeViewContent) {
         console.log("[Dashboard] Same format clicked, content already loaded");
@@ -9267,6 +9336,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setCodeViewContent(response.content);
           setCodeViewFormat(format);
           setHasLocalCodeViewChanges(false);
+          codeViewDirtyRef.current = false;
           if (response.cached) {
             console.log("[Dashboard] Content loaded from cache (line positions preserved)");
           } else {
@@ -9344,6 +9414,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleCodeContentChange = useCallback((newContent: string) => {
     setCodeViewContent(newContent);
     setHasLocalCodeViewChanges(true);
+    setCodeViewSyntaxError(null); // clear error as user edits
     console.log("[Dashboard] Code view content updated via editing");
   }, []);
 
@@ -9406,13 +9477,19 @@ const Dashboard: React.FC<DashboardProps> = ({
             synced ? "Code content saved and synced across all formats" : "Code content saved",
           );
           setHasLocalCodeViewChanges(false);
+          setCodeViewSyntaxError(null);
         } else {
-          console.error("[Dashboard] Save failed:", response.error || "Unknown error");
-          notificationService.error("Save Failed", response.error || "Failed to save content");
+          const errMsg = response.error || "Failed to save content";
+          console.error("[Dashboard] Save failed:", errMsg);
+          // Show the error inline in the editor so the user can see what needs fixing
+          setCodeViewSyntaxError(errMsg.replace("Failed to save and sync code view: ", ""));
+          notificationService.error("Syntax/Parse Error", "Fix the highlighted error before saving.");
         }
       } catch (error: any) {
         console.error("[Dashboard] Error saving code content:", error);
-        notificationService.error("Save Failed", error.message || "Failed to save content to backend");
+        const errMsg = error.message || "Failed to save content to backend";
+        setCodeViewSyntaxError(errMsg);
+        notificationService.error("Save Failed", errMsg);
       }
     },
     [projectId, codeViewFormat],
@@ -11356,8 +11433,13 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Load code view content when switching to CodeView tab
   useEffect(() => {
-    if (mainTab === "CodeView" && projectId && !codeViewContent) {
-      fetchCodeViewContent(codeViewFormat);
+    if (mainTab === "CodeView" && projectId) {
+      if (!codeViewContent) {
+        fetchCodeViewContent(codeViewFormat);
+      } else if (codeViewDirtyRef.current) {
+        // Ontology was mutated since last load — reload without clearing cache
+        fetchCodeViewContent(codeViewFormat, false, true);
+      }
     }
   }, [mainTab, projectId, codeViewContent, codeViewFormat, fetchCodeViewContent]);
 
@@ -11634,6 +11716,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                       onRequestZoteroCitation={() => setShowCitationPicker(true)}
                       onContentChange={handleCodeContentChange}
                       onSaveContent={handleSaveCodeContent}
+                      syntaxError={codeViewSyntaxError}
                     />
                   )}
                 </div>
@@ -11895,16 +11978,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-primary)" }}>
                     Ontology header
                   </h2>
-                  <button
-                    onClick={() => setEditOntologyIRIDialogOpen(true)}
-                    className="p-1 rounded transition-colors"
-                    style={{ color: "var(--accent)" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
-                    title="Edit Ontology IRIs"
-                  >
-                    <Edit2 size={14} />
-                  </button>
+                  {!isViewOnlyMember && (
+                    <button
+                      onClick={() => setEditOntologyIRIDialogOpen(true)}
+                      className="p-1 rounded transition-colors"
+                      style={{ color: "var(--accent)" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                      title="Edit Ontology IRIs"
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 gap-4">
@@ -11952,18 +12037,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <h3 className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
                     Annotations
                   </h3>
-                  <button
-                    onClick={() => {
-                      setOntologyAnnotationEditTarget(null);
-                      setIsOntologyAnnotationDialogOpen(true);
-                    }}
-                    className="px-2 py-1 text-xs rounded transition-colors"
-                    style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.9")}
-                    onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-                  >
-                    Add
-                  </button>
+                  {!isViewOnlyMember && (
+                    <button
+                      onClick={() => {
+                        setOntologyAnnotationEditTarget(null);
+                        setIsOntologyAnnotationDialogOpen(true);
+                      }}
+                      className="px-2 py-1 text-xs rounded transition-colors"
+                      style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.9")}
+                      onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                    >
+                      Add
+                    </button>
+                  )}
                 </div>
                 {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
@@ -12001,39 +12088,41 @@ const Dashboard: React.FC<DashboardProps> = ({
                                   {annotation.propertyIri}
                                 </div>
                               </div>
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => {
-                                    setOntologyAnnotationEditTarget({
-                                      propertyIri: annotation.propertyIri,
-                                      value: annotation.value,
-                                      datatype: annotation.datatype,
-                                    });
-                                    setIsOntologyAnnotationDialogOpen(true);
-                                  }}
-                                  className="px-2 py-1 text-[10px] rounded transition-colors"
-                                  style={{ backgroundColor: "var(--surface-2)", color: "var(--text-primary)" }}
-                                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
-                                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-2)")}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    handleDeleteOntologyAnnotation(
-                                      annotation.propertyIri,
-                                      annotation.value,
-                                      annotation.datatype,
-                                    )
-                                  }
-                                  className="px-2 py-1 text-[10px] rounded transition-colors"
-                                  style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
-                                  onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
-                                  onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-                                >
-                                  Delete
-                                </button>
-                              </div>
+                              {!isViewOnlyMember && (
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => {
+                                      setOntologyAnnotationEditTarget({
+                                        propertyIri: annotation.propertyIri,
+                                        value: annotation.value,
+                                        datatype: annotation.datatype,
+                                      });
+                                      setIsOntologyAnnotationDialogOpen(true);
+                                    }}
+                                    className="px-2 py-1 text-[10px] rounded transition-colors"
+                                    style={{ backgroundColor: "var(--surface-2)", color: "var(--text-primary)" }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-2)")}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      handleDeleteOntologyAnnotation(
+                                        annotation.propertyIri,
+                                        annotation.value,
+                                        annotation.datatype,
+                                      )
+                                    }
+                                    className="px-2 py-1 text-[10px] rounded transition-colors"
+                                    style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
+                                    onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              )}
                             </div>
                             <div
                               className="px-3 py-2 text-xs"
@@ -13255,16 +13344,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       switch (selectorTarget) {
         case "subProperty":
+          // Always use the raw IRI for subPropertyOf — inverse wrapping is not valid here
           await ontologyMutationService.addSubPropertyOf(
             projectId,
             selectedItem.id,
-            finalExpression,
+            expression,
             user?.email || "anonymous",
             user?.username || "Anonymous",
           );
           updateItemInState({
             ...selectedItem,
-            superProperties: [...((selectedItem as Property).superProperties || []), finalExpression],
+            superProperties: [...((selectedItem as Property).superProperties || []), expression],
           });
           break;
         case "inverse":
@@ -13976,6 +14066,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               }
             : undefined
         }
+        onCreateNewFile={() => { autoLoadNewFileRef.current = true; }}
       />
       <DuplicateFileDialog
         isOpen={duplicatePrompt.isOpen}
@@ -14611,7 +14702,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         projectId={projectId || undefined}
         onRefresh={refreshProperties}
-        showInverseOption={selectedItem?.type !== "DatatypeProperty"}
+        showInverseOption={selectorTarget !== "subProperty" && selectedItem?.type !== "DatatypeProperty"}
         propertyType={selectedItem?.type === "DatatypeProperty" ? "data" : "object"}
       />
 

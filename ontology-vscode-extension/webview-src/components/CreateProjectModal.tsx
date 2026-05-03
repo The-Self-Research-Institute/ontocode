@@ -44,7 +44,13 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
       const members = workspaceData?.members || [];
 
       // Filter out the current user (project creator/owner) - they always have OWNER access
-      const filteredMembers = members.filter((m: WorkspaceMember) => m.userId !== user?.id && m.email !== user?.email);
+      // Guard against both `userId` and `id` field names returned by different API versions
+      const filteredMembers = members.filter(
+        (m: any) =>
+          m.userId !== user?.id &&
+          m.id !== user?.id &&
+          m.email?.toLowerCase() !== user?.email?.toLowerCase(),
+      );
       console.log("Loaded workspace members (excluding owner):", filteredMembers);
       setWorkspaceMembers(filteredMembers);
     } catch (error) {
@@ -219,7 +225,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                     <Users size={16} />
                     All Workspace Members
                   </div>
-                  <div className="text-sm text-gray-500">All members will have view access</div>
+                  <div className="text-sm text-gray-500">All members will be added as <strong>Viewer</strong></div>
                 </div>
               </label>
 
@@ -241,7 +247,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                       </span>
                     )}
                   </div>
-                  <div className="text-sm text-gray-500 mb-2">Choose who can view this project</div>
+                  <div className="text-sm text-gray-500 mb-2">Selected members will be added as <strong>Viewer</strong></div>
 
                   {shareWith === "specific" && (
                     <div className="mt-3 space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded p-2">
@@ -262,10 +268,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                                 onChange={() => toggleMember(member.username)}
                                 className="rounded text-purple-600"
                               />
-                              <div className="text-sm">
+                              <div className="text-sm flex-1">
                                 <div className="font-medium text-gray-900">{member.username}</div>
                                 <div className="text-gray-500 text-xs">{member.email}</div>
                               </div>
+                              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">Viewer</span>
                             </label>
                           ))
                       )}

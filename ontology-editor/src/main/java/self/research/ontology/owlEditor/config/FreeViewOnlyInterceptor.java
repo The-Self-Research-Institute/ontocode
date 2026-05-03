@@ -35,12 +35,18 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
     // POST paths that are read-only — always allowed regardless of plan
     private static final List<String> READ_ONLY_POST_PATTERNS = List.of(
         "/**/dl-query",
-        "/api/sparql/**",
+        "/api/sparql/query/**",   // SELECT/CONSTRUCT queries (read-only)
+        "/api/sparql/*/queries",  // save/list query templates (not ontology mutations)
         "/api/sqwrl/**",
         "/**/reasoner/**",
         "/**/validate",
         "/**/reload/**",
         "/**/code-view-cache"
+    );
+
+    // PUT/DELETE paths allowed for FREE plan (non-ontology operations)
+    private static final List<String> FREE_PUT_DELETE_ALLOW_PATTERNS = List.of(
+        "/api/sparql/*/queries/**"  // manage saved SPARQL query templates
     );
 
     private final ProjectRepository projectRepository;
@@ -65,6 +71,12 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
 
         if ("POST".equals(method)) {
             for (String pattern : READ_ONLY_POST_PATTERNS) {
+                if (PATH.match(pattern, path)) return true;
+            }
+        }
+
+        if ("PUT".equals(method) || "DELETE".equals(method)) {
+            for (String pattern : FREE_PUT_DELETE_ALLOW_PATTERNS) {
                 if (PATH.match(pattern, path)) return true;
             }
         }

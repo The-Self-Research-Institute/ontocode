@@ -33,7 +33,7 @@ public class OntologyQueryController {
 
     @GetMapping("/classes/top-level/{projectId:.+}")
     public ResponseEntity<?> topLevel(@PathVariable String projectId,
-                                      @RequestParam(defaultValue = "1000") int limit) {
+                                      @RequestParam(defaultValue = "5000") int limit) {
         try {
             return ResponseEntity.ok(Map.of("success", true, "classes",
                     queryService.topLevelClasses(projectId, limit)));
@@ -45,7 +45,7 @@ public class OntologyQueryController {
 
     @GetMapping("/classes/all/{projectId:.+}")
     public ResponseEntity<?> allClasses(@PathVariable String projectId,
-                                        @RequestParam(defaultValue = "10000") int limit) {
+                                        @RequestParam(defaultValue = "50000") int limit) {
         try {
             return ResponseEntity.ok(Map.of("success", true, "classes",
                     queryService.allClasses(projectId, limit)));
@@ -66,7 +66,7 @@ public class OntologyQueryController {
     @GetMapping("/properties/{projectId:.+}")
     public ResponseEntity<?> properties(@PathVariable String projectId,
                                         @RequestParam(required = false) String type,
-                                        @RequestParam(defaultValue = "100") int limit,
+                                        @RequestParam(defaultValue = "2000") int limit,
                                         @RequestParam(defaultValue = "0") int offset) {
         try {
             return ResponseEntity.ok(Map.of("success", true, "data",
@@ -107,7 +107,7 @@ public class OntologyQueryController {
 
     @GetMapping("/annotation-properties/{projectId:.+}")
     public ResponseEntity<?> annotationProperties(@PathVariable String projectId,
-                                                  @RequestParam(defaultValue = "100") int limit,
+                                                  @RequestParam(defaultValue = "2000") int limit,
                                                   @RequestParam(defaultValue = "0") int offset) {
         try {
             return ResponseEntity.ok(Map.of("success", true, "data",

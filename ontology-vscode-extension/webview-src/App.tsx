@@ -256,6 +256,13 @@ const AppContent = () => {
       apiClient.put('/api/auth/last-opened', { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
     };
 
+    // Tab-switch restore threshold: if the user had a file open less than 30 minutes ago,
+    // treat it as a VS Code tab-switch and restore directly to the editor.
+    // Anything older is a fresh session → restore to project library so the user can choose.
+    const EDITOR_RESTORE_THRESHOLD_MS = 30 * 60 * 1000;
+    const lastEditorActiveAt = Number(localStorage.getItem("ontocode_lastEditorActiveAt") || "0");
+    const wasRecentlyEditing = Date.now() - lastEditorActiveAt < EDITOR_RESTORE_THRESHOLD_MS;
+
     const restoreWithIds = async (projectId: string, projectName: string, fileId: string | null, fileName: string | null) => {
       // Validate project still exists
       try {
@@ -266,22 +273,13 @@ const AppContent = () => {
         goToDashboard();
         return;
       }
-      if (fileId && fileName) {
-        // Validate file still exists
-        try {
-          const fileCheck = await apiClient.get<{ exists: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/files/check?fileName=${encodeURIComponent(fileName)}`);
-          if (fileCheck?.exists === false) {
-            throw new Error("File not found");
-          }
-          console.log("[App] Auto-restoring last project+file:", projectId, fileId);
-          navigateTo({ view: "dashboard", projectId, projectName, fileId, fileName });
-        } catch {
-          console.warn("[App] Stored file no longer exists, restoring to project library");
-          clearStoredIds();
-          navigateTo({ view: "projectLibrary", projectId, projectName, fileId: null, fileName: "" });
-        }
+      if (fileId && fileName && wasRecentlyEditing) {
+        // User had a file open recently (tab-switch) — restore directly to editor
+        console.log("[App] Tab-switch restore: reopening last file in editor:", fileId);
+        navigateTo({ view: "dashboard", projectId, projectName, fileId, fileName });
       } else {
-        console.log("[App] Auto-restoring last project:", projectId);
+        // Fresh session or no recent editing — restore to project library
+        console.log("[App] Auto-restoring last project to library:", projectId);
         navigateTo({ view: "projectLibrary", projectId, projectName, fileId: null, fileName: "" });
       }
     };
@@ -530,6 +528,17 @@ const AppContent = () => {
 
   // Initialize router
   const { clearHistory, navigateTo, goBack, goForward } = useRouter(currentRoute, handleRouteChange);
+
+  // While a real file is open in the editor, keep the "last active" timestamp fresh
+  // so a tab-switch restore within the session correctly lands back in the editor.
+  useEffect(() => {
+    if (selectedFileId && selectedFileId !== "__editor__") {
+      const interval = setInterval(() => {
+        try { localStorage.setItem("ontocode_lastEditorActiveAt", String(Date.now())); } catch { /* ignore */ }
+      }, 60_000); // refresh every minute
+      return () => clearInterval(interval);
+    }
+  }, [selectedFileId]);
 
   // Clear restoredRoute after it has been used in the render cycle
   // This ensures we go back to computing routes from state after handling browser navigation
@@ -840,6 +849,9 @@ const AppContent = () => {
     try {
       localStorage.setItem("ontocode_lastWorkspaceFileId", fileId);
       localStorage.setItem("ontocode_lastWorkspaceFileName", fileName);
+      // Record when the user last had a file open — used to decide whether to
+      // restore directly to the editor (recent tab-switch) vs project library (fresh session).
+      localStorage.setItem("ontocode_lastEditorActiveAt", String(Date.now()));
     } catch { /* ignore */ }
     // Also persist to backend for cross-device restore
     apiClient.put('/api/auth/last-opened', {
