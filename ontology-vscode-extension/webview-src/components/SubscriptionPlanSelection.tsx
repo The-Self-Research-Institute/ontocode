@@ -140,7 +140,8 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
         return Math.round((plan.monthlyPrice - plan.annualPrice) / plan.monthlyPrice * 100);
     };
 
-    const maxDiscount = Math.max(...plans.filter(p => p.monthlyPrice > 0).map(getDiscountPercent));
+    const discountPercentages = plans.filter(p => p.monthlyPrice > 0).map(getDiscountPercent);
+    const maxDiscount = discountPercentages.length > 0 ? Math.max(...discountPercentages) : 0;
 
     const handleContinue = () => {
         onPlanSelected(selectedPlan, billingInterval);

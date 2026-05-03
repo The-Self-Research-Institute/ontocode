@@ -216,23 +216,8 @@ public class StripeService {
         user.setBillingInterval(interval);
         userRepository.save(user);
 
-        // Model B: activate collaboration on ALL user-owned workspaces
-        boolean hasPaidPlan = !"FREE".equalsIgnoreCase(planName);
-        java.util.List<Workspace> ownedWorkspaces = workspaceRepository.findByOwnerId(user.getId());
-        for (Workspace ws : ownedWorkspaces) {
-            ws.setBillingStatus("ACTIVE");
-            ws.setCollaborationEnabled(hasPaidPlan);
-            if ("ENTERPRISE".equalsIgnoreCase(planName)) {
-                ws.setMaxMembers(Integer.MAX_VALUE);
-                ws.setMaxWorkspaces(Integer.MAX_VALUE);
-            } else if ("PRO".equalsIgnoreCase(planName)) {
-                ws.setMaxMembers(10);
-                ws.setMaxWorkspaces(10);
-            }
-            workspaceRepository.save(ws);
-        }
-        log.info("Activated {} workspaces for user {} as {} — subscription {}",
-                ownedWorkspaces.size(), user.getUsername(), planName.toUpperCase(), subscription.getId());
+        // Sync to ALL user-owned workspaces (Account-level billing)
+        workspaceService.syncWorkspacesToOwnerPlan(user);
 
         log.info("Subscription {} ({}) created for user {} / workspace {}",
                 subscription.getId(), subscription.getStatus(), user.getUsername(), workspaceId);
@@ -379,21 +364,11 @@ public class StripeService {
             builder.putMetadata("workspaceId", workspaceId);
         }
 
-        // Guard: per-workspace subscription check (each workspace has its own subscription)
-        if (workspaceId != null && !workspaceId.isBlank()) {
-            Optional<Workspace> wsOpt = workspaceRepository.findByWorkspaceId(workspaceId);
-            if (wsOpt.isPresent()) {
-                Workspace ws = wsOpt.get();
-                boolean wsSubscribed = ws.getStripeSubscriptionId() != null
-                        || "ACTIVE".equalsIgnoreCase(ws.getBillingStatus()) && ws.getStripeSubscriptionId() != null;
-                boolean wsPending = ws.getPendingCheckoutSessionId() != null
-                        && ws.getPendingCheckoutCreatedAt() != null
-                        && ws.getPendingCheckoutCreatedAt().isAfter(LocalDateTime.now().minusHours(1));
-                if (wsSubscribed || wsPending) {
-                    log.warn("Workspace {} already has subscription or pending checkout — blocking duplicate.", workspaceId);
-                    throw new IllegalStateException(
-                            "This workspace already has an active subscription. Use the billing portal to manage it.");
-                }
+        // Guard: Account-level subscription check (Model C: One subscription per account)
+        if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
+            String status = user.getSubscriptionStatus();
+            if (!"canceled".equalsIgnoreCase(status) && !"unpaid".equalsIgnoreCase(status)) {
+                throw new IllegalStateException("Your account already has an active subscription. Use the billing portal to manage it.");
             }
         }
 
@@ -552,19 +527,8 @@ public class StripeService {
         // Clear pending lock and immediately activate the workspace
         String workspaceId = session.getMetadata() != null ? session.getMetadata().get("workspaceId") : null;
         if (workspaceId != null && !workspaceId.isBlank()) {
-            workspaceRepository.findByWorkspaceId(workspaceId).ifPresent(workspace -> {
-                workspace.setPendingCheckoutSessionId(null);
-                workspace.setPendingCheckoutCreatedAt(null);
-                if (session.getSubscription() != null) {
-                    workspace.setStripeSubscriptionId(session.getSubscription());
-                }
-                workspace.setBillingStatus("ACTIVE");
-                if (!"FREE".equalsIgnoreCase(workspace.getSubscriptionPlan())) {
-                    workspace.setCollaborationEnabled(true);
-                }
-                workspaceRepository.save(workspace);
-                log.info("Workspace {} activated, subscription {} attached", workspaceId, session.getSubscription());
-            });
+        // Sync status to ALL workspaces
+        workspaceService.syncWorkspacesToOwnerPlan(user);
         }
 
         log.info("Checkout session completed for user {}, subscription: {}", userId, session.getSubscription());
@@ -640,16 +604,8 @@ public class StripeService {
                             .format(DATE_FMT)
                     : "immediately";
 
-            // Model B: downgrade ALL user-owned workspaces on subscription cancel
-            workspaceRepository.findByOwnerId(user.getId()).forEach(ws -> {
-                ws.setBillingStatus("ACTIVE");
-                ws.setCollaborationEnabled(false);
-                ws.setMaxMembers(3);
-                ws.setMaxWorkspaces(3);
-                workspaceRepository.save(ws);
-            });
-            log.info("Downgraded all workspaces for user {} (subscription {} cancelled)",
-                    user.getUsername(), subscription.getId());
+            // Downgrade ALL workspaces owned by this user
+            workspaceService.syncWorkspacesToOwnerPlan(user);
 
             // Only clear user-level subscription if it matches this subscription
             if (subscription.getId().equals(user.getStripeSubscriptionId())) {
@@ -681,12 +637,8 @@ public class StripeService {
                     userRepository.save(user);
                     log.warn("Invoice payment failed for user {} — status set to past_due", user.getUsername());
 
-                    // Model B: disable collaboration on ALL user-owned workspaces
-                    workspaceRepository.findByOwnerId(user.getId()).forEach(ws -> {
-                        ws.setBillingStatus("PAYMENT_FAILED");
-                        ws.setCollaborationEnabled(false);
-                        workspaceRepository.save(ws);
-                    });
+                    // Sync status to ALL workspaces
+                    workspaceService.syncWorkspacesToOwnerPlan(user);
 
                     String amount = invoice.getAmountDue() != null
                             ? String.format("$%.2f", invoice.getAmountDue() / 100.0) : "your subscription amount";
@@ -715,16 +667,8 @@ public class StripeService {
                     // Skip $0 invoices (e.g. trial-start invoice with no charge)
                     if (invoice.getAmountPaid() == null || invoice.getAmountPaid() == 0) return;
 
-                    // Model B: restore ALL user-owned workspaces
-                    String userPlan = user.getSubscriptionPlanName() != null
-                            ? user.getSubscriptionPlanName().toUpperCase() : "FREE";
-                    boolean hasPaid = "PRO".equals(userPlan) || "ENTERPRISE".equals(userPlan);
-                    workspaceRepository.findByOwnerId(user.getId()).forEach(ws -> {
-                        ws.setBillingStatus("ACTIVE");
-                        ws.setCollaborationEnabled(hasPaid);
-                        workspaceRepository.save(ws);
-                    });
-                    log.info("Restored all workspaces for user {} — collaboration={}", user.getUsername(), hasPaid);
+                    // Sync status to ALL workspaces (restores collaboration if paid)
+                    workspaceService.syncWorkspacesToOwnerPlan(user);
 
                     String amount = String.format("$%.2f %s",
                             invoice.getAmountPaid() / 100.0,
@@ -790,23 +734,8 @@ public class StripeService {
                         LocalDateTime.ofInstant(Instant.ofEpochSecond(subscription.getCurrentPeriodEnd()), ZoneOffset.UTC));
             }
 
-            String workspaceId = metadata.get("workspaceId");
-            if (workspaceId != null && !workspaceId.isBlank()) {
-                workspaceRepository.findByWorkspaceId(workspaceId).ifPresent(workspace -> {
-                    workspace.setStripeSubscriptionId(subscription.getId());
-                    workspace.setBillingStatus("ACTIVE");
-                    workspace.setBillingInterval(user.getBillingInterval());
-                    if (subscription.getCurrentPeriodEnd() != null) {
-                        workspace.setSubscriptionCurrentPeriodEnd(
-                                LocalDateTime.ofInstant(Instant.ofEpochSecond(subscription.getCurrentPeriodEnd()), ZoneOffset.UTC));
-                    }
-                    if (!"FREE".equalsIgnoreCase(workspace.getSubscriptionPlan())) {
-                        workspace.setCollaborationEnabled(true);
-                    }
-                    workspaceRepository.save(workspace);
-                    log.info("Updated workspace {} — subscription {}, interval {}", workspaceId, subscription.getId(), user.getBillingInterval());
-                });
-            }
+            // Sync to ALL user-owned workspaces (Account-level billing)
+            workspaceService.syncWorkspacesToOwnerPlan(user);
 
             userRepository.save(user);
             log.info("Subscription {} for user {} — status={}, autoRenew={}",

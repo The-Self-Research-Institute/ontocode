@@ -92,15 +92,70 @@ public class WorkspaceService {
         // Add owner as first member
         workspace.addMember(userId, user.getUsername(), user.getEmail(), WorkspaceRole.OWNER);
 
-        // Set default plan
-        workspace.setSubscriptionPlan("FREE");
-        workspace.setBillingStatus("ACTIVE");
-        workspace.setMaxWorkspaces(3);
-        workspace.setMaxMembers(3);
-        workspace.setCollaborationEnabled(false);
+        // Resolve owner's current plan and standing (Model C: Inherit from account)
+        String ownerPlan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName().toUpperCase() : "FREE";
+        String status = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus().toLowerCase() : "active";
+        
+        boolean isPaidPlan = "PRO".equals(ownerPlan) || "ENTERPRISE".equals(ownerPlan);
+        boolean isStatusGood = "active".equals(status) || "trialing".equals(status);
+        boolean collaborationEnabled = isPaidPlan && isStatusGood;
+        
+        workspace.setSubscriptionPlan(ownerPlan);
+        workspace.setBillingStatus(status.toUpperCase());
+        workspace.setBillingInterval(user.getBillingInterval() != null ? user.getBillingInterval() : "monthly");
+        workspace.setStripeSubscriptionId(user.getStripeSubscriptionId());
+        workspace.setSubscriptionCurrentPeriodEnd(user.getSubscriptionCurrentPeriodEnd());
+        
+        // Limits based on plan
+        if ("PRO".equals(ownerPlan)) {
+            workspace.setMaxMembers(10);
+        } else if ("ENTERPRISE".equals(ownerPlan)) {
+            workspace.setMaxMembers(Integer.MAX_VALUE);
+        } else {
+            workspace.setMaxMembers(3);
+        }
+        workspace.setCollaborationEnabled(collaborationEnabled);
         workspace.setSubscriptionStartDate(LocalDateTime.now());
 
         return workspaceRepository.save(workspace);
+    }
+
+    /**
+     * Synchronize all workspaces owned by a user with their current account plan details.
+     * This is a "Model C" approach where account status is the source of truth but
+     * workspaces maintain redundant fields for simplified performance.
+     */
+    public void syncWorkspacesToOwnerPlan(User owner) {
+        if (owner == null) return;
+        
+        String planName = owner.getSubscriptionPlanName() != null ? owner.getSubscriptionPlanName().toUpperCase() : "FREE";
+        String status = owner.getSubscriptionStatus() != null ? owner.getSubscriptionStatus().toLowerCase() : "active";
+        
+        // Collaboration is only enabled for paid plans that are in good standing
+        boolean isPaidPlan = "PRO".equals(planName) || "ENTERPRISE".equals(planName);
+        boolean isStatusGood = "active".equals(status) || "trialing".equals(status);
+        boolean collaborationEnabled = isPaidPlan && isStatusGood;
+        
+        workspaceRepository.findByOwnerId(owner.getId()).forEach(workspace -> {
+            workspace.setSubscriptionPlan(planName);
+            workspace.setBillingStatus(status.toUpperCase());
+            workspace.setBillingInterval(owner.getBillingInterval());
+            workspace.setStripeSubscriptionId(owner.getStripeSubscriptionId());
+            workspace.setSubscriptionCurrentPeriodEnd(owner.getSubscriptionCurrentPeriodEnd());
+            workspace.setCollaborationEnabled(collaborationEnabled);
+            
+            // Set limits based on plan
+            if ("PRO".equals(planName)) {
+                workspace.setMaxMembers(10);
+            } else if ("ENTERPRISE".equals(planName)) {
+                workspace.setMaxMembers(Integer.MAX_VALUE);
+            } else {
+                workspace.setMaxMembers(3);
+            }
+            
+            workspaceRepository.save(workspace);
+        });
+        log.info("Synced account plan {} (status: {}) to all workspaces for user {}", planName, status, owner.getUsername());
     }
 
     /**
