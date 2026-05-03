@@ -63,16 +63,23 @@ interface Workspace {
 const isPendingPaidWorkspace = (workspace: Workspace) => {
   const plan = (workspace.subscriptionPlan || "FREE").toUpperCase();
   if (plan === "FREE") return false;
+  
+  // If collaboration is enabled, it's NOT pending (it's active)
+  if (workspace.collaborationEnabled) return false;
+
   const status = (workspace.billingStatus || "").toUpperCase();
   if (status === "PENDING" || status === "PAYMENT_FAILED") return true;
-  return workspace.collaborationEnabled === false;
+  
+  // If it's a paid plan but collaboration is still off, it might need activation/payment
+  return true;
 };
 
-// Model B: billing is account-level, not per-workspace. Workspace-level plan/status fields
-// are legacy data from Model A. Do not show per-workspace billing badges.
-// Account billing status is shown via the "Manage Billing" / "Upgrade Plan" button in the header.
-function workspaceStatusBadge(_workspace: Workspace): { label: string; cls: string } | null {
-  return null;
+// Model B: billing is account-level, but we still mirror the plan on the workspace for quick access.
+function workspaceStatusBadge(workspace: Workspace): { label: string; cls: string } | null {
+  const plan = (workspace.subscriptionPlan || "FREE").toUpperCase();
+  if (plan === "ENTERPRISE") return { label: "ENTERPRISE", cls: "bg-amber-500/20 text-amber-300 border border-amber-500/30" };
+  if (plan === "PRO") return { label: "PRO", cls: "bg-purple-500/20 text-purple-300 border border-purple-500/30" };
+  return { label: "FREE", cls: "bg-white/5 text-gray-400 border border-white/10" };
 }
 
 
@@ -978,7 +985,9 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                               {workspace.memberCount} member{workspace.memberCount !== 1 ? "s" : ""}
                             </span>
                           </span>
-                          <span className="text-xs px-2 py-1 bg-white/5 rounded">FREE</span>
+                          <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${workspaceStatusBadge(workspace)?.cls}`}>
+                            {workspaceStatusBadge(workspace)?.label}
+                          </span>
                         </div>
                       </div>
                     </div>

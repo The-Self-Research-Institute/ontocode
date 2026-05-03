@@ -5,6 +5,8 @@ import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
+import self.research.ontology.auth.repository.UserRepository;
+import self.research.ontology.auth.model.User;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -17,10 +19,12 @@ public class ProjectService {
 
     private final ProjectRepository projectRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final UserRepository userRepository;
 
-    public ProjectService(ProjectRepository projectRepository, WorkspaceRepository workspaceRepository) {
+    public ProjectService(ProjectRepository projectRepository, WorkspaceRepository workspaceRepository, UserRepository userRepository) {
         this.projectRepository = projectRepository;
         this.workspaceRepository = workspaceRepository;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -524,15 +528,20 @@ public class ProjectService {
     }
 
     private boolean canUseWorkspace(Workspace workspace) {
-        String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
-        if ("FREE".equalsIgnoreCase(plan)) {
+        // Model B: Single source of truth is the OWNER'S account status
+        User owner = userRepository.findById(workspace.getOwnerId()).orElse(null);
+        if (owner == null) return true; // Safety fallback for legacy data
+
+        String subStatus = owner.getSubscriptionStatus();
+        String subPlan = owner.getSubscriptionPlanName();
+
+        // FREE is always usable
+        if (subPlan == null || "FREE".equalsIgnoreCase(subPlan)) {
             return true;
         }
-        String billingStatus = workspace.getBillingStatus();
-        if (billingStatus == null || billingStatus.isBlank()) {
-            return Boolean.TRUE.equals(workspace.getCollaborationEnabled());
-        }
-        return "ACTIVE".equalsIgnoreCase(billingStatus);
+
+        // Paid plans must be active or trialing
+        return "active".equalsIgnoreCase(subStatus) || "trialing".equalsIgnoreCase(subStatus);
     }
 
     /**
