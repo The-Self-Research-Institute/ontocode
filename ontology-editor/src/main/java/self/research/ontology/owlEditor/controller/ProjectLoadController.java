@@ -19,6 +19,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.servlet.http.HttpServletRequest;
+
+import self.research.ontology.owlEditor.config.JwtClaimUtils;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.apache.commons.io.input.TeeInputStream;
 
@@ -701,13 +704,24 @@ public class ProjectLoadController {
     @GetMapping("/check-duplicate")
     public ResponseEntity<Map<String, Object>> checkDuplicate(
             @RequestParam String filename,
-            @RequestParam String ownerEmail) {
+            @RequestParam(required = false) String ownerEmail,
+            HttpServletRequest request) {
         try {
-            log.info("[CHECK-DUPLICATE] Checking for duplicate - filename: {}, ownerEmail: {}", filename, ownerEmail);
+            String email = ownerEmail;
+            if (email == null || email.isBlank()) {
+                email = JwtClaimUtils.extractEmail(request.getHeader("Authorization"));
+            }
+            if (email == null || email.isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "error", "ownerEmail is required (or sign in with a JWT that includes an email claim)"
+                ));
+            }
+            log.info("[CHECK-DUPLICATE] Checking for duplicate - filename: {}, ownerEmail: {}", filename, email);
             
             // Check if filename conflicts with shared files
-            if (shareService.isFilenameInSharedFiles(filename, ownerEmail)) {
-                log.warn("[CHECK-DUPLICATE] Filename conflicts with shared file: {} for user: {}", filename, ownerEmail);
+            if (shareService.isFilenameInSharedFiles(filename, email)) {
+                log.warn("[CHECK-DUPLICATE] Filename conflicts with shared file: {} for user: {}", filename, email);
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(Map.of(
                             "success", false,
@@ -717,7 +731,7 @@ public class ProjectLoadController {
             }
             
             // Check if user owns a file with this name
-            Optional<String> existingProjectId = metadataService.getExistingProjectId(filename, ownerEmail);
+            Optional<String> existingProjectId = metadataService.getExistingProjectId(filename, email);
             if (existingProjectId.isPresent()) {
                 String projectId = existingProjectId.get();
                 log.info("[CHECK-DUPLICATE] Found duplicate file - projectId: {}", projectId);

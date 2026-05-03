@@ -241,7 +241,7 @@ type ExtensionMessage =
     | { type: 'cursorMoved'; nodeId: string; nodeName: string } // User moved cursor to a node
     | { type: 'broadcastCursor'; projectId: string; userId: string; userName: string; position: { x: number; y: number }; timestamp: number } // User cursor position
     | { type: 'importLocalFile'; filePath: string; currentProjectId: string } // Import local OWL file
-    | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string; skipDuplicateCheck?: boolean; importMode?: string; partition?: string } // Upload ontology from webview (admin flow)
+    | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string; workspaceId?: string; skipDuplicateCheck?: boolean; importMode?: string; partition?: string } // Upload ontology from webview (admin flow)
     | { type: 'uploadFileToProject'; projectId: string; fileName: string; fileContent: string; fileSize: number }
     | { type: 'showSubscriptionPlans' } // Request to show subscription plans page
     | { type: 'setApiBaseUrl'; url: string; deploymentType?: 'self-hosted' | 'cloud' }
@@ -2421,6 +2421,8 @@ class OntoCodePanel {
             };
 
             // 4. Upload to gateway endpoint
+            // workspaceId MUST be on the query string: FreeViewOnlyInterceptor runs before multipart
+            // is parsed, so request.getParameter("workspaceId") only sees URL params, not FormData.
             const query = new URLSearchParams();
             if (importMode) {
                 query.set('importMode', importMode);
@@ -2428,8 +2430,11 @@ class OntoCodePanel {
             if (partition) {
                 query.set('partition', partition);
             }
+            if (workspaceId) {
+                query.set('workspaceId', workspaceId);
+            }
             const queryString = query.toString();
-            const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${projectId}${queryString ? `?${queryString}` : ''}`;
+            const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${encodeURIComponent(projectId)}${queryString ? `?${queryString}` : ''}`;
             const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
 
             console.log(`[OntoCode] Uploading to: ${uploadUrl}`);

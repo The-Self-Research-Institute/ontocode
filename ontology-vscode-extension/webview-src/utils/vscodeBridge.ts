@@ -48,6 +48,21 @@ function getOwnerEmailFromToken(): string | undefined {
     }
 }
 
+/** JWT workspaceId — must be duplicated on upload URL query for FREE-plan owner checks (see extension upload URL). */
+function getWorkspaceIdFromToken(): string | undefined {
+    try {
+        const token = localStorage.getItem('authToken');
+        if (!token) return undefined;
+        const parts = token.split('.');
+        if (parts.length !== 3) return undefined;
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const ws = payload.workspaceId;
+        return typeof ws === 'string' && ws.trim() ? ws.trim() : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 // ── Helper: Blob download (shared by downloadOntology & downloadFile) ───────
 function triggerBlobDownload(content: string | Blob, filename: string) {
     const blob = content instanceof Blob
@@ -289,6 +304,8 @@ function handleBrowserMessage(message: any) {
                         projectId: message.projectId,
                         fileName: fileData.fileName,
                         fileContent: fileContentToBase64(fileData.fileContent),
+                        ownerEmail: getOwnerEmailFromToken(),
+                        workspaceId: getWorkspaceIdFromToken(),
                         importMode: message.importMode,
                         partition: message.partition,
                     });
@@ -634,6 +651,8 @@ function handleBrowserMessage(message: any) {
                 try {
                     const token = localStorage.getItem('authToken');
                     const baseUrl = getGatewayUrl();
+                    const resolvedOwnerEmail = message.ownerEmail || getOwnerEmailFromToken();
+                    const resolvedWorkspaceId = message.workspaceId || getWorkspaceIdFromToken();
 
                     // ── FAST PATH: Check if file already exists in GraphDB (skip upload entirely) ──
                     // Skip this when forceUpload is set — caller already confirmed GraphDB is empty
@@ -665,7 +684,7 @@ function handleBrowserMessage(message: any) {
                     if (!message.skipDuplicateCheck) {
                         console.log('[BrowserBridge] Checking for duplicate file before upload:', message.fileName);
                         try {
-                            const checkUrl = `${baseUrl}/api/ontology/check-duplicate?filename=${encodeURIComponent(message.fileName)}${message.ownerEmail ? `&ownerEmail=${encodeURIComponent(message.ownerEmail)}` : ''}`;
+                            const checkUrl = `${baseUrl}/api/ontology/check-duplicate?filename=${encodeURIComponent(message.fileName)}${resolvedOwnerEmail ? `&ownerEmail=${encodeURIComponent(resolvedOwnerEmail)}` : ''}`;
                             const checkResp = await fetch(checkUrl, {
                                 headers: token ? { Authorization: `Bearer ${token}` } : {},
                             });
@@ -758,7 +777,8 @@ function handleBrowserMessage(message: any) {
                     formData.append('file', blob, message.fileName);
 
                     const query = new URLSearchParams();
-                    if (message.ownerEmail) query.set('ownerEmail', message.ownerEmail);
+                    if (resolvedOwnerEmail) query.set('ownerEmail', resolvedOwnerEmail);
+                    if (resolvedWorkspaceId) query.set('workspaceId', resolvedWorkspaceId);
                     if (message.importMode) query.set('importMode', message.importMode);
                     if (message.partition) query.set('partition', message.partition);
                     if (message.skipDuplicateCheck) query.set('action', 'replace');
