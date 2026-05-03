@@ -135,7 +135,9 @@ const IndividualEditor: React.FC<{
   username?: string;
   objectPropertyHierarchy?: TreeNode[];
   dataPropertyHierarchy?: TreeNode[];
-}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy, dataPropertyHierarchy }) => {
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy, dataPropertyHierarchy, isViewOnly = false, onViewOnlyAction }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [isNegativeAssertion, setIsNegativeAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
@@ -463,13 +465,13 @@ const IndividualEditor: React.FC<{
         {/* Annotations Section */}
         <Panel title="Annotations" defaultOpen={true} themeColor="bg-gradient-to-b from-gray-50 to-gray-100 text-gray-800 border-gray-200"
           actions={
-            <button onClick={onAddAnnotation} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600" title="Add annotation">
+            <button onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600" title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}>
               <Plus size={14} />
             </button>
           }
         >
           <div className="p-2">
-            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
+            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} isViewOnly={isViewOnly} onViewOnlyAction={onViewOnlyAction} />
           </div>
         </Panel>
 
@@ -480,7 +482,7 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Types</h4>
-                <button onClick={openTypeDialog} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add type">
+                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : openTypeDialog} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add type"}>
                   <Plus size={14} />
                 </button>
               </div>
@@ -501,7 +503,7 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Object property assertions</h4>
-                <button onClick={() => openPropertyAssertionDialog(true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add object property assertion">
+                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => openPropertyAssertionDialog(true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add object property assertion"}>
                   <Plus size={14} />
                 </button>
               </div>
@@ -521,7 +523,7 @@ const IndividualEditor: React.FC<{
                                   <span className="mx-1.5 text-gray-400">→</span>
                                   <span className="text-blue-600">{assertion.targetLabel || assertion.targetIri?.split('#').pop()}</span>
                               </div>
-                              <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
+                              <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
                                   <Trash2 size={12} className="text-red-600"/>
                               </button>
                           </div>
@@ -539,7 +541,7 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Data property assertions</h4>
-                <button onClick={() => openPropertyAssertionDialog(false)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-green-600 transition-colors" title="Add data property assertion">
+                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => openPropertyAssertionDialog(false)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-green-600 transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add data property assertion"}>
                   <Plus size={14} />
                 </button>
               </div>
@@ -559,7 +561,7 @@ const IndividualEditor: React.FC<{
                                   <span className="mx-1.5 text-gray-400">=</span>
                                   <span className="text-green-600">{assertion.targetLiteral}</span>
                               </div>
-                              <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
+                              <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
                                   <Trash2 size={12} className="text-red-600"/>
                               </button>
                           </div>
@@ -577,7 +579,7 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Negative object property assertions</h4>
-                <button onClick={() => openPropertyAssertionDialog(true, true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-600 transition-colors" title="Add negative object property assertion">
+                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => openPropertyAssertionDialog(true, true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-600 transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add negative object property assertion"}>
                   <Plus size={14} />
                 </button>
               </div>
@@ -592,7 +594,7 @@ const IndividualEditor: React.FC<{
                         <span className="mx-1.5 text-gray-400">→</span>
                         <span className="text-red-600">{assertion.targetLabel || assertion.targetIri?.split('#').pop()}</span>
                       </div>
-                      <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
+                      <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
                         <Trash2 size={12} className="text-red-600" />
                       </button>
                     </div>
@@ -608,7 +610,7 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Negative data property assertions</h4>
-                <button onClick={() => openPropertyAssertionDialog(false, true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-600 transition-colors" title="Add negative data property assertion">
+                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => openPropertyAssertionDialog(false, true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-600 transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add negative data property assertion"}>
                   <Plus size={14} />
                 </button>
               </div>
@@ -623,7 +625,7 @@ const IndividualEditor: React.FC<{
                         <span className="mx-1.5 text-gray-400">=</span>
                         <span className="text-red-600">{assertion.targetLiteral}</span>
                       </div>
-                      <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
+                      <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
                         <Trash2 size={12} className="text-red-600" />
                       </button>
                     </div>
@@ -677,6 +679,8 @@ const IndividualEditor: React.FC<{
                     onDelete={handleDeleteSameAs}
                     themeColor="purple"
                     itemEntityType="individual"
+                    isViewOnly={isViewOnly}
+                    onViewOnlyAction={onViewOnlyAction}
                 />
 
                 {/* Different Individual From */}
@@ -687,6 +691,8 @@ const IndividualEditor: React.FC<{
                     onDelete={handleDeleteDifferentFrom}
                     themeColor="purple"
                     itemEntityType="individual"
+                    isViewOnly={isViewOnly}
+                    onViewOnlyAction={onViewOnlyAction}
                 />
               </div>
             </div>

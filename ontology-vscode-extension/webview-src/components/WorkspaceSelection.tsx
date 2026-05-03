@@ -89,7 +89,7 @@ const InlinePaymentStep: React.FC<{
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { getShortPrice } = usePlanPricing();
+  const { getShortPrice, trialPeriodDays } = usePlanPricing();
   const price = getShortPrice(planName, interval);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -142,7 +142,7 @@ const InlinePaymentStep: React.FC<{
         </div>
         <div className="text-right">
           <p className="text-purple-300 font-semibold">{price}</p>
-          <p className="text-[11px] text-green-400">First 14 days free</p>
+          <p className="text-[11px] text-green-400">First {trialPeriodDays} days free</p>
         </div>
       </div>
       <div>
@@ -156,7 +156,7 @@ const InlinePaymentStep: React.FC<{
       )}
       <div className="flex items-center gap-2 text-[11px] text-gray-400">
         <Shield size={13} className="text-green-400 flex-shrink-0" />
-        <span>Card saved securely — not charged for 14 days — cancel any time</span>
+        <span>Card saved securely — not charged for {trialPeriodDays} days — cancel any time</span>
       </div>
       <div className="flex gap-3">
         <button type="button" onClick={onSkip} disabled={submitting}
@@ -165,7 +165,7 @@ const InlinePaymentStep: React.FC<{
         </button>
         <button type="submit" disabled={submitting || !stripe || !elements}
           className="flex-[2] py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold hover:from-purple-700 hover:to-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm shadow-lg shadow-purple-600/30">
-          {submitting ? <><Loader2 size={16} className="animate-spin" />Setting up…</> : <><CheckCircle size={16} />Start free trial</>}
+          {submitting ? <><Loader2 size={16} className="animate-spin" />Setting up…</> : <><CheckCircle size={16} />Start {trialPeriodDays}-day free trial</>}
         </button>
       </div>
     </form>

@@ -848,6 +848,8 @@ const TopMenuBar = ({
   isConsistencyLoading,
   onGoToProjectDashboard,
   onGoToWorkspace,
+  subscription,
+  onExportProAction,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -882,6 +884,8 @@ const TopMenuBar = ({
   isConsistencyLoading?: boolean;
   onGoToProjectDashboard?: () => void;
   onGoToWorkspace?: () => void;
+  subscription?: any;
+  onExportProAction?: () => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1233,6 +1237,10 @@ const TopMenuBar = ({
                             onClick={async (e) => {
                               e.preventDefault();
                               if (!currentProjectId) return;
+                              if (subscription?.isFree) {
+                                onExportProAction?.();
+                                return;
+                              }
                               setExportingFormat(format);
                               const filename = `${currentProjectId}.${ext}`;
                               const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(currentProjectId)}?format=${format}`;
@@ -1823,6 +1831,8 @@ const DetailsPanel = ({
   setIndividuals,
   markAsUnsaved,
   viewMode = "asserted",
+  isViewOnly = false,
+  onViewOnlyAction,
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -1860,6 +1870,8 @@ const DetailsPanel = ({
   setIndividuals: React.Dispatch<React.SetStateAction<Individual[]>>;
   markAsUnsaved: () => void;
   viewMode?: "asserted" | "inferred";
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
 }) => {
   if (!selectedItem) {
     return (
@@ -1879,8 +1891,8 @@ const DetailsPanel = ({
     onDeleteAnnotation,
     activeTheme,
     projectId: projectId || "",
-    // userId: user?.email || 'anonymous',
-    // username: user?.username || 'Anonymous'
+    isViewOnly,
+    onViewOnlyAction,
   };
 
   switch (entitiesTab) {
@@ -1973,6 +1985,8 @@ const DetailsPanel = ({
           onAddSubPropertyClick={onAddAnnotationSuperpropertyClick}
           onAddDomainClick={onAddAnnotationDomainClick}
           onAddRangeClick={onAddAnnotationRangeClick}
+          isViewOnly={isViewOnly}
+          onViewOnlyAction={onViewOnlyAction}
         />
       );
     }
@@ -1985,6 +1999,8 @@ const DetailsPanel = ({
             annotations={selectedItem.annotations}
             onDelete={onDeleteAnnotation}
             onEdit={onEditAnnotation}
+            isViewOnly={isViewOnly}
+            onViewOnlyAction={onViewOnlyAction}
           />
         </div>
       );
@@ -2031,6 +2047,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const readonlyMode = false; // Allow editing by default
   // FREE plan members (non-owners inside a workspace) are view-only
   const isViewOnlyMember = subscription.isFree && user?.workspaceRole != null && user.workspaceRole !== "OWNER";
+  const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | null>(null);
+  const handleViewOnlyAction = () => setShowProPromptType('edit');
+  const handleExportProAction = () => setShowProPromptType('export');
   const [showThemeSettings, setShowThemeSettings] = useState(false);
   const deploymentType = localStorage.getItem("deploymentType") as "self-hosted" | "cloud" | null;
   const isCloudDeployment = deploymentType === "cloud";
@@ -9007,6 +9026,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleRenameItem = useCallback(
     async (itemId: string, newLabel: string) => {
+      if (isViewOnlyMember) { handleViewOnlyAction(); return; }
       console.log("[DEBUG] handleRenameItem called for itemId:", itemId, "newLabel:", newLabel);
       if (!projectId || !newLabel.trim()) return;
 
@@ -9422,11 +9442,49 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Handle saving code content to backend
   const handleSaveCodeContent = useCallback(
     async (content: string) => {
+      // Free-plan non-owners cannot edit or save — show the Pro upgrade dialog
+      if (isViewOnlyMember) {
+        setShowProPromptType('edit');
+        return;
+      }
+
       if (!projectId) {
         console.error("[Dashboard] No projectId available for save");
         notificationService.error("Save Failed", "No project selected");
         return;
       }
+
+      // ── Client-side validation before sending to backend ─────────────────
+      // This catches common parse errors instantly without a round-trip.
+      if (codeViewFormat === 'rdfxml' || codeViewFormat === 'owlxml') {
+        // Use the browser's built-in XML parser
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(content, 'application/xml');
+        const parseErrorEl = doc.querySelector('parsererror');
+        if (parseErrorEl) {
+          // Extract the text — browsers include line/column info in the text
+          const rawErr = parseErrorEl.textContent || 'Invalid XML structure';
+          // Trim verbose Gecko/WebKit prefix so only the useful message shows
+          const cleanErr = rawErr
+            .replace(/^.*?error\s*:\s*/i, '')
+            .replace(/^This page contains the following errors:\s*/i, '')
+            .trim();
+          console.error('[Dashboard] Client-side XML validation failed:', cleanErr);
+          setCodeViewSyntaxError(cleanErr);
+          notificationService.error('XML Validation Error', 'Fix the highlighted error before saving.');
+          return;
+        }
+      } else if (codeViewFormat === 'turtle' || codeViewFormat === 'ntriples') {
+        // Heuristic: non-empty Turtle/N-Triples files must have at least one triple-terminating dot
+        const trimmed = content.trim();
+        if (trimmed && !trimmed.includes('.')) {
+          const msg = 'Turtle/N-Triples content appears malformed: no statement-terminating dot (.) found.';
+          setCodeViewSyntaxError(msg);
+          notificationService.error('Validation Error', msg);
+          return;
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────
 
       try {
         console.log(
@@ -9493,7 +9551,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         notificationService.error("Save Failed", errMsg);
       }
     },
-    [projectId, codeViewFormat],
+    [projectId, codeViewFormat, isViewOnlyMember, setShowProPromptType],
   );
 
   // Handle insertion at selected location in code view
@@ -11598,26 +11656,29 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </button>
                   <button
                     onClick={() => {
+                      if (isViewOnlyMember) { handleViewOnlyAction(); return; }
                       setShowCitationPicker(true);
                     }}
                     className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
-                    title="Insert citation from Zotero"
+                    title={isViewOnlyMember ? "Pro feature: Zotero citations require a Pro plan" : "Insert citation from Zotero"}
                   >
                     <BookOpen size={16} />
                     Zotero Citation
                   </button>
                   <button
                     onClick={() => {
+                      if (isViewOnlyMember) { handleViewOnlyAction(); return; }
                       setShowManualCitationDialog(true);
                     }}
                     className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-1"
-                    title="Add citation manually"
+                    title={isViewOnlyMember ? "Pro feature: manual citations require a Pro plan" : "Add citation manually"}
                   >
                     <Edit2 size={16} />
                     Manual Citation
                   </button>
                   <button
                     onClick={() => {
+                      if (isViewOnlyMember) { handleViewOnlyAction(); return; }
                       setCitationRemovalMode(!citationRemovalMode);
                       if (citationInsertionMode) {
                         setCitationInsertionMode(false);
@@ -11718,6 +11779,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                       onContentChange={handleCodeContentChange}
                       onSaveContent={handleSaveCodeContent}
                       syntaxError={codeViewSyntaxError}
+                      readOnly={isViewOnlyMember}
                     />
                   )}
                 </div>
@@ -12248,7 +12310,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                           Prefix mappings
                         </div>
                         <button
-                          onClick={handleAddPrefixDialog}
+                          onClick={isViewOnlyMember ? handleViewOnlyAction : handleAddPrefixDialog}
                           className="px-2 py-1 text-[10px] rounded flex items-center gap-1"
                           style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
                         >
@@ -12293,18 +12355,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                                   <td className="p-2">
                                     <div className="flex gap-1">
                                       <button
-                                        onClick={() => handleEditPrefixDialog(p.prefix, p.namespace)}
+                                        onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleEditPrefixDialog(p.prefix, p.namespace)}
                                         className="p-1 rounded text-[10px]"
                                         style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
-                                        title="Edit"
+                                        title={isViewOnlyMember ? "View-only: upgrade to edit" : "Edit"}
                                       >
                                         <Edit2 size={12} />
                                       </button>
                                       <button
-                                        onClick={() => handleDeletePrefix(p.prefix)}
+                                        onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleDeletePrefix(p.prefix)}
                                         className="p-1 rounded text-[10px]"
                                         style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
-                                        title="Delete"
+                                        title={isViewOnlyMember ? "View-only: upgrade to edit" : "Delete"}
                                       >
                                         <Trash2 size={12} />
                                       </button>
@@ -12354,7 +12416,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                             <span>Show import closure</span>
                           </label>
                           <button
-                            onClick={handleAddImportDialog}
+                            onClick={isViewOnlyMember ? handleViewOnlyAction : handleAddImportDialog}
                             className="px-2 py-1 text-[10px] rounded flex items-center gap-1"
                             style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
                           >
@@ -12457,18 +12519,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                                     </div>
                                     <div className="flex-shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                       <button
-                                        onClick={() => handleEditImportDialog(iri)}
+                                        onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleEditImportDialog(iri)}
                                         className="p-1.5 rounded"
                                         style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
-                                        title="Edit import"
+                                        title={isViewOnlyMember ? "View-only: upgrade to edit" : "Edit import"}
                                       >
                                         <Edit2 size={11} />
                                       </button>
                                       <button
-                                        onClick={() => handleRemoveImport(iri)}
+                                        onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleRemoveImport(iri)}
                                         className="p-1.5 rounded"
                                         style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
-                                        title="Remove import"
+                                        title={isViewOnlyMember ? "View-only: upgrade to edit" : "Remove import"}
                                       >
                                         <Trash2 size={11} />
                                       </button>
@@ -12510,7 +12572,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                           General Class Axioms
                         </div>
                         <button
-                          onClick={() => {
+                          onClick={isViewOnlyMember ? handleViewOnlyAction : () => {
                             setEditingAxiomIndex(null);
                             setAxiomDraft({ definition: "", superClassIri: "" });
                             setAxiomDialogOpen(true);
@@ -12557,18 +12619,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                                   </div>
                                   <div className="flex gap-1 flex-shrink-0">
                                     <button
-                                      onClick={() => handleEditAxiom(idx)}
+                                      onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleEditAxiom(idx)}
                                       className="p-1 rounded"
                                       style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
-                                      title="Edit axiom"
+                                      title={isViewOnlyMember ? "View-only: upgrade to edit" : "Edit axiom"}
                                     >
                                       <Edit2 size={12} />
                                     </button>
                                     <button
-                                      onClick={() => handleDeleteAxiom(idx)}
+                                      onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleDeleteAxiom(idx)}
                                       className="p-1 rounded"
                                       style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
-                                      title="Delete axiom"
+                                      title={isViewOnlyMember ? "View-only: upgrade to edit" : "Delete axiom"}
                                     >
                                       <Trash2 size={12} />
                                     </button>
@@ -14246,6 +14308,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           isConsistencyLoading={isConsistencyLoading}
           onGoToProjectDashboard={onGoToProjectDashboard}
           onGoToWorkspace={onGoToWorkspace}
+          subscription={subscription}
+          onExportProAction={handleExportProAction}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -14426,6 +14490,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                 onViewModeChange={setCurrentHierarchyViewMode}
                 isReasonerRunning={isReasonerRunning}
                 loadingNodes={loadingNodes}
+                isViewOnly={isViewOnlyMember}
+                onViewOnlyAction={handleViewOnlyAction}
               />
 
               <section className="flex-1 overflow-hidden p-2 bg-slate-200 flex flex-col">
@@ -14466,6 +14532,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                     individuals={individuals}
                     setIndividuals={setIndividuals}
                     markAsUnsaved={markAsUnsaved}
+                    isViewOnly={isViewOnlyMember}
+                    onViewOnlyAction={handleViewOnlyAction}
                   />
                 </div>
               </section>
@@ -14500,6 +14568,73 @@ const Dashboard: React.FC<DashboardProps> = ({
         onRefreshClasses={refreshClassHierarchy}
         metadata={metadata}
       />
+
+      {/* View-Only Upgrade Prompt */}
+      {showProPromptType && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]" onClick={() => setShowProPromptType(null)}>
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Top accent bar */}
+            <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500" />
+
+            {/* Header */}
+            <div className="px-6 pt-5 pb-4 flex items-start gap-4">
+              <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                  <line x1="2" y1="2" x2="22" y2="22"/>
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-[15px] font-semibold text-gray-900 leading-tight">
+                  {showProPromptType === 'export' ? 'Pro Feature' : 'View-Only Access'}
+                </h3>
+                <p className="text-xs text-gray-400 mt-0.5">Your account is on the <span className="font-medium text-gray-500">Free plan</span></p>
+              </div>
+              <button
+                onClick={() => setShowProPromptType(null)}
+                className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100 -mt-1 -mr-1"
+                aria-label="Close"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 pb-5">
+              <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
+                {showProPromptType === 'export' ? (
+                  <>Exporting ontologies is restricted to <span className="font-medium text-gray-800">Pro plan</span> members.</>
+                ) : (
+                  <>You can <span className="font-medium text-gray-800">browse and explore</span> this ontology, but editing is restricted to the <span className="font-medium text-gray-800">workspace owner</span> on the Free plan.</>
+                )}
+              </div>
+
+              <div className="flex items-start gap-2.5 text-sm text-gray-600">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                </svg>
+                <span>Ask your <span className="font-medium text-gray-800">workspace owner</span> to upgrade to Pro to unlock {showProPromptType === 'export' ? 'exporting' : 'editing for all members'}.</span>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 pb-5 flex justify-end">
+              <button
+                onClick={() => setShowProPromptType(null)}
+                className="px-5 py-2 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-700 transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Import Dialog */}
       {showImportDialog && (

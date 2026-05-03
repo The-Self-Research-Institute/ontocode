@@ -1163,10 +1163,24 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">
-                          {member.roles.join(", ")}
-                        </span>
-                        {isWorkspaceOwner &&
+                        <div className="flex items-center gap-2">
+                          {member.roles.map((role) => {
+                            const upperRole = role.toUpperCase();
+                            const roleStyles = {
+                              OWNER: "bg-yellow-500/20 text-yellow-500 border-yellow-500/30",
+                              ADMIN: "bg-purple-500/20 text-purple-500 border-purple-500/30",
+                              MEMBER: "bg-blue-500/20 text-blue-500 border-blue-500/30",
+                              VIEWER: "bg-gray-500/20 text-gray-500 border-gray-500/30",
+                            };
+                            const style = roleStyles[upperRole as keyof typeof roleStyles] || roleStyles.MEMBER;
+                            return (
+                              <span key={role} className={`px-2 py-0.5 text-[10px] font-bold rounded border ${style}`}>
+                                {upperRole}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        {(isWorkspaceOwner || isWorkspaceAdmin) &&
                           member.email !== user?.email &&
                           member.status !== "PENDING" &&
                           member.id !== workspaceOwnerId &&
@@ -1179,16 +1193,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                               <Trash2 size={16} />
                             </button>
                           )}
-                        {(member.id === workspaceOwnerId || member.roles.includes("OWNER")) &&
-                          member.email !== user?.email && (
-                            <span
-                              className="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded-full"
-                              title="Workspace owner cannot be removed"
-                            >
-                              Owner
-                            </span>
-                          )}
-                        {isWorkspaceOwner && member.status === "PENDING" && (
+                        {(isWorkspaceOwner || isWorkspaceAdmin) && member.status === "PENDING" && (
                           <button
                             onClick={() => handleCancelInvitation(member)}
                             className="p-1.5 hover:bg-red-50 rounded text-red-600 hover:text-red-700 transition-colors"

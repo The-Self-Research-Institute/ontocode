@@ -27,6 +27,9 @@ public class EmailService {
     @Value("${spring.mail.username:}")
     private String mailUsername;
 
+    @Value("${stripe.trial-period-days:14}")
+    private Long trialPeriodDays;
+
     public EmailService() {
         log.info("✓ SMTP Email service initialized");
     }
@@ -550,8 +553,9 @@ public class EmailService {
 
     public void sendTrialStartedEmail(String to, String username, String planName, String trialEndDate, String billingPortalUrl) {
         String plan = toDisplayName(planName);
+        String trialLabel = trialPeriodDays + "-day";
         String html = billingHtml(
-            "🎉 Your 14-day free trial has started!",
+            "🎉 Your " + trialLabel + " free trial has started!",
             String.format("""
                 <p>Hi <strong>%s</strong>,</p>
                 <p>Welcome to OntoCode <span class="badge">%s</span>. Your free trial is now active — your card has been saved securely but <strong>will not be charged</strong> until the trial ends.</p>
@@ -569,7 +573,7 @@ public class EmailService {
                 username, plan, plan, trialEndDate, trialEndDate, trialEndDate, billingPortalUrl),
             "Questions? Contact <a href='mailto:support@ontocode.com'>support@ontocode.com</a>"
         );
-        sendHtml(to, "Your OntoCode " + plan + " trial has started — 14 days free", html);
+        sendHtml(to, "Your OntoCode " + plan + " trial has started — " + trialLabel + " free", html);
     }
 
     public void sendTrialEndingReminderEmail(String to, String username, String planName,

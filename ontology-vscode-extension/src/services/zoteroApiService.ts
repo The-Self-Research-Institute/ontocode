@@ -63,6 +63,41 @@ class ZoteroApiService {
     }
 
     /**
+     * Fetch a single page of library items and return both the items and the total results.
+     */
+    async fetchLibraryPage(start: number = 0, pageSize: number = 100): Promise<{ items: ZoteroItem[]; totalResults: number }> {
+        const config = this.getConfig();
+        if (!config) {
+            throw new Error('Zotero not configured');
+        }
+
+        const libraryPath = config.libraryType === 'group'
+            ? `groups/${config.groupId}`
+            : `users/${config.userId}`;
+
+        const url = `${this.baseUrl}/${libraryPath}/items`;
+        console.log('[ZoteroAPI] Fetching from:', url, 'start:', start, 'limit:', pageSize);
+
+        const response = await axios.get<ZoteroItem[]>(url, {
+            params: {
+                limit: pageSize,
+                start: start,
+                format: 'json',
+                include: 'data'
+            },
+            headers: {
+                'Zotero-API-Key': config.apiKey,
+                'Zotero-API-Version': '3'
+            },
+            timeout: 20000
+        });
+
+        console.log(`[ZoteroAPI] Fetched ${response.data.length} items`);
+        const totalResults = parseInt(response.headers['total-results'] || '0', 10);
+        return { items: response.data, totalResults };
+    }
+
+    /**
      * Fetch items from Zotero library
      */
     async fetchLibrary(limit: number = 10000, start: number = 0, throwOnError: boolean = false): Promise<ZoteroItem[]> {
@@ -73,58 +108,23 @@ class ZoteroApiService {
             return [];
         }
 
-        const libraryPath = config.libraryType === 'group'
-            ? `groups/${config.groupId}`
-            : `users/${config.userId}`;
-
-        const fetchPage = async (pageStart: number, pageLimit: number): Promise<ZoteroItem[]> => {
-            const url = `${this.baseUrl}/${libraryPath}/items`;
-            console.log('[ZoteroAPI] Fetching from:', url, 'start:', pageStart, 'limit:', pageLimit);
-
-            const response = await axios.get<ZoteroItem[]>(url, {
-                params: {
-                    limit: pageLimit,
-                    start: pageStart,
-                    format: 'json',
-                    include: 'data'
-                },
-                headers: {
-                    'Zotero-API-Key': config.apiKey,
-                    'Zotero-API-Version': '3'
-                },
-                timeout: 20000
-            });
-
-            console.log(`[ZoteroAPI] Fetched ${response.data.length} items`);
-            return response.data;
-        };
-
         const maxPageSize = 100;
         const fetchLimit = Math.min(limit, maxPageSize);
 
-        if (start > 0 || limit <= maxPageSize) {
-            try {
-                return await fetchPage(start, fetchLimit);
-            } catch (error) {
-                if (throwOnError) throw error;
-                return this.handleFetchError(error);
-            }
-        }
-
         const allItems: ZoteroItem[] = [];
-        let currentStart = 0;
+        let currentStart = start;
 
         while (allItems.length < limit) {
             try {
-                const batch = await fetchPage(currentStart, fetchLimit);
-                if (!batch || batch.length === 0) {
+                const { items, totalResults } = await this.fetchLibraryPage(currentStart, fetchLimit);
+                if (!items || items.length === 0) {
                     break;
                 }
 
-                allItems.push(...batch);
-                currentStart += batch.length;
+                allItems.push(...items);
+                currentStart += items.length;
 
-                if (batch.length < fetchLimit) {
+                if (items.length < fetchLimit || allItems.length >= totalResults) {
                     break;
                 }
             } catch (error) {

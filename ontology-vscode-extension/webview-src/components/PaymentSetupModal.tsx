@@ -33,7 +33,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const { getDisplayPrice } = usePlanPricing();
+    const { getDisplayPrice, trialPeriodDays } = usePlanPricing();
     const price = getDisplayPrice(planName, interval);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -87,7 +87,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                 </div>
                 <div className="text-right">
                     <p className="text-purple-300 font-semibold">{price}</p>
-                    <p className="text-[11px] text-green-400">First 14 days free</p>
+                    <p className="text-[11px] text-green-400">First {trialPeriodDays} days free</p>
                 </div>
             </div>
 
@@ -109,7 +109,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
             {/* Trust line */}
             <div className="flex items-start gap-2 text-[11px] text-gray-400">
                 <Shield size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
-                <span>Secured by Stripe — card not charged for 14 days — cancel any time before trial ends</span>
+                <span>Secured by Stripe — card not charged for {trialPeriodDays} days — cancel any time before trial ends</span>
             </div>
 
             {/* Actions */}
@@ -135,7 +135,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                     ) : (
                         <>
                             <CheckCircle size={18} />
-                            Start 14-day free trial
+                            Start {trialPeriodDays}-day free trial
                         </>
                     )}
                 </button>
@@ -209,7 +209,7 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
                 <div className="flex items-center justify-between px-6 py-5 border-b border-white/10">
                     <div>
                         <h2 className="text-lg font-bold text-white">Start your free trial</h2>
-                        <p className="text-xs text-gray-400 mt-0.5">Card saved securely — charged only after 14 days</p>
+                        <p className="text-xs text-gray-400 mt-0.5">Card saved securely — charged only after {trialPeriodDays} days</p>
                     </div>
                     <button
                         onClick={onClose}
