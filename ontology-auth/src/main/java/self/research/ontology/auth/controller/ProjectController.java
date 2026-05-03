@@ -55,8 +55,9 @@ public class ProjectController {
     private final self.research.ontology.auth.repository.ProjectRepository projectRepository;
     private final GridFsTemplate gridFsTemplate;
     private final org.springframework.web.client.RestTemplate restTemplate;
+    private final self.research.ontology.auth.service.EmailService emailService;
 
-    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, GridFsTemplate gridFsTemplate) {
+    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, GridFsTemplate gridFsTemplate, self.research.ontology.auth.service.EmailService emailService) {
         this.projectService = projectService;
         this.userRepository = userRepository;
         this.fileMetadataRepository = fileMetadataRepository;
@@ -65,6 +66,7 @@ public class ProjectController {
         this.projectRepository = projectRepository;
         this.gridFsTemplate = gridFsTemplate;
         this.restTemplate = new org.springframework.web.client.RestTemplate();
+        this.emailService = emailService;
     }
 
     /**
@@ -291,28 +293,29 @@ public class ProjectController {
             List<Project> projects = projectService.getWorkspaceProjects(workspaceId);
             
             // Filter projects based on workspace role and project privacy.
-            // Workspace OWNER sees all non-private projects (private = only the project owner is a member).
-            // Workspace ADMIN and regular members only see projects they are explicitly a member of.
+            // OWNER/ADMIN: see all shared projects (>1 member) plus their own private ones.
+            // MEMBER: only sees projects they are explicitly added to.
             Optional<Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
-            boolean isWsOwner = false;
+            boolean isWsOwnerOrAdmin = false;
             if (wsOpt.isPresent()) {
                 Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
                 if (wsMember != null) {
-                    isWsOwner = wsMember.getRole() == Workspace.WorkspaceRole.OWNER;
+                    isWsOwnerOrAdmin = wsMember.getRole() == Workspace.WorkspaceRole.OWNER
+                            || wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
                 }
             }
-            if (isWsOwner) {
-                // Workspace owner sees all shared projects (> 1 member) plus their own
+            if (isWsOwnerOrAdmin) {
+                // Owners and admins see all shared projects (> 1 member) plus their own
                 projects = projects.stream()
                         .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
                         .collect(Collectors.toList());
             } else {
-                // Admins and regular members only see projects they are explicitly added to
+                // Regular members only see projects they are explicitly added to
                 projects = projects.stream()
                         .filter(p -> p.hasMember(user.getId()))
                         .collect(Collectors.toList());
             }
-            
+
             List<Map<String, Object>> projectDTOs = projects.stream()
                     .map(this::convertToDTO)
                     .collect(Collectors.toList());
@@ -439,26 +442,27 @@ public class ProjectController {
                         p.getProjectId(), p.getName(), p.getOwnerId(), p.getMembers().size(), p.getActiveFiles().size());
                 }
                 
-                // Workspace OWNER sees all shared projects plus their own.
-                // Admins and regular members only see projects they are explicitly a member of.
+                // OWNER/ADMIN: see all shared projects plus their own.
+                // MEMBER: only sees projects they are explicitly added to.
                 Optional<Workspace> wsOpt = workspaceService.getWorkspace(effectiveWorkspaceId);
-                boolean isWsOwner = false;
+                boolean isWsOwnerOrAdmin = false;
                 if (wsOpt.isPresent()) {
                     Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
                     if (wsMember != null) {
-                        isWsOwner = wsMember.getRole() == Workspace.WorkspaceRole.OWNER;
+                        isWsOwnerOrAdmin = wsMember.getRole() == Workspace.WorkspaceRole.OWNER
+                                || wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
                     }
                 }
-                if (isWsOwner) {
+                if (isWsOwnerOrAdmin) {
                     projects = projects.stream()
                             .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
                             .collect(Collectors.toList());
-                    log.info("[getMyProjects] Filtered to {} projects for workspace owner {}", projects.size(), username);
+                    log.info("[getMyProjects] Filtered to {} projects for owner/admin {}", projects.size(), username);
                 } else {
                     projects = projects.stream()
                             .filter(p -> p.hasMember(user.getId()))
                             .collect(Collectors.toList());
-                    log.info("[getMyProjects] Filtered to {} projects for user {}", projects.size(), username);
+                    log.info("[getMyProjects] Filtered to {} projects for member {}", projects.size(), username);
                 }
             }
             
@@ -637,6 +641,19 @@ public class ProjectController {
                 request.role
             );
 
+            // Notify the new member via email (best-effort — never block the response)
+            try {
+                emailService.sendProjectAccessEmail(
+                    targetUser.getEmail(),
+                    targetUser.getUsername(),
+                    project.getName(),
+                    request.role,
+                    user.getUsername()
+                );
+            } catch (Exception emailEx) {
+                log.warn("Failed to send project access email to {}: {}", targetUser.getEmail(), emailEx.getMessage());
+            }
+
             return ResponseEntity.ok(Map.of(
                 "message", "Member added successfully",
                 "project", convertToDTO(project)
@@ -812,7 +829,27 @@ public class ProjectController {
                 log.warn("⚠️ GraphDB cleanup failed during project delete (continuing with soft delete): {}", e.getMessage());
             }
 
+            // Capture workspace ID before deletion for broadcast
+            String workspaceIdForBroadcast = projectForCheck.map(p -> p.getWorkspaceId()).orElse(null);
+
             projectService.deleteProject(projectId, user.getId());
+
+            // Notify all workspace members via WebSocket (best-effort)
+            if (workspaceIdForBroadcast != null) {
+                try {
+                    String editorServiceUrl = System.getenv().getOrDefault("ONTOLOGY_EDITOR_URL", "http://localhost:8083");
+                    String eventUrl = editorServiceUrl + "/api/internal/workspace/" + workspaceIdForBroadcast + "/event";
+                    Map<String, Object> event = Map.of(
+                        "type", "PROJECT_DELETED",
+                        "projectId", projectId,
+                        "deletedBy", user.getUsername()
+                    );
+                    restTemplate.postForObject(eventUrl, event, Map.class);
+                    log.info("[deleteProject] Broadcast PROJECT_DELETED for {} to workspace {}", projectId, workspaceIdForBroadcast);
+                } catch (Exception broadcastEx) {
+                    log.warn("[deleteProject] Failed to broadcast PROJECT_DELETED event: {}", broadcastEx.getMessage());
+                }
+            }
 
             return ResponseEntity.ok(Map.of("message", "Project deleted successfully"));
         } catch (SecurityException e) {

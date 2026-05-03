@@ -754,4 +754,60 @@ public class EmailService {
             throw new RuntimeException("Failed to send email: " + subject, e);
         }
     }
+
+    /**
+     * Notify a user that they have been granted access to a project.
+     */
+    public void sendProjectAccessEmail(String toEmail, String toUsername, String projectName,
+                                       String role, String grantedByUsername) {
+        String projectUrl = baseUrl + "/projects";
+        String htmlContent = String.format("""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; }
+                    .content { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                    .button { display: inline-block; background-color: #8B5CF6; color: white !important; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; font-weight: 600; }
+                    .badge { display: inline-block; background-color: #e0e7ff; color: #4338ca; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+                    .info-box { background-color: #f3f4f6; padding: 15px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #8B5CF6; }
+                    .footer { margin-top: 20px; font-size: 12px; color: #666; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="content">
+                        <h1 style="color: #8B5CF6;">You have been added to a project</h1>
+                        <p>Hi <strong>%s</strong>,</p>
+                        <p><strong>%s</strong> has granted you access to the following project:</p>
+                        <div class="info-box">
+                            <strong>Project:</strong> %s<br/>
+                            <strong>Your role:</strong> <span class="badge">%s</span>
+                        </div>
+                        <p>You can now open OntoCode and access this project from your project library.</p>
+                        <a href="%s" class="button">Open Project Library</a>
+                        <p class="footer">
+                            If you believe this is a mistake, please contact the workspace owner.
+                        </p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """, toUsername, grantedByUsername, projectName, role, projectUrl);
+
+        try {
+            log.info("Sending project access email to: {}", toEmail);
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(fromEmail, "OntoCode Team");
+            helper.setTo(toEmail);
+            helper.setSubject("OntoCode: You have been added to \"" + projectName + "\"");
+            helper.setText(htmlContent, true);
+            mailSender.send(message);
+            log.info("Project access email sent to: {}", toEmail);
+        } catch (Exception e) {
+            log.warn("Failed to send project access email to {}: {}", toEmail, e.getMessage());
+        }
+    }
 }

@@ -13,7 +13,30 @@ import {
   Link,
   Download,
   Edit2,
+  AlertTriangle,
+  ArrowRight,
 } from "lucide-react";
+
+/** Extract all line numbers mentioned in a parser error string (1-based). */
+function parseErrorLines(errorStr: string): number[] {
+  if (!errorStr) return [];
+  const found = new Set<number>();
+  const patterns = [
+    /\bline[:\s]+(\d+)/gi,
+    /at line (\d+)/gi,
+    /\[(\d+),\s*\d+\]/g,
+    /line (\d+),/gi,
+    /\brow[:\s]+(\d+)/gi,
+  ];
+  for (const re of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(errorStr)) !== null) {
+      const n = parseInt(m[1], 10);
+      if (n > 0) found.add(n);
+    }
+  }
+  return Array.from(found);
+}
 
 // Declare vscode API
 declare global {
@@ -36,6 +59,7 @@ interface CodeHighlighterProps {
   onContentChange?: (newContent: string) => void;
   readOnly?: boolean;
   onSaveContent?: (content: string) => void;
+  syntaxError?: string | null;
 }
 
 const MAX_LINES_INITIAL = 500; // Show first 500 lines initially
@@ -58,6 +82,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
   onContentChange,
   readOnly = false,
   onSaveContent,
+  syntaxError,
 }) => {
   const [displayedLines, setDisplayedLines] = useState(MAX_LINES_INITIAL);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -80,10 +105,39 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
   const [isEditMode, setIsEditMode] = useState(false);
   const [cursorPosition, setCursorPosition] = useState({ line: 1, column: 1 });
   const [collapsedRanges, setCollapsedRanges] = useState<Map<number, number>>(new Map()); // startLineIdx -> endLineIdx (0-based)
+  const [showErrorDialog, setShowErrorDialog] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumberGutterRef = useRef<HTMLDivElement>(null);
   const foldGutterRef = useRef<HTMLDivElement>(null);
+
+  // Derived: error line numbers (1-based) from the syntaxError prop
+  const errorLineNumbers = useMemo(() => new Set(parseErrorLines(syntaxError || "")), [syntaxError]);
+
+  /** Navigate to a 1-based line number in whichever mode is active. */
+  const navigateToLine = useCallback((lineNumber: number) => {
+    if (lineNumber < 1) return;
+    const zeroIdx = lineNumber - 1;
+
+    if (isEditMode && textareaRef.current) {
+      const lines = currentContent.split("\n");
+      // Ensure lines up to target are loaded
+      if (lineNumber > displayedLines) setDisplayedLines(lineNumber + 50);
+      const offset = lines.slice(0, zeroIdx).reduce((acc, l) => acc + l.length + 1, 0);
+      const ta = textareaRef.current;
+      ta.focus();
+      ta.setSelectionRange(offset, offset + (lines[zeroIdx]?.length ?? 0));
+      // Scroll textarea to that line
+      const lineHeight = 22.4; // matches style lineHeight 1.6 * 14px
+      ta.scrollTop = Math.max(0, zeroIdx * lineHeight - ta.clientHeight / 2);
+      if (lineNumberGutterRef.current) lineNumberGutterRef.current.scrollTop = ta.scrollTop;
+      if (foldGutterRef.current) foldGutterRef.current.scrollTop = ta.scrollTop;
+    } else {
+      // View mode: use existing handleLineClick
+      handleLineClick(zeroIdx);
+    }
+    setShowErrorDialog(false);
+  }, [isEditMode, currentContent, displayedLines]);
 
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const searchCancelRef = useRef<boolean>(false);
@@ -758,8 +812,12 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
       }
 
       // Enhanced line number visibility - brighter colors and larger font
-      const lineNumberColor = citationRemovalMode && isCitationLine ? "#ef4444" : hasDOI ? "#10b981" : "#a1a1aa";
-      const lineNumberWeight = hasDOI ? "bold" : "600";
+      const isErrorLine = errorLineNumbers.has(lineNumber);
+      const lineNumberColor =
+        isErrorLine ? "#f87171" :
+        citationRemovalMode && isCitationLine ? "#ef4444" :
+        hasDOI ? "#10b981" : "#a1a1aa";
+      const lineNumberWeight = hasDOI || isErrorLine ? "bold" : "600";
       const lineNumberSize = "13px";
 
       // Add hover highlight when in citation insertion or removal mode
@@ -782,9 +840,13 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
         ? `<span style="color:${isCollapsed ? "#c5c5c5" : "#858585"};font-size:8px;user-select:none;width:16px;min-width:16px;text-align:center;flex-shrink:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:transform 0.15s ease;transform:rotate(${isCollapsed ? "0deg" : "90deg"})" class="fold-indicator" data-fold-line="${index}" title="${isCollapsed ? "Unfold" : "Fold"}">&#9654;</span>`
         : `<span style="width:16px;min-width:16px;flex-shrink:0;display:inline-block"></span>`;
 
+      const errorLineStyle = isErrorLine ? "background-color:rgba(239,68,68,0.12);border-left:2px solid #f87171;" : "";
+      const combinedLineStyle = [lineStyle, errorLineStyle].filter(Boolean).join(";");
+      const lineNumberDisplay = isErrorLine ? `⚠${lineNumber}` : `${lineNumber}`;
+
       numberedLines.push(
-        `<div class="code-line${isCitationLine ? " citation-line" : ""}${hasDOI ? " doi-line" : ""}" data-line="${index}" data-line-idx="${index}" data-is-citation="${isCitationLine}" data-has-doi="${hasDOI}" data-doi="${hasDOI ? doi : ""}" style="${lineStyle};display:flex;align-items:center;min-height:20px;line-height:20px;padding:0;margin:0${citationModeHoverStyle}">` +
-          `<span style="color:${lineNumberColor};font-weight:${lineNumberWeight};font-size:${lineNumberSize};user-select:none;width:55px;min-width:55px;text-align:right;padding-right:4px;flex-shrink:0;cursor:${citationInsertionMode || citationRemovalMode ? "pointer" : "default"};opacity:0.9" class="line-number" data-line-idx="${index}" title="${lineNumberTitle}">${lineNumber}</span>` +
+        `<div class="code-line${isCitationLine ? " citation-line" : ""}${hasDOI ? " doi-line" : ""}${isErrorLine ? " error-line" : ""}" data-line="${index}" data-line-idx="${index}" data-is-citation="${isCitationLine}" data-has-doi="${hasDOI}" data-doi="${hasDOI ? doi : ""}" style="${combinedLineStyle};display:flex;align-items:center;min-height:20px;line-height:20px;padding:0;margin:0${citationModeHoverStyle}">` +
+          `<span style="color:${lineNumberColor};font-weight:${lineNumberWeight};font-size:${lineNumberSize};user-select:none;width:55px;min-width:55px;text-align:right;padding-right:4px;flex-shrink:0;cursor:${citationInsertionMode || citationRemovalMode ? "pointer" : "default"};opacity:0.9" class="line-number" data-line-idx="${index}" title="${isErrorLine ? "Syntax error on this line — click to navigate" : lineNumberTitle}">${lineNumberDisplay}</span>` +
           foldIndicatorHtml +
           `<span style="color:#d4d4d4;white-space:${wordWrap ? "pre-wrap" : "pre"};overflow-wrap:${wordWrap ? "anywhere" : "normal"};word-break:${wordWrap ? "break-word" : "normal"};flex:1;min-width:0;user-select:text;${citationModeCursor}" class="line-content" data-line-idx="${index}">${processedLine}</span>` +
           `</div>`,
@@ -804,6 +866,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
     readOnly,
     foldableRanges,
     collapsedRanges,
+    errorLineNumbers,
   ]);
 
   const loadMore = () => {
@@ -1217,6 +1280,25 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
         </div>
       </div>
 
+      {/* Syntax Error Indicator Bar */}
+      {syntaxError && (
+        <div className="flex items-center gap-2 bg-red-950 border-b border-red-700 px-3 py-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+          <span className="text-red-300 text-xs font-semibold flex-1 truncate">
+            {errorLineNumbers.size > 0
+              ? `${errorLineNumbers.size} syntax error${errorLineNumbers.size > 1 ? "s" : ""} — lines: ${(Array.from(errorLineNumbers) as number[]).sort((a, b) => a - b).join(", ")}`
+              : "Syntax error — fix before saving"}
+          </span>
+          <button
+            onClick={() => setShowErrorDialog(true)}
+            className="flex items-center gap-1 text-xs text-red-300 hover:text-white bg-red-800 hover:bg-red-700 px-2 py-0.5 rounded transition-colors flex-shrink-0"
+          >
+            <span>Show Errors</span>
+            <ArrowRight className="w-3 h-3" />
+          </button>
+        </div>
+      )}
+
       {/* Search Results Panel */}
       {showSearchPanel && searchResults.length > 0 && (
         <div className="bg-gray-800 border-b border-gray-700 max-h-64 overflow-auto">
@@ -1299,6 +1381,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
                     if (isCollapsed) {
                       skipUntil = collapsedRanges.get(i)!;
                     }
+                    const isErrLine = errorLineNumbers.has(i + 1);
                     items.push(
                       <div
                         key={i}
@@ -1306,9 +1389,12 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
                           paddingRight: "4px",
                           minHeight: "22.4px",
                           lineHeight: "1.6",
+                          color: isErrLine ? "#f87171" : undefined,
+                          fontWeight: isErrLine ? "bold" : undefined,
                         }}
+                        title={isErrLine ? "Syntax error on this line" : undefined}
                       >
-                        {i + 1}
+                        {isErrLine ? "⚠" : ""}{i + 1}
                       </div>,
                     );
                   }
@@ -1439,6 +1525,78 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
           >
             {isProcessing ? "Loading..." : `Load More (${displayedLines} / ${totalLines} lines)`}
           </button>
+        </div>
+      )}
+
+      {/* Syntax Error Dialog */}
+      {showErrorDialog && syntaxError && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: "rgba(0,0,0,0.6)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowErrorDialog(false); }}
+        >
+          <div className="bg-gray-900 border border-red-700 rounded-lg shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[70vh]">
+            {/* Dialog header */}
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-red-800 flex-shrink-0">
+              <AlertTriangle className="w-4 h-4 text-red-400" />
+              <span className="text-red-300 font-semibold text-sm flex-1">Syntax Errors</span>
+              <button
+                onClick={() => setShowErrorDialog(false)}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Raw error message */}
+            <div className="px-4 py-3 bg-red-950 border-b border-red-900 flex-shrink-0">
+              <pre className="text-red-200 text-xs whitespace-pre-wrap break-all font-mono leading-relaxed max-h-28 overflow-y-auto">
+                {syntaxError}
+              </pre>
+            </div>
+
+            {/* Error line list */}
+            {errorLineNumbers.size > 0 && (
+              <div className="flex-1 overflow-y-auto px-4 py-3">
+                <p className="text-gray-400 text-xs mb-2">
+                  Click a line to navigate there:
+                </p>
+                <div className="space-y-1">
+                  {Array.from(errorLineNumbers)
+                    .sort((a: number, b: number) => a - b)
+                    .map((lineNo: number) => {
+                      const lines = currentContent.split("\n");
+                      const lineText = lines[lineNo - 1] ?? "";
+                      const preview = lineText.trim().slice(0, 80) + (lineText.trim().length > 80 ? "…" : "");
+                      return (
+                        <button
+                          key={lineNo}
+                          onClick={() => navigateToLine(lineNo)}
+                          className="w-full flex items-center gap-3 px-3 py-2 rounded bg-gray-800 hover:bg-red-900 hover:border-red-700 border border-gray-700 transition-colors text-left group"
+                        >
+                          <span className="text-red-400 font-mono text-xs font-bold w-14 flex-shrink-0">
+                            Line {lineNo}
+                          </span>
+                          <span className="text-gray-300 font-mono text-xs truncate flex-1">
+                            {preview || <span className="text-gray-500 italic">empty line</span>}
+                          </span>
+                          <ArrowRight className="w-3.5 h-3.5 text-gray-500 group-hover:text-red-300 flex-shrink-0" />
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
+            <div className="px-4 py-3 border-t border-gray-800 flex-shrink-0">
+              <button
+                onClick={() => setShowErrorDialog(false)}
+                className="w-full py-1.5 text-sm text-gray-400 hover:text-white transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

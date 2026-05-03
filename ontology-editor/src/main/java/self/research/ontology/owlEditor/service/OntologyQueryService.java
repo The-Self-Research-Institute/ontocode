@@ -141,6 +141,16 @@ public class OntologyQueryService {
                 ?c rdfs:subClassOf ?any .
               } UNION {
                 ?any rdfs:subClassOf ?c .
+              } UNION {
+                ?prop rdfs:domain ?c . FILTER(isIRI(?c))
+              } UNION {
+                ?prop rdfs:range ?c . FILTER(isIRI(?c))
+              } UNION {
+                ?restrict owl:someValuesFrom ?c . FILTER(isIRI(?c))
+              } UNION {
+                ?restrict owl:allValuesFrom ?c . FILTER(isIRI(?c))
+              } UNION {
+                ?restrict owl:onClass ?c . FILTER(isIRI(?c))
               }
               FILTER(isIRI(?c))
               FILTER(?c != <http://www.w3.org/2002/07/owl#Thing>)
@@ -294,7 +304,7 @@ public class OntologyQueryService {
             WHERE {
               BIND(<%s> AS ?prop)
               ?prop a ?kind .
-              FILTER(?kind IN (owl:ObjectProperty, owl:DatatypeProperty))
+              FILTER(?kind IN (owl:ObjectProperty, owl:DatatypeProperty, owl:AnnotationProperty))
               OPTIONAL { ?prop rdfs:label ?lbl }
               OPTIONAL { ?prop rdfs:comment ?cmt }
               OPTIONAL { ?prop rdfs:domain ?domain . FILTER(isIRI(?domain)) }
@@ -343,6 +353,30 @@ public class OntologyQueryService {
                     .map(charIri -> localName(charIri).replace("Property", ""))
                     .toList());
             }
+            // Fetch all annotation values for this property
+            String annQuery = PREFIXES + """
+                SELECT ?prop ?value WHERE {
+                  <%s> ?prop ?value .
+                  FILTER(isLiteral(?value))
+                  {
+                    ?prop a owl:AnnotationProperty .
+                  } UNION {
+                    VALUES ?prop { rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy }
+                  }
+                }
+                """.formatted(propertyIri);
+            TupleQueryResult annRs = datasetService.execSelect(projectId, annQuery);
+            Map<String, String> annotations = new java.util.LinkedHashMap<>();
+            while (annRs.hasNext()) {
+                BindingSet annSol = annRs.next();
+                String annProp = resource(annSol, "prop");
+                String annValue = literal(annSol, "value");
+                if (annProp != null && !annValue.isBlank()) {
+                    annotations.put(annProp, annValue);
+                }
+            }
+            dto.setAnnotations(annotations);
+
             long duration = System.currentTimeMillis() - startTime;
             log.info("[PERF] propertyDetail for {} completed in {}ms project={}", localName(propertyIri), duration, projectId);
             return dto;

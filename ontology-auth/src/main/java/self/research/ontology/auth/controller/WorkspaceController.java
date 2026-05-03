@@ -373,6 +373,12 @@ public class WorkspaceController {
 
             Workspace workspace = workspaceOpt.get();
             WorkspaceRole role = workspaceService.getMemberRole(workspaceId, user.getId());
+            // Fallback: owner may not be in members set (legacy data) — resolve from ownerId
+            if (role == null) {
+                role = user.getId().equals(workspace.getOwnerId()) ? WorkspaceRole.OWNER : WorkspaceRole.MEMBER;
+                log.warn("[Workspace] getMemberRole returned null for user {} in workspace {} — resolved to {}",
+                    user.getId(), workspaceId, role);
+            }
             String billingStatus = resolveBillingStatus(workspace);
 
             // Model B: account-level plan check — if account subscription has expired,
