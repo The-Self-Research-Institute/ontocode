@@ -146,13 +146,15 @@ const PropertyEditor: React.FC<{
   onAddDisjointClick?: () => void;
   onAddEquivalentClick?: () => void;
   objectProperties?: Property[];
-}> = ({ 
-    item, 
-    onUpdate, 
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+}> = ({
+    item,
+    onUpdate,
     onAddAnnotation,
-    onEditAnnotation, 
-    onDeleteAnnotation, 
-    activeTheme, 
+    onEditAnnotation,
+    onDeleteAnnotation,
+    activeTheme,
     projectId,
     onAddDomainClick,
     onAddRangeClick,
@@ -161,7 +163,9 @@ const PropertyEditor: React.FC<{
     onAddDisjointClick,
     onAddEquivalentClick,
     objectProperties = [],
-    viewMode = 'asserted'
+    viewMode = 'asserted',
+    isViewOnly = false,
+    onViewOnlyAction,
 }) => {
     const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -234,6 +238,7 @@ const PropertyEditor: React.FC<{
         : []; // Annotation properties don't have characteristics
     
     const handleCharacteristicChange = async (char: string, checked: boolean) => {
+        if (isViewOnly) { onViewOnlyAction?.(); return; }
         const currentChars = item.characteristics || [];
         const newChars = checked ? [...currentChars, char] : currentChars.filter(c => c !== char);
         
@@ -388,9 +393,9 @@ const PropertyEditor: React.FC<{
                     </div>
                 </div>
                 <button
-                    onClick={() => setIsIRIEditorOpen(true)}
+                    onClick={isViewOnly ? () => onViewOnlyAction?.() : () => setIsIRIEditorOpen(true)}
                     className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
-                    title="Edit IRI and Label"
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Edit IRI and Label"}
                 >
                     <Edit3 size={16} />
                 </button>
@@ -441,14 +446,14 @@ const PropertyEditor: React.FC<{
                         <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
                             <span className="text-sm font-semibold">Annotations: {item.label}</span>
                             <div className="flex items-center gap-1">
-                                <button onClick={onAddAnnotation} className="p-1 hover:bg-white/20 rounded transition-colors" title="Add annotation">
+                                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation} className="p-1 hover:bg-white/20 rounded transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}>
                                     <Plus size={16} />
                                 </button>
                             </div>
                         </div>
                         {/* Annotations Content */}
                         <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm">
-                            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
+                            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} isViewOnly={isViewOnly} onViewOnlyAction={onViewOnlyAction} />
                         </div>
                     </div>
                 )}
@@ -505,6 +510,8 @@ const PropertyEditor: React.FC<{
                                 onDelete={prop => handleDeleteRelation('equivalent', prop)}
                                 themeColor={isObjectProperty ? 'blue' : 'green'}
                                 itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                                isViewOnly={isViewOnly}
+                                onViewOnlyAction={onViewOnlyAction}
                             />
 
                         <MultiSelectSection
@@ -515,6 +522,8 @@ const PropertyEditor: React.FC<{
                             onDelete={prop => handleDeleteRelation('subProperty', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
                             itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                            isViewOnly={isViewOnly}
+                            onViewOnlyAction={onViewOnlyAction}
                         />
 
                         {isObjectProperty && (
@@ -525,6 +534,8 @@ const PropertyEditor: React.FC<{
                                 onDelete={prop => handleDeleteRelation('inverse', prop)}
                                 themeColor="blue"
                                 itemEntityType="objectProperty"
+                                isViewOnly={isViewOnly}
+                                onViewOnlyAction={onViewOnlyAction}
                             />
                         )}
 
@@ -536,6 +547,8 @@ const PropertyEditor: React.FC<{
                             onDelete={domain => handleDeleteRelation('domain', domain)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
                             itemEntityType="class"
+                            isViewOnly={isViewOnly}
+                            onViewOnlyAction={onViewOnlyAction}
                         />
                         )}
 
@@ -547,6 +560,8 @@ const PropertyEditor: React.FC<{
                             onDelete={range => handleDeleteRelation('range', range)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
                             itemEntityType={isObjectProperty ? 'class' : 'datatype'}
+                            isViewOnly={isViewOnly}
+                            onViewOnlyAction={onViewOnlyAction}
                         />
                         )}
 
@@ -557,6 +572,8 @@ const PropertyEditor: React.FC<{
                             onDelete={prop => handleDeleteRelation('disjoint', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
                             itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                            isViewOnly={isViewOnly}
+                            onViewOnlyAction={onViewOnlyAction}
                         />
 
                         {isObjectProperty && (
@@ -566,6 +583,8 @@ const PropertyEditor: React.FC<{
                                 onAddClick={openChainEditor}
                                 onDelete={handleDeletePropertyChain}
                                 themeColor="blue"
+                                isViewOnly={isViewOnly}
+                                onViewOnlyAction={onViewOnlyAction}
                             />
                         )}
                         </div>

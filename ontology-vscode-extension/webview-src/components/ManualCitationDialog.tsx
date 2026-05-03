@@ -25,9 +25,22 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
   const [authors, setAuthors] = useState('');
   const [year, setYear] = useState('');
   const [doi, setDoi] = useState('');
+  const [doiError, setDoiError] = useState('');
   const [url, setUrl] = useState('');
   const [itemType, setItemType] = useState('journalArticle');
   const [publicationTitle, setPublicationTitle] = useState('');
+
+  // Normalise and validate DOI — strips common URL/prefix wrappers
+  const normalizeDoi = (raw: string): string | null => {
+    const stripped = raw
+      .trim()
+      .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+      .replace(/^doi:/i, '')
+      .trim();
+    // DOIs start with 10. followed by registrant and suffix
+    const DOI_REGEX = /^10\.\d{4,9}\/.+/;
+    return DOI_REGEX.test(stripped) ? stripped : null;
+  };
 
   const handleSubmit = () => {
     if (!title.trim() || !authors.trim() || !year.trim()) {
@@ -35,11 +48,23 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
       return;
     }
 
+    // Validate DOI if provided
+    let cleanDoi: string | undefined = undefined;
+    if (doi.trim()) {
+      const normalized = normalizeDoi(doi);
+      if (!normalized) {
+        setDoiError('Invalid DOI format. Expected format: 10.XXXX/suffix');
+        return;
+      }
+      cleanDoi = normalized;
+      setDoiError('');
+    }
+
     onSubmit({
       title: title.trim(),
       authors: authors.trim(),
       year: year.trim(),
-      doi: doi.trim() || undefined,
+      doi: cleanDoi,
       url: url.trim() || undefined,
       itemType,
       publicationTitle: publicationTitle.trim() || undefined
@@ -50,6 +75,7 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
     setAuthors('');
     setYear('');
     setDoi('');
+    setDoiError('');
     setUrl('');
     setItemType('journalArticle');
     setPublicationTitle('');
@@ -163,10 +189,16 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
               <input
                 type="text"
                 value={doi}
-                onChange={(e) => setDoi(e.target.value)}
-                placeholder="e.g., 10.1000/xyz123"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                onChange={(e) => { setDoi(e.target.value); setDoiError(''); }}
+                placeholder="e.g., 10.1000/xyz123  or  https://doi.org/10.1000/xyz123"
+                className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 ${
+                  doiError ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                }`}
               />
+              {doiError && (
+                <p className="text-xs text-red-500 mt-1">{doiError}</p>
+              )}
+              <p className="text-xs text-gray-400 mt-1">You can paste a full DOI URL — it will be normalised automatically.</p>
             </div>
 
             {/* URL */}

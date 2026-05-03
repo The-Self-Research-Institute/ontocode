@@ -14,10 +14,11 @@ import self.research.ontology.auth.service.PlanFeatureConfigService;
 import self.research.ontology.auth.service.StripeService;
 import self.research.ontology.auth.service.WorkspaceService;
 
-import org.springframework.beans.factory.annotation.Value;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Value;
 
 /**
  * REST endpoints for subscription management.
@@ -33,6 +34,9 @@ public class SubscriptionController {
     private final UserRepository userRepository;
     private final WorkspaceService workspaceService;
     private final PlanFeatureConfigService planFeatureConfigService;
+
+    @Value("${stripe.trial-period-days:14}")
+    private Long trialPeriodDays;
 
     public SubscriptionController(StripeService stripeService, UserRepository userRepository,
                                   WorkspaceService workspaceService, PlanFeatureConfigService planFeatureConfigService) {
@@ -52,7 +56,10 @@ public class SubscriptionController {
         var plans = List.of("FREE", "PRO", "ENTERPRISE").stream()
             .map(id -> buildPlanResponse(configs.get(id)))
             .toList();
-        return ResponseEntity.ok(Map.of("plans", plans));
+        return ResponseEntity.ok(Map.of(
+            "plans", plans,
+            "trialPeriodDays", trialPeriodDays
+        ));
     }
 
     private Map<String, Object> buildPlanResponse(PlanFeatureConfig config) {

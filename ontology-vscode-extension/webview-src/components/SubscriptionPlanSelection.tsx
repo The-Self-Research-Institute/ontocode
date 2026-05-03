@@ -115,7 +115,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     const [billingInterval, setBillingInterval] = useState<BillingInterval>('annual');
     const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
 
-    const { getPricing } = usePlanPricing();
+    const { getPricing, trialPeriodDays } = usePlanPricing();
     const plans = PLANS.map(plan => {
         const live = getPricing(plan.id);
         return {
@@ -191,8 +191,8 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     <div className="flex items-center gap-2.5 px-5 py-2.5 bg-gradient-to-r from-violet-600/30 to-indigo-600/30 border border-violet-500/40 rounded-full backdrop-blur-sm">
                         <Gift size={16} className="text-violet-300" />
                         <span className="text-white text-sm font-medium">
-                            14-day free trial on all paid plans —{' '}
-                            <span className="text-violet-300">card saved, not charged until day 15</span>
+                            {trialPeriodDays}-day free trial on all paid plans —{' '}
+                            <span className="text-violet-300">card saved, not charged until day {trialPeriodDays + 1}</span>
                         </span>
                     </div>
                 </div>
@@ -331,7 +331,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                             <div className="mt-3 pt-3 border-t border-white/10">
                                                 <div className="flex items-center gap-1.5 text-violet-300 text-xs">
                                                     <Shield size={12} />
-                                                    <span>14-day trial • card not charged until day 15</span>
+                                                    <span>{trialPeriodDays}-day trial • card not charged until day {trialPeriodDays + 1}</span>
                                                 </div>
                                             </div>
                                         )}
@@ -347,7 +347,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     {selectedPlanData && selectedPlanData.monthlyPrice > 0 && (
                         <p className="text-slate-400 text-xs text-center">
                             You'll start your{' '}
-                            <span className="text-white font-medium">14-day free trial</span>
+                            <span className="text-white font-medium">{trialPeriodDays}-day free trial</span>
                             {' '}of <span className="text-violet-300 font-medium">{selectedPlanData.name}</span>.
                             {' '}Your card won't be charged until the trial ends.
                         </p>
@@ -372,7 +372,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     </div>
 
                     <p className="text-slate-500 text-xs">
-                        Card required • not charged for 14 days • cancel anytime before trial ends
+                        Card required • not charged for {trialPeriodDays} days • cancel anytime before trial ends
                     </p>
                 </div>
             </div>

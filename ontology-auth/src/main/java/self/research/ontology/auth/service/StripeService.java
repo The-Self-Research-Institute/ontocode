@@ -63,7 +63,11 @@ public class StripeService {
     @Value("${stripe.price.enterprise-yearly}")
     private String priceEnterpriseYearly;
 
+    @Value("${stripe.trial-period-days:14}")
+    private Long trialPeriodDays;
+
     @Value("${app.base-url}")
+
     private String baseUrl;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("MMMM d, yyyy");
@@ -197,7 +201,7 @@ public class StripeService {
                 SubscriptionCreateParams.builder()
                         .setCustomer(customer.getId())
                         .addItem(SubscriptionCreateParams.Item.builder().setPrice(priceId).build())
-                        .setTrialPeriodDays(14L)
+                        .setTrialPeriodDays(trialPeriodDays)
                         .setDefaultPaymentMethod(paymentMethodId)
                         .putMetadata("userId", user.getId())
                         .putMetadata("planName", planName.toUpperCase())
@@ -364,7 +368,7 @@ public class StripeService {
                         .build())
                 .setReturnUrl(baseUrl + "/?checkout_complete=1&session_id={CHECKOUT_SESSION_ID}")
                 .setSubscriptionData(SessionCreateParams.SubscriptionData.builder()
-                        .setTrialPeriodDays(14L)
+                        .setTrialPeriodDays(trialPeriodDays)
                         .putMetadata("userId", user.getId())
                         .putMetadata("planName", planName.toUpperCase())
                         .putMetadata("billingInterval", interval.toLowerCase())

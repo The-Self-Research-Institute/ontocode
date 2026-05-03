@@ -163,6 +163,11 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
   };
 
   const handleSaveChanges = () => {
+    // Block save when syntax errors are already known client-side
+    if (syntaxError && errorLineNumbers.size > 0) {
+      setShowErrorDialog(true);
+      return;
+    }
     if (onSaveContent) {
       onSaveContent(currentContent);
       setHasUnsavedChanges(false);
@@ -951,7 +956,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
     setCursorPosition({ line, column });
   };
 
-  // Handle cursor position changes (clicks, arrow keys, etc.)
+  // Handle cursor position changes (clicks, arrow keys, mouse-up after drag, etc.)
   const handleCursorMove = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
     updateCursorPosition(e.currentTarget);
   };
@@ -959,12 +964,17 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
   // Toggle edit mode
   const toggleEditMode = () => {
     if (readOnly) return;
-    setIsEditMode(!isEditMode);
-    // Focus textarea when entering edit mode
-    if (!isEditMode) {
+    const entering = !isEditMode;
+    setIsEditMode(entering);
+    if (entering) {
       setTimeout(() => {
-        textareaRef.current?.focus();
-      }, 100);
+        const ta = textareaRef.current;
+        if (ta) {
+          ta.focus();
+          // Initialise cursor to start so position bar shows something meaningful
+          updateCursorPosition(ta);
+        }
+      }, 50);
     }
   };
 
@@ -1462,7 +1472,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
                   return items;
                 })()}
               </div>
-              {/* Textarea editor */}
+          {/* Textarea editor */}
               <textarea
                 ref={textareaRef}
                 value={editDisplayContent}
@@ -1471,24 +1481,34 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
                 onClick={handleCursorMove}
                 onKeyUp={handleCursorMove}
                 onSelect={handleCursorMove}
+                onMouseUp={handleCursorMove}
                 onScroll={handleTextareaScroll}
-                onFocus={handleTextareaFocus}
-                className="code-editor-textarea flex-1 h-full bg-[#1e1e1e] text-white font-mono text-sm resize-none focus:outline-none"
+                onFocus={(e) => {
+                  handleTextareaFocus();
+                  updateCursorPosition(e.currentTarget);
+                }}
+                className="code-editor-textarea flex-1 bg-[#1e1e1e] text-white font-mono text-sm resize-none focus:outline-none"
                 style={{
                   lineHeight: "1.6",
                   tabSize: 4,
                   fontFamily: 'Consolas, "Courier New", monospace',
                   fontSize: "14px",
                   letterSpacing: "0.5px",
-                  caretColor: "#fff",
+                  caretColor: "#e879f9",   /* bright magenta — clearly visible on dark bg */
                   padding: "16px 16px 40px 12px",
                   border: "none",
+                  height: "100%",
+                  width: "100%",
+                  overflow: "auto",
                 }}
                 spellCheck={false}
               />
             </div>
-            {/* Cursor Position Display */}
-            <div className="absolute bottom-2 right-2 bg-gray-900 border border-gray-600 rounded px-3 py-1 text-xs font-mono text-gray-300 shadow-lg">
+            {/* Cursor Position Display — sits outside overflow-hidden wrapper */}
+            <div
+              className="absolute bottom-2 right-2 bg-gray-900 border border-gray-600 rounded px-3 py-1 text-xs font-mono text-gray-300 shadow-lg pointer-events-none"
+              style={{ zIndex: 10 }}
+            >
               Ln {cursorPosition.line}, Col {cursorPosition.column}
             </div>
           </>
