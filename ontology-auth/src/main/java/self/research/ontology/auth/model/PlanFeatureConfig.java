@@ -21,6 +21,7 @@ public class PlanFeatureConfig {
 
     private List<String> features;
     private List<String> limitations;
+    private int maxMembers;
     private LocalDateTime updatedAt;
 
     public PlanFeatureConfig() {}
@@ -56,6 +57,9 @@ public class PlanFeatureConfig {
 
     public List<String> getLimitations() { return limitations; }
     public void setLimitations(List<String> limitations) { this.limitations = limitations; }
+
+    public int getMaxMembers() { return maxMembers; }
+    public void setMaxMembers(int maxMembers) { this.maxMembers = maxMembers; }
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }

@@ -55,6 +55,11 @@ public class WorkspaceController {
             }
 
             User user = userOpt.get();
+            
+            // Model C Self-Healing: Sync workspaces to owner's account plan on fetch
+            // This ensures previous data is automatically migrated to the new sync model.
+            workspaceService.syncWorkspacesToOwnerPlan(user);
+
             List<Workspace> workspaces = workspaceService.getUserWorkspaces(user.getId());
 
             // Convert to DTO to avoid sending sensitive info

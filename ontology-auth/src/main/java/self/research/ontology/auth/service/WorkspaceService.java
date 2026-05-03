@@ -17,6 +17,7 @@ import self.research.ontology.auth.repository.WorkspaceRepository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -29,15 +30,18 @@ public class WorkspaceService {
     private final UserRepository userRepository;
     private final ProjectRepository projectRepository;
     private final FileMetadataRepository fileMetadataRepository;
+    private final PlanFeatureConfigService planFeatureConfigService;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository, 
                            UserRepository userRepository,
                            ProjectRepository projectRepository,
-                           FileMetadataRepository fileMetadataRepository) {
+                           FileMetadataRepository fileMetadataRepository,
+                           PlanFeatureConfigService planFeatureConfigService) {
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
         this.projectRepository = projectRepository;
         this.fileMetadataRepository = fileMetadataRepository;
+        this.planFeatureConfigService = planFeatureConfigService;
     }
 
     /**
@@ -136,26 +140,41 @@ public class WorkspaceService {
         boolean isStatusGood = "active".equals(status) || "trialing".equals(status);
         boolean collaborationEnabled = isPaidPlan && isStatusGood;
         
+        Map<String, PlanFeatureConfig> configs = planFeatureConfigService.getAllByPlanId();
+        PlanFeatureConfig currentPlanConfig = configs.get(planName);
+        int maxMembers = currentPlanConfig != null ? currentPlanConfig.getMaxMembers() : 3;
+        
         workspaceRepository.findByOwnerId(owner.getId()).forEach(workspace -> {
-            workspace.setSubscriptionPlan(planName);
-            workspace.setBillingStatus(status.toUpperCase());
-            workspace.setBillingInterval(owner.getBillingInterval());
-            workspace.setStripeSubscriptionId(owner.getStripeSubscriptionId());
-            workspace.setSubscriptionCurrentPeriodEnd(owner.getSubscriptionCurrentPeriodEnd());
-            workspace.setCollaborationEnabled(collaborationEnabled);
+            boolean dirty = false;
             
-            // Set limits based on plan
-            if ("PRO".equals(planName)) {
-                workspace.setMaxMembers(10);
-            } else if ("ENTERPRISE".equals(planName)) {
-                workspace.setMaxMembers(Integer.MAX_VALUE);
-            } else {
-                workspace.setMaxMembers(3);
+            if (!planName.equals(workspace.getSubscriptionPlan())) { 
+                workspace.setSubscriptionPlan(planName); dirty = true; 
+            }
+            if (!status.equalsIgnoreCase(workspace.getBillingStatus())) { 
+                workspace.setBillingStatus(status.toUpperCase()); dirty = true; 
+            }
+            if (!Objects.equals(owner.getBillingInterval(), workspace.getBillingInterval())) { 
+                workspace.setBillingInterval(owner.getBillingInterval()); dirty = true; 
+            }
+            if (!Objects.equals(owner.getStripeSubscriptionId(), workspace.getStripeSubscriptionId())) { 
+                workspace.setStripeSubscriptionId(owner.getStripeSubscriptionId()); dirty = true; 
+            }
+            if (!Objects.equals(owner.getSubscriptionCurrentPeriodEnd(), workspace.getSubscriptionCurrentPeriodEnd())) { 
+                workspace.setSubscriptionCurrentPeriodEnd(owner.getSubscriptionCurrentPeriodEnd()); dirty = true; 
+            }
+            if (collaborationEnabled != workspace.isCollaborationEnabled()) { 
+                workspace.setCollaborationEnabled(collaborationEnabled); dirty = true; 
+            }
+            if (workspace.getMaxMembers() == null || workspace.getMaxMembers() != maxMembers) { 
+                workspace.setMaxMembers(maxMembers); dirty = true; 
             }
             
-            workspaceRepository.save(workspace);
+            if (dirty) {
+                workspaceRepository.save(workspace);
+                log.info("Workspace {} was out of sync — updated to match owner plan {} ({})", 
+                    workspace.getWorkspaceId(), planName, status);
+            }
         });
-        log.info("Synced account plan {} (status: {}) to all workspaces for user {}", planName, status, owner.getUsername());
     }
 
     /**
