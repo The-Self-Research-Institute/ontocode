@@ -1061,31 +1061,39 @@ function handleBrowserMessage(message: any) {
                         return;
                     }
 
-                    const batchSize = 100;
+                    const PAGE_SIZE = 100;
                     let start = 0;
-                    let batch = await sci2CodeBrowserService.fetchLibrary(batchSize, start);
+                    let totalResults = Infinity; // will be set after first page
 
-                    postToSelf({
-                        type: 'zoteroLibraryData',
-                        items: batch || [],
-                        hasMore: batch.length === batchSize
-                    });
+                    while (start < totalResults) {
+                        const { items, totalResults: total } = await sci2CodeBrowserService.fetchLibraryPage(start, PAGE_SIZE);
 
-                    start += batch.length;
-
-                    while (batch.length === batchSize) {
-                        batch = await sci2CodeBrowserService.fetchLibrary(batchSize, start);
-                        if (!batch || batch.length === 0) {
-                            break;
+                        // Lock in the real total from the first response
+                        if (start === 0) {
+                            totalResults = total;
                         }
 
-                        postToSelf({
-                            type: 'zoteroLibraryDataAppend',
-                            items: batch,
-                            hasMore: batch.length === batchSize
-                        });
+                        if (!items || items.length === 0) break;
 
-                        start += batch.length;
+                        if (start === 0) {
+                            // First batch — send as initial payload so the UI can show results fast
+                            postToSelf({
+                                type: 'zoteroLibraryData',
+                                items,
+                                hasMore: start + items.length < totalResults,
+                            });
+                        } else {
+                            postToSelf({
+                                type: 'zoteroLibraryDataAppend',
+                                items,
+                                hasMore: start + items.length < totalResults,
+                            });
+                        }
+
+                        start += items.length;
+
+                        // Stop if we got the last page
+                        if (items.length < PAGE_SIZE || start >= totalResults) break;
                     }
 
                     postToSelf({ type: 'zoteroLibraryDataComplete' });

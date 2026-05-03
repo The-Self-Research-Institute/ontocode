@@ -247,6 +247,8 @@ const DatatypeEditor: React.FC<{
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   projectId: string;
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
 }> = ({
     item,
     onUpdate,
@@ -254,7 +256,9 @@ const DatatypeEditor: React.FC<{
     onEditAnnotation,
     onDeleteAnnotation,
     activeTheme,
-    projectId
+    projectId,
+    isViewOnly = false,
+    onViewOnlyAction,
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('description');
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -316,15 +320,15 @@ const DatatypeEditor: React.FC<{
             themeColor="bg-gradient-to-b from-gray-50 to-gray-100 text-gray-800 border-gray-200"
             actions={
               <button
-                onClick={onAddAnnotation}
+                onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation}
                 className="p-1 rounded hover:bg-gray-200 transition-colors"
-                title="Add annotation"
+                title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}
               >
                 <Plus size={14} />
               </button>
             }
           >
-            <AnnotationsDisplay annotations={item.annotations || {}} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
+            <AnnotationsDisplay annotations={item.annotations || {}} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} isViewOnly={isViewOnly} onViewOnlyAction={onViewOnlyAction} />
           </Panel>
         )}
 

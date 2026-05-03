@@ -295,7 +295,9 @@ export const AxiomRow: React.FC<{
   properties?: any[];
   dataProperties?: any[];
   onNavigate?: (iri: string, type: string) => void;
-}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [], onNavigate }) => {
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [], onNavigate, isViewOnly = false, onViewOnlyAction }) => {
   // Handle isInferred from prop or axiom object (can be boolean or string 'true')
   const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
   const [isEditing, setIsEditing] = useState(false);
@@ -359,6 +361,7 @@ export const AxiomRow: React.FC<{
 
   // Handle double-click to edit (Protégé-style)
   const handleDoubleClick = () => {
+    if (isViewOnly) { onViewOnlyAction?.(); return; }
     if (!isInferred && (onEdit || onEditClick)) {
       if (onEditClick) {
         const initialTab = determineInitialTab();
@@ -372,14 +375,15 @@ export const AxiomRow: React.FC<{
 
   // Handle keyboard shortcuts (Protégé-style)
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Only handle if this row is focused
     if (!isFocused) return;
-    
+
     if (e.key === 'Enter' && !isInferred && (onEdit || onEditClick)) {
       e.preventDefault();
+      if (isViewOnly) { onViewOnlyAction?.(); return; }
       handleDoubleClick();
     } else if (e.key === 'Delete' && !isInferred) {
       e.preventDefault();
+      if (isViewOnly) { onViewOnlyAction?.(); return; }
       if (window.confirm('Delete this axiom?')) {
         onDelete(axiom.id);
       }
@@ -460,9 +464,10 @@ export const AxiomRow: React.FC<{
 
             {/* Edit button - only for asserted axioms */}
             {!isInferred && (onEdit || onEditClick) && (
-              <button 
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (isViewOnly) { onViewOnlyAction?.(); return; }
                   if (onEditClick) {
                     const initialTab = determineInitialTab();
                     const restrictionData = buildRestrictionData();
@@ -472,7 +477,7 @@ export const AxiomRow: React.FC<{
                   }
                 }}
                 className={`p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                title="Edit axiom (or press Enter)"
+                title={isViewOnly ? "View-only: upgrade to edit" : "Edit axiom (or press Enter)"}
                 aria-label="Edit"
               >
                 <Edit2 size={14} />
@@ -481,9 +486,10 @@ export const AxiomRow: React.FC<{
 
             {/* Delete button - only for asserted axioms */}
             {!isInferred && (
-              <button 
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (isViewOnly) { onViewOnlyAction?.(); return; }
                   if (window.confirm('Delete this axiom?')) {
                     onDelete(axiom.id);
                   }
@@ -525,9 +531,11 @@ export const AxiomSubsection: React.FC<{
   activeOntologyIri?: string;
   properties?: any[];
   dataProperties?: any[];
-  themeColor?: 'yellow' | 'blue' | 'green' | 'orange' | 'purple'; // Protégé-style colored headers
+  themeColor?: 'yellow' | 'blue' | 'green' | 'orange' | 'purple';
   onNavigate?: (iri: string, type: string) => void;
-}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate }) => {
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -537,6 +545,7 @@ export const AxiomSubsection: React.FC<{
   };
 
   const handleAddButtonClick = () => {
+    if (isViewOnly) { onViewOnlyAction?.(); return; }
     if (onAddClick) {
       onAddClick();
     } else {
@@ -633,7 +642,7 @@ export const AxiomSubsection: React.FC<{
         </button>
       ) : (
         // Default header style
-        <div 
+        <div
           className={`flex justify-between items-center mb-1 px-2 py-1 rounded ${isFocused ? 'ring-2 ring-purple-300' : ''}`}
           tabIndex={0}
           onFocus={() => setIsFocused(true)}
@@ -642,12 +651,12 @@ export const AxiomSubsection: React.FC<{
         >
           <h4 className="text-xs font-bold text-tertiary uppercase tracking-wider">
             {title}
-            {isFocused && <span className="ml-2 text-[10px] text-accent">(Press Enter to add)</span>}
+            {isFocused && !isViewOnly && <span className="ml-2 text-[10px] text-accent">(Press Enter to add)</span>}
           </h4>
-          <button 
-            onClick={handleAddButtonClick} 
-            className="p-1 hover-overlay rounded text-tertiary hover-text-accent transition-colors" 
-            title={`Add ${title} (Enter when focused)`}
+          <button
+            onClick={handleAddButtonClick}
+            className="p-1 hover-overlay rounded text-tertiary hover-text-accent transition-colors"
+            title={isViewOnly ? "View-only: upgrade to edit" : `Add ${title} (Enter when focused)`}
           >
             <Plus size={14} />
           </button>
@@ -661,9 +670,9 @@ export const AxiomSubsection: React.FC<{
           <>
             {/* Asserted axioms */}
             {axioms?.map(axiom => (
-              <AxiomRow 
-                key={axiom.id} 
-                axiom={axiom} 
+              <AxiomRow
+                key={axiom.id}
+                axiom={axiom}
                 onDelete={onDelete}
                 onEdit={onEdit}
                 onEditClick={onEditClick}
@@ -674,13 +683,15 @@ export const AxiomSubsection: React.FC<{
                 properties={properties}
                 dataProperties={dataProperties}
                 onNavigate={onNavigate}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
             ))}
             {/* Inferred axioms */}
             {inferredAxioms?.map(axiom => (
-              <AxiomRow 
-                key={`inferred-${axiom.id}`} 
-                axiom={axiom} 
+              <AxiomRow
+                key={`inferred-${axiom.id}`}
+                axiom={axiom}
                 onDelete={onDelete}
                 onEdit={onEdit}
                 onEditClick={onEditClick}
@@ -689,6 +700,8 @@ export const AxiomSubsection: React.FC<{
                 properties={properties}
                 dataProperties={dataProperties}
                 onNavigate={onNavigate}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
             ))}
           </>
@@ -741,10 +754,12 @@ const getPropertyLabel = (uri: string): string => {
  * in Protégé style - grouped by property with full URI displayed.
  * Sorts annotations to show rdfs:comment first, then rdfs:label, then others alphabetically.
  */
-export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: { 
-  annotations?: Record<string, string>, 
+export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly = false, onViewOnlyAction }: {
+  annotations?: Record<string, string>,
   onDelete: (key: string) => void,
-  onEdit?: (key: string, currentValue: string) => void 
+  onEdit?: (key: string, currentValue: string) => void,
+  isViewOnly?: boolean,
+  onViewOnlyAction?: () => void,
 }) => {
   if (!annotations || Object.keys(annotations).length === 0) {
     return (
@@ -804,18 +819,18 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: {
               </div>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 {onEdit && (
-                  <button 
-                    onClick={() => onEdit(key, value)} 
+                  <button
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onEdit(key, value)}
                     className="p-1 rounded hover-overlay transition-all"
-                    title={`Edit ${propertyLabel}`}
+                    title={isViewOnly ? "View-only: upgrade to edit" : `Edit ${propertyLabel}`}
                   >
                     <Edit2 size={12} className="text-tertiary hover-text-accent" />
                   </button>
                 )}
-                <button 
-                  onClick={() => onDelete(key)} 
+                <button
+                  onClick={() => isViewOnly ? onViewOnlyAction?.() : onDelete(key)}
                   className="p-1 rounded hover-overlay transition-all"
-                  title={`Delete ${propertyLabel}`}
+                  title={isViewOnly ? "View-only: upgrade to edit" : `Delete ${propertyLabel}`}
                 >
                   <Trash2 size={12} className="text-tertiary hover-text-error" />
                 </button>
@@ -1074,7 +1089,9 @@ export const MultiSelectSection: React.FC<{
     onDelete: (item: string) => void;
     themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple'; // For header styling
     itemEntityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual'; // For item icons
-}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType }) => {
+    isViewOnly?: boolean;
+    onViewOnlyAction?: () => void;
+}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction }) => {
     const [isSelected, setIsSelected] = useState(false);
     
     // Clean minimal theme colors - Protégé-style
@@ -1120,7 +1137,7 @@ export const MultiSelectSection: React.FC<{
     
     const handleHeaderClick = () => {
         setIsSelected(true);
-        // If there's an add handler, trigger it
+        if (isViewOnly) { onViewOnlyAction?.(); return; }
         if (onAddClick) {
             onAddClick();
         }
@@ -1148,7 +1165,7 @@ export const MultiSelectSection: React.FC<{
              {/* Content area */}
              <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm overflow-hidden">
                  {items && items.length > 0 ? (
-                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} themeColor={themeColor} entityType={itemEntityType} />)
+                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } onDelete(i); }} themeColor={themeColor} entityType={itemEntityType} />)
                  ) : null}
                  {inferredItems && inferredItems.length > 0 ? (
                     inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} />)

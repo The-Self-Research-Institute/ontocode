@@ -236,7 +236,9 @@ const ClassEditor: React.FC<{
   onAddIndividual?: (name: string, classIri: string) => Promise<void>;
   onDeleteIndividual?: (id: string) => Promise<void>;
   onRefreshIndividuals?: () => void;
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals }) => {
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction }) => {
   // Get current user for tracking mutations
   const { user } = useAuth();
 
@@ -1909,9 +1911,9 @@ const ClassEditor: React.FC<{
             <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5 flex items-center justify-between">
               <span className="text-xs font-medium text-stone-700">Annotations: {item.label}</span>
               <button
-                onClick={onAddAnnotation}
+                onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation}
                 className="p-1 hover:bg-stone-200 rounded text-stone-500 hover:text-stone-700"
-                title="Add annotation"
+                title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}
               >
                 <Plus size={14} />
               </button>
@@ -1922,6 +1924,8 @@ const ClassEditor: React.FC<{
                 annotations={displayAnnotations}
                 onDelete={onDeleteAnnotation}
                 onEdit={onEditAnnotation}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
             </div>
           </div>
@@ -1945,19 +1949,14 @@ const ClassEditor: React.FC<{
                 onDelete={(id) => handleDeleteAxiom("EquivalentTo", id)}
                 onAddClick={() => openEditor("EquivalentTo", "Equivalent Class Expression")}
                 onEditClick={(axiom, initialTab, restrictionData) =>
-                  openEditor(
-                    "EquivalentTo",
-                    "Equivalent Class Expression",
-                    axiom.definition,
-                    axiom.id,
-                    initialTab,
-                    restrictionData,
-                  )
+                  openEditor("EquivalentTo", "Equivalent Class Expression", axiom.definition, axiom.id, initialTab, restrictionData)
                 }
                 properties={properties}
                 dataProperties={dataProperties}
                 themeColor="yellow"
                 onNavigate={handleNavigate}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
 
               {/* SubClass Of Section */}
@@ -1970,22 +1969,17 @@ const ClassEditor: React.FC<{
                 onDelete={(id) => handleDeleteAxiom("SubClassOf", id)}
                 onAddClick={() => openEditor("SubClassOf", "SubClass Expression")}
                 onEditClick={(axiom, initialTab, restrictionData) =>
-                  openEditor(
-                    "SubClassOf",
-                    "SubClass Expression",
-                    axiom.definition,
-                    axiom.id,
-                    initialTab,
-                    restrictionData,
-                  )
+                  openEditor("SubClassOf", "SubClass Expression", axiom.definition, axiom.id, initialTab, restrictionData)
                 }
                 properties={properties}
                 dataProperties={dataProperties}
                 themeColor="yellow"
                 onNavigate={handleNavigate}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
 
-              {/* General Class Axioms Section - GCIs mentioning this class */}
+              {/* General Class Axioms Section */}
               <AxiomSubsection
                 title="General class axioms"
                 axioms={classDetails?.generalClassAxioms || []}
@@ -1996,15 +1990,18 @@ const ClassEditor: React.FC<{
                 onEditClick={(axiom) => handleEditGCA(axiom.id)}
                 emptyMessage=""
                 themeColor="yellow"
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
 
-              {/* SubClass Of (Anonymous Ancestor) - Inherited restrictions */}
+              {/* SubClass Of (Anonymous Ancestor) */}
               <AxiomSubsection
                 title="SubClass Of (Anonymous Ancestor)"
                 axioms={classDetails?.inheritedAnonymousAxioms || []}
                 onAdd={() => {}}
                 onDelete={() => {}}
                 themeColor="yellow"
+                isViewOnly={true}
               />
 
               {/* Instances Section */}
@@ -2018,13 +2015,12 @@ const ClassEditor: React.FC<{
                 onAdd={() => {}}
                 onEdit={(id, newDef) => handleEditInstance(id)}
                 onDelete={(id) => handleDeleteInstance(id)}
-                onAddClick={() => {
-                  setEditingInstanceId(undefined);
-                  setIsInstancesOpen(true);
-                }}
+                onAddClick={() => { setEditingInstanceId(undefined); setIsInstancesOpen(true); }}
                 onEditClick={(axiom) => handleEditInstance(axiom.id)}
                 emptyMessage=""
                 themeColor="yellow"
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
 
               {/* Target for Key Section */}
@@ -2040,6 +2036,8 @@ const ClassEditor: React.FC<{
                 themeColor="yellow"
                 properties={properties}
                 dataProperties={dataProperties}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
 
               {/* Disjoint With Section */}
@@ -2057,6 +2055,8 @@ const ClassEditor: React.FC<{
                 dataProperties={dataProperties}
                 themeColor="yellow"
                 onNavigate={handleNavigate}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
 
               {/* Disjoint Union Of Section */}
@@ -2072,6 +2072,8 @@ const ClassEditor: React.FC<{
                 themeColor="yellow"
                 properties={properties}
                 dataProperties={dataProperties}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
             </div>
           </div>

@@ -3866,33 +3866,36 @@ class OntoCodePanel {
                 }
             }
 
-            const batchSize = 100;
+            const PAGE_SIZE = 100;
             let start = 0;
-            let batch: any[] = [];
+            let totalResults = Infinity;
 
-            // Load an initial page quickly so the UI can render immediately.
-            batch = await zoteroApiService.fetchLibrary(batchSize, start, true);
-            this.postMessage({
-                type: 'zoteroLibraryData',
-                items: batch,
-                hasMore: batch.length === batchSize
-            });
+            while (start < totalResults) {
+                const { items, totalResults: total } = await zoteroApiService.fetchLibraryPage(start, PAGE_SIZE);
 
-            start += batch.length;
-
-            while (batch.length === batchSize) {
-                batch = await zoteroApiService.fetchLibrary(batchSize, start, true);
-                if (!batch || batch.length === 0) {
-                    break;
+                if (start === 0) {
+                    totalResults = total;
                 }
 
-                this.postMessage({
-                    type: 'zoteroLibraryDataAppend',
-                    items: batch,
-                    hasMore: batch.length === batchSize
-                });
+                if (!items || items.length === 0) break;
 
-                start += batch.length;
+                if (start === 0) {
+                    this.postMessage({
+                        type: 'zoteroLibraryData',
+                        items,
+                        hasMore: start + items.length < totalResults
+                    });
+                } else {
+                    this.postMessage({
+                        type: 'zoteroLibraryDataAppend',
+                        items,
+                        hasMore: start + items.length < totalResults
+                    });
+                }
+
+                start += items.length;
+
+                if (items.length < PAGE_SIZE || start >= totalResults) break;
             }
 
             this.postMessage({

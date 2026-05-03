@@ -128,61 +128,64 @@ class Sci2CodeBrowserService {
     }
   }
 
+  /**
+   * Fetch a single page of library items and return both the items and the
+   * Zotero `Total-Results` header so callers know when to stop paginating.
+   */
+  async fetchLibraryPage(
+    start: number = 0,
+    pageSize: number = 100
+  ): Promise<{ items: ZoteroItem[]; totalResults: number }> {
+    const cfg = this.getConfig();
+    if (!cfg) throw new Error('Zotero not configured');
+
+    const libraryPath =
+      cfg.libraryType === 'group' && cfg.groupId
+        ? `groups/${cfg.groupId}`
+        : `users/${cfg.userId}`;
+
+    const resp = await fetch(
+      `${this.baseUrl}/${libraryPath}/items?limit=${pageSize}&start=${start}&format=json&include=data&itemType=-attachment`,
+      {
+        headers: {
+          'Zotero-API-Key': cfg.apiKey,
+          'Zotero-API-Version': '3',
+        },
+      }
+    );
+
+    if (!resp.ok) {
+      if (resp.status === 403) throw new Error('Invalid Zotero API key');
+      if (resp.status === 404) throw new Error('Zotero user/group not found');
+      throw new Error(`Zotero API error: ${resp.status}`);
+    }
+
+    const totalResults = parseInt(resp.headers.get('Total-Results') || '0', 10);
+    const items: ZoteroItem[] = await resp.json();
+    return { items, totalResults };
+  }
+
+  /** Legacy single-call helper — fetches ALL items at once (used internally). */
   async fetchLibrary(limit: number = 10000, start: number = 0): Promise<ZoteroItem[]> {
     const cfg = this.getConfig();
     if (!cfg) throw new Error('Zotero not configured');
 
-    const libraryPath = cfg.libraryType === 'group' && cfg.groupId
-      ? `groups/${cfg.groupId}`
-      : `users/${cfg.userId}`;
-
-    const fetchPage = async (pageStart: number, pageLimit: number): Promise<ZoteroItem[]> => {
-      const resp = await fetch(
-        `${this.baseUrl}/${libraryPath}/items?limit=${pageLimit}&start=${pageStart}&format=json&include=data&itemType=-attachment`,
-        {
-          headers: {
-            'Zotero-API-Key': cfg.apiKey,
-            'Zotero-API-Version': '3',
-          },
-        }
-      );
-
-      if (!resp.ok) {
-        if (resp.status === 403) throw new Error('Invalid Zotero API key');
-        if (resp.status === 404) throw new Error('Zotero user/group not found');
-        throw new Error(`Zotero API error: ${resp.status}`);
-      }
-
-      return resp.json();
-    };
-
-    const maxPageSize = 100;
-    const fetchLimit = Math.min(limit, maxPageSize);
-
-    if (start > 0 || limit <= maxPageSize) {
-      const items = await fetchPage(start, fetchLimit);
-      this.cachedItems = start === 0 ? items : [...(this.cachedItems || []), ...items];
-      return items;
-    }
-
+    const PAGE_SIZE = 100;
     const allItems: ZoteroItem[] = [];
-    let currentStart = 0;
+    let currentStart = start;
 
     while (allItems.length < limit) {
-      const batch = await fetchPage(currentStart, fetchLimit);
-      if (!batch || batch.length === 0) {
-        break;
-      }
+      const { items, totalResults } = await this.fetchLibraryPage(currentStart, PAGE_SIZE);
+      if (!items || items.length === 0) break;
 
-      allItems.push(...batch);
-      currentStart += batch.length;
+      allItems.push(...items);
+      currentStart += items.length;
 
-      if (batch.length < fetchLimit) {
-        break;
-      }
+      // Stop when we have fetched everything the library has
+      if (allItems.length >= totalResults || items.length < PAGE_SIZE) break;
     }
 
-    this.cachedItems = allItems;
+    this.cachedItems = start === 0 ? allItems : [...(this.cachedItems || []), ...allItems];
     return allItems;
   }
 

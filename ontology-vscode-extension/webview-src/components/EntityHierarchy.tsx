@@ -40,6 +40,8 @@ interface EntityHierarchyProps {
   selectedProperties?: string[];
   multiSelectMode?: boolean;
   loadingNodes?: Set<string>; // Nodes currently fetching children
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
 }
 
 const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
@@ -68,6 +70,8 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   selectedProperties = [],
   multiSelectMode = false,
   loadingNodes = new Set(),
+  isViewOnly = false,
+  onViewOnlyAction,
 }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: SelectableItem } | null>(null);
   const [draggedItem, setDraggedItem] = useState<SelectableItem | null>(null);
@@ -132,6 +136,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
 
   // Drag and Drop handlers for class hierarchy reorganization
   const handleDragStart = (e: React.DragEvent, item: SelectableItem) => {
+    if (isViewOnly) { e.preventDefault(); return; }
     // Only allow drag in Classes tab and asserted mode
     if (entitiesTab !== 'Classes' || viewMode !== 'asserted') {
       e.preventDefault();
@@ -152,9 +157,8 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   const handleDrop = (e: React.DragEvent, targetItem: SelectableItem) => {
     e.preventDefault();
     e.stopPropagation();
-    
+    if (isViewOnly) { setDraggedItem(null); return; }
     if (draggedItem && draggedItem.id !== targetItem.id && onMoveClass) {
-      // Call the move handler to update backend
       onMoveClass(draggedItem.id, targetItem.id);
     }
     setDraggedItem(null);
@@ -177,6 +181,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
 
   const handleDoubleClick = (e: React.MouseEvent, item: SelectableItem) => {
     e.stopPropagation();
+    if (isViewOnly) { onViewOnlyAction?.(); return; }
     setRenamingItemId(item.id);
   };
 
@@ -438,20 +443,20 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           <div className="flex items-center gap-0.5">
               {entitiesTab === 'Classes' && viewMode === 'asserted' && (
                  <>
-                 <button 
-                    title="Add subclass (Ctrl+E)" 
+                 <button
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add subclass (Ctrl+E)"}
                     aria-label="Add subclass"
-                    disabled={!selectedItem} 
-                    onClick={() => onAddItem('subclass')} //
+                    disabled={!isViewOnly && !selectedItem}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
                     className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <PlusCircle size={14} />
                  </button>
-                 <button 
-                    title="Add sibling class (Ctrl+Shift+E)" 
+                 <button
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sibling class (Ctrl+Shift+E)"}
                     aria-label="Add sibling class"
-                    disabled={!selectedItem} 
-                    onClick={() => onAddItem('sibling')} //
+                    disabled={!isViewOnly && !selectedItem}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('sibling')}
                     className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <Binary size={14} />
@@ -460,20 +465,20 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
               )}
               {entitiesTab === 'ObjectProperties' && viewMode === 'asserted' && (
                  <>
-                 <button 
-                    title="Add sub property" 
+                 <button
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sub property"}
                     aria-label="Add sub property"
-                    disabled={!selectedItem} 
-                    onClick={() => onAddItem('subclass')} // Reusing 'subclass' type for sub-property
+                    disabled={!isViewOnly && !selectedItem}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
                     className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <PlusCircle size={14} />
                  </button>
-                 <button 
-                    title="Add sibling property" 
+                 <button
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sibling property"}
                     aria-label="Add sibling property"
-                    disabled={!selectedItem} 
-                    onClick={() => onAddItem('sibling')} // Reusing 'sibling' type for sibling property
+                    disabled={!isViewOnly && !selectedItem}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('sibling')}
                     className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <Binary size={14} />
@@ -482,20 +487,20 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
               )}
               {entitiesTab === 'DataProperties' && viewMode === 'asserted' && (
                  <>
-                 <button 
-                    title="Add sub property" 
+                 <button
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sub property"}
                     aria-label="Add sub property"
-                    disabled={!selectedItem} 
-                    onClick={() => onAddItem('subclass')} //
+                    disabled={!isViewOnly && !selectedItem}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
                     className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <PlusCircle size={14} />
                  </button>
-                 <button 
-                    title="Add sibling property" 
+                 <button
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sibling property"}
                     aria-label="Add sibling property"
-                    disabled={!selectedItem} 
-                    onClick={() => onAddItem('sibling')} //
+                    disabled={!isViewOnly && !selectedItem}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('sibling')}
                     className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <Binary size={14} />
@@ -505,9 +510,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
               {entitiesTab === 'Datatypes' && viewMode === 'asserted' && (
                  <>
                  <button
-                    title="Add datatype"
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add datatype"}
                     aria-label="Add datatype"
-                    onClick={() => onAddItem('subclass')} // Reusing 'subclass' type for datatype creation
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
                     className="p-0.5 rounded text-gray-600 hover:text-purple-600"
                  >
                       <PlusCircle size={14} />
@@ -516,19 +521,19 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
               )}
               {entitiesTab === 'Individuals' && (
                    <button
-                      title="Add individual"
+                      title={isViewOnly ? "View-only: upgrade to edit" : "Add individual"}
                       aria-label="Add individual"
-                      onClick={() => onAddItem('individual')} //
+                      onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('individual')}
                     className="p-0.5 rounded text-gray-600 hover:text-purple-600"
                  >
                       <PlusCircle size={14} />
                  </button>
               )}
               <button
-                title="Delete selected entity"
+                title={isViewOnly ? "View-only: upgrade to edit" : "Delete selected entity"}
                 aria-label="Delete selected entity"
-                disabled={!selectedItem || ((entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'Datatypes') && viewMode === 'inferred')}
-                onClick={() => onDeleteItem()}
+                disabled={!isViewOnly && (!selectedItem || ((entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'Datatypes') && viewMode === 'inferred'))}
+                onClick={() => isViewOnly ? onViewOnlyAction?.() : onDeleteItem()}
                 className="p-0.5 rounded text-gray-600 hover:text-red-600 disabled:text-gray-400 disabled:opacity-80"
              >
                 <Trash2 size={14} />
@@ -657,9 +662,10 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           <button
             className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
             onClick={() => {
+              setContextMenu(null);
+              if (isViewOnly) { onViewOnlyAction?.(); return; }
               onSelectItem(contextMenu.item);
               setRenamingItemId(contextMenu.item.id);
-              setContextMenu(null);
             }}
           >
             <Edit3 size={14} />
@@ -669,8 +675,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             <button
               className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
               onClick={() => {
-                onQuickSetParent(contextMenu.item);
                 setContextMenu(null);
+                if (isViewOnly) { onViewOnlyAction?.(); return; }
+                onQuickSetParent(contextMenu.item);
               }}
             >
               <GitBranch size={14} />
@@ -681,8 +688,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             <button
               className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
               onClick={() => {
-                onQuickAddNote(contextMenu.item);
                 setContextMenu(null);
+                if (isViewOnly) { onViewOnlyAction?.(); return; }
+                onQuickAddNote(contextMenu.item);
               }}
             >
               <Edit3 size={14} />
@@ -693,9 +701,10 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             <button
               className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
               onClick={() => {
+                setContextMenu(null);
+                if (isViewOnly) { onViewOnlyAction?.(); return; }
                 onSelectItem(contextMenu.item);
                 onMakeSiblingsDisjoint();
-                setContextMenu(null);
               }}
             >
               <Binary size={14} />

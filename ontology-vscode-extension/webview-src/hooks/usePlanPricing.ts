@@ -43,6 +43,7 @@ const FALLBACK: PricingMap = {
 
 // Module-level cache — only one HTTP request regardless of how many components mount.
 let _cache: PricingMap | null = null;
+let _trialDaysCache: number = 14;
 let _inflight: Promise<PricingMap> | null = null;
 
 function loadPricing(): Promise<PricingMap> {
@@ -50,11 +51,12 @@ function loadPricing(): Promise<PricingMap> {
     if (_inflight) return _inflight;
     _inflight = fetch(`${getGatewayUrl()}/api/billing/plans`)
         .then(r => r.json())
-        .then((data: { plans?: PlanPricing[] }) => {
+        .then((data: { plans?: PlanPricing[], trialPeriodDays?: number }) => {
             if (Array.isArray(data.plans)) {
                 const map: PricingMap = {};
                 data.plans.forEach(p => { map[p.id.toUpperCase()] = p; });
                 _cache = map;
+                _trialDaysCache = data.trialPeriodDays ?? 14;
                 return map;
             }
             return FALLBACK;
@@ -90,5 +92,5 @@ export function usePlanPricing() {
         return '';
     };
 
-    return { pricing, getPricing, getDisplayPrice, getShortPrice };
+    return { pricing, getPricing, getDisplayPrice, getShortPrice, trialPeriodDays: _trialDaysCache };
 }
