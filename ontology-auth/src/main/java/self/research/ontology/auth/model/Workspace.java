@@ -318,6 +318,10 @@ public class Workspace {
     public void setCollaborationEnabled(Boolean collaborationEnabled) { 
         this.collaborationEnabled = collaborationEnabled; 
     }
+    
+    public boolean isCollaborationEnabled() {
+        return collaborationEnabled != null && collaborationEnabled;
+    }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
