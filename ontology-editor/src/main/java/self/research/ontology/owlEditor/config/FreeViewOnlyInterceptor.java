@@ -1,7 +1,5 @@
 package self.research.ontology.owlEditor.config;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -9,16 +7,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerInterceptor;
-import self.research.ontology.owlEditor.document.ProjectDocument;
-import self.research.ontology.owlEditor.document.WorkspaceDocument;
-import self.research.ontology.owlEditor.repository.ProjectRepository;
-import self.research.ontology.owlEditor.repository.WorkspaceRepository;
+import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
 
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Blocks write operations for FREE plan non-owner users.
@@ -29,7 +20,6 @@ import java.util.Optional;
 public class FreeViewOnlyInterceptor implements HandlerInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(FreeViewOnlyInterceptor.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final AntPathMatcher PATH = new AntPathMatcher();
 
     // POST paths that are read-only — always allowed regardless of plan
@@ -49,13 +39,10 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         "/api/sparql/*/queries/**"  // manage saved SPARQL query templates
     );
 
-    private final ProjectRepository projectRepository;
-    private final WorkspaceRepository workspaceRepository;
+    private final WorkspaceOwnershipService workspaceOwnershipService;
 
-    public FreeViewOnlyInterceptor(ProjectRepository projectRepository,
-                                   WorkspaceRepository workspaceRepository) {
-        this.projectRepository = projectRepository;
-        this.workspaceRepository = workspaceRepository;
+    public FreeViewOnlyInterceptor(WorkspaceOwnershipService workspaceOwnershipService) {
+        this.workspaceOwnershipService = workspaceOwnershipService;
     }
 
     @Override
@@ -81,7 +68,7 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
             }
         }
 
-        String[] jwtClaims = extractJwtClaims(request.getHeader("Authorization"));
+        String[] jwtClaims = JwtClaimUtils.extractPlanAndUserId(request.getHeader("Authorization"));
         if (jwtClaims == null) return true; // unauthenticated — let security filters handle it
 
         String plan = jwtClaims[0];
@@ -91,7 +78,7 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         if (!"FREE".equalsIgnoreCase(plan)) return true;
 
         // FREE plan: workspace owners can edit their own content
-        if (userId != null && isWorkspaceOwner(userId, path, request.getParameter("workspaceId"))) {
+        if (workspaceOwnershipService.isFreePlanUserOwner(userId, path, request.getParameter("workspaceId"))) {
             return true;
         }
 
@@ -99,58 +86,11 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         response.setContentType("application/json");
         response.getWriter().write(
-            "{\"error\":\"Your current plan is Free. Upgrade to Pro to edit ontologies.\"," +
+            "{\"error\":\"Your current plan is Free. Upgrade to Pro to import or edit ontologies. " +
+            "Opening a file imports it into the graph first (same permission gate). " +
+            "Workspace owners: open files from your Project Library so your project id is recognized.\"," +
             "\"requiresUpgrade\":true}"
         );
         return false;
-    }
-
-    private boolean isWorkspaceOwner(String userId, String path, String workspaceIdParam) {
-        String workspaceId = workspaceIdParam;
-        if (workspaceId == null || workspaceId.isBlank()) {
-            workspaceId = resolveWorkspaceFromPath(path);
-        }
-        if (workspaceId == null) return false; // Can't determine workspace — deny
-        Optional<WorkspaceDocument> wsOpt = workspaceRepository.findByWorkspaceId(workspaceId);
-        return wsOpt.isPresent() && userId.equals(wsOpt.get().getOwnerId());
-    }
-
-    private String[] extractJwtClaims(String authHeader) {
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
-        String[] parts = authHeader.substring(7).split("\\.");
-        if (parts.length != 3) return null;
-        try {
-            byte[] decoded = Base64.getUrlDecoder().decode(parts[1]);
-            JsonNode claims = MAPPER.readTree(decoded);
-            String plan = claims.has("plan") ? claims.get("plan").asText() : "FREE";
-            String userId = claims.has("userId") ? claims.get("userId").asText() : null;
-            return new String[]{plan, userId};
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private String resolveWorkspaceFromPath(String uri) {
-        if (uri == null) return null;
-        try {
-            String decoded = URLDecoder.decode(uri, StandardCharsets.UTF_8);
-            for (String segment : decoded.split("/")) {
-                if (!segment.startsWith("proj-")) continue;
-                Optional<ProjectDocument> doc = projectRepository.findById(segment);
-                if (doc.isPresent() && doc.get().getWorkspaceId() != null) {
-                    return doc.get().getWorkspaceId();
-                }
-                if (segment.contains("--")) {
-                    String parentId = segment.substring(0, segment.indexOf("--"));
-                    doc = projectRepository.findById(parentId);
-                    if (doc.isPresent() && doc.get().getWorkspaceId() != null) {
-                        return doc.get().getWorkspaceId();
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.debug("Could not resolve workspaceId from path {}: {}", uri, e.getMessage());
-        }
-        return null;
     }
 }

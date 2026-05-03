@@ -746,6 +746,8 @@ const AppContent = () => {
           projectId: projectId,
           fileName: pendingFile.fileName,
           fileContent: pendingFile.fileContent,
+          ownerEmail: user.email || undefined,
+          workspaceId: user.workspaceId || undefined,
           skipDuplicateCheck: false,
         });
       } else {

@@ -7513,6 +7513,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           fileName: fileName,
           fileContent: base64Data,
           ownerEmail: resolvedEmail || undefined,
+          workspaceId: user?.workspaceId || undefined,
           skipDuplicateCheck: isWorkspaceFile,
           forceUpload: true, // Dashboard already confirmed GraphDB is empty; skip status cache check
           importMode,
@@ -7536,7 +7537,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }, 1000);
       }
     },
-    [initialProjectId, resolveUserEmail, importMode, partitionStrategy, fetchData],
+    [initialProjectId, resolveUserEmail, user?.workspaceId, importMode, partitionStrategy, fetchData],
   );
 
   // Create Property from Class Expression Dialog
