@@ -55,6 +55,7 @@ public class GraphGeneratingService {
                 case "objectProperty": return "#50C878";
                 case "dataProperty": return "#F39C12";
                 case "individual": return "#E74C3C";
+                case "annotationProperty": return "#9B59B6";
                 default: return "#95A5A6";
             }
         }

@@ -381,8 +381,8 @@ public class ProjectService {
         if (project.hasMember(userId)) {
             return true;
         }
-        // Only workspace OWNERs can bypass explicit project membership.
-        // Admins see only the projects they are explicitly a member of.
+        // Workspace OWNER or ADMIN can access any non-private (shared) project.
+        // A project is considered private when it has only 1 member (the creator).
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
         if (workspaceOpt.isPresent()) {
             Workspace workspace = workspaceOpt.get();
@@ -391,7 +391,10 @@ public class ProjectService {
             }
             Workspace.WorkspaceMember wsMember = workspace.getMember(userId);
             if (wsMember != null) {
-                return wsMember.getRole() == Workspace.WorkspaceRole.OWNER;
+                boolean isOwnerOrAdmin = wsMember.getRole() == Workspace.WorkspaceRole.OWNER
+                        || wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
+                // Grant access only to shared (non-private) projects
+                return isOwnerOrAdmin && project.getMembers().size() > 1;
             }
         }
         return false;

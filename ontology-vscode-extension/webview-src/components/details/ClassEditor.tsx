@@ -1118,6 +1118,11 @@ const ClassEditor: React.FC<{
         return;
       }
 
+      if (!item.id) {
+        alert("Cannot add axiom: class IRI is not yet available. Please wait for the class to finish loading.");
+        return;
+      }
+
       // Check if definition is a simple class IRI (starts with http:// or urn:)
       // For simple IRIs, use the specific mutation methods that work with the backend
       const isSimpleIRI =
@@ -1178,6 +1183,14 @@ const ClassEditor: React.FC<{
           throw mutationError;
         }
       } else {
+        if (!item.id) {
+          alert("Cannot add axiom: class IRI is not yet available. Please wait for the class to finish loading.");
+          return;
+        }
+        if (!definition.trim()) {
+          alert("Cannot add axiom: expression is empty.");
+          return;
+        }
         // For complex Manchester Syntax expressions, use addAxiom (requires backend Manchester parser)
         await ontologyMutationService.addAxiom(projectId, item.id, type, definition);
       }

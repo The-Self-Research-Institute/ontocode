@@ -74,6 +74,8 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
   const stompClientRef = useRef<Client | null>(null);
   const subscriptionsRef = useRef<Map<string, StompSubscription>>(new Map());
   const currentProjectRef = useRef<string | null>(null);
+  // Ref so handlePresenceUpdate can call addNotification before its declaration
+  const addNotificationRef = useRef<((n: Omit<EditNotification, "id">) => void) | null>(null);
   //   const activeUsersIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Standalone REST fetch for active users — works regardless of WebSocket status
@@ -145,6 +147,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
 
     const client = new Client({
       webSocketFactory: () => new SockJS(sockJsUrl) as any,
+      connectHeaders: { Authorization: `Bearer ${user.token}` },
       debug: () => {},
       reconnectDelay: 2000,
       heartbeatIncoming: 4000,
@@ -165,6 +168,20 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
             }
           });
           subscriptionsRef.current.set("shares", sub);
+        }
+
+        // Subscribe to workspace-level events (project created/deleted by others)
+        if (user.workspaceId) {
+          const wsSub = client.subscribe(`/topic/workspace/${user.workspaceId}`, (msg) => {
+            try {
+              const event = JSON.parse(msg.body);
+              console.log("[CollaborationContext] 🏢 Workspace event:", event);
+              window.dispatchEvent(new CustomEvent("workspaceEvent", { detail: event }));
+            } catch (e) {
+              console.error("[CollaborationContext] Workspace event parse error:", e);
+            }
+          });
+          subscriptionsRef.current.set("workspace", wsSub);
         }
 
         // If we already have a project selected, join it
@@ -219,11 +236,19 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       const userId = user?.userId || user?.username || "";
       const username = user?.username || "";
 
+      // Metadata events must sync across all devices for the same user
+      const METADATA_EVENT_TYPES = new Set([
+        "ONTOLOGY_ANNOTATION_ADDED", "ONTOLOGY_ANNOTATION_MODIFIED", "ONTOLOGY_ANNOTATION_DELETED",
+        "IMPORT_ADDED", "IMPORT_REMOVED", "GCI_ADDED", "GCI_REMOVED",
+      ]);
+
       // Edits
       const editSub = client.subscribe(`/topic/ontology/${projectId}`, (msg) => {
         try {
           const edit = JSON.parse(msg.body);
-          if (edit.userId === userId) return; // ignore own edits
+          // Skip own non-metadata edits (avoid echo). Metadata events always propagate
+          // so that the same user on a second device sees annotation/import/GCI changes.
+          if (edit.userId === userId && !METADATA_EVENT_TYPES.has(edit.type)) return;
           console.log("[CollaborationContext] 📝 Remote edit:", edit);
           handleRemoteEdit(edit);
         } catch (e) {
@@ -396,6 +421,8 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
   }, []);
 
   const handlePresenceUpdate = useCallback((presence: any) => {
+    const currentUserId = user?.userId || user?.username;
+
     setState((prev) => {
       const newUsers = new Map(prev.activeUsers);
 
@@ -409,7 +436,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
             username: presence.username,
             color: presence.color || "#888888",
             lastActivity: presence.timestamp,
-            projectId: presence.projectId, // Track which project user is viewing
+            projectId: presence.projectId,
             cursorPosition: presence.cursorPosition,
             selectedNodes: presence.selectedNodes,
           });
@@ -420,12 +447,32 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
           break;
       }
 
-      return {
-        ...prev,
-        activeUsers: newUsers,
-      };
+      return { ...prev, activeUsers: newUsers };
     });
-  }, []);
+
+    // Notify on join/leave — skip for current user
+    if (presence.userId !== currentUserId && addNotificationRef.current) {
+      if (presence.type === "USER_JOINED") {
+        addNotificationRef.current({
+          type: "info" as any,
+          message: `${presence.username || "A collaborator"} joined the session`,
+          userId: presence.userId,
+          username: presence.username,
+          userColor: presence.color || "#888888",
+          timestamp: presence.timestamp,
+        });
+      } else if (presence.type === "USER_LEFT") {
+        addNotificationRef.current({
+          type: "info" as any,
+          message: `${presence.username || "A collaborator"} left the session`,
+          userId: presence.userId,
+          username: presence.username,
+          userColor: "#888888",
+          timestamp: presence.timestamp,
+        });
+      }
+    }
+  }, [user?.userId, user?.username]);
 
   const handleLockUpdate = useCallback((lock: any) => {
     setState((prev) => {
@@ -515,6 +562,8 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       removeNotification(id);
     }, 5000);
   }, []);
+  // Keep the ref current so handlePresenceUpdate (declared above) can call it
+  addNotificationRef.current = addNotification;
 
   const removeNotification = useCallback((id: string) => {
     setState((prev) => ({

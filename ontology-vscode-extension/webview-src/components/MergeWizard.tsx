@@ -184,7 +184,8 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
       setStep(2);
     } catch (error: any) {
       console.error("Error analyzing ontologies:", error);
-      alert("Analysis failed: " + (error.message || "Unknown error"));
+      const errMsg = error?.response?.data?.error || error?.data?.error || error?.message || "Unknown error";
+      alert("Analysis failed: " + errMsg);
     } finally {
       setAnalyzing(false);
     }
@@ -287,7 +288,8 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
       setStep(4);
     } catch (error: any) {
       console.error("Error merging ontologies:", error);
-      alert("Merge failed: " + (error.message || "Unknown error"));
+      const errMsg = error?.response?.data?.error || error?.data?.error || error?.message || "Unknown error";
+      alert("Merge failed: " + errMsg);
     } finally {
       setMerging(false);
     }
