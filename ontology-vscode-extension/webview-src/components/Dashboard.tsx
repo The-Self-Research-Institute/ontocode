@@ -2045,9 +2045,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const { actualMode } = useTheme();
   const subscription = useSubscription();
   const readonlyMode = false; // Allow editing by default
-  // FREE plan members (non-owners inside a workspace) are view-only
-  // FREE plan members (non-owners inside a workspace) are view-only
-  const isViewOnlyMember = !subscription.canAccessFeature('hasAdvancedCollaboration') && user?.workspaceRole != null && user.workspaceRole !== "OWNER";
+  // FREE plan members (non-owners inside a workspace) are view-only.
+  // PRO plan allows members and admins to edit.
+  const isViewOnlyMember = (subscription.isFree && user?.workspaceRole != null && user.workspaceRole !== "OWNER") || user?.workspaceRole === "VIEWER";
   const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | null>(null);
   const handleViewOnlyAction = () => setShowProPromptType('edit');
   const handleExportProAction = () => setShowProPromptType('export');
@@ -14238,7 +14238,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         onClose={() => setIsReasonerSettingsOpen(false)}
       />
 
-      <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
+      {/* Mobile scroll fix: avoid h-screen/max-h-screen (100vh) which can lock scroll on mobile browsers */}
+      <div className="min-h-[100dvh] bg-gray-50 flex flex-col text-sm">
         {/* Persistent background import progress banner */}
         {backgroundImportActive && (
           <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-blue-800 text-xs z-40 shrink-0">
@@ -14465,47 +14466,50 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
         )}
 
-        <main className="flex flex-1 overflow-hidden">
+        {/* Mobile: stack hierarchy above details and allow page scrolling */}
+        <main className="flex flex-1 flex-col md:flex-row overflow-y-auto md:overflow-hidden">
           {mainTab === "Entities" ? (
             <>
-              <EntityHierarchy
-                entitiesTab={entitiesTab}
-                filteredData={filteredData}
-                selectedItem={selectedItem}
-                expandedNodes={expandedNodes}
-                searchQuery={searchQuery}
-                onSearchQueryChange={setSearchQuery}
-                searchOptions={searchOptions}
-                onSearchOptionsChange={setSearchOptions}
-                onSelectItem={setSelectedItem}
-                onToggleNode={toggleNode}
-                onAddItem={handleAddItem}
-                onDeleteItem={handleDeleteItem}
-                onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
-                onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
-                onRenameItem={handleRenameItem}
-                onQuickSetParent={(item) => {
-                  setQuickEditParentItem(item);
-                  if (entitiesTab === "Classes") {
-                    setQuickParentDialogOpen(true);
-                  } else if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties") {
-                    setQuickPropertyParentDialogOpen(true);
-                  }
-                }}
-                onQuickAddNote={(item) => {
-                  setQuickEditNoteItem(item);
-                  setQuickNoteDialogOpen(true);
-                }}
-                viewMode={currentHierarchyViewMode}
-                onViewModeChange={setCurrentHierarchyViewMode}
-                isReasonerRunning={isReasonerRunning}
-                loadingNodes={loadingNodes}
-                isViewOnly={isViewOnlyMember}
-                onViewOnlyAction={handleViewOnlyAction}
-              />
+              <div className="w-full md:w-auto md:h-full max-h-[42dvh] md:max-h-none overflow-y-auto md:overflow-visible shrink-0">
+                <EntityHierarchy
+                  entitiesTab={entitiesTab}
+                  filteredData={filteredData}
+                  selectedItem={selectedItem}
+                  expandedNodes={expandedNodes}
+                  searchQuery={searchQuery}
+                  onSearchQueryChange={setSearchQuery}
+                  searchOptions={searchOptions}
+                  onSearchOptionsChange={setSearchOptions}
+                  onSelectItem={setSelectedItem}
+                  onToggleNode={toggleNode}
+                  onAddItem={handleAddItem}
+                  onDeleteItem={handleDeleteItem}
+                  onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
+                  onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
+                  onRenameItem={handleRenameItem}
+                  onQuickSetParent={(item) => {
+                    setQuickEditParentItem(item);
+                    if (entitiesTab === "Classes") {
+                      setQuickParentDialogOpen(true);
+                    } else if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties") {
+                      setQuickPropertyParentDialogOpen(true);
+                    }
+                  }}
+                  onQuickAddNote={(item) => {
+                    setQuickEditNoteItem(item);
+                    setQuickNoteDialogOpen(true);
+                  }}
+                  viewMode={currentHierarchyViewMode}
+                  onViewModeChange={setCurrentHierarchyViewMode}
+                  isReasonerRunning={isReasonerRunning}
+                  loadingNodes={loadingNodes}
+                  isViewOnly={isViewOnlyMember}
+                  onViewOnlyAction={handleViewOnlyAction}
+                />
+              </div>
 
-              <section className="flex-1 overflow-hidden p-2 bg-slate-200 flex flex-col">
-                <div className="flex-1 overflow-hidden flex flex-col">
+              <section className="flex-1 min-w-0 overflow-hidden md:overflow-hidden p-2 bg-slate-200 flex flex-col">
+                <div className="flex-1 min-w-0 overflow-y-auto md:overflow-hidden flex flex-col">
                   <DetailsPanel
                     selectedItem={selectedItem}
                     entitiesTab={entitiesTab}

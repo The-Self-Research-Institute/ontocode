@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy } from "react";
 import { useAuth } from "./custom-hook/useAuth";
 import apiClient, { updateBaseUrl } from "./services/apiClient";
 import { openOntologyFile, fileContentToBase64 } from "./utils/fileAccess";
@@ -10,7 +10,7 @@ import Dashboard from "./components/Dashboard";
 import LoginForm from "./components/LoginForm";
 import SignupForm from "./components/SignupForm";
 import DeploymentSelector from "./components/DeploymentSelector";
-import WorkspaceSelection from "./components/WorkspaceSelection";
+const WorkspaceSelection = lazy(() => import("./components/WorkspaceSelection"));
 import ProjectDashboard from "./components/ProjectDashboard";
 import ProjectLibrary from "./components/ProjectLibrary";
 import SubscriptionPlanSelection from "./components/SubscriptionPlanSelection";
@@ -20,7 +20,7 @@ import ForgotPasswordForm from "./components/ForgotPasswordForm";
 import ResetPasswordForm from "./components/ResetPasswordForm";
 import { Loader2 } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
-import ManageSubscriptionModal from "./components/ManageSubscriptionModal";
+const ManageSubscriptionModal = lazy(() => import("./components/ManageSubscriptionModal"));
 
 const getInitialInvitationFromLocation = (): { token: string | null; email: string | null } => {
   const pathname = window.location.pathname;
@@ -1178,34 +1178,40 @@ const AppContent = () => {
   if (showWorkspaceSelectionScreen) {
     console.log("[App] 🎨 Rendering WorkspaceSelection component");
     return (
-      <WorkspaceSelection
-        username={user.username}
-        isAdmin={user.isAdmin || false}
-        onWorkspaceSelected={handleWorkspaceSelected}
-        onSkipWorkspace={() => {
-          console.log("[App] 🚀 User chose to continue without workspace");
-          console.log("[App] Current needsWorkspaceSelection:", needsWorkspaceSelection);
-          console.log("[App] Current user:", { email: user?.email, workspaceId: user?.workspaceId });
-          setSkipWorkspaceRequested(true);
-          // Update auth context to skip workspace selection
-          selectWorkspace({ skipWorkspace: true });
-          setForceShowWorkspace(false);
-          setRestoredRoute(null);
-          setSelectedProjectId(null);
-          setSelectedProjectName("");
-          setSelectedFileId("__editor__");
-          setSelectedFileName("");
-          navigateTo({
-            view: "dashboard",
-            projectId: null,
-            projectName: "",
-            fileId: "__editor__",
-            fileName: "",
-          });
-          console.log("[App] ✅ Continue without workspace now routes to editor");
-        }}
-        onLogout={handleLogout}
-      />
+      <Suspense fallback={
+        <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "var(--color-background)" }}>
+          <Loader2 size={40} className="text-purple-500 animate-spin" />
+        </div>
+      }>
+        <WorkspaceSelection
+          username={user.username}
+          isAdmin={user.isAdmin || false}
+          onWorkspaceSelected={handleWorkspaceSelected}
+          onSkipWorkspace={() => {
+            console.log("[App] 🚀 User chose to continue without workspace");
+            console.log("[App] Current needsWorkspaceSelection:", needsWorkspaceSelection);
+            console.log("[App] Current user:", { email: user?.email, workspaceId: user?.workspaceId });
+            setSkipWorkspaceRequested(true);
+            // Update auth context to skip workspace selection
+            selectWorkspace({ skipWorkspace: true });
+            setForceShowWorkspace(false);
+            setRestoredRoute(null);
+            setSelectedProjectId(null);
+            setSelectedProjectName("");
+            setSelectedFileId("__editor__");
+            setSelectedFileName("");
+            navigateTo({
+              view: "dashboard",
+              projectId: null,
+              projectName: "",
+              fileId: "__editor__",
+              fileName: "",
+            });
+            console.log("[App] ✅ Continue without workspace now routes to editor");
+          }}
+          onLogout={handleLogout}
+        />
+      </Suspense>
     );
   }
 
@@ -1264,20 +1270,22 @@ const AppContent = () => {
           onManageSubscription={hasPaidPlan ? () => setShowManageSubscription(true) : undefined}
         />
         {showManageSubscription && user.workspaceId && (
-          <ManageSubscriptionModal
-            workspace={{
-              workspaceId: user.workspaceId,
-              name: user.workspaceName || "Workspace",
-              subscriptionPlan: user.subscriptionPlan || "FREE",
-              billingStatus: workspaceBillingStatus || "ACTIVE",
-              billingInterval: (user as any).billingInterval || "monthly",
-            }}
-            onClose={() => setShowManageSubscription(false)}
-            onCancelled={() => {
-              setShowManageSubscription(false);
-              setForceShowWorkspace(true);
-            }}
-          />
+          <Suspense fallback={null}>
+            <ManageSubscriptionModal
+              workspace={{
+                workspaceId: user.workspaceId,
+                name: user.workspaceName || "Workspace",
+                subscriptionPlan: user.subscriptionPlan || "FREE",
+                billingStatus: workspaceBillingStatus || "ACTIVE",
+                billingInterval: (user as any).billingInterval || "monthly",
+              }}
+              onClose={() => setShowManageSubscription(false)}
+              onCancelled={() => {
+                setShowManageSubscription(false);
+                setForceShowWorkspace(true);
+              }}
+            />
+          </Suspense>
         )}
       </>
     );

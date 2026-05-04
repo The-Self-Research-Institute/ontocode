@@ -221,7 +221,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
 
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50">
+            <div className="min-h-screen overflow-y-auto flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50 p-6">
                 <div className="text-center">
                     <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-purple-600 mx-auto"></div>
                     <p className="mt-4 text-gray-600">Loading invitation...</p>
@@ -232,7 +232,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
 
     if (error) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50 p-6">
+            <div className="min-h-screen overflow-y-auto flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50 p-6">
                 <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8">
                     <div className="text-center">
                         <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -268,7 +268,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50 p-6">
+        <div className="min-h-screen overflow-y-auto flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50 p-6">
             <div className="max-w-md w-full bg-white rounded-xl shadow-lg overflow-hidden">
                 <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-8 text-white">
                     <div className="text-center">
