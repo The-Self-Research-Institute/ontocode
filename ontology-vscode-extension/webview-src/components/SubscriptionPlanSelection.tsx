@@ -7,7 +7,7 @@ interface SubscriptionPlanSelectionProps {
     username: string;
     workspaceId: string;
     workspaceName: string;
-    onPlanSelected: (planId: string, interval: "monthly" | "annual") => void;
+    onPlanSelected: (planId: string, interval: "monthly" | "annual") => Promise<void> | void;
     onSkip: () => void;
     onLogout: () => void;
 }
@@ -112,8 +112,9 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     onLogout,
 }) => {
     const [selectedPlan, setSelectedPlan] = useState<string>('PRO');
-    const [billingInterval, setBillingInterval] = useState<BillingInterval>('annual');
+    const [billingInterval, setBillingInterval] = useState<BillingInterval>('monthly');
     const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
 
     const { getPricing, trialPeriodDays } = usePlanPricing();
     const plans = PLANS.map(plan => {
@@ -143,12 +144,19 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     const discountPercentages = plans.filter(p => p.monthlyPrice > 0).map(getDiscountPercent);
     const maxDiscount = discountPercentages.length > 0 ? Math.max(...discountPercentages) : 0;
 
-    const handleContinue = () => {
-        onPlanSelected(selectedPlan, billingInterval);
+    const handleContinue = async () => {
+        setIsProcessing(true);
+        try {
+            await onPlanSelected(selectedPlan, billingInterval);
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     const selectedPlanData = plans.find(p => p.id === selectedPlan);
     const selectedDiscount = selectedPlanData ? getDiscountPercent(selectedPlanData) : 0;
+    
+    // Ensure badgeDiscount uses live data and falls back to max discount if selected has none
     const badgeDiscount = selectedDiscount > 0 ? selectedDiscount : maxDiscount;
 
     return (
@@ -220,13 +228,15 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                             }`}
                         >
                             Annual
-                            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
-                                billingInterval === 'annual'
-                                    ? 'bg-green-500 text-white'
-                                    : 'bg-green-600/30 text-green-400'
-                            }`}>
-                                Save {badgeDiscount}%
-                            </span>
+                            {badgeDiscount > 0 && (
+                                <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
+                                    billingInterval === 'annual'
+                                        ? 'bg-green-500 text-white'
+                                        : 'bg-green-600/30 text-green-400'
+                                }`}>
+                                    Save {badgeDiscount}%
+                                </span>
+                            )}
                         </button>
                     </div>
                 </div>
@@ -234,7 +244,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 {/* Plan cards */}
                 <div className="flex-1 flex items-start justify-center">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl w-full">
-                        {PLANS.map((plan) => {
+                        {plans.map((plan) => {
                             const isSelected = selectedPlan === plan.id;
                             const savings = getAnnualSavings(plan);
                             const price = getDisplayPrice(plan);
@@ -363,12 +373,17 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                         </button>
                         <button
                             onClick={handleContinue}
-                            className="px-7 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg shadow-violet-500/30 text-sm"
+                            disabled={isProcessing}
+                            className="px-7 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg shadow-violet-500/30 text-sm disabled:opacity-50"
                         >
-                            {selectedPlanData?.monthlyPrice === 0
-                                ? `Continue with ${selectedPlanData.name}`
-                                : `Start free trial — ${selectedPlanData?.name}`}
-                            <ArrowRight size={15} />
+                            {isProcessing ? "Processing..." : (
+                                <>
+                                    {selectedPlanData?.monthlyPrice === 0
+                                        ? `Continue with ${selectedPlanData.name}`
+                                        : `Start free trial — ${selectedPlanData?.name}`}
+                                    <ArrowRight size={15} />
+                                </>
+                            )}
                         </button>
                     </div>
 

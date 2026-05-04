@@ -201,6 +201,48 @@ public class AuthController {
     }
 
     /**
+     * Refresh JWT token endpoint
+     * Generates a fresh token with current roles and subscription status
+     */
+    @GetMapping("/refresh")
+    public ResponseEntity<?> refreshToken(HttpServletRequest request) {
+        try {
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+            }
+            
+            String token = authHeader.substring(7);
+            String username = jwtUtil.extractUsername(token);
+            
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
+            
+            User user = userOpt.get();
+            UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+            
+            // Generate fresh token with current subscription plan
+            String newJwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
+            
+            boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
+            
+            return ResponseEntity.ok(Map.of(
+                "jwt", newJwt,
+                "username", user.getUsername(),
+                "email", user.getEmail(),
+                "roles", user.getRoles(),
+                "isAdmin", isAdmin,
+                "subscriptionPlan", user.getSubscriptionPlanName()
+            ));
+        } catch (Exception e) {
+            log.error("Token refresh failed", e);
+            return ResponseEntity.status(401).body(Map.of("error", "Failed to refresh session: " + e.getMessage()));
+        }
+    }
+
+    /**
      * Signup endpoint
      * Features: Email verification, password validation, audit logging
      */

@@ -156,6 +156,7 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
     onClose,
 }) => {
     const stripePromise = useMemo(() => loadStripe(publishableKey), [publishableKey]);
+    const { trialPeriodDays } = usePlanPricing();
 
     const options: StripeElementsOptions = {
         clientSecret,

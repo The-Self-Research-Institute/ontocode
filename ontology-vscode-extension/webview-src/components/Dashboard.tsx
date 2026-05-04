@@ -1237,7 +1237,7 @@ const TopMenuBar = ({
                             onClick={async (e) => {
                               e.preventDefault();
                               if (!currentProjectId) return;
-                              if (subscription?.isFree) {
+                              if (!subscription.canAccessFeature('hasMultipleExportFormats')) {
                                 onExportProAction?.();
                                 return;
                               }
@@ -2046,7 +2046,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const subscription = useSubscription();
   const readonlyMode = false; // Allow editing by default
   // FREE plan members (non-owners inside a workspace) are view-only
-  const isViewOnlyMember = subscription.isFree && user?.workspaceRole != null && user.workspaceRole !== "OWNER";
+  // FREE plan members (non-owners inside a workspace) are view-only
+  const isViewOnlyMember = !subscription.canAccessFeature('hasAdvancedCollaboration') && user?.workspaceRole != null && user.workspaceRole !== "OWNER";
   const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | null>(null);
   const handleViewOnlyAction = () => setShowProPromptType('edit');
   const handleExportProAction = () => setShowProPromptType('export');
@@ -2532,6 +2533,15 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
+
+  // Auto-close collaboration panel if permissions are lost (downgrade/expiration)
+  useEffect(() => {
+    if (showCollaborationPanel && isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')) {
+      console.log("[Dashboard] 🛡️ Closing collaboration panel due to permission change");
+      setShowCollaborationPanel(false);
+      showToast("Collaboration is no longer available on your current plan. Upgrade to resume.", "info");
+    }
+  }, [subscription, isCloudDeployment, showCollaborationPanel]);
 
   const [visibleMainTabs, setVisibleMainTabs] = useState([
     "ActiveOntology",
@@ -14339,20 +14349,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                       isCloudDeployment,
                     });
 
-                    // Only cloud deployment with free version doesn't have access to collaboration
-                    if (isCloudDeployment && subscription.isFree) {
+                    // Check for collaboration access using the standardized hook
+                    if (isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')) {
                       showToast(
                         "Collaboration is only available in Pro and Enterprise plans. Upgrade to enable real-time collaboration.",
                         "warning",
                       );
                       return;
                     }
-
+                    
                     setShowCollaborationPanel(!showCollaborationPanel);
                   }}
                   // disabled={isCloudDeployment && subscription.isFree}
                   className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
-                    isCloudDeployment && subscription.isFree
+                    isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')
                       ? "bg-gray-100 text-gray-400 cursor-not-allowed opacity-50"
                       : showCollaborationPanel
                         ? "bg-blue-600 text-white hover:bg-blue-700"
@@ -14361,14 +14371,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                           : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                   }`}
                   title={
-                    isCloudDeployment && subscription.isFree
+                    isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')
                       ? "Collaboration is only available in Pro and Enterprise plans"
                       : `Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? " (Shared file)" : " (Enable sharing to collaborate)"}`
                   }
                 >
                   <Users size={14} />
                   <span>Collaboration</span>
-                  {isCloudDeployment && subscription.isFree && (
+                  {isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration') && (
                     <span className="bg-amber-500 text-white text-[10px] px-1 rounded">PRO</span>
                   )}
                   {hasMultipleActiveUsers && (
