@@ -279,7 +279,35 @@ public class WorkspaceController {
 
             String plan = request.getSubscriptionPlan();
             String currentPlan = workspace.getSubscriptionPlan();
-            
+
+            // ── UPGRADE GUARD ──────────────────────────────────────────
+            // Upgrading to a paid plan (PRO/ENTERPRISE) requires an active
+            // Stripe subscription on the user's account.  The proper flow is:
+            //   1. Frontend collects card via SetupIntent
+            //   2. POST /api/billing/subscribe creates the Stripe subscription
+            //   3. StripeService updates User + syncs workspaces automatically
+            // This endpoint should only be used for DOWNGRADES or internal sync.
+            if (isUpgrade(currentPlan, plan)) {
+                String stripeStatus = user.getSubscriptionStatus();
+                String stripePlan  = user.getSubscriptionPlanName();
+                boolean hasActiveStripeSub =
+                        user.getStripeSubscriptionId() != null
+                        && ("active".equalsIgnoreCase(stripeStatus) || "trialing".equalsIgnoreCase(stripeStatus))
+                        && stripePlan != null
+                        && planTier(stripePlan) >= planTier(plan);
+
+                if (!hasActiveStripeSub) {
+                    log.warn("Blocked direct upgrade for workspace {} — user {} has no matching Stripe subscription (status={}, stripePlan={})",
+                            workspaceId, username, stripeStatus, stripePlan);
+                    return ResponseEntity.status(402).body(Map.of(
+                        "error", "Payment required. Please complete the billing setup to upgrade your plan.",
+                        "requiresBilling", true,
+                        "currentPlan", currentPlan != null ? currentPlan : "FREE",
+                        "requestedPlan", plan
+                    ));
+                }
+            }
+
             // Validate downgrade constraints
             if (isDowngrade(currentPlan, plan)) {
                 // Check if current workspace/member count exceeds new plan limits
@@ -870,6 +898,16 @@ public class WorkspaceController {
             case "ENTERPRISE" -> 3;
             default -> 0;
         };
+    }
+
+    private boolean isUpgrade(String currentPlan, String newPlan) {
+        if (currentPlan == null) currentPlan = "FREE";
+        return getPlanRank(newPlan) > getPlanRank(currentPlan);
+    }
+
+    /** Returns numeric tier for a plan name (used to compare Stripe account plan vs requested workspace plan). */
+    private int planTier(String plan) {
+        return getPlanRank(plan);
     }
     
     /**

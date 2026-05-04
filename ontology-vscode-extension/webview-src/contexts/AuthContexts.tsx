@@ -1,4 +1,4 @@
-﻿
+
 import React, { createContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import apiClient from '../services/apiClient';
 
@@ -29,6 +29,7 @@ interface AuthContextType {
     switchWorkspace: () => void;
     updateSubscriptionPlan: (planId: string) => Promise<void>;
     updateUserRole: (deploymentType: 'self-hosted' | 'cloud') => Promise<void>;
+    refreshPermissions: () => Promise<void>;
     logout: () => void;
     sessionExpiredMessage: string | null;
 }
@@ -812,6 +813,49 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
+    const refreshPermissions = async () => {
+        try {
+            console.log('[AuthContext] 🔄 Refreshing permissions from server...');
+            const response = await apiClient.get('/api/auth/refresh');
+            const data = response?.data || response;
+            
+            const newToken = data.jwt;
+            if (newToken) {
+                console.log('[AuthContext] ✅ Received fresh JWT after refresh');
+                localStorage.setItem('authToken', newToken);
+                if (window.vscode) {
+                    window.vscode.postMessage({ type: 'saveAuthToken', token: newToken });
+                }
+                
+                const userInfo = decodeToken(newToken);
+                setUser({
+                    token: newToken,
+                    userId: userInfo.userId || user?.userId,
+                    username: userInfo.username || user?.username || 'unknown',
+                    email: userInfo.email || user?.email,
+                    roles: userInfo.roles || user?.roles || [],
+                    isAdmin: userInfo.isAdmin || user?.isAdmin || false,
+                    workspaceId: userInfo.workspaceId || user?.workspaceId,
+                    workspaceName: userInfo.workspaceName || user?.workspaceName,
+                    workspaceRole: userInfo.workspaceRole || user?.workspaceRole,
+                    subscriptionPlan: userInfo.subscriptionPlan || user?.subscriptionPlan
+                });
+                
+                // Update needsWorkspaceSelection based on new token info
+                const deploymentType = getStoredDeploymentType();
+                const requiresWorkspace = shouldRequireWorkspaceSelection(
+                    deploymentType,
+                    userInfo.isAdmin || (userInfo.roles && userInfo.roles.includes('ROLE_ADMIN')),
+                    userInfo.workspaceId
+                );
+                setNeedsWorkspaceSelection(requiresWorkspace);
+            }
+        } catch (error) {
+            console.error('[AuthContext] ❌ Failed to refresh permissions:', error);
+            // Don't throw here, just log it. If the refresh fails, we keep the current state.
+        }
+    };
+
     const updateUserRole = async (deploymentType: 'self-hosted' | 'cloud') => {
         if (!user) {
             throw new Error('No user logged in');
@@ -877,6 +921,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         switchWorkspace,
         updateSubscriptionPlan,
         updateUserRole,
+        refreshPermissions,
         logout: () => logout(false),
         sessionExpiredMessage,
     };

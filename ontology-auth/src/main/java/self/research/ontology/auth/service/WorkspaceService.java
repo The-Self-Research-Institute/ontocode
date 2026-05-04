@@ -128,8 +128,8 @@ public class WorkspaceService {
 
     /**
      * Synchronize all workspaces owned by a user with their current account plan details.
-     * This is a "Model C" approach where account status is the source of truth but
-     * workspaces maintain redundant fields for simplified performance.
+     * This follows "Model B" (Account-Level Billing) where the user's account status is the 
+     * source of truth and workspaces dynamically inherit premium features.
      */
     public void syncWorkspacesToOwnerPlan(User owner) {
         if (owner == null) return;

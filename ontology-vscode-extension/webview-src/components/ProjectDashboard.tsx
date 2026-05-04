@@ -160,12 +160,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   // Handle workspace subscription plan upgrade
   const handleUpgradePlan = async (planId: string) => {
     setUpgradingPlan(true);
+    const upperCasePlan = planId.toUpperCase();
     try {
-      // Convert plan ID to uppercase (backend expects FREE, PRO, ENTERPRISE)
-      const upperCasePlan = planId.toUpperCase();
       console.log("[ProjectDashboard] Upgrading plan from", subscription.plan, "to", upperCasePlan);
 
-      // Update subscription plan (this calls the API and updates user state)
+      // Attempt to update subscription plan (backend will validate Stripe subscription)
       await updateSubscriptionPlan(upperCasePlan);
 
       // Close modal
@@ -178,7 +177,30 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       await loadData();
     } catch (error: any) {
       console.error("Failed to upgrade workspace plan:", error);
-      showToast(error?.response?.data?.error || "Failed to upgrade plan. Please try again.", "error");
+      const errMsg = error?.error || error?.data?.error || error?.response?.data?.error || error?.message || "";
+      const requiresBilling = error?.data?.requiresBilling || error?.requiresBilling || error?.response?.data?.requiresBilling;
+
+      console.log("[ProjectDashboard] Upgrade error analysis:", { requiresBilling, errMsg });
+
+      if (requiresBilling || errMsg.toLowerCase().includes("payment required")) {
+        // Backend requires Stripe billing setup — redirect user to workspace selection
+        // which contains the card collection + subscription flow
+        console.log("[ProjectDashboard] Redirecting to billing setup. Setting localStorage intent.");
+        setShowPlanDetails(false);
+        showToast("Redirecting to billing setup...", "info");
+        // Store intent so WorkspaceSelection can automatically pop the billing modal
+        localStorage.setItem("pendingUpgradeWorkspaceId", user?.workspaceId || "");
+        localStorage.setItem("pendingUpgradePlan", upperCasePlan);
+        // Use switchWorkspace to go back to workspace selection (which has the Stripe flow)
+        setTimeout(() => {
+          console.log("[ProjectDashboard] Executing switchWorkspace to trigger redirect");
+          switchWorkspace();
+        }, 500);
+      } else {
+        console.log("[ProjectDashboard] Showing standard error toast");
+        showToast(errMsg || "Failed to upgrade plan. Please try again.", "error");
+      }
+    } finally {
       setUpgradingPlan(false);
     }
   };
