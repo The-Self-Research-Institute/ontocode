@@ -801,7 +801,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-screen overflow-y-auto bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
         <div className="text-center">
           <div className="w-20 h-20 rounded-2xl flex items-center justify-center shadow-lg mx-auto mb-6 bg-gradient-to-br from-purple-500 to-indigo-600">
             <Loader2 size={40} className="text-white animate-spin" />
@@ -814,7 +814,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   }
 
   return (
-    <div className="dark-surface min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+    <div className="dark-surface min-h-screen overflow-y-auto bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
 
       {/* Account-level Manage Billing Modal (for existing PRO/ENTERPRISE subscribers) */}
       {showManageAccount && accountSubscription && (

@@ -58,11 +58,11 @@ public class PlanFeatureConfigService {
                 "DL Query & reasoning",
                 "Import OWL/TTL/RDF files",
                 "Custom plugin support",
-                "Community support"
+                "Invite and manage members",
             ),
             List.of(
-                "Invited members are view-only",
-                "No shared editing for members"
+                'No team collaboration', 
+                'No shared editing'
             )
         );
         upsertConfig("PRO", defaultProMonthlyPrice, defaultProAnnualDiscountPercent, defaultProMaxMembers,
@@ -71,9 +71,8 @@ public class PlanFeatureConfigService {
                 "Up to 10 team members",
                 "100 GB storage shared across workspaces",
                 "Everything in Free",
-                "Full editing access for all members",
-                "Invite & manage members",
-                "Priority email support",
+                "Team collaboration enabled",
+                "Shared editing in workspaces",
                 "Export to multiple formats"
             ),
             List.of()
@@ -84,7 +83,6 @@ public class PlanFeatureConfigService {
                 "Unlimited workspaces",
                 "Unlimited storage",
                 "Everything in Professional",
-                "Priority support channel",
                 "Early access to new features"
             ),
             List.of()

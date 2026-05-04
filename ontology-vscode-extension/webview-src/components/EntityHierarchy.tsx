@@ -394,7 +394,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   const currentTabConfig = entitiesTabsConfig[entitiesTab as keyof typeof entitiesTabsConfig];
 
   const isPropertyTab = entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties';
-  const sidebarWidthClass = isPropertyTab ? 'w-[26rem] min-w-[24rem]' : 'w-80';
+  // Mobile: use full width so the hierarchy doesn't crush the details panel.
+  // Desktop: keep the existing sidebar widths.
+  const sidebarWidthClass = isPropertyTab ? 'w-full md:w-[26rem] md:min-w-[24rem]' : 'w-full md:w-80';
   const currentLabel = currentTabConfig?.label || entitiesTab;
 
   return (

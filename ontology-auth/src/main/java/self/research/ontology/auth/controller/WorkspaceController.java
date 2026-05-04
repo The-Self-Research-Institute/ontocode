@@ -172,17 +172,10 @@ public class WorkspaceController {
                 request.getName(), 
                 request.getDescription()
             );
-            
-            // Model B: workspaces are always FREE; features come from user's account plan
-            workspace.setSubscriptionPlan("FREE");
-            workspace.setBillingStatus("ACTIVE");
-            workspace.setSubscriptionStartDate(LocalDateTime.now());
-            boolean hasPaidPlan = "PRO".equals(activeAccountPlan) || "ENTERPRISE".equals(activeAccountPlan);
-            workspace.setCollaborationEnabled(hasPaidPlan);
-            workspace.setMaxMembers(hasPaidPlan ? ("ENTERPRISE".equals(activeAccountPlan) ? Integer.MAX_VALUE : 10) : 3);
+            // WorkspaceService.createWorkspace already stamps subscription/billing fields based on the
+            // owner's account plan/status (Model C / account-inherited workspaces). Do not override
+            // them here; only set the maxWorkspaces (creation quota) on the workspace record.
             workspace.setMaxWorkspaces(maxWorkspaces);
-            
-            // Save updated workspace with subscription plan
             workspace = workspaceService.updateWorkspace(workspace);
 
             return ResponseEntity.ok(Map.of(
@@ -418,7 +411,17 @@ public class WorkspaceController {
             // collaboration features are off but workspace access is still allowed (downgraded to FREE limits).
             // No hard block here; features are gated by workspace.collaborationEnabled.
 
-            // Generate workspace-scoped JWT token with subscription plan
+            // Effective plan for permissions must be the WORKSPACE plan, not the member's personal plan.
+            // Otherwise invited members (often FREE accounts) get a FREE token and are blocked from editing
+            // even inside a PRO workspace.
+            String workspacePlan = workspace.getSubscriptionPlan() != null
+                    ? workspace.getSubscriptionPlan().toUpperCase()
+                    : "FREE";
+            boolean canUsePaidFeatures = Boolean.TRUE.equals(workspace.getCollaborationEnabled())
+                    && ("ACTIVE".equalsIgnoreCase(billingStatus) || "TRIALING".equalsIgnoreCase(billingStatus));
+            String effectivePlan = canUsePaidFeatures ? workspacePlan : "FREE";
+
+            // Generate workspace-scoped JWT token with effective subscription plan
             Map<String, Object> claims = new HashMap<>();
             claims.put("workspaceId", workspaceId);
             claims.put("workspaceName", workspace.getName());
@@ -427,9 +430,8 @@ public class WorkspaceController {
             claims.put("email", user.getEmail());
             claims.put("roles", user.getRoles());
             claims.put("isAdmin", user.getRoles().contains("ROLE_ADMIN"));
-            String userPlan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName().toUpperCase() : "FREE";
-            claims.put("plan", userPlan);
-            claims.put("subscriptionPlan", userPlan); // keep for frontend backward compat
+            claims.put("plan", effectivePlan);
+            claims.put("subscriptionPlan", effectivePlan); // keep for frontend backward compat
             claims.put("billingStatus", billingStatus);
 
             String token = jwtUtil.generateToken(username, claims);
@@ -440,7 +442,7 @@ public class WorkspaceController {
                 "workspaceId", workspaceId,
                 "workspaceName", workspace.getName(),
                 "role", role.toString(),
-                "subscriptionPlan", userPlan,
+                "subscriptionPlan", effectivePlan,
                 "billingStatus", billingStatus
             ));
         } catch (Exception e) {

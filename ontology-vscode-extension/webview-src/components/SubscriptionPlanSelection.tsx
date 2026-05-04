@@ -50,11 +50,12 @@ const PLANS: Plan[] = [
             'DL Query & reasoning',
             'Import OWL/TTL/RDF files',
             'Custom plugin support',
+            'Invite & manage members',
             'Community support',
         ],
         limitations: [
-            'No team collaboration',
-            'No shared editing',
+            'Invited members are view-only',
+            'No shared editing for members',
         ],
         gradient: 'from-slate-500 to-slate-700',
         glowColor: 'shadow-slate-500/30',
@@ -72,9 +73,7 @@ const PLANS: Plan[] = [
             'Up to 10 team members',
             '100 GB storage',
             'Everything in Free',
-            'Team collaboration enabled',
-            'Invite & manage members',
-            'Priority email support',
+            'Role-based editing for members',
             'Export to multiple formats',
         ],
         popular: true,
@@ -95,7 +94,6 @@ const PLANS: Plan[] = [
             'Unlimited workspaces',
             'Unlimited storage',
             'Everything in Professional',
-            'Priority support channel',
             'Early access to new features',
         ],
         gradient: 'from-amber-500 to-orange-600',
@@ -160,7 +158,8 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     const badgeDiscount = selectedDiscount > 0 ? selectedDiscount : maxDiscount;
 
     return (
-        <div className="dark-surface h-screen bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 relative overflow-y-auto">
+        // Mobile scroll fix: avoid `h-screen` (100vh) which can lock scroll on mobile browsers.
+        <div className="dark-surface min-h-[100dvh] bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 relative overflow-y-auto">
             {/* Background orbs */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute -top-32 -right-32 w-96 h-96 bg-violet-600 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" />
