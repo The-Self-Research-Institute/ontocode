@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, Suspense, lazy } from "react";
 import {
   FolderOpen,
   Users,
@@ -41,7 +41,7 @@ import InviteMemberModal from "./InviteMemberModal";
 import SettingsModal from "./SettingsModal";
 import CreateProjectModal from "./CreateProjectModal";
 import ConfirmationModal from "./ConfirmationModal";
-import PlanDetailsModal from "./PlanDetailsModal";
+const PlanDetailsModal = lazy(() => import("./PlanDetailsModal"));
 import { UserGuideModal } from "./UserGuideModal";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { Bug } from "lucide-react";
@@ -748,7 +748,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
+    // Mobile scroll fix:
+    // - Avoid `h-screen` (100vh) + `overflow-hidden` which can lock scrolling on mobile browsers
+    //   when the address bar resizes the viewport.
+    // - Use a min-height container and allow the main region to scroll naturally.
+    <div className="min-h-[100dvh] flex flex-col bg-gray-50 overflow-x-hidden">
       {/* Toast Notification */}
       {toast && (
         <div
@@ -817,8 +821,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       {/* Header */}
       <header className="bg-white border-b border-gray-200 flex-shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 py-3 sm:py-4">
+            <div className="flex items-center gap-3 min-w-0">
               <button
                 onClick={() => {
                   console.log("[ProjectDashboard] 🔙 Back to workspace clicked");
@@ -829,9 +833,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               >
                 <ArrowLeft size={20} />
               </button>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">OntoCode</h1>
-                <p className="text-sm text-gray-500">
+              <div className="min-w-0">
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">OntoCode</h1>
+                <p className="text-xs sm:text-sm text-gray-500 truncate">
                   Welcome, {user?.username}
                   {user?.workspaceName && (
                     <button
@@ -839,17 +843,17 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                         console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (inline)");
                         switchWorkspace();
                       }}
-                      className="ml-2 px-2.5 py-0.5 bg-gradient-to-r from-purple-50 to-indigo-50 text-purple-700 border border-purple-200 rounded-full text-xs hover:from-purple-100 hover:to-indigo-100 hover:border-purple-300 hover:shadow-sm transition-all inline-flex items-center gap-1.5 font-medium"
+                      className="ml-2 px-2.5 py-0.5 bg-gradient-to-r from-purple-50 to-indigo-50 text-purple-700 border border-purple-200 rounded-full text-xs hover:from-purple-100 hover:to-indigo-100 hover:border-purple-300 hover:shadow-sm transition-all inline-flex items-center gap-1.5 font-medium max-w-[55vw] sm:max-w-none"
                       title="Click to switch workspace"
                     >
                       <Building2 size={11} />
-                      {user.workspaceName}
+                      <span className="truncate">{user.workspaceName}</span>
                     </button>
                   )}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap justify-start sm:justify-end w-full sm:w-auto">
               {/* Workspace Subscription Plan Badge */}
               <button
                 onClick={() => setShowPlanDetails(true)}
@@ -934,7 +938,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               </button>
               <button
                 onClick={logout}
-                className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                className="flex items-center gap-2 px-3 sm:px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
               >
                 <LogOut size={20} />
                 Logout
@@ -946,7 +950,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
           {/* Search and View Controls */}
           <div className="flex justify-between items-center mb-6">
             <div className="flex-1 max-w-lg">
@@ -1658,13 +1662,17 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       )}
 
       {/* Plan Details Modal */}
-      <PlanDetailsModal
-        isOpen={showPlanDetails}
-        onClose={() => setShowPlanDetails(false)}
-        onUpgrade={handleUpgradePlan}
-        isUpgrading={upgradingPlan}
-        workspaceId={user?.workspaceId || ''}
-      />
+      {showPlanDetails && (
+        <Suspense fallback={null}>
+          <PlanDetailsModal
+            isOpen={showPlanDetails}
+            onClose={() => setShowPlanDetails(false)}
+            onUpgrade={handleUpgradePlan}
+            isUpgrading={upgradingPlan}
+            workspaceId={user?.workspaceId || ''}
+          />
+        </Suspense>
+      )}
 
       {/* User Guide Modal */}
       <UserGuideModal isOpen={showUserGuide} onClose={() => setShowUserGuide(false)} />

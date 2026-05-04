@@ -18,7 +18,7 @@ const FALLBACK: PricingMap = {
             'Up to 3 workspaces', 'Up to 3 workspace members', '10 GB storage',
             'OWL/RDF ontology editing', 'Class hierarchy & properties',
             'SPARQL query execution', 'SWRL rule editor', 'DL Query & reasoning',
-            'Import OWL/TTL/RDF files', 'Custom plugin support', 'Community support',
+            'Import OWL/TTL/RDF files', 'Custom plugin support', 'Invite & manage members',
         ],
         limitations: ['No team collaboration', 'No shared editing'],
     },
@@ -26,8 +26,7 @@ const FALLBACK: PricingMap = {
         id: 'PRO', monthlyPrice: 29, annualPrice: 24,
         features: [
             'Up to 10 workspaces', 'Up to 10 team members', '100 GB storage',
-            'Everything in Free', 'Team collaboration enabled',
-            'Invite & manage members', 'Priority email support', 'Export to multiple formats',
+            'Everything in Free', 'Team collaboration enabled', 'Export to multiple formats',
         ],
         limitations: [],
     },
@@ -35,7 +34,7 @@ const FALLBACK: PricingMap = {
         id: 'ENTERPRISE', monthlyPrice: 99, annualPrice: 79,
         features: [
             'Unlimited team members', 'Unlimited workspaces', 'Unlimited storage',
-            'Everything in Professional', 'Priority support channel', 'Early access to new features',
+            'Everything in Professional', 'Early access to new features',
         ],
         limitations: [],
     },
