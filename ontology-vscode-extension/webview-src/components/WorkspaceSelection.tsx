@@ -10,6 +10,7 @@ import { getGatewayUrl } from "../config/deploymentConfig";
 import { usePlanPricing } from "../hooks/usePlanPricing";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { validateWorkspaceName, validateDescription } from "../utils/validation";
+import { useAuth } from "../custom-hook/useAuth";
 
 // ─── Payment edge-case helpers ────────────────────────────────────────────────
 
@@ -194,6 +195,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   onSkipWorkspace,
   onLogout,
 }) => {
+  const { user, refreshPermissions } = useAuth();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [selecting, setSelecting] = useState(false);
@@ -253,6 +255,17 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
   // Account-level subscription state (Model B)
   const [accountSubscription, setAccountSubscription] = useState<{ planName: string; status: string; billingInterval: string } | null>(null);
+
+  // Sync accountSubscription with user context (refreshed via JWT)
+  useEffect(() => {
+    if (user?.subscriptionPlan) {
+      setAccountSubscription(prev => ({
+        planName: user.subscriptionPlan || "FREE",
+        status: (user.subscriptionPlan && user.subscriptionPlan !== "FREE") ? "active" : "active",
+        billingInterval: prev?.billingInterval || "monthly"
+      }));
+    }
+  }, [user?.subscriptionPlan]);
   const [showManageAccount, setShowManageAccount] = useState(false);
 
   // Report Issue modal state — available in workspace selection screen
@@ -276,6 +289,44 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   useEffect(() => {
     loadWorkspaces();
   }, []);
+
+  // Handle auto-starting billing checkout from ProjectDashboard redirects
+  useEffect(() => {
+    console.log("[WorkspaceSelection] Auto-checkout effect running. Workspaces:", workspaces.length, "Loading:", loading);
+    if (workspaces.length === 0 || loading) return;
+
+    const pendingUpgradeWorkspaceId = localStorage.getItem("pendingUpgradeWorkspaceId");
+    const pendingUpgradePlan = localStorage.getItem("pendingUpgradePlan");
+
+    console.log("[WorkspaceSelection] Pending upgrade params:", { pendingUpgradeWorkspaceId, pendingUpgradePlan });
+
+    if (pendingUpgradeWorkspaceId && pendingUpgradePlan) {
+      localStorage.removeItem("pendingUpgradeWorkspaceId");
+      localStorage.removeItem("pendingUpgradePlan");
+
+      const targetWs = workspaces.find((w) => w.workspaceId === pendingUpgradeWorkspaceId);
+      console.log("[WorkspaceSelection] Target workspace found:", targetWs);
+      
+      if (targetWs) {
+        // Assume interval from workspace if available, default to monthly
+        const interval = targetWs.billingInterval === "annual" || targetWs.billingInterval === "yearly" ? "annual" : "monthly";
+        
+        console.log("[WorkspaceSelection] Starting billing checkout with:", { pendingUpgradeWorkspaceId, pendingUpgradePlan, interval });
+        // Start billing checkout
+        startBillingCheckout(pendingUpgradeWorkspaceId, pendingUpgradePlan, interval).catch((err) => {
+           console.error("[WorkspaceSelection] Auto-checkout failed:", err);
+           setError(err.message || "Failed to start payment setup");
+        });
+      } else {
+        console.warn("[WorkspaceSelection] Could not find target workspace for auto-checkout:", pendingUpgradeWorkspaceId);
+        // Fallback: try to start checkout anyway without workspace ID (account level)
+        startBillingCheckout("", pendingUpgradePlan, "monthly").catch((err) => {
+           console.error("[WorkspaceSelection] Fallback auto-checkout failed:", err);
+           setError(err.message || "Failed to start payment setup");
+        });
+      }
+    }
+  }, [workspaces, loading]);
 
   useEffect(() => {
     apiClient.get("/api/billing/subscription")
@@ -494,46 +545,33 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   };
 
   const startBillingCheckout = async (workspaceId: string, planName: string, interval: "monthly" | "annual" = "monthly") => {
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${safeGetStorage("authToken") ?? ""}`,
-    };
-
-    let response: Response;
     try {
-      response = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/setup`, { method: "POST", headers });
-      if (!response.ok && response.status === 404) {
-        response = await fetchWithTimeout(`${window.location.origin}/api/billing/setup`, { method: "POST", headers });
+      const response = await apiClient.post("/api/billing/setup", {});
+      const data = response?.data || response;
+
+      if (!data?.clientSecret || !data?.stripePublishableKey) {
+        throw new Error("Missing payment configuration from server");
       }
+
+      setPendingSubParams({ planName, interval, workspaceId });
+      setSetupPublishableKey(data.stripePublishableKey);
+      setSetupClientSecret(data.clientSecret);
     } catch (err: any) {
-      throw new Error(err.message || "Network error. Please check your connection and try again.");
-    }
-
-    if (response.status === 401 || response.status === 403) {
-      setError("Your session has expired. Please sign in again.");
-      onLogout();
-      return;
-    }
-
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      const errMsg = (data?.error ?? "").toLowerCase();
+      if (err?.status === 401 || err?.status === 403 || err?.response?.status === 401 || err?.response?.status === 403) {
+        setError("Your session has expired. Please sign in again.");
+        onLogout();
+        return;
+      }
+      
+      const errMsg = (err?.response?.data?.error || err?.data?.error || err?.message || "").toLowerCase();
       if (errMsg.includes("already") && (errMsg.includes("active") || errMsg.includes("subscription"))) {
         // Already active — just refresh to show current status
         await loadWorkspaces();
         return;
       }
-      throw new Error(data?.error || "Failed to create payment setup");
+      
+      throw new Error(err?.response?.data?.error || err?.data?.error || err?.message || "Failed to create payment setup");
     }
-
-    if (!data?.clientSecret || !data?.stripePublishableKey) {
-      throw new Error("Missing payment configuration from server");
-    }
-
-    setPendingSubParams({ planName, interval, workspaceId });
-    setSetupPublishableKey(data.stripePublishableKey);
-    setSetupClientSecret(data.clientSecret);
   };
 
   const handlePaymentConfirmed = async (
@@ -546,75 +584,57 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     const resolvedInterval = interval ?? pendingSubParams?.interval ?? "monthly";
     const resolvedWorkspace = workspaceId ?? pendingSubParams?.workspaceId ?? "";
 
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${safeGetStorage("authToken") ?? ""}`,
-    };
-
     try {
-      const payload = JSON.stringify({
+      const payload = {
         setupIntentId,
         planName: resolvedPlan,
         interval: resolvedInterval,
         workspaceId: resolvedWorkspace,
-      });
+      };
 
-      let res: Response;
-      try {
-        res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/subscribe`, { method: "POST", headers, body: payload });
-        if (!res.ok && res.status === 404) {
-          res = await fetchWithTimeout(`${window.location.origin}/api/billing/subscribe`, { method: "POST", headers, body: payload });
-        }
-      } catch (err: any) {
-        // Network/timeout — setupIntentId still in localStorage, reload will auto-retry
-        setError(err.message || "Network error. Your card was saved — reload the page to complete activation.");
-        return;
+      const response = await apiClient.post("/api/billing/subscribe", payload);
+      const result = response?.data || response;
+
+      safeRemoveStorage("pendingPaymentRecovery");
+      setSetupClientSecret(null);
+      setPendingSubParams(null);
+
+      // Force refresh JWT token if needed, then reload workspaces to show active status
+      refreshPermissions().catch(() => {});
+      await loadWorkspaces();
+
+      // If we just subscribed a new workspace, automatically select it
+      if (resolvedWorkspace) {
+        await handleSelectWorkspace(resolvedWorkspace);
       }
-
-      if (res.status === 401 || res.status === 403) {
+    } catch (err: any) {
+      if (err?.status === 401 || err?.status === 403 || err?.response?.status === 401 || err?.response?.status === 403) {
         setError("Your session has expired. Please sign in again.");
         onLogout();
         return;
       }
 
-      const result = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        const errMsg = (result?.error ?? "").toLowerCase();
-        // Duplicate tab / retry race — already subscribed, treat as success
-        if (errMsg.includes("already") && (errMsg.includes("active") || errMsg.includes("subscription"))) {
-          safeRemoveStorage("pendingPaymentRecovery");
-          setSetupClientSecret(null);
-          setPendingSubParams(null);
-          apiClient.get("/api/billing/subscription").then((r: any) => {
-            const d = r?.data || r;
-            setAccountSubscription({ planName: d.planName || "FREE", status: d.status || "active", billingInterval: d.billingInterval || "monthly" });
-          }).catch(() => {});
-          await loadWorkspaces();
-          if (resolvedWorkspace) {
-            await handleSelectWorkspace(resolvedWorkspace);
-          }
-          return;
+      const errMsg = (err?.response?.data?.error || err?.data?.error || err?.message || "").toLowerCase();
+      // Duplicate tab / retry race — already subscribed, treat as success
+      if (errMsg.includes("already") && (errMsg.includes("active") || errMsg.includes("subscription"))) {
+        safeRemoveStorage("pendingPaymentRecovery");
+        setSetupClientSecret(null);
+        setPendingSubParams(null);
+        refreshPermissions().catch(() => {});
+        await loadWorkspaces();
+        if (resolvedWorkspace) {
+          await handleSelectWorkspace(resolvedWorkspace);
         }
-        setError(result?.error || "Failed to activate subscription. Please contact support.");
         return;
       }
-
-      // Success — refresh account subscription state and workspaces
-      safeRemoveStorage("pendingPaymentRecovery");
-      setSetupClientSecret(null);
-      setPendingSubParams(null);
-      // Refresh account subscription so button switches to "Manage Billing"
-      apiClient.get("/api/billing/subscription").then((r: any) => {
-        const d = r?.data || r;
-        setAccountSubscription({ planName: d.planName || "FREE", status: d.status || "active", billingInterval: d.billingInterval || "monthly" });
-      }).catch(() => {});
-      await loadWorkspaces();
-      if (resolvedWorkspace) {
-        await handleSelectWorkspace(resolvedWorkspace);
+      
+      // Network/timeout — setupIntentId still in localStorage, reload will auto-retry
+      if (err?.code === "TIMEOUT" || err?.message?.toLowerCase().includes("network")) {
+        setError("Network error. Your card was saved — reload the page to complete activation.");
+        return;
       }
-    } catch (err: any) {
-      setError(err.message || "Failed to activate subscription");
+      
+      setError(err?.response?.data?.error || err?.data?.error || err?.message || "Failed to activate subscription. Please contact support.");
     }
   };
 

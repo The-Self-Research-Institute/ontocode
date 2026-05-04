@@ -873,14 +873,22 @@ const AppContent = () => {
     });
   };
 
-  const handlePlanSelected = async (planId: string) => {
-    console.log("Selected plan:", planId);
+  const handlePlanSelected = async (planId: string, interval: string) => {
+    console.log("Selected plan:", planId, "interval:", interval);
     try {
       // Save plan to backend via auth context
       await updateSubscriptionPlan(planId);
       setShowSubscriptionPlan(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to save subscription plan:", error);
+      const errMsg = error?.error || error?.data?.error || error?.response?.data?.error || error?.message || "";
+      const requiresBilling = error?.data?.requiresBilling || error?.requiresBilling || error?.response?.data?.requiresBilling;
+
+      if (requiresBilling || errMsg.toLowerCase().includes("payment required")) {
+        // Backend requires Stripe billing setup — redirect user to workspace selection
+        setShowSubscriptionPlan(false);
+        setForceShowWorkspace(true);
+      }
     }
   };
 

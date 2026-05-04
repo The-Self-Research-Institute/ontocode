@@ -46,7 +46,7 @@ public class PlanFeatureConfigService {
 
     @PostConstruct
     public void seedDefaults() {
-        seedIfAbsent("FREE", 0, 0, defaultFreeMaxMembers,
+        upsertConfig("FREE", 0, 0, defaultFreeMaxMembers,
             List.of(
                 "Up to 3 workspaces",
                 "Up to 3 workspace members (owner + 2 guests)",
@@ -65,7 +65,7 @@ public class PlanFeatureConfigService {
                 "No shared editing for members"
             )
         );
-        seedIfAbsent("PRO", defaultProMonthlyPrice, defaultProAnnualDiscountPercent, defaultProMaxMembers,
+        upsertConfig("PRO", defaultProMonthlyPrice, defaultProAnnualDiscountPercent, defaultProMaxMembers,
             List.of(
                 "Up to 10 workspaces",
                 "Up to 10 team members",
@@ -78,7 +78,7 @@ public class PlanFeatureConfigService {
             ),
             List.of()
         );
-        seedIfAbsent("ENTERPRISE", defaultEnterpriseMonthlyPrice, defaultEnterpriseAnnualDiscountPercent, defaultEnterpriseMaxMembers,
+        upsertConfig("ENTERPRISE", defaultEnterpriseMonthlyPrice, defaultEnterpriseAnnualDiscountPercent, defaultEnterpriseMaxMembers,
             List.of(
                 "Unlimited team members",
                 "Unlimited workspaces",
@@ -91,14 +91,19 @@ public class PlanFeatureConfigService {
         );
     }
 
-    private void seedIfAbsent(String planId, int monthlyPrice, int annualDiscountPercent, int maxMembers,
+    private void upsertConfig(String planId, int monthlyPrice, int annualDiscountPercent, int maxMembers,
                                List<String> features, List<String> limitations) {
-        if (repo.findByPlanId(planId).isEmpty()) {
-            PlanFeatureConfig config = new PlanFeatureConfig(planId, monthlyPrice, annualDiscountPercent, features, limitations);
-            config.setMaxMembers(maxMembers);
-            repo.save(config);
-            log.info("Seeded plan config for: {} (${}/mo, {} members max)", planId, monthlyPrice, maxMembers);
-        }
+        PlanFeatureConfig config = repo.findByPlanId(planId).orElse(new PlanFeatureConfig(planId, monthlyPrice, annualDiscountPercent, features, limitations));
+        
+        // Always update the prices and limits from environment config
+        config.setMonthlyPrice(monthlyPrice);
+        config.setAnnualDiscountPercent(annualDiscountPercent);
+        config.setMaxMembers(maxMembers);
+        config.setFeatures(features);
+        config.setLimitations(limitations);
+        
+        repo.save(config);
+        log.info("Upserted plan config for: {} (${}/mo, {} members max)", planId, monthlyPrice, maxMembers);
     }
 
     public Map<String, PlanFeatureConfig> getAllByPlanId() {
