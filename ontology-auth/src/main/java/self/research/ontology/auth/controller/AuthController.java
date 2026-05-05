@@ -213,15 +213,15 @@ public class AuthController {
             }
             
             String token = authHeader.substring(7);
-            String username = jwtUtil.extractUsername(token);
+            String email = jwtUtil.extractEmail(token);
             
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            Optional<User> userOpt = userRepository.findByEmail(email);
             if (userOpt.isEmpty()) {
                 return ResponseEntity.notFound().build();
             }
             
             User user = userOpt.get();
-            UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+            UserDetails userDetails = userDetailsService.loadUserByUsername(email);
             
             // Generate fresh token with current subscription plan
             String newJwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
@@ -325,10 +325,10 @@ public class AuthController {
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
 
-        auditService.logEmailVerified(user.getUsername());
+        auditService.logEmailVerified(user.getEmail());
 
         // Generate JWT for auto-login
-        UserDetails userDetails = userDetailsService.loadUserByUsername(user.getUsername());
+        UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
         String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
 
         boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
@@ -464,13 +464,13 @@ public class AuthController {
             @Valid @RequestBody ChangePasswordRequest request,
             @RequestHeader("Authorization") String authHeader) {
         try {
-            // Extract username from JWT token
+            // Extract email from JWT token (subject is now email)
             String token = authHeader.replace("Bearer ", "");
-            String username = jwtUtil.extractUsername(token);
+            String email = jwtUtil.extractEmail(token);
             
-            log.info("Change password request for user: {}", username);
+            log.info("Change password request for user email: {}", email);
 
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            Optional<User> userOpt = userRepository.findByEmail(email);
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of(
                     "error", "User not found"
@@ -481,7 +481,7 @@ public class AuthController {
 
             // Verify current password
             if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPassword())) {
-                log.warn("Invalid current password for user: {}", username);
+                log.warn("Invalid current password for user: {}", user.getUsername());
                 return ResponseEntity.badRequest().body(Map.of(
                     "error", "Current password is incorrect"
                 ));
@@ -508,8 +508,8 @@ public class AuthController {
                 // Don't fail the password change if email fails
             }
 
-            auditService.logPasswordChange(username);
-            log.info("Password changed successfully for user: {}", username);
+            auditService.logPasswordChange(user.getUsername());
+            log.info("Password changed successfully for user: {}", user.getUsername());
 
             return ResponseEntity.ok(Map.of(
                 "message", "Password changed successfully! You will be logged out for security."
@@ -589,7 +589,7 @@ public class AuthController {
             
             // Generate new JWT token with updated roles
             try {
-                UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+                UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
                 String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
                 
                 boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
@@ -639,8 +639,8 @@ public class AuthController {
                 return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
             }
             String token = authHeader.substring(7);
-            String username = jwtUtil.extractUsername(token);
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = jwtUtil.extractEmail(token);
+            Optional<User> userOpt = userRepository.findByEmail(email);
             if (userOpt.isEmpty()) return ResponseEntity.notFound().build();
             User user = userOpt.get();
             Map<String, Object> result = new HashMap<>();
@@ -666,8 +666,8 @@ public class AuthController {
                 return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
             }
             String token = authHeader.substring(7);
-            String username = jwtUtil.extractUsername(token);
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = jwtUtil.extractEmail(token);
+            Optional<User> userOpt = userRepository.findByEmail(email);
             if (userOpt.isEmpty()) return ResponseEntity.notFound().build();
             User user = userOpt.get();
             user.setLastOpenedProjectId(body.get("projectId"));

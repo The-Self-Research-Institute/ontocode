@@ -70,7 +70,7 @@ interface Project {
   updatedAt: string;
 }
 
-interface TeamMember {
+interface WorkspaceMember {
   id: string;
   username: string;
   email: string;
@@ -105,7 +105,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   const subscription = useSubscription();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -150,12 +150,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     type?: "danger" | "warning" | "info";
   } | null>(null);
 
-  // Check if current user is workspace owner
-  // Check both userId match and if user has OWNER role in the workspace
-  const isWorkspaceOwner = user?.userId === workspaceOwnerId || user?.workspaceRole === "OWNER";
-    const isWorkspaceAdmin = user?.workspaceRole === "ADMIN";
-    const canInviteMembers = isWorkspaceOwner || isWorkspaceAdmin;
-  const isViewer = user?.workspaceRole === "VIEWER";
+  const currentUserInTeam = useMemo(() => teamMembers.find(m => m.id === user?.userId || m.email === user?.email || m.username === user?.username), [teamMembers, user]);
+  const isWorkspaceOwner = user?.userId === workspaceOwnerId || user?.workspaceRole?.toUpperCase() === "OWNER" || currentUserInTeam?.roles?.some(r => r.toUpperCase() === "OWNER");
+  const isWorkspaceAdmin = user?.workspaceRole?.toUpperCase() === "ADMIN" || currentUserInTeam?.roles?.some(r => r.toUpperCase() === "ADMIN");
+  const canInviteMembers = isWorkspaceOwner || isWorkspaceAdmin;
+  const isViewer = user?.workspaceRole?.toUpperCase() === "VIEWER" || (!currentUserInTeam?.roles?.some(r => ["OWNER", "ADMIN", "EDITOR"].includes(r.toUpperCase())));
 
   // Handle workspace subscription plan upgrade
   const handleUpgradePlan = async (planId: string) => {
@@ -318,7 +317,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         console.log("[ProjectDashboard] No projects returned from API");
       }
 
-      // Load team members from workspace (includes both active and pending members)
+      // Load workspace members from workspace (includes both active and pending members)
       if (user?.workspaceId) {
         try {
           const workspaceResponse = await apiClient.get(`/api/workspaces/${user.workspaceId}`);
@@ -331,7 +330,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           console.log("[ProjectDashboard] Workspace members from backend:", members);
           console.log("[ProjectDashboard] Workspace owner ID:", workspaceData?.ownerId);
 
-          // Convert workspace members to team members format
+          // Convert workspace members to workspace members format
           // Now includes both ACTIVE and PENDING members from the workspace
           const teamMembersList = members.map((member: any) => {
             // Determine status: if userId is null, it's a pending member
@@ -353,7 +352,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           console.log("[ProjectDashboard] Team members loaded:", activeCount, "active +", pendingCount, "pending");
           setTeamMembers(teamMembersList);
         } catch (error) {
-          console.error("[ProjectDashboard] Error loading team members:", error);
+          console.error("[ProjectDashboard] Error loading workspace members:", error);
         }
       }
     } catch (error) {
@@ -459,7 +458,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
 
     // Prevent removing workspace owner
-    if (member.id === workspaceOwnerId || member.roles.includes("OWNER")) {
+    if (member.roles.some(r => r.toUpperCase() === "OWNER")) {
       showToast("Cannot remove workspace owner. Please transfer ownership or delete the workspace.", "error");
       return;
     }
@@ -472,14 +471,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
     // Show confirmation modal for active members
     showConfirm({
-      title: "Remove Team Member",
+      title: "Remove Workspace Member",
       message: `Are you sure you want to remove ${member.username} (${member.email}) from this workspace? This action cannot be undone.`,
       type: "danger",
       confirmText: "Remove",
       onConfirm: async () => {
         try {
-          console.log("[ProjectDashboard] Removing active member:", member.id, member.email);
-          await apiClient.delete(`/api/workspaces/${user?.workspaceId}/members/${member.id}`);
+          console.log("[ProjectDashboard] Removing active member:", member.email);
+          await apiClient.delete(`/api/workspaces/${user?.workspaceId}/members/${member.email}`);
           showToast(`${member.username} has been removed from the workspace successfully.`, "success");
           await loadData();
         } catch (error: any) {
@@ -696,7 +695,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
   };
 
-  // Get available team members (not already in project)
+  // Get available workspace members (not already in project)
   const getAvailableTeamMembers = () => {
     if (!projectSettingsModal) return [];
 
@@ -748,11 +747,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   }
 
   return (
-    // Mobile scroll fix:
-    // - Avoid `h-screen` (100vh) + `overflow-hidden` which can lock scrolling on mobile browsers
-    //   when the address bar resizes the viewport.
-    // - Use a min-height container and allow the main region to scroll naturally.
-    <div className="min-h-[100dvh] flex flex-col bg-gray-50 overflow-x-hidden">
+    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
       {/* Toast Notification */}
       {toast && (
         <div
@@ -1106,19 +1101,19 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
             </div>
           </div>
 
-          {/* Team Members Section */}
+          {/* Workspace Members Section */}
           <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
                 <Users size={24} className="text-purple-600" />
-                Team Members
-                <span className="text-sm font-normal text-gray-500">({teamMembers.length})</span>
+                Workspace Members
+                <span className="text-sm font-normal text-gray-500">({workspaceMembers.length})</span>
               </h2>
               {!subscription.canAccessFeature("hasBasicCollaboration") ? (
                 // FREE plan — collaboration locked
                 <div
                   className="flex items-center gap-2 px-3 py-2 text-sm border border-purple-200 rounded-lg bg-purple-50 text-purple-500 cursor-not-allowed"
-                  title="Upgrade to Professional to invite team members"
+                  title="Upgrade to Professional to invite workspace members"
                 >
                   <UserPlus size={16} />
                   Invite Member
@@ -1133,9 +1128,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       : ""
                   }`}
                   title={
-                    !subscription.isWithinLimit(teamMembers.length, "maxTeamMembers")
+                    !subscription.isWithinLimit(workspaceMembers.length, "maxTeamMembers")
                       ? `Limit reached (${subscription.limits.maxTeamMembers} members). Upgrade to add more.`
-                      : "Invite a new team member"
+                      : "Invite a new workspace member"
                   }
                 >
                   <UserPlus size={16} />
@@ -1158,7 +1153,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
             <div className="pr-2 custom-scrollbar">
               {teamMembers.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">No team members yet</div>
+                <div className="text-center py-8 text-gray-500">No workspace members yet</div>
               ) : (
                 <div className="space-y-2">
                   {teamMembers.map((member) => (
@@ -1209,8 +1204,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                         {(isWorkspaceOwner || isWorkspaceAdmin) &&
                           member.email !== user?.email &&
                           member.status !== "PENDING" &&
-                          member.id !== workspaceOwnerId &&
-                          !member.roles.includes("OWNER") && (
+                          !member.roles.some(r => r.toUpperCase() === "OWNER") && (
                             <button
                               onClick={() => handleRemoveMember(member)}
                               className="p-1.5 hover:bg-red-50 rounded text-red-600 hover:text-red-700 transition-colors"
@@ -1475,7 +1469,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       {getAvailableTeamMembers().length > 0 ? (
                         <>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Select Team Member</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Select Workspace Member</label>
                             <select
                               value={newMemberUsername}
                               onChange={(e) => {
@@ -1491,14 +1485,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                               disabled={addingMember}
                             >
-                              <option value="">-- Select a team member --</option>
+                              <option value="">-- Select a workspace member --</option>
                               {getAvailableTeamMembers().map((member) => (
                                 <option key={member.id} value={member.username}>
                                   {member.username} ({member.email})
                                 </option>
                               ))}
                             </select>
-                            <p className="text-xs text-gray-500 mt-1">Choose from workspace team members</p>
+                            <p className="text-xs text-gray-500 mt-1">Choose from workspace workspace members</p>
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>

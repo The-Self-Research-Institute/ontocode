@@ -17,16 +17,16 @@ public class PlanFeatureConfigService {
 
     // Seed defaults — only used on first startup if the collection is empty.
     // After that, all values are read from MongoDB and can be changed there.
-    @Value("${plan.pro.monthly.price:29}")
+    @Value("${plan.pro.monthly.price:59}")
     private int defaultProMonthlyPrice;
 
-    @Value("${plan.pro.annual.discount.percent:17}")
+    @Value("${plan.pro.annual.discount.percent:0}")
     private int defaultProAnnualDiscountPercent;
 
-    @Value("${plan.enterprise.monthly.price:99}")
+    @Value("${plan.enterprise.monthly.price:299}")
     private int defaultEnterpriseMonthlyPrice;
 
-    @Value("${plan.enterprise.annual.discount.percent:20}")
+    @Value("${plan.enterprise.annual.discount.percent:0}")
     private int defaultEnterpriseAnnualDiscountPercent;
 
     @Value("${plan.free.max-members:3}")
@@ -58,20 +58,20 @@ public class PlanFeatureConfigService {
                 "DL Query & reasoning",
                 "Import OWL/TTL/RDF files",
                 "Custom plugin support",
-                "Invite and manage members",
+                "Invite and manage members"
             ),
             List.of(
-                'No team collaboration', 
-                'No shared editing'
+                "No team collaboration",
+                "No shared editing"
             )
         );
         upsertConfig("PRO", defaultProMonthlyPrice, defaultProAnnualDiscountPercent, defaultProMaxMembers,
             List.of(
                 "Up to 10 workspaces",
-                "Up to 10 team members",
+                "Up to 10 workspace members",
                 "100 GB storage shared across workspaces",
                 "Everything in Free",
-                "Team collaboration enabled",
+                "Workspace collaboration enabled",
                 "Shared editing in workspaces",
                 "Export to multiple formats"
             ),
@@ -79,7 +79,7 @@ public class PlanFeatureConfigService {
         );
         upsertConfig("ENTERPRISE", defaultEnterpriseMonthlyPrice, defaultEnterpriseAnnualDiscountPercent, defaultEnterpriseMaxMembers,
             List.of(
-                "Unlimited team members",
+                "Unlimited workspace members",
                 "Unlimited workspaces",
                 "Unlimited storage",
                 "Everything in Professional",

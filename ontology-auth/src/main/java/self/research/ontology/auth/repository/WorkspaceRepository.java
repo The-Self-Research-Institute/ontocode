@@ -28,6 +28,11 @@ public interface WorkspaceRepository extends MongoRepository<Workspace, String> 
     @Query("{ $and: [ { 'members.userId': ?0 }, { $or: [ { 'isDeleted': { $exists: false } }, { 'isDeleted': false } ] } ] }")
     List<Workspace> findActiveByMemberId(String userId);
 
+    // Find workspaces where the user is listed by email (legacy/broken membership rows)
+    // Excludes soft-deleted workspaces. Used to self-heal missing member.userId mappings.
+    @Query("{ $and: [ { 'members.email': ?0 }, { $or: [ { 'isDeleted': { $exists: false } }, { 'isDeleted': false } ] } ] }")
+    List<Workspace> findActiveByMemberEmail(String email);
+
     @Query("{ $or: [ { 'ownerId': ?0 }, { 'members.userId': ?0 } ] }")
     List<Workspace> findAllUserWorkspaces(String userId);
     

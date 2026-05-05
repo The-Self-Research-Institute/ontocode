@@ -55,8 +55,12 @@ public class JwtUtil {
         log.info("JWT secret validated — {} bytes.", decoded.length);
     }
 
-    public String extractUsername(String token) {
+    public String extractEmail(String token) {
         return extractClaim(token, Claims::getSubject);
+    }
+
+    public String extractUsername(String token) {
+        return extractEmail(token);
     }
 
     public Date extractExpiration(String token) {
@@ -97,7 +101,8 @@ public class JwtUtil {
         }
         // Include plan so downstream services can enforce access without a DB call
         claims.put("plan", planName != null ? planName.toUpperCase() : "FREE");
-        return createToken(claims, userDetails.getUsername());
+        claims.put("username", userDetails.getUsername());
+        return createToken(claims, email);
     }
 
     // Overloaded method for workspace-scoped tokens
@@ -116,8 +121,9 @@ public class JwtUtil {
     }
 
     public Boolean validateToken(String token, UserDetails userDetails) {
-        final String username = extractUsername(token);
-        return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
+        final String email = extractEmail(token);
+        // During transition, we check if the subject matches the UserDetails username (which will now be the email)
+        return (email.equals(userDetails.getUsername()) && !isTokenExpired(token));
     }
 
     private Key getSigningKey() {

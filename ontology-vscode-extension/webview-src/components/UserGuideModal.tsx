@@ -126,7 +126,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
         <div style={styles.content}>
           <p style={styles.intro}>
             Welcome to OntoCode! This guide follows the logical workflow for setting up and using OntoCode. Start with
-            creating a workspace, then invite team members, and progress through creating projects and files. Each
+            creating a workspace, then invite workspace members, and progress through creating projects and files. Each
             section includes positive scenarios (what to do) and negative scenarios (what to avoid) to help you work
             efficiently.
           </p>
@@ -205,7 +205,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       team
                     </li>
                     <li>
-                      <strong>Subscription Plan:</strong> Select appropriate plan based on team size and needs
+                      <strong>Subscription Plan:</strong> Select appropriate plan based on workspace size and needs
                       (Free/Pro/Enterprise)
                     </li>
                     <li>
@@ -218,7 +218,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                     <div style={styles.exampleContent}>
                       Workspace Name: "BioinformaticsLab - Stanford"
                       <br />
-                      Plan: Pro (for 10 team members)
+                      Plan: Pro (for 10 workspace members)
                       <br />
                       Purpose: Academic research in genomics ontologies
                     </div>
@@ -521,7 +521,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       <strong>Workspace Selection:</strong> Ensure you're creating the project in the correct workspace
                     </li>
                     <li>
-                      <strong>Initial Members:</strong> You can add team members immediately or later
+                      <strong>Initial Members:</strong> You can add workspace members immediately or later
                     </li>
                     <li>
                       <strong>Subscription Check:</strong> Verify your workspace plan allows creating more projects
@@ -997,7 +997,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       re-syncs your collaboration session
                     </li>
                     <li>
-                      <strong>Multi-User Scaling:</strong> Multiple team members can work on the same ontology project
+                      <strong>Multi-User Scaling:</strong> Multiple workspace members can work on the same ontology project
                       simultaneously with real-time visibility
                     </li>
                     <li>

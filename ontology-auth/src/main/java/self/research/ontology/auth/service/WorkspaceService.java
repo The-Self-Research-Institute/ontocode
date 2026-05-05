@@ -16,6 +16,7 @@ import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -183,7 +184,73 @@ public class WorkspaceService {
      * Get all active workspaces for a user (owned or member) - excludes soft-deleted ones
      */
     public List<Workspace> getUserWorkspaces(String userId) {
-        return workspaceRepository.findAllActiveUserWorkspaces(userId);
+        // Primary path: workspaces where this user is already linked by member.userId
+        List<Workspace> workspaces = new ArrayList<>(workspaceRepository.findAllActiveUserWorkspaces(userId));
+
+        // Self-heal: some legacy/broken rows may have members.email populated but missing members.userId,
+        // which prevents the workspace from showing up for the member. We attempt to link the userId.
+        Optional<User> userOpt = userRepository.findById(userId);
+        if (userOpt.isEmpty()) {
+            return workspaces;
+        }
+
+        User user = userOpt.get();
+        String email = user.getEmail();
+        if (email == null || email.isBlank()) {
+            return workspaces;
+        }
+
+        List<Workspace> byEmail = workspaceRepository.findActiveByMemberEmail(email);
+        for (Workspace ws : byEmail) {
+            boolean changed = linkMemberIdentityIfSafe(ws, email, user.getId(), user.getUsername());
+            if (changed) {
+                workspaceRepository.save(ws);
+            }
+
+            boolean alreadyIncluded = workspaces.stream().anyMatch(w -> Objects.equals(w.getWorkspaceId(), ws.getWorkspaceId()));
+            if (!alreadyIncluded) {
+                workspaces.add(ws);
+            }
+        }
+
+        return workspaces;
+    }
+
+    /**
+     * Link a member entry that matches the user's email to a concrete userId.
+     *
+     * Safety rules:
+     * - Only link when the workspace member row has no userId yet, AND
+     *   - it is already ACTIVE, OR
+     *   - it has no invitationToken (meaning it's not an outstanding pending invite).
+     *
+     * This prevents granting access for truly pending invitations.
+     */
+    private boolean linkMemberIdentityIfSafe(Workspace ws, String email, String userId, String username) {
+        if (ws == null || email == null || userId == null) return false;
+        WorkspaceMember member = ws.getMemberByEmail(email);
+        if (member == null) return false;
+
+        if (member.getUserId() != null && !member.getUserId().isBlank()) {
+            return false;
+        }
+
+        boolean isActive = member.getStatus() == Workspace.MemberStatus.ACTIVE;
+        boolean hasNoInviteToken = member.getInvitationToken() == null || member.getInvitationToken().isBlank();
+        if (!isActive && !hasNoInviteToken) {
+            // Still pending with a token; do not auto-link.
+            return false;
+        }
+
+        member.setUserId(userId);
+        if (username != null && !username.isBlank()) {
+            member.setUsername(username);
+        }
+        member.setStatus(Workspace.MemberStatus.ACTIVE);
+        member.setInvitationToken(null);
+        member.setJoinedAt(LocalDateTime.now());
+        ws.setUpdatedAt(LocalDateTime.now());
+        return true;
     }
 
     /**
@@ -319,8 +386,36 @@ public class WorkspaceService {
      * Check if user has access to workspace
      */
     public boolean hasAccess(String workspaceId, String userId) {
-        Optional<Workspace> workspace = workspaceRepository.findByWorkspaceId(workspaceId);
-        return workspace.map(w -> w.isMember(userId)).orElse(false);
+        Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
+        if (workspaceOpt.isEmpty()) return false;
+        Workspace workspace = workspaceOpt.get();
+
+        // Primary check: match by userId
+        if (workspace.isMember(userId)) return true;
+
+        // Fallback: match by email.
+        // This covers cases where multiple users share the same display-name ("Soundhar")
+        // causing findByUsername() to return the wrong User object. The member record may
+        // have the correct email but the wrong userId stamped (a data-integrity issue
+        // created during invitation acceptance). We also self-heal the record.
+        Optional<User> userOpt = userRepository.findById(userId);
+        if (userOpt.isPresent()) {
+            String email = userOpt.get().getEmail();
+            if (email != null && workspace.isMemberByEmail(email)) {
+                // Self-heal: fix the corrupted userId on the member record
+                WorkspaceMember member = workspace.getMemberByEmail(email);
+                if (member != null && !userId.equals(member.getUserId())) {
+                    log.warn("[hasAccess] Self-healing member userId for email={} in workspace={}: {} -> {}",
+                            email, workspaceId, member.getUserId(), userId);
+                    member.setUserId(userId);
+                    member.setUsername(userOpt.get().getUsername());
+                    workspaceRepository.save(workspace);
+                }
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -356,6 +451,19 @@ public class WorkspaceService {
         if (member != null) {
             return member.getRole();
         }
+
+        // Fallback: try matching by email (handles corrupted userId from shared-username bug)
+        Optional<User> userOpt = userRepository.findById(userId);
+        if (userOpt.isPresent()) {
+            String email = userOpt.get().getEmail();
+            if (email != null) {
+                WorkspaceMember emailMember = workspace.getMemberByEmail(email);
+                if (emailMember != null) {
+                    return emailMember.getRole();
+                }
+            }
+        }
+
         // Legacy workspaces may have the owner tracked only via ownerId, not in the members set
         if (userId != null && userId.equals(workspace.getOwnerId())) {
             return Workspace.WorkspaceRole.OWNER;

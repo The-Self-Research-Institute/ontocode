@@ -648,7 +648,32 @@ public class EmailService {
         sendHtml(to, "Action required: OntoCode payment failed — update your card", html);
     }
 
-    public void sendSubscriptionCancelledEmail(String to, String username, String planName, String accessEndDate) {
+    public void sendSubscriptionCancelledEmail(String to, String username, String planName, String cancelledDate) {
+        String plan = toDisplayName(planName);
+        String html = billingHtml(
+            "Your subscription has been cancelled",
+            String.format("""
+                <p>Hi <strong>%s</strong>,</p>
+                <p>Your OntoCode <span class="badge">%s</span> subscription has been cancelled. Workspace access for paid plans is blocked until the plan is renewed.</p>
+                <div class="info-box">
+                  <strong>Access details</strong>
+                  <table style="margin-top:10px;width:100%%;border-collapse:collapse;">
+                    <tr><td style="padding:4px 0;color:#6b7280;">Plan cancelled</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Cancelled on</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Workspace access</td><td style="padding:4px 0;font-weight:600;">Blocked until renewal</td></tr>
+                  </table>
+                </div>
+                <p>Your data is retained. Renew your existing plan to restore workspace access.</p>
+                <a href="%s" class="button">Renew subscription</a>
+                <p>If you cancelled by mistake or have questions, please reach out to <a href="mailto:support@ontocode.com">support@ontocode.com</a>.</p>
+                """,
+                username, plan, plan, cancelledDate, baseUrl),
+            "Your workspace data is retained, but paid workspace access is blocked until renewal."
+        );
+        sendHtml(to, "Your OntoCode " + plan + " subscription has been cancelled", html);
+    }
+
+    private void sendSubscriptionCancelledEmailLegacy(String to, String username, String planName, String accessEndDate) {
         String plan = toDisplayName(planName);
         String html = billingHtml(
             "Your subscription has been cancelled",
@@ -674,8 +699,35 @@ public class EmailService {
     }
 
     public void sendRenewalReminderEmail(String to, String username, String planName,
-                                        String renewalDate, String amountFormatted, String billingPortalUrl) {
+                                        int daysBefore, String renewalDate, String amountFormatted, String billingPortalUrl) {
         String plan = toDisplayName(planName);
+        String dayLabel = daysBefore == 1 ? "1 day" : daysBefore + " days";
+        String html = billingHtml(
+            "Your subscription renews in " + dayLabel,
+            String.format("""
+                <p>Hi <strong>%s</strong>,</p>
+                <p>Just a heads-up: your OntoCode <span class="badge">%s</span> subscription will automatically renew on <strong>%s</strong>.</p>
+                <div class="info-box">
+                  <strong>Renewal details</strong>
+                  <table style="margin-top:10px;width:100%%;border-collapse:collapse;">
+                    <tr><td style="padding:4px 0;color:#6b7280;">Plan</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Renewal date</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Amount</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                  </table>
+                </div>
+                <p>No action is needed if you want to continue. To cancel or update your payment method before renewal, visit billing settings.</p>
+                <a href="%s" class="button">Manage billing</a>
+                """,
+                username, plan, renewalDate, plan, renewalDate, amountFormatted, billingPortalUrl),
+            "You're receiving this renewal reminder because you have an active OntoCode subscription."
+        );
+        sendHtml(to, "OntoCode " + plan + " renews in " + dayLabel + " on " + renewalDate + " - " + amountFormatted, html);
+    }
+
+    private void sendRenewalReminderEmailLegacy(String to, String username, String planName,
+                                        int daysBefore, String renewalDate, String amountFormatted, String billingPortalUrl) {
+        String plan = toDisplayName(planName);
+        String dayLabel = daysBefore == 1 ? "1 day" : daysBefore + " days";
         String html = billingHtml(
             "📅 Your subscription renews in 3 days",
             String.format("""
