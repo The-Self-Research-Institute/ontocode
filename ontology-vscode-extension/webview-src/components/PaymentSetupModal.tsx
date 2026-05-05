@@ -109,6 +109,10 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
             {/* Trust line */}
             <div className="flex items-start gap-2 text-[11px] text-gray-400">
                 <Shield size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
+                <span>Secured by Stripe. Paid plans renew automatically with reminders at 15, 7, and 1 day. Canceling blocks workspace access until renewed.</span>
+            </div>
+            <div className="hidden">
+                <Shield size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
                 <span>Secured by Stripe — card not charged for {trialPeriodDays} days — cancel any time before trial ends</span>
             </div>
 

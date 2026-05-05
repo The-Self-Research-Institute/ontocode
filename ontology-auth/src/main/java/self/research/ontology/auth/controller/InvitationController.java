@@ -53,7 +53,7 @@ public class InvitationController {
     /**
      * Get current authenticated username
      */
-    private String getCurrentUsername() {
+    private String getCurrentUserEmail() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         return authentication.getName();
     }
@@ -64,8 +64,8 @@ public class InvitationController {
     @PostMapping("/send")
     public ResponseEntity<?> sendInvitation(@Valid @RequestBody SendInvitationRequest request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -218,8 +218,8 @@ public class InvitationController {
     @PostMapping("/accept/{token}")
     public ResponseEntity<?> acceptInvitation(@PathVariable String token) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -298,7 +298,7 @@ public class InvitationController {
             } else {
                 // Add as new member (this case shouldn't normally happen, but handle it)
                 workspace.addMember(user.getId(), user.getUsername(), user.getEmail(), Workspace.WorkspaceRole.valueOf(invitation.getRole()));
-                log.info("Added user {} to workspace {}", user.getUsername(), workspace.getWorkspaceId());
+                log.info("Added user {} to workspace {}", user.getEmail(), workspace.getWorkspaceId());
             }
             workspaceRepository.save(workspace);
             
@@ -346,8 +346,8 @@ public class InvitationController {
     @GetMapping("/workspace/{workspaceId}")
     public ResponseEntity<?> getWorkspaceInvitations(@PathVariable String workspaceId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -391,8 +391,8 @@ public class InvitationController {
         try {
             log.info("Resending invitation to {} for workspace {}", request.email, request.workspaceId);
             
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -448,8 +448,8 @@ public class InvitationController {
     @DeleteMapping("/{token}")
     public ResponseEntity<?> cancelInvitation(@PathVariable String token) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));

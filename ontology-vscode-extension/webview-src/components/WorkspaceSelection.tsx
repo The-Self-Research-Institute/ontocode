@@ -164,6 +164,10 @@ const InlinePaymentStep: React.FC<{
       )}
       <div className="flex items-center gap-2 text-[11px] text-gray-400">
         <Shield size={13} className="text-green-400 flex-shrink-0" />
+        <span>Renewal reminders are sent 15, 7, and 1 day before renewal. Canceling blocks workspace access until renewed.</span>
+      </div>
+      <div className="hidden">
+        <Shield size={13} className="text-green-400 flex-shrink-0" />
         <span>Card saved securely — not charged for {trialPeriodDays} days — cancel any time</span>
       </div>
       <div className="flex gap-3">
@@ -297,19 +301,24 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
     const pendingUpgradeWorkspaceId = localStorage.getItem("pendingUpgradeWorkspaceId");
     const pendingUpgradePlan = localStorage.getItem("pendingUpgradePlan");
+    const pendingUpgradeInterval = localStorage.getItem("pendingUpgradeInterval");
 
-    console.log("[WorkspaceSelection] Pending upgrade params:", { pendingUpgradeWorkspaceId, pendingUpgradePlan });
+    console.log("[WorkspaceSelection] Pending upgrade params:", { pendingUpgradeWorkspaceId, pendingUpgradePlan, pendingUpgradeInterval });
 
     if (pendingUpgradeWorkspaceId && pendingUpgradePlan) {
       localStorage.removeItem("pendingUpgradeWorkspaceId");
       localStorage.removeItem("pendingUpgradePlan");
+      localStorage.removeItem("pendingUpgradeInterval");
 
       const targetWs = workspaces.find((w) => w.workspaceId === pendingUpgradeWorkspaceId);
       console.log("[WorkspaceSelection] Target workspace found:", targetWs);
       
       if (targetWs) {
         // Assume interval from workspace if available, default to monthly
-        const interval = targetWs.billingInterval === "annual" || targetWs.billingInterval === "yearly" ? "annual" : "monthly";
+        const interval =
+          pendingUpgradeInterval === "annual" || pendingUpgradeInterval === "yearly"
+            ? "annual"
+            : (targetWs.billingInterval === "annual" || targetWs.billingInterval === "yearly" ? "annual" : "monthly");
         
         console.log("[WorkspaceSelection] Starting billing checkout with:", { pendingUpgradeWorkspaceId, pendingUpgradePlan, interval });
         // Start billing checkout
@@ -320,7 +329,9 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       } else {
         console.warn("[WorkspaceSelection] Could not find target workspace for auto-checkout:", pendingUpgradeWorkspaceId);
         // Fallback: try to start checkout anyway without workspace ID (account level)
-        startBillingCheckout("", pendingUpgradePlan, "monthly").catch((err) => {
+        const interval =
+          pendingUpgradeInterval === "annual" || pendingUpgradeInterval === "yearly" ? "annual" : "monthly";
+        startBillingCheckout("", pendingUpgradePlan, interval).catch((err) => {
            console.error("[WorkspaceSelection] Fallback auto-checkout failed:", err);
            setError(err.message || "Failed to start payment setup");
         });
@@ -780,7 +791,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   };
 
   const getRoleBadge = (workspace: Workspace) => {
-    const member = workspace.members.find((m) => m.username === username);
+    const member = workspace.members.find((m) => m.userId === user?.userId || m.email === user?.email || m.username === user?.username || m.username === username);
     if (!member) return null;
 
     const roleColors = {
@@ -814,7 +825,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   }
 
   return (
-    <div className="dark-surface min-h-screen overflow-y-auto bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+    <div className="dark-surface min-h-[100dvh] overflow-y-auto bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col items-center justify-start py-12 px-4">
 
       {/* Account-level Manage Billing Modal (for existing PRO/ENTERPRISE subscribers) */}
       {showManageAccount && accountSubscription && (
@@ -829,8 +840,16 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           onClose={() => setShowManageAccount(false)}
           onCancelled={() => {
             setShowManageAccount(false);
-            setAccountSubscription({ planName: "FREE", status: "canceled", billingInterval: "monthly" });
+            setAccountSubscription({
+              planName: accountSubscription?.planName || "FREE",
+              status: "canceled",
+              billingInterval: accountSubscription?.billingInterval || "monthly",
+            });
             loadWorkspaces();
+          }}
+          onUpgradePlan={() => {
+            setShowManageAccount(false);
+            setShowAccountPlanSelection(true);
           }}
         />
       )}
@@ -842,6 +861,14 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             username={username}
             workspaceId=""
             workspaceName="Your Account"
+            currentPlanId={accountSubscription?.planName || "FREE"}
+            currentStatus={accountSubscription?.status || ""}
+            allowCurrentPlanSelection={
+              !!accountSubscription?.planName &&
+              accountSubscription.planName !== "FREE" &&
+              accountSubscription.status !== "active" &&
+              accountSubscription.status !== "trialing"
+            }
             onPlanSelected={(planId, interval) => {
               setShowAccountPlanSelection(false);
               if (planId === "FREE") {
@@ -881,6 +908,10 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
               setError(err.message || "Failed to start payment setup"),
             );
           }}
+          onUpgradePlan={() => {
+            setManagingWorkspace(null);
+            setShowAccountPlanSelection(true);
+          }}
         />
       )}
 
@@ -906,7 +937,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-pulse delay-1000"></div>
       </div>
 
-      <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-4xl max-h-[90vh] flex flex-col">
+      <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-4xl flex flex-col my-auto">
         <div className="absolute top-4 right-4 flex items-center gap-2">
           {accountSubscription && (accountSubscription.status === "active" || accountSubscription.status === "trialing") && accountSubscription.planName !== "FREE" ? (
             <button
@@ -923,10 +954,10 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
               type="button"
               onClick={() => setShowAccountPlanSelection(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600/80 hover:bg-purple-600 border border-purple-500/50 text-xs font-medium text-white transition-colors backdrop-blur-sm"
-              title="Upgrade your account to PRO or ENTERPRISE"
+              title={accountSubscription?.planName && accountSubscription.planName !== "FREE" ? "Renew or upgrade your account plan" : "Upgrade your account to PRO or ENTERPRISE"}
             >
               <CreditCard size={14} />
-              Upgrade Plan
+              {accountSubscription?.planName && accountSubscription.planName !== "FREE" ? "Renew Plan" : "Upgrade Plan"}
             </button>
           )}
           <button
@@ -956,7 +987,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           </div>
         )}
 
-        <div className="space-y-4 mb-6 overflow-y-auto min-h-0 flex-1 pr-1 workspace-scroll">
+        <div className="space-y-4 mb-6">
           {workspaces.length === 0 ? (
             <div className="text-center py-12">
               <Building2 size={64} className="text-gray-400 mx-auto mb-4 opacity-50" />
@@ -1012,13 +1043,15 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={(e) => confirmDelete(workspace, e)}
-                        className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-                        title="Delete workspace"
-                      >
-                        <Trash size={18} />
-                      </button>
+                      {(workspace.members.find(m => m.email === user?.email || (m.userId === user?.userId && m.email === user?.email))?.role?.toUpperCase() === "OWNER") && (
+                        <button
+                          onClick={(e) => confirmDelete(workspace, e)}
+                          className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                          title="Delete workspace"
+                        >
+                          <Trash size={18} />
+                        </button>
+                      )}
                       <ChevronRight
                         size={24}
                         className="text-gray-400 group-hover:text-purple-400 transition-colors flex-shrink-0"

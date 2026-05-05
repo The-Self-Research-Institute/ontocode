@@ -65,7 +65,11 @@ class ZoteroApiService {
     /**
      * Fetch a single page of library items and return both the items and the total results.
      */
-    async fetchLibraryPage(start: number = 0, pageSize: number = 100): Promise<{ items: ZoteroItem[]; totalResults: number }> {
+    async fetchLibraryPage(
+        start: number = 0,
+        pageSize: number = 100,
+        opts?: { q?: string }
+    ): Promise<{ items: ZoteroItem[]; totalResults: number }> {
         const config = this.getConfig();
         if (!config) {
             throw new Error('Zotero not configured');
@@ -76,15 +80,21 @@ class ZoteroApiService {
             : `users/${config.userId}`;
 
         const url = `${this.baseUrl}/${libraryPath}/items`;
-        console.log('[ZoteroAPI] Fetching from:', url, 'start:', start, 'limit:', pageSize);
+        const qTrim = opts?.q?.trim();
+        console.log('[ZoteroAPI] Fetching from:', url, 'start:', start, 'limit:', pageSize, qTrim ? `q="${qTrim}"` : '(full library)');
 
-        const response = await axios.get<ZoteroItem[]>(url, {
-            params: {
+        const params: Record<string, string | number> = {
                 limit: pageSize,
                 start: start,
                 format: 'json',
                 include: 'data'
-            },
+        };
+        if (qTrim) {
+            params.q = qTrim;
+        }
+
+        const response = await axios.get<ZoteroItem[]>(url, {
+            params,
             headers: {
                 'Zotero-API-Key': config.apiKey,
                 'Zotero-API-Version': '3'

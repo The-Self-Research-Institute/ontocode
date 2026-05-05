@@ -114,7 +114,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
               <UserPlus size={20} className="text-purple-600" />
             </div>
             <div>
-              <h3 className="text-xl font-semibold text-gray-900">Invite Team Member</h3>
+              <h3 className="text-xl font-semibold text-gray-900">Invite Workspace Member</h3>
               <p className="text-sm text-gray-500">{workspaceName}</p>
             </div>
           </div>
@@ -136,11 +136,11 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
                   <h4 className="text-lg font-semibold text-amber-900 mb-2">Member Limit Reached</h4>
                   <p className="text-sm text-amber-800 mb-4">
                     Your current <span className="font-semibold">{subscriptionPlan}</span> plan subscription allows a
-                    maximum of <span className="font-semibold">{maxMembers} team members</span>. You currently have{" "}
+                    maximum of <span className="font-semibold">{maxMembers} workspace members</span>. You currently have{" "}
                     <span className="font-semibold">{currentMemberCount} members</span> added.
                   </p>
                   <p className="text-sm text-amber-800">
-                    To add more team members, please upgrade your subscription plan or remove existing members.
+                    To add more workspace members, please upgrade your subscription plan or remove existing members.
                   </p>
                 </div>
               </div>

@@ -33,6 +33,7 @@ interface ManageSubscriptionModalProps {
     onClose: () => void;
     onCancelled: () => void;
     onCompletePayment?: () => void;
+    onUpgradePlan?: () => void;
 }
 
 
@@ -40,6 +41,8 @@ function statusLabel(status?: string) {
     const s = (status ?? '').toUpperCase();
     if (s === 'TRIALING' || s === 'ACTIVE') return { label: s === 'TRIALING' ? 'Trial active' : 'Active', color: 'text-green-400 bg-green-400/10 border-green-400/30' };
     if (s === 'PAYMENT_FAILED') return { label: 'Payment failed', color: 'text-red-400 bg-red-400/10 border-red-400/30' };
+    if (s === 'PAST_DUE' || s === 'UNPAID') return { label: 'Payment overdue', color: 'text-red-400 bg-red-400/10 border-red-400/30' };
+    if (s === 'EXPIRED') return { label: 'Expired', color: 'text-red-400 bg-red-400/10 border-red-400/30' };
     if (s === 'CANCELED') return { label: 'Canceled', color: 'text-gray-400 bg-gray-400/10 border-gray-400/30' };
     return { label: s || 'Active', color: 'text-green-400 bg-green-400/10 border-green-400/30' };
 }
@@ -143,7 +146,7 @@ const UpdateCardForm: React.FC<{
 
 type View = 'info' | 'update-card' | 'cancel-confirm' | 'cancelling' | 'done';
 
-const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ workspace, onClose, onCancelled, onCompletePayment }) => {
+const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ workspace, onClose, onCancelled, onCompletePayment, onUpgradePlan }) => {
     const [view, setView] = useState<View>('info');
     const [error, setError] = useState<string | null>(null);
     const [setupClientSecret, setSetupClientSecret] = useState<string | null>(null);
@@ -290,6 +293,10 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
                                 </div>
                             </div>
 
+                            <div className="bg-white/5 border border-white/10 rounded-xl px-5 py-3 text-xs text-gray-300 leading-relaxed">
+                                Paid plans renew automatically. Renewal reminders are sent 15, 7, and 1 day before renewal. Expired or canceled subscriptions block workspace access until renewed.
+                            </div>
+
                             {error && (
                                 <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-5 py-3.5 rounded-xl text-sm">{error}</div>
                             )}
@@ -330,6 +337,19 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
                                     </button>
                                 )}
 
+                                {onUpgradePlan && (
+                                    <button onClick={onUpgradePlan}
+                                        className="w-full flex items-center gap-4 px-5 py-4 rounded-xl bg-indigo-500/10 border border-indigo-400/30 text-white hover:bg-indigo-500/20 hover:border-indigo-400/60 transition-all">
+                                        <div className="w-11 h-11 rounded-lg bg-indigo-500/30 flex items-center justify-center flex-shrink-0">
+                                            <Crown size={20} className="text-indigo-300" />
+                                        </div>
+                                        <div className="text-left">
+                                            <p className="font-semibold text-base text-indigo-200">Upgrade plan</p>
+                                            <p className="text-sm text-gray-400 mt-0.5">Explore more advanced features</p>
+                                        </div>
+                                    </button>
+                                )}
+
                                 <button onClick={() => setView('cancel-confirm')}
                                     className="w-full flex items-center gap-4 px-5 py-4 rounded-xl bg-white/5 border border-white/10 text-white hover:bg-red-500/10 hover:border-red-400/40 transition-all">
                                     <div className="w-11 h-11 rounded-lg bg-red-500/20 flex items-center justify-center flex-shrink-0">
@@ -337,7 +357,7 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
                                     </div>
                                     <div className="text-left">
                                         <p className="font-semibold text-base text-red-300">Cancel subscription</p>
-                                        <p className="text-sm text-gray-400 mt-0.5">Access continues until billing period ends</p>
+                                        <p className="text-sm text-gray-400 mt-0.5">Workspace access is blocked after cancellation</p>
                                     </div>
                                 </button>
                             </div>
@@ -361,8 +381,8 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
                             <div className="flex items-start gap-4 bg-amber-500/10 border border-amber-400/20 rounded-xl p-5">
                                 <AlertTriangle size={26} className="text-amber-400 flex-shrink-0 mt-0.5" />
                                 <div className="text-sm text-gray-300 space-y-2">
-                                    <p className="font-semibold text-white text-base">Your subscription will be cancelled at the end of the current billing period.</p>
-                                    <p className="text-sm">You and your team keep full access to <span className="text-white font-medium">{workspace.name}</span> until then. After that, the account reverts to the Free plan.</p>
+                                    <p className="font-semibold text-white text-base">Canceling blocks paid workspace access.</p>
+                                    <p className="text-sm">Access to <span className="text-white font-medium">{workspace.name}</span> will be blocked until you renew the existing plan. Your workspace data is retained.</p>
                                 </div>
                             </div>
                             {error && (
@@ -396,8 +416,8 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
                                 <div className="w-20 h-20 rounded-full bg-amber-500/20 flex items-center justify-center">
                                     <CheckCircle size={38} className="text-amber-400" />
                                 </div>
-                                <p className="text-white font-semibold text-lg">Cancellation scheduled</p>
-                                <p className="text-gray-400 text-sm max-w-sm">Your subscription for <span className="text-white">{workspace.name}</span> will remain active until the end of the current billing period, then revert to Free.</p>
+                                <p className="text-white font-semibold text-lg">Subscription canceled</p>
+                                <p className="text-gray-400 text-sm max-w-sm">Workspace access for <span className="text-white">{workspace.name}</span> is blocked until you renew the existing plan.</p>
                             </div>
                             <button onClick={onCancelled}
                                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold text-base hover:from-purple-700 hover:to-indigo-700 transition-all">

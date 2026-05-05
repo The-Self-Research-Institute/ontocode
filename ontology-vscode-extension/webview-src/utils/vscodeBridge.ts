@@ -29,6 +29,8 @@ import { openOntologyFile, fileContentToBase64 } from './fileAccess';
 import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
 import { getGatewayUrl } from '../config/deploymentConfig';
 
+let browserZoteroLibrarySessionCounter = 0;
+
 // ── Helper: dispatch a synthetic MessageEvent so listener code sees it ──────
 function postToSelf(data: Record<string, any>) {
     window.dispatchEvent(new MessageEvent('message', { data }));
@@ -1052,11 +1054,13 @@ function handleBrowserMessage(message: any) {
 
         case 'requestZoteroLibrary': {
             (async () => {
+                const librarySessionId = ++browserZoteroLibrarySessionCounter;
                 try {
                     if (!sci2CodeBrowserService.isConfigured()) {
                         postToSelf({
                             type: 'zoteroLibraryError',
-                            error: 'ZOTERO_NOT_CONFIGURED'
+                            error: 'ZOTERO_NOT_CONFIGURED',
+                            librarySessionId,
                         });
                         return;
                     }
@@ -1065,8 +1069,18 @@ function handleBrowserMessage(message: any) {
                     let start = 0;
                     let totalResults = Infinity; // will be set after first page
 
+                    const qRaw =
+                        typeof (message as Record<string, unknown>).searchQuery === 'string'
+                            ? String((message as Record<string, unknown>).searchQuery).trim()
+                            : '';
+                    const pageOpts = qRaw ? { q: qRaw } : undefined;
+
                     while (start < totalResults) {
-                        const { items, totalResults: total } = await sci2CodeBrowserService.fetchLibraryPage(start, PAGE_SIZE);
+                        const { items, totalResults: total } = await sci2CodeBrowserService.fetchLibraryPage(
+                            start,
+                            PAGE_SIZE,
+                            pageOpts
+                        );
 
                         // Lock in the real total from the first response
                         if (start === 0) {
@@ -1081,12 +1095,14 @@ function handleBrowserMessage(message: any) {
                                 type: 'zoteroLibraryData',
                                 items,
                                 hasMore: start + items.length < totalResults,
+                                librarySessionId,
                             });
                         } else {
                             postToSelf({
                                 type: 'zoteroLibraryDataAppend',
                                 items,
                                 hasMore: start + items.length < totalResults,
+                                librarySessionId,
                             });
                         }
 
@@ -1096,9 +1112,13 @@ function handleBrowserMessage(message: any) {
                         if (items.length < PAGE_SIZE || start >= totalResults) break;
                     }
 
-                    postToSelf({ type: 'zoteroLibraryDataComplete' });
+                    postToSelf({ type: 'zoteroLibraryDataComplete', librarySessionId });
                 } catch (err: any) {
-                    postToSelf({ type: 'zoteroLibraryError', error: err?.message || 'Zotero unavailable' });
+                    postToSelf({
+                        type: 'zoteroLibraryError',
+                        error: err?.message || 'Zotero unavailable',
+                        librarySessionId,
+                    });
                 }
             })();
             break;

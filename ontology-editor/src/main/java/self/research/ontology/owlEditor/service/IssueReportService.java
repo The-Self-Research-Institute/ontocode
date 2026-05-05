@@ -27,6 +27,12 @@ public class IssueReportService {
     
     /**
      * Submit an issue report, creating a Jira ticket if enabled
+     * 
+     * IMPORTANT: This method saves issue reports for ALL USERS regardless of subscription plan (FREE/PRO/ENTERPRISE)
+     * - Free users can report issues just like paid users
+     * - Reports are ALWAYS saved to MongoDB with success: true
+     * - Jira ticket creation is attempted but failures don't prevent local storage
+     * - This ensures users get immediate feedback that their issue was received and stored
      */
     public IssueReportResult submitIssueReport(IssueReport issueReport, List<MultipartFile> attachments) {
         try {

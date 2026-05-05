@@ -173,14 +173,15 @@ public class StripeService {
     public String createSubscriptionAfterSetup(User user, String setupIntentId,
             String planName, String interval, String workspaceId) throws StripeException {
 
-        // Account-level duplicate guard (Model B: one subscription per user account)
-        if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
-            // Allow re-entry if the existing subscription is canceled/past_due so user can resubscribe
-            String existingStatus = user.getSubscriptionStatus();
-            if (!"canceled".equalsIgnoreCase(existingStatus) && !"unpaid".equalsIgnoreCase(existingStatus)) {
-                throw new RuntimeException("Account already has an active subscription. Use Manage Billing to modify it.");
-            }
-        }
+        validateAllowedPlanChange(user, planName);
+
+        // Model B/C: one subscription per user account.
+        // If an active/trialing subscription exists, treat this as an UPDATE (plan/interval change),
+        // using the newly confirmed payment method from the SetupIntent.
+        boolean hasExistingSub = user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank();
+        String existingStatus = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus() : "";
+        boolean existingIsActiveLike =
+                "active".equalsIgnoreCase(existingStatus) || "trialing".equalsIgnoreCase(existingStatus);
 
         // Retrieve and validate setup intent
         SetupIntent setupIntent = SetupIntent.retrieve(setupIntentId);
@@ -197,19 +198,55 @@ public class StripeService {
                         .build())
                 .build());
 
-        // Create subscription with trial
         String priceId = resolvePriceId(planName, interval);
-        com.stripe.model.Subscription subscription = com.stripe.model.Subscription.create(
-                SubscriptionCreateParams.builder()
-                        .setCustomer(customer.getId())
-                        .addItem(SubscriptionCreateParams.Item.builder().setPrice(priceId).build())
-                        .setTrialPeriodDays(trialPeriodDays)
-                        .setDefaultPaymentMethod(paymentMethodId)
-                        .putMetadata("userId", user.getId())
-                        .putMetadata("planName", planName.toUpperCase())
-                        .putMetadata("billingInterval", interval.toLowerCase())
-                        .putMetadata("workspaceId", workspaceId != null ? workspaceId : "")
-                        .build());
+
+        com.stripe.model.Subscription subscription;
+        if (hasExistingSub && existingIsActiveLike) {
+            // Update existing subscription's price (monthly ↔ yearly, PRO ↔ ENTERPRISE) and default payment method.
+            subscription = Subscription.retrieve(user.getStripeSubscriptionId());
+            if (subscription.getItems() == null || subscription.getItems().getData() == null || subscription.getItems().getData().isEmpty()) {
+                throw new IllegalStateException("Existing subscription has no items to update.");
+            }
+
+            String itemId = subscription.getItems().getData().get(0).getId();
+            String idempotencyKey = "sub-update-" + user.getId() + "-" + subscription.getId() + "-" + priceId;
+
+            SubscriptionUpdateParams params = SubscriptionUpdateParams.builder()
+                    .setDefaultPaymentMethod(paymentMethodId)
+                    .addItem(
+                            SubscriptionUpdateParams.Item.builder()
+                                    .setId(itemId)
+                                    .setPrice(priceId)
+                                    .build()
+                    )
+                    // Keep the subscription running; Stripe will compute prorations based on their config.
+                    .setCancelAtPeriodEnd(false)
+                    .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.CREATE_PRORATIONS)
+                    .putMetadata("planName", planName.toUpperCase())
+                    .putMetadata("billingInterval", interval.toLowerCase())
+                    .putMetadata("workspaceId", workspaceId != null ? workspaceId : "")
+                    .build();
+
+            subscription = subscription.update(
+                    params,
+                    com.stripe.net.RequestOptions.builder().setIdempotencyKey(idempotencyKey).build()
+            );
+            log.info("Updated subscription {} for user {} to {}/{}",
+                    subscription.getId(), user.getUsername(), planName.toUpperCase(), interval);
+        } else {
+            // Create subscription with trial
+            subscription = com.stripe.model.Subscription.create(
+                    SubscriptionCreateParams.builder()
+                            .setCustomer(customer.getId())
+                            .addItem(SubscriptionCreateParams.Item.builder().setPrice(priceId).build())
+                            .setTrialPeriodDays(trialPeriodDays)
+                            .setDefaultPaymentMethod(paymentMethodId)
+                            .putMetadata("userId", user.getId())
+                            .putMetadata("planName", planName.toUpperCase())
+                            .putMetadata("billingInterval", interval.toLowerCase())
+                            .putMetadata("workspaceId", workspaceId != null ? workspaceId : "")
+                            .build());
+        }
 
         // Update user-level subscription reference
         user.setStripeSubscriptionId(subscription.getId());
@@ -292,6 +329,7 @@ public class StripeService {
             user.setAutoRenewEnabled(false);
             user.setSubscriptionCanceledAt(LocalDateTime.now());
             userRepository.save(user);
+            workspaceService.syncWorkspacesToOwnerPlan(user);
         }
         log.info("Subscription {} canceled for workspace {} by user {}", subId, workspaceId, user.getUsername());
     }
@@ -301,10 +339,10 @@ public class StripeService {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Cancels the account subscription at the end of the current billing period.
-     * The user retains full access (collaboration, limits) until Stripe fires
+     * Cancels the account subscription immediately and syncs all owned workspaces.
+     * Paid workspace access remains blocked until the user renews the plan.
      * customer.subscription.deleted at period end — at which point handleSubscriptionDeleted
-     * downgrades all owned workspaces.
+     *
      */
     public void cancelAccountSubscription(User user) throws StripeException {
         String subId = user.getStripeSubscriptionId();
@@ -312,19 +350,17 @@ public class StripeService {
             throw new IllegalStateException("No active account subscription found.");
         }
 
-        String idempotencyKey = "cancel-at-period-end-acct-" + user.getId() + "-" + subId;
         Subscription subscription = Subscription.retrieve(subId);
-        subscription.update(
-            SubscriptionUpdateParams.builder().setCancelAtPeriodEnd(true).build(),
-            com.stripe.net.RequestOptions.builder().setIdempotencyKey(idempotencyKey).build()
-        );
+        subscription.cancel();
 
-        // Mark locally: subscription is still active but scheduled for cancellation at period end
+        // Mark locally as canceled so workspace access is blocked immediately.
+        user.setSubscriptionStatus("canceled");
         user.setAutoRenewEnabled(false);
         user.setSubscriptionCanceledAt(LocalDateTime.now());
         // Keep status as "active"/"trialing" — access continues until period end
         userRepository.save(user);
-        log.info("Account subscription {} set to cancel at period end for user {}", subId, user.getUsername());
+        workspaceService.syncWorkspacesToOwnerPlan(user);
+        log.info("Account subscription {} canceled for user {}", subId, user.getUsername());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -341,6 +377,8 @@ public class StripeService {
      * @return Stripe Checkout client secret for embedded checkout
      */
     public String createCheckoutSession(User user, String planName, String interval, String workspaceId) throws StripeException {
+        validateAllowedPlanChange(user, planName);
+
         String priceId = resolvePriceId(planName, interval);
         Customer customer = getOrCreateCustomer(user);
 
@@ -478,6 +516,7 @@ public class StripeService {
         user.setAutoRenewEnabled(false);
         user.setSubscriptionCanceledAt(LocalDateTime.now());
         userRepository.save(user);
+        workspaceService.syncWorkspacesToOwnerPlan(user);
         log.info("Subscription {} immediately canceled for user {}", user.getStripeSubscriptionId(), user.getUsername());
     }
 
@@ -606,18 +645,15 @@ public class StripeService {
                             .format(DATE_FMT)
                     : "immediately";
 
-            // Downgrade ALL workspaces owned by this user
-            workspaceService.syncWorkspacesToOwnerPlan(user);
-
             // Only clear user-level subscription if it matches this subscription
             if (subscription.getId().equals(user.getStripeSubscriptionId())) {
                 user.setStripeSubscriptionId(null);
                 user.setSubscriptionStatus("canceled");
-                user.setSubscriptionPlanName("FREE");
             }
             user.setAutoRenewEnabled(false);
             user.setSubscriptionCanceledAt(LocalDateTime.now());
             userRepository.save(user);
+            workspaceService.syncWorkspacesToOwnerPlan(user);
             log.info("Subscription deleted for user {}", user.getUsername());
 
             try {
@@ -755,6 +791,36 @@ public class StripeService {
             case "ENTERPRISE_ANNUAL"   -> priceEnterpriseYearly;
             default -> throw new IllegalArgumentException(
                     "Unknown plan/interval combination: " + planName + "/" + interval);
+        };
+    }
+
+    private void validateAllowedPlanChange(User user, String requestedPlan) {
+        String normalizedRequested = requestedPlan != null ? requestedPlan.toUpperCase() : "";
+        int requestedRank = planRank(normalizedRequested);
+        if (requestedRank < 2) {
+            throw new IllegalArgumentException("Invalid planName. Must be PRO or ENTERPRISE");
+        }
+
+        String currentPlan = user.getSubscriptionPlanName() != null
+                ? user.getSubscriptionPlanName().toUpperCase()
+                : "FREE";
+        int currentRank = planRank(currentPlan);
+        if (currentRank < 2) {
+            return;
+        }
+
+        if (requestedRank < currentRank) {
+            throw new IllegalStateException(
+                    "Downgrading is not permitted. You can renew your existing plan or upgrade to a higher tier.");
+        }
+    }
+
+    private int planRank(String plan) {
+        return switch (plan != null ? plan.toUpperCase() : "") {
+            case "FREE" -> 1;
+            case "PRO" -> 2;
+            case "ENTERPRISE" -> 3;
+            default -> 0;
         };
     }
 
