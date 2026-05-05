@@ -7,6 +7,9 @@ interface SubscriptionPlanSelectionProps {
     username: string;
     workspaceId: string;
     workspaceName: string;
+    currentPlanId?: string;
+    currentStatus?: string;
+    allowCurrentPlanSelection?: boolean;
     onPlanSelected: (planId: string, interval: "monthly" | "annual") => Promise<void> | void;
     onSkip: () => void;
     onLogout: () => void;
@@ -64,13 +67,13 @@ const PLANS: Plan[] = [
         id: 'PRO',
         name: 'Professional',
         icon: <Zap size={22} />,
-        monthlyPrice: 29,
-        annualPrice: 24,
-        description: 'For serious ontology teams',
-        tagline: 'Collaborate with your team and unlock advanced features',
+        monthlyPrice: 59,
+        annualPrice: 59,
+        description: 'For serious ontology projects',
+        tagline: 'Collaborate within your workspace and unlock advanced features',
         features: [
             'Up to 10 workspaces',
-            'Up to 10 team members',
+            'Up to 10 workspace members',
             '100 GB storage',
             'Everything in Free',
             'Role-based editing for members',
@@ -85,12 +88,12 @@ const PLANS: Plan[] = [
         id: 'ENTERPRISE',
         name: 'Enterprise',
         icon: <Crown size={22} />,
-        monthlyPrice: 99,
-        annualPrice: 79,
+        monthlyPrice: 299,
+        annualPrice: 299,
         description: 'For large organizations',
         tagline: 'Unlimited scale with dedicated support and SLA',
         features: [
-            'Unlimited team members',
+            'Unlimited workspace members',
             'Unlimited workspaces',
             'Unlimited storage',
             'Everything in Professional',
@@ -105,11 +108,15 @@ const PLANS: Plan[] = [
 const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     username,
     workspaceName,
+    currentPlanId = 'FREE',
+    currentStatus = '',
+    allowCurrentPlanSelection = false,
     onPlanSelected,
     onSkip,
     onLogout,
 }) => {
-    const [selectedPlan, setSelectedPlan] = useState<string>('PRO');
+    const normalizedCurrentPlanId = currentPlanId.toUpperCase();
+    const [selectedPlan, setSelectedPlan] = useState<string>(normalizedCurrentPlanId);
     const [billingInterval, setBillingInterval] = useState<BillingInterval>('monthly');
     const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -139,10 +146,36 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
         return Math.round((plan.monthlyPrice - plan.annualPrice) / plan.monthlyPrice * 100);
     };
 
-    const discountPercentages = plans.filter(p => p.monthlyPrice > 0).map(getDiscountPercent);
+    const getPlanRank = (id: string) => {
+        const ranks = { FREE: 1, PRO: 2, ENTERPRISE: 3 };
+        return ranks[id.toUpperCase() as keyof typeof ranks] || 0;
+    };
+
+    const currentRank = getPlanRank(normalizedCurrentPlanId);
+    const availablePlans = plans.filter(plan =>
+        currentRank >= 2 ? getPlanRank(plan.id) >= currentRank : true
+    );
+    const discountPercentages = availablePlans.filter(p => p.monthlyPrice > 0).map(getDiscountPercent);
     const maxDiscount = discountPercentages.length > 0 ? Math.max(...discountPercentages) : 0;
 
+    const selectedPlanData = availablePlans.find(p => p.id === selectedPlan) ?? availablePlans[0];
+    const selectedDiscount = selectedPlanData ? getDiscountPercent(selectedPlanData) : 0;
+    
+    // Ensure badgeDiscount uses live data and falls back to max discount if selected has none
+    const badgeDiscount = selectedDiscount > 0 ? selectedDiscount : maxDiscount;
+
+    const selectedRank = getPlanRank(selectedPlan);
+    const isDowngradeAttempt = selectedRank < currentRank && currentRank > 1; // Only check if current is paid
+    const isUpgrade = selectedRank > currentRank;
+    const isCurrentPaidPlan = selectedPlan === normalizedCurrentPlanId && currentRank > 1;
+    const disableContinue = isProcessing || isDowngradeAttempt || (isCurrentPaidPlan && !allowCurrentPlanSelection);
+    const isInactiveCurrentPlan = allowCurrentPlanSelection && currentRank > 1;
+    const isPaidSelected = (selectedPlanData?.monthlyPrice ?? 0) > 0;
+    const isEnterpriseSelected = selectedPlan === 'ENTERPRISE';
+    const normalizedCurrentStatus = currentStatus.toUpperCase();
+
     const handleContinue = async () => {
+        if (disableContinue) return;
         setIsProcessing(true);
         try {
             await onPlanSelected(selectedPlan, billingInterval);
@@ -151,15 +184,8 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
         }
     };
 
-    const selectedPlanData = plans.find(p => p.id === selectedPlan);
-    const selectedDiscount = selectedPlanData ? getDiscountPercent(selectedPlanData) : 0;
-    
-    // Ensure badgeDiscount uses live data and falls back to max discount if selected has none
-    const badgeDiscount = selectedDiscount > 0 ? selectedDiscount : maxDiscount;
-
     return (
-        // Mobile scroll fix: avoid `h-screen` (100vh) which can lock scroll on mobile browsers.
-        <div className="dark-surface min-h-[100dvh] bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 relative overflow-y-auto">
+        <div className="dark-surface h-screen bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 relative overflow-y-auto">
             {/* Background orbs */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute -top-32 -right-32 w-96 h-96 bg-violet-600 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" />
@@ -179,7 +205,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                             <span className="text-violet-300 text-xs font-semibold uppercase tracking-widest">OntoCode</span>
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-bold text-white">
-                            Start your free trial
+                            {isInactiveCurrentPlan ? 'Renew your subscription' : currentRank > 1 ? 'Manage your plan' : 'Choose your plan'}
                         </h1>
                         <p className="text-slate-400 text-sm mt-0.5">
                             Hi <span className="text-violet-300 font-medium">{username}</span> — workspace <span className="text-violet-300 font-medium">{workspaceName}</span>
@@ -194,16 +220,45 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     </button>
                 </div>
 
-                {/* Trial banner */}
+                {/* Billing terms banner */}
                 <div className="mb-5 flex justify-center">
                     <div className="flex items-center gap-2.5 px-5 py-2.5 bg-gradient-to-r from-violet-600/30 to-indigo-600/30 border border-violet-500/40 rounded-full backdrop-blur-sm">
                         <Gift size={16} className="text-violet-300" />
                         <span className="text-white text-sm font-medium">
-                            {trialPeriodDays}-day free trial on all paid plans —{' '}
-                            <span className="text-violet-300">card saved, not charged until day {trialPeriodDays + 1}</span>
+                            {isPaidSelected ? (
+                                <>{trialPeriodDays}-day trial on paid plans <span className="text-violet-300">with renewal reminders at 15, 7, and 1 day{currentRank > 1 && normalizedCurrentStatus ? ` (${normalizedCurrentStatus})` : ''}</span></>
+                            ) : (
+                                <>Free plan <span className="text-violet-300">with no card required</span></>
+                            )}
                         </span>
                     </div>
                 </div>
+
+                {/* Trial banner */}
+                <div className="hidden">
+                    <div className="flex items-center gap-2.5 px-5 py-2.5 bg-gradient-to-r from-violet-600/30 to-indigo-600/30 border border-violet-500/40 rounded-full backdrop-blur-sm">
+                        <Gift size={16} className="text-violet-300" />
+                        <span className="text-white text-sm font-medium">
+                            {isEnterpriseSelected ? (
+                                <>Enterprise Plan — <span className="text-violet-300">Unlimited scale with priority support</span></>
+                            ) : (
+                                <>{trialPeriodDays}-day free trial on Professional plan — <span className="text-violet-300">card saved, not charged until day {trialPeriodDays + 1}</span></>
+                            )}
+                        </span>
+                    </div>
+                </div>
+
+                {/* No-Downgrade Heads-up */}
+                {isUpgrade && (
+                    <div className="mb-5 flex justify-center">
+                        <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg backdrop-blur-sm">
+                            <Shield size={14} className="text-amber-400" />
+                            <p className="text-amber-200 text-xs">
+                                <strong>Note:</strong> Once you upgrade to {selectedPlanData?.name}, downgrading to a lower plan is not permitted.
+                            </p>
+                        </div>
+                    </div>
+                )}
 
                 {/* Billing toggle */}
                 <div className="flex justify-center mb-6">
@@ -240,10 +295,12 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     </div>
                 </div>
 
-                {/* Plan cards */}
+                {/* Plan cards (scrollable region) */}
                 <div className="flex-1 flex items-start justify-center">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl w-full">
-                        {plans.map((plan) => {
+                    <div className="w-full max-w-5xl">
+                        <div className="pb-8">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 w-full">
+                        {availablePlans.map((plan) => {
                             const isSelected = selectedPlan === plan.id;
                             const savings = getAnnualSavings(plan);
                             const price = getDisplayPrice(plan);
@@ -311,7 +368,14 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                                 </p>
                                             )}
                                             {billingInterval === 'monthly' && plan.monthlyPrice > 0 && (
-                                                <p className="text-xs text-slate-500 mt-0.5">Billed monthly</p>
+                                                <p className="text-xs text-slate-500 mt-0.5">
+                                                    Billed monthly
+                                                    {savings > 0 && (
+                                                        <span className="ml-1.5 text-green-400 font-medium">
+                                                            · Save {getDiscountPercent(plan)}% with annual
+                                                        </span>
+                                                    )}
+                                                </p>
                                             )}
                                         </div>
 
@@ -345,15 +409,25 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                                 </div>
                                             </div>
                                         )}
+                                        {false && plan.id === 'ENTERPRISE' && (
+                                            <div className="mt-3 pt-3 border-t border-white/10">
+                                                <div className="flex items-center gap-1.5 text-amber-300 text-xs font-medium">
+                                                    <Crown size={12} />
+                                                    <span>Enterprise Tier • No trial version available</span>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             );
                         })}
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 {/* CTA */}
-                <div className="mt-6 flex flex-col items-center gap-3">
+                <div className="mt-4 flex flex-col items-center gap-3 sticky bottom-0 pt-4 pb-2 bg-gradient-to-t from-slate-950/90 via-slate-950/60 to-transparent backdrop-blur-sm">
                     {selectedPlanData && selectedPlanData.monthlyPrice > 0 && (
                         <p className="text-slate-400 text-xs text-center">
                             You'll start your{' '}
@@ -362,32 +436,54 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                             {' '}Your card won't be charged until the trial ends.
                         </p>
                     )}
+                    {false && isEnterpriseSelected && (
+                        <p className="text-amber-400 text-xs text-center font-medium">
+                            Enterprise plans are charged immediately. No trial period is available for this tier.
+                        </p>
+                    )}
+                    {isDowngradeAttempt && (
+                        <p className="text-red-400 text-xs text-center font-bold">
+                            ⚠️ Downgrades are not permitted. You can only maintain or upgrade your plan.
+                        </p>
+                    )}
 
                     <div className="flex items-center gap-3">
                         <button
                             onClick={onSkip}
                             className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white rounded-xl transition-all text-sm"
                         >
-                            Skip for now
+                            Go Back
                         </button>
                         <button
                             onClick={handleContinue}
-                            disabled={isProcessing}
-                            className="px-7 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg shadow-violet-500/30 text-sm disabled:opacity-50"
+                            disabled={disableContinue}
+                            className={`px-7 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg shadow-violet-500/30 text-sm disabled:opacity-50 ${disableContinue ? 'cursor-not-allowed opacity-70 grayscale-[0.5]' : ''}`}
                         >
                             {isProcessing ? "Processing..." : (
                                 <>
-                                    {selectedPlanData?.monthlyPrice === 0
-                                        ? `Continue with ${selectedPlanData.name}`
-                                        : `Start free trial — ${selectedPlanData?.name}`}
-                                    <ArrowRight size={15} />
+                                    {isDowngradeAttempt ? "Downgrade Restricted" : (
+                                        <>
+                                            {isCurrentPaidPlan && !allowCurrentPlanSelection
+                                                ? "Your Current Plan"
+                                                : isInactiveCurrentPlan && selectedPlan === normalizedCurrentPlanId
+                                                    ? `Renew ${selectedPlanData?.name}`
+                                                    : <>{isUpgrade ? 'Upgrade' : selectedPlan === 'FREE' ? 'Continue with' : 'Select'} {selectedPlanData?.name}</>
+                                            }
+                                            {!disableContinue && <ArrowRight size={15} />}
+                                        </>
+                                    )}
                                 </>
                             )}
                         </button>
                     </div>
 
-                    <p className="text-slate-500 text-xs">
-                        Card required • not charged for {trialPeriodDays} days • cancel anytime before trial ends
+                    <p className="text-slate-500 text-xs text-center">
+                        Paid plans renew automatically. Reminders are sent 15, 7, and 1 day before renewal. Expired or canceled subscriptions block workspace access until renewed.
+                    </p>
+                    <p className="hidden">
+                        {isEnterpriseSelected 
+                          ? "Instant activation • No trial for Enterprise • Billed monthly/annually"
+                          : `Card required • not charged for ${trialPeriodDays} days • cancel anytime before trial ends`}
                     </p>
                 </div>
             </div>

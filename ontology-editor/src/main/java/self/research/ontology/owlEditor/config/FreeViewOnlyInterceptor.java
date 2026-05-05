@@ -27,6 +27,7 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         "/**/dl-query",
         "/api/sparql/query/**",   // SELECT/CONSTRUCT queries (read-only)
         "/api/sparql/*/queries",  // save/list query templates (not ontology mutations)
+        "/api/v1/issues/report",  // support submissions are open to FREE users
         "/api/sqwrl/**",
         "/**/reasoner/**",
         "/**/validate",

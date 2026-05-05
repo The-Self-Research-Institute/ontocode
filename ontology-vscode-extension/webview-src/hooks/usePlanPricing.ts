@@ -23,17 +23,17 @@ const FALLBACK: PricingMap = {
         limitations: ['No team collaboration', 'No shared editing'],
     },
     PRO: {
-        id: 'PRO', monthlyPrice: 29, annualPrice: 24,
+        id: 'PRO', monthlyPrice: 59, annualPrice: 59,
         features: [
-            'Up to 10 workspaces', 'Up to 10 team members', '100 GB storage',
+            'Up to 10 workspaces', 'Up to 10 workspace members', '100 GB storage',
             'Everything in Free', 'Team collaboration enabled', 'Export to multiple formats',
         ],
         limitations: [],
     },
     ENTERPRISE: {
-        id: 'ENTERPRISE', monthlyPrice: 99, annualPrice: 79,
+        id: 'ENTERPRISE', monthlyPrice: 299, annualPrice: 299,
         features: [
-            'Unlimited team members', 'Unlimited workspaces', 'Unlimited storage',
+            'Unlimited workspace members', 'Unlimited workspaces', 'Unlimited storage',
             'Everything in Professional', 'Early access to new features',
         ],
         limitations: [],

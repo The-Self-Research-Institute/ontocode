@@ -208,10 +208,10 @@ type WebviewMessage =
     | { type: 'uploadProgress'; projectId: string; percent: number; loaded: number; total: number; message: string }
     | { type: 'showSubscriptionPlans' }
     // Citation messages
-    | { type: 'zoteroLibraryData'; items: any[]; hasMore?: boolean }
-    | { type: 'zoteroLibraryDataAppend'; items: any[]; hasMore?: boolean }
-    | { type: 'zoteroLibraryDataComplete' }
-    | { type: 'zoteroLibraryError'; error: string }
+    | { type: 'zoteroLibraryData'; items: any[]; hasMore?: boolean; totalResults?: number; loadedSoFar?: number; librarySessionId?: number }
+    | { type: 'zoteroLibraryDataAppend'; items: any[]; hasMore?: boolean; totalResults?: number; loadedSoFar?: number; librarySessionId?: number }
+    | { type: 'zoteroLibraryDataComplete'; librarySessionId?: number }
+    | { type: 'zoteroLibraryError'; error: string; librarySessionId?: number }
     | { type: 'citationFormatted'; citation: string; metadata: any; projectId: string }
     | { type: 'uploadOntologyContentDone'; success: boolean; projectId: string }; // Navigate to subscription plans page
 
@@ -245,7 +245,8 @@ type ExtensionMessage =
     | { type: 'uploadFileToProject'; projectId: string; fileName: string; fileContent: string; fileSize: number }
     | { type: 'showSubscriptionPlans' } // Request to show subscription plans page
     | { type: 'setApiBaseUrl'; url: string; deploymentType?: 'self-hosted' | 'cloud' }
-    | { type: 'requestZoteroLibrary' } // Request Zotero library
+    | { type: 'requestZoteroLibrary'; searchQuery?: string } // Zotero quick search (`q`), optional — empty = whole library
+    | { type: 'requestZoteroLibraryMore' } // Request next Zotero page (infinite scroll)
     | { type: 'insertCitation'; citationKey: string; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert citation from Zotero
     | { type: 'insertManualCitation'; citation: any; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert manual citation
     | { type: 'insertCitationToGraphDB'; citation: string; format: string; projectId: string; metadata: any } // Insert citation directly to GraphDB
@@ -671,6 +672,19 @@ class OntoCodePanel {
     public _pendingInvitationToken: string | null = null; // Track pending invitation token
     private _pendingDuplicatePrompts = new Map<string, { resolve: (result: DuplicatePromptResult | null) => void; timeout: ReturnType<typeof setTimeout> }>();
 
+    // Zotero infinite-scroll paging state (per webview session)
+    private _zoteroPaging: {
+        start: number;
+        totalResults: number;
+        pageSize: number;
+        loading: boolean;
+        done: boolean;
+        searchQuery?: string;
+        sessionId: number;
+    } | null = null;
+    /** Monotonic session id per library/search request — webview ignores stale paging events */
+    private _zoteroLibrarySessionSeq = 0;
+
     // Collaborative editing
     private collaborationManager: ICollaborationManager | null = null;
     private editCapture: EditCapture;
@@ -933,9 +947,14 @@ class OntoCodePanel {
                             console.error('[OntoCode] ❌ Failed to save deployment type:', err);
                         });
                         break;
-                    case 'requestZoteroLibrary':
-                        // Handle request for Zotero library from webview
-                        await this.handleRequestZoteroLibrary();
+                    case 'requestZoteroLibrary': {
+                        const raw = (message as { searchQuery?: string }).searchQuery?.trim();
+                        await this.handleRequestZoteroLibrary(raw || undefined);
+                        break;
+                    }
+                    case 'requestZoteroLibraryMore':
+                        // Load the next page of Zotero citations (infinite scroll)
+                        await this.handleRequestZoteroLibraryMore();
                         break;
                     case 'insertCitation':
                         // Handle citation insertion from Zotero
@@ -3842,11 +3861,15 @@ class OntoCodePanel {
     }
 
     /**
-     * Handle request for Zotero library from webview
+     * Handle request for Zotero library from webview.
+     * @param searchQuery When set, Zotero `/items?q=` quick search scope; otherwise paginate entire library.
      */
-    private async handleRequestZoteroLibrary(): Promise<void> {
+    private async handleRequestZoteroLibrary(searchQuery?: string): Promise<void> {
+        const trimmed = typeof searchQuery === 'string' && searchQuery.trim() ? searchQuery.trim() : undefined;
+        const sid = ++this._zoteroLibrarySessionSeq;
+
         try {
-            console.log('[OntoCode] Handling Zotero library request');
+            console.log('[OntoCode] Handling Zotero library request', trimmed ? `(q="${trimmed}")` : '(full library)');
 
             // Check if Zotero is configured
             if (!zoteroApiService.isConfigured()) {
@@ -3860,52 +3883,126 @@ class OntoCodePanel {
                     console.log('[OntoCode] User cancelled Zotero configuration');
                     this.postMessage({
                         type: 'zoteroLibraryError',
-                        error: 'Zotero configuration cancelled. Please configure Zotero to use citations.'
+                        error: 'Zotero configuration cancelled. Please configure Zotero to use citations.',
+                        librarySessionId: sid
                     });
                     return;
                 }
             }
 
+            // Reset paging session and fetch only the first page.
             const PAGE_SIZE = 100;
-            let start = 0;
-            let totalResults = Infinity;
+            this._zoteroPaging = {
+                start: 0,
+                totalResults: Infinity,
+                pageSize: PAGE_SIZE,
+                loading: true,
+                done: false,
+                sessionId: sid,
+                ...(trimmed ? { searchQuery: trimmed } : {})
+            };
 
-            while (start < totalResults) {
-                const { items, totalResults: total } = await zoteroApiService.fetchLibraryPage(start, PAGE_SIZE);
+            const { items, totalResults } = await zoteroApiService.fetchLibraryPage(
+                0,
+                PAGE_SIZE,
+                trimmed ? { q: trimmed } : undefined
+            );
+            this._zoteroPaging.totalResults = totalResults;
+            this._zoteroPaging.start = items?.length || 0;
+            this._zoteroPaging.loading = false;
+            this._zoteroPaging.done = !items || items.length === 0 || this._zoteroPaging.start >= totalResults;
 
-                if (start === 0) {
-                    totalResults = total;
-                }
-
-                if (!items || items.length === 0) break;
-
-                if (start === 0) {
-                    this.postMessage({
-                        type: 'zoteroLibraryData',
-                        items,
-                        hasMore: start + items.length < totalResults
-                    });
-                } else {
-                    this.postMessage({
-                        type: 'zoteroLibraryDataAppend',
-                        items,
-                        hasMore: start + items.length < totalResults
-                    });
-                }
-
-                start += items.length;
-
-                if (items.length < PAGE_SIZE || start >= totalResults) break;
-            }
+            const knownTotal =
+                Number.isFinite(totalResults) && totalResults >= 0 && totalResults < Number.MAX_SAFE_INTEGER
+                    ? Math.floor(totalResults)
+                    : undefined;
 
             this.postMessage({
-                type: 'zoteroLibraryDataComplete'
+                type: 'zoteroLibraryData',
+                items: items || [],
+                hasMore: !this._zoteroPaging.done,
+                librarySessionId: sid,
+                ...(knownTotal !== undefined ? { totalResults: knownTotal, loadedSoFar: this._zoteroPaging.start } : {})
             });
+
+            if (this._zoteroPaging.done) {
+                this.postMessage({ type: 'zoteroLibraryDataComplete', librarySessionId: sid });
+            }
         } catch (error) {
             console.error('[OntoCode] Failed to load Zotero library:', error);
             this.postMessage({
                 type: 'zoteroLibraryError',
-                error: error instanceof Error ? error.message : 'Failed to load Zotero library'
+                error: error instanceof Error ? error.message : 'Failed to load Zotero library',
+                librarySessionId: sid
+            });
+        }
+    }
+
+    /**
+     * Fetch the next page of Zotero library items (triggered by webview scroll).
+     */
+    private async handleRequestZoteroLibraryMore(): Promise<void> {
+        try {
+            if (!this._zoteroPaging) {
+                // If the webview asks for more before initial load, just start fresh.
+                await this.handleRequestZoteroLibrary(undefined);
+                return;
+            }
+
+            if (this._zoteroPaging.done || this._zoteroPaging.loading) {
+                return;
+            }
+
+            this._zoteroPaging.loading = true;
+            const start = this._zoteroPaging.start;
+            const pageSize = this._zoteroPaging.pageSize;
+            const pq = this._zoteroPaging.searchQuery?.trim();
+
+            const { items, totalResults } = await zoteroApiService.fetchLibraryPage(
+                start,
+                pageSize,
+                pq ? { q: pq } : undefined
+            );
+            // totalResults can be 0 if header missing; keep the best-known value
+            if (Number.isFinite(totalResults) && totalResults > 0) {
+                this._zoteroPaging.totalResults = totalResults;
+            }
+
+            const got = items?.length || 0;
+            this._zoteroPaging.start = start + got;
+            this._zoteroPaging.loading = false;
+
+            const done = got === 0 || this._zoteroPaging.start >= this._zoteroPaging.totalResults || got < pageSize;
+            this._zoteroPaging.done = done;
+
+            const sidActive = this._zoteroPaging.sessionId;
+
+            if (got > 0) {
+                const pt = this._zoteroPaging;
+                const knownTotal =
+                    pt && Number.isFinite(pt.totalResults) && pt.totalResults < Number.MAX_SAFE_INTEGER
+                        ? Math.floor(pt.totalResults)
+                        : undefined;
+                this.postMessage({
+                    type: 'zoteroLibraryDataAppend',
+                    items,
+                    hasMore: !done,
+                    librarySessionId: sidActive,
+                    ...(knownTotal !== undefined && pt ? { totalResults: knownTotal, loadedSoFar: pt.start } : {})
+                });
+            }
+
+            if (done) {
+                this.postMessage({ type: 'zoteroLibraryDataComplete', librarySessionId: sidActive });
+            }
+        } catch (error) {
+            const sidErr = this._zoteroPaging?.sessionId;
+            if (this._zoteroPaging) this._zoteroPaging.loading = false;
+            console.error('[OntoCode] Failed to load more Zotero items:', error);
+            this.postMessage({
+                type: 'zoteroLibraryError',
+                error: error instanceof Error ? error.message : 'Failed to load more Zotero items',
+                ...(sidErr !== undefined ? { librarySessionId: sidErr } : {})
             });
         }
     }

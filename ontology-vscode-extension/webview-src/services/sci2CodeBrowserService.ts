@@ -134,7 +134,8 @@ class Sci2CodeBrowserService {
    */
   async fetchLibraryPage(
     start: number = 0,
-    pageSize: number = 100
+    pageSize: number = 100,
+    opts?: { q?: string }
   ): Promise<{ items: ZoteroItem[]; totalResults: number }> {
     const cfg = this.getConfig();
     if (!cfg) throw new Error('Zotero not configured');
@@ -144,9 +145,16 @@ class Sci2CodeBrowserService {
         ? `groups/${cfg.groupId}`
         : `users/${cfg.userId}`;
 
-    const resp = await fetch(
-      `${this.baseUrl}/${libraryPath}/items?limit=${pageSize}&start=${start}&format=json&include=data&itemType=-attachment`,
-      {
+    const u = new URL(`${this.baseUrl}/${libraryPath}/items`);
+    u.searchParams.set('limit', String(pageSize));
+    u.searchParams.set('start', String(start));
+    u.searchParams.set('format', 'json');
+    u.searchParams.set('include', 'data');
+    u.searchParams.set('itemType', '-attachment');
+    const qt = opts?.q?.trim();
+    if (qt) u.searchParams.set('q', qt);
+
+    const resp = await fetch(u.toString(), {
         headers: {
           'Zotero-API-Key': cfg.apiKey,
           'Zotero-API-Version': '3',

@@ -129,11 +129,12 @@ const PLANS = [
         name: 'Free',
         icon: <Sparkles size={20} />,
         monthlyPrice: 0,
+        annualPrice: 0,
         gradient: 'from-slate-500 to-slate-700',
         glowColor: 'shadow-slate-500/30',
         features: [
             'Up to 3 workspaces',
-            'Up to 3 team members',
+            'Up to 3 workspace members',
             'OWL/RDF ontology editing',
             'SPARQL query execution',
             'SWRL rule editor',
@@ -146,13 +147,14 @@ const PLANS = [
         id: 'pro',
         name: 'Professional',
         icon: <Zap size={20} />,
-        monthlyPrice: 29,
+        monthlyPrice: 59,
+        annualPrice: 59,
         gradient: 'from-violet-500 to-indigo-600',
         glowColor: 'shadow-violet-500/40',
         badge: 'Most Popular',
         features: [
             'Up to 10 workspaces',
-            'Up to 10 team members',
+            'Up to 10 workspace members',
             'Everything in Free',
             'Role-based editing for members',
             'Export to multiple formats',
@@ -162,12 +164,13 @@ const PLANS = [
         id: 'enterprise',
         name: 'Enterprise',
         icon: <Crown size={20} />,
-        monthlyPrice: 99,
+        monthlyPrice: 299,
+        annualPrice: 299,
         gradient: 'from-amber-500 to-orange-600',
         glowColor: 'shadow-amber-500/40',
         badge: 'Best Value',
         features: [
-            'Unlimited team members',
+            'Unlimited workspace members',
             'Unlimited workspaces',
             'Everything in Professional',
             'Early access to new features',
@@ -189,11 +192,13 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
         return {
             ...plan,
             monthlyPrice: live.monthlyPrice,
+            annualPrice: live.annualPrice,
             features: live.features.length ? live.features : plan.features,
         };
     });
     const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
     const [view, setView] = useState<View>('plans');
+    const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly');
     const [setupClientSecret, setSetupClientSecret] = useState<string | null>(null);
     const [setupPublishableKey, setSetupPublishableKey] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
@@ -233,6 +238,13 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
     if (!isOpen) return null;
 
     const currentPlan = plans.find(p => p.id === subscription.plan) || plans[0];
+    const getPlanRank = (id: string) => {
+        const ranks = { free: 1, pro: 2, enterprise: 3 };
+        return ranks[id.toLowerCase() as keyof typeof ranks] || 0;
+    };
+    const currentRank = getPlanRank(subscription.plan);
+    const availablePlans = plans.filter(plan => currentRank >= 2 ? getPlanRank(plan.id) >= currentRank : true);
+    const currentIntervalLabel = billingInterval === 'annual' ? 'Annual' : 'Monthly';
 
     const handleClose = () => {
         setView('plans');
@@ -308,6 +320,32 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                     {view === 'plans' && (
                         <div className="p-6 space-y-6">
 
+                            {/* Billing interval toggle (controls displayed price + upgrade intent) */}
+                            <div className="flex justify-center">
+                                <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-1">
+                                    <button
+                                        onClick={() => setBillingInterval('monthly')}
+                                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                                            billingInterval === 'monthly'
+                                                ? 'bg-violet-600 text-white shadow-sm'
+                                                : 'text-slate-400 hover:text-white'
+                                        }`}
+                                    >
+                                        Monthly
+                                    </button>
+                                    <button
+                                        onClick={() => setBillingInterval('annual')}
+                                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                                            billingInterval === 'annual'
+                                                ? 'bg-violet-600 text-white shadow-sm'
+                                                : 'text-slate-400 hover:text-white'
+                                        }`}
+                                    >
+                                        Annual
+                                    </button>
+                                </div>
+                            </div>
+
                             {/* Current plan stats card */}
                             <div className={`rounded-xl bg-gradient-to-br ${currentPlan.gradient} p-px`}>
                                 <div className="rounded-xl bg-slate-900/90 p-5">
@@ -332,7 +370,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                         <div className="bg-white/5 rounded-lg p-3">
                                             <Users size={16} className="text-violet-400 mb-1.5" />
-                                            <p className="text-[11px] text-slate-400">Team Members</p>
+                                            <p className="text-[11px] text-slate-400">Workspace Members</p>
                                             <p className="text-base font-bold text-white">
                                                 {subscription.limits.maxTeamMembers === Infinity ? 'Unlimited' : subscription.limits.maxTeamMembers}
                                             </p>
@@ -366,12 +404,39 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                 <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-xl text-sm">{error}</div>
                             )}
 
+                            {/* No-Downgrade Policy Warning */}
+                            {subscription.plan && subscription.plan.toLowerCase() !== 'free' && (
+                                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
+                                    <Shield size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-amber-200">Strict Plan Policy</p>
+                                        <p className="text-xs text-amber-200/80 mt-1 leading-relaxed">
+                                            As part of our premium service policy, downgrading from <strong>{currentPlan.name}</strong> to a lower plan tier is not permitted. You can continue with your current plan or upgrade to a higher tier.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-start gap-3">
+                                <Shield size={18} className="text-violet-300 flex-shrink-0 mt-0.5" />
+                                <p className="text-xs text-slate-300 leading-relaxed">
+                                    Paid plans renew automatically on the selected interval. Renewal reminders are sent 15, 7, and 1 day before renewal. Expired or canceled paid subscriptions block workspace access until renewed.
+                                </p>
+                            </div>
+
                             {/* Plan comparison */}
                             <div>
                                 <h3 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-widest">Compare Plans</h3>
                                 <div className="grid md:grid-cols-3 gap-4">
-                                    {plans.map((plan) => {
+                                    {availablePlans.map((plan) => {
                                         const isCurrent = plan.id === subscription.plan;
+                                        const displayPrice = billingInterval === 'annual' ? plan.annualPrice : plan.monthlyPrice;
+                                        const secondary = plan.monthlyPrice === 0
+                                            ? 'Free forever'
+                                            : billingInterval === 'annual'
+                                                ? `$${(plan.annualPrice * 12)}/yr`
+                                                : `$${plan.monthlyPrice}/mo`;
+
                                         return (
                                             <div
                                                 key={plan.id}
@@ -401,10 +466,24 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                                     <div>
                                                         <h4 className="text-sm font-bold text-white leading-tight">{plan.name}</h4>
                                                         <p className="text-xs text-slate-400">
-                                                            {plan.monthlyPrice === 0 ? 'Free forever' : `$${plan.monthlyPrice}/mo`}
+                                                            {secondary}
                                                         </p>
                                                     </div>
                                                 </div>
+                                                {plan.monthlyPrice > 0 && (
+                                                    <div className="mb-3">
+                                                        <div className="flex items-baseline gap-1">
+                                                            <span className="text-2xl font-extrabold text-white">${displayPrice}</span>
+                                                            <span className="text-slate-400 text-xs">/ mo</span>
+                                                        </div>
+                                                        {billingInterval === 'annual' && (
+                                                            <p className="text-[11px] text-slate-500">Billed annually</p>
+                                                        )}
+                                                        {billingInterval === 'monthly' && (
+                                                            <p className="text-[11px] text-slate-500">Billed monthly</p>
+                                                        )}
+                                                    </div>
+                                                )}
 
                                                 <ul className="space-y-1.5 mb-4 flex-1">
                                                     {plan.features.map((f, i) => (
@@ -415,31 +494,52 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                                     ))}
                                                 </ul>
 
-                                                {isCurrent ? (
-                                                    <button disabled className="w-full py-2 bg-violet-600/20 text-violet-300 rounded-lg text-sm font-semibold cursor-not-allowed border border-violet-500/30">
-                                                        Current Plan
-                                                    </button>
-                                                ) : plan.id === 'free' && subscription.plan !== 'free' ? (
-                                                    <button disabled className="w-full py-2 bg-white/5 text-slate-500 rounded-lg text-sm font-semibold cursor-not-allowed border border-white/10">
-                                                        Downgrade Unavailable
-                                                    </button>
-                                                ) : (
-                                                    <button
-                                                        onClick={() => {
-                                                            if (onUpgrade && !isUpgrading) {
-                                                                setSelectedPlan(plan.id);
-                                                                onUpgrade(plan.id);
+                                                {(() => {
+                                                    const getPlanRank = (id: string) => {
+                                                        const ranks = { free: 1, pro: 2, enterprise: 3 };
+                                                        return ranks[id.toLowerCase() as keyof typeof ranks] || 0;
+                                                    };
+                                                    const currentRank = getPlanRank(subscription.plan);
+                                                    const planRank = getPlanRank(plan.id);
+                                                    const isUpgrade = planRank > currentRank;
+                                                    const isDowngrade = planRank < currentRank;
+
+                                                    if (isCurrent) {
+                                                        return (
+                                                            <button disabled className="w-full py-2 bg-violet-600/20 text-violet-300 rounded-lg text-sm font-semibold cursor-not-allowed border border-violet-500/30">
+                                                                Current Plan
+                                                            </button>
+                                                        );
+                                                    }
+
+                                                    if (isDowngrade && currentRank > 1) {
+                                                        return (
+                                                            <button disabled className="w-full py-2 bg-slate-800 text-slate-500 rounded-lg text-sm font-semibold cursor-not-allowed border border-white/5 opacity-50">
+                                                                Downgrade Restricted
+                                                            </button>
+                                                        );
+                                                    }
+
+                                                    return (
+                                                        <button
+                                                            onClick={() => {
+                                                                if (onUpgrade && !isUpgrading) {
+                                                                    setSelectedPlan(plan.id);
+                                                                    // Persist interval so WorkspaceSelection auto-checkout can honor annual vs monthly
+                                                                    try { localStorage.setItem('pendingUpgradeInterval', billingInterval); } catch {}
+                                                                    onUpgrade(plan.id);
+                                                                }
+                                                            }}
+                                                            disabled={isUpgrading}
+                                                            className={`w-full py-2 bg-gradient-to-r ${plan.gradient} text-white rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2`}
+                                                        >
+                                                            {isUpgrading && selectedPlan === plan.id
+                                                                ? <><Loader2 size={14} className="animate-spin" /> Processing…</>
+                                                                : `${isUpgrade ? 'Upgrade' : 'Select'} to ${plan.name} (${currentIntervalLabel})`
                                                             }
-                                                        }}
-                                                        disabled={isUpgrading}
-                                                        className={`w-full py-2 bg-gradient-to-r ${plan.gradient} text-white rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2`}
-                                                    >
-                                                        {isUpgrading && selectedPlan === plan.id
-                                                            ? <><Loader2 size={14} className="animate-spin" /> Upgrading…</>
-                                                            : `Upgrade to ${plan.name}`
-                                                        }
-                                                    </button>
-                                                )}
+                                                        </button>
+                                                    );
+                                                })()}
                                             </div>
                                         );
                                     })}

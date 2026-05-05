@@ -141,7 +141,7 @@ public class SubscriptionController {
             }
             String clientSecret = stripeService.createCheckoutSession(user, planName, normalizedInterval, workspaceId);
             return ResponseEntity.ok(Map.of("clientSecret", clientSecret));
-        } catch (IllegalStateException e) {
+        } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             log.error("Checkout session creation failed for {}: {}", principal.getUsername(), e.getMessage());
@@ -346,7 +346,8 @@ public class SubscriptionController {
     // ─────────────────────────────────────────────────────────────────────────
 
     private User resolveUser(UserDetails principal) {
-        return userRepository.findByUsername(principal.getUsername())
+        return userRepository.findByEmail(principal.getUsername())
+                .or(() -> userRepository.findByUsername(principal.getUsername()))
                 .orElseThrow(() -> new IllegalStateException("Authenticated user not found in database"));
     }
 

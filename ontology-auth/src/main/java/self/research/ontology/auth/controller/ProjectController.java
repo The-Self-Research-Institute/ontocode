@@ -72,7 +72,7 @@ public class ProjectController {
     /**
      * Get current authenticated username
      */
-    private String getCurrentUsername() {
+    private String getCurrentUserEmail() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         return authentication.getName();
     }
@@ -101,8 +101,8 @@ public class ProjectController {
     @GetMapping
     public ResponseEntity<?> getAllProjects(@RequestParam(required = false) String userEmail) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -150,8 +150,8 @@ public class ProjectController {
             @RequestParam String name,
             @RequestParam String workspaceId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -192,14 +192,15 @@ public class ProjectController {
     @PostMapping
     public ResponseEntity<?> createProject(@Valid @RequestBody CreateProjectRequest request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
+            String username = user.getUsername();
             
             log.info("[createProject] User: {}, userId: {}, email: {}, workspaceId: {}", 
                 username, user.getId(), user.getEmail(), request.workspaceId);
@@ -247,10 +248,10 @@ public class ProjectController {
                         }
                     }
                 }
-            } else if ("specific".equals(request.shareWith) && request.memberUsernames != null) {
+            } else if ("specific".equals(request.shareWith) && request.memberEmails != null) {
                 // Add specific members as VIEWER (matching UI: "Choose who can view this project")
-                for (String memberUsername : request.memberUsernames) {
-                    Optional<User> memberOpt = userRepository.findByUsername(memberUsername);
+                for (String memberEmail : request.memberEmails) {
+                    Optional<User> memberOpt = userRepository.findByEmail(memberEmail);
                     if (memberOpt.isPresent() && !memberOpt.get().getId().equals(user.getId())) {
                         User member = memberOpt.get();
                         project.addMember(member.getId(), member.getUsername(), member.getEmail(), "VIEWER");
@@ -282,8 +283,8 @@ public class ProjectController {
     @GetMapping("/workspace/{workspaceId}")
     public ResponseEntity<?> getWorkspaceProjects(@PathVariable String workspaceId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -336,8 +337,8 @@ public class ProjectController {
     @GetMapping("/workspace/{workspaceId}/deleted")
     public ResponseEntity<?> getDeletedProjects(@PathVariable String workspaceId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -384,14 +385,15 @@ public class ProjectController {
     public ResponseEntity<?> getMyProjects(HttpServletRequest request,
                                            @RequestParam(required = false) String workspaceId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
+            String username = user.getUsername();
             
             // Get workspace ID: prefer JWT token claim, fallback to query parameter
             String tokenWorkspaceId = getWorkspaceIdFromToken(request);
@@ -487,8 +489,8 @@ public class ProjectController {
     @GetMapping("/{projectId}")
     public ResponseEntity<?> getProject(@PathVariable String projectId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -523,8 +525,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @Valid @RequestBody UpdateProjectRequest request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -560,8 +562,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestParam String email) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String currentUserEmail = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(currentUserEmail);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -615,8 +617,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @Valid @RequestBody AddMemberRequest request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -625,7 +627,7 @@ public class ProjectController {
             User user = userOpt.get();
             
             // Find target user
-            Optional<User> targetUserOpt = userRepository.findByUsername(request.username);
+            Optional<User> targetUserOpt = userRepository.findByEmail(request.email);
             if (targetUserOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Target user not found"));
             }
@@ -676,8 +678,8 @@ public class ProjectController {
             @PathVariable String memberId,
             @Valid @RequestBody UpdateMemberRoleRequest request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
 
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -713,8 +715,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @PathVariable String userId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -743,8 +745,8 @@ public class ProjectController {
     @PostMapping("/{projectId}/archive")
     public ResponseEntity<?> archiveProject(@PathVariable String projectId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -776,8 +778,8 @@ public class ProjectController {
     @DeleteMapping("/{projectId}")
     public ResponseEntity<?> deleteProject(@PathVariable String projectId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -869,8 +871,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestParam(defaultValue = "true") boolean restoreFiles) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -931,8 +933,8 @@ public class ProjectController {
     @GetMapping("/{projectId}/files")
     public ResponseEntity<?> getProjectFiles(@PathVariable String projectId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1031,8 +1033,8 @@ public class ProjectController {
             @PathVariable String fileId,
             HttpServletResponse httpResponse) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1152,8 +1154,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestParam String fileName) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1244,8 +1246,8 @@ public class ProjectController {
             @RequestParam(value = "replaceFileId", required = false) String replaceFileId,
             @RequestParam(value = "fileType", required = false, defaultValue = "application/rdf+xml") String fileType) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1472,8 +1474,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @PathVariable String fileId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1548,8 +1550,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @PathVariable String fileId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1604,8 +1606,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestBody Map<String, String> request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
 
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1654,8 +1656,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestBody Map<String, String> request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1705,8 +1707,8 @@ public class ProjectController {
         public String workspaceId;
         public String name;
         public String description;
-        public String shareWith; // "all" or "specific"
-        public List<String> memberUsernames; // List of usernames when shareWith="specific"
+        public String shareWith; // "none", "all", "specific"
+        public List<String> memberEmails; // List of emails when shareWith="specific"
         public String memberRole; // Role for shared members: VIEWER (default), EDITOR, ADMIN
     }
 
@@ -1716,7 +1718,7 @@ public class ProjectController {
     }
 
     public static class AddMemberRequest {
-        public String username;
+        public String email;
         public String role; // EDITOR, VIEWER
     }
 

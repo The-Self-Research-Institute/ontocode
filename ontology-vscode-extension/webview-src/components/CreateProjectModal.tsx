@@ -121,9 +121,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
         shareWith: shareWith === "none" ? null : shareWith,
       };
 
-      // Add member usernames only when shareWith is 'specific' and members are selected
+      // Add member emails only when shareWith is 'specific' and members are selected
       if (shareWith === "specific" && selectedMembers.length > 0) {
-        payload.memberUsernames = selectedMembers;
+        payload.memberEmails = selectedMembers;
       }
 
       console.log("Creating project with payload:", payload);
@@ -144,8 +144,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
     }
   };
 
-  const toggleMember = (username: string) => {
-    setSelectedMembers((prev) => (prev.includes(username) ? prev.filter((m) => m !== username) : [...prev, username]));
+  const toggleMember = (email: string) => {
+    setSelectedMembers((prev) => (prev.includes(email) ? prev.filter((m) => m !== email) : [...prev, email]));
   };
 
   if (!isOpen) return null;
@@ -264,8 +264,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                             >
                               <input
                                 type="checkbox"
-                                checked={selectedMembers.includes(member.username)}
-                                onChange={() => toggleMember(member.username)}
+                                checked={selectedMembers.includes(member.email)}
+                                onChange={() => toggleMember(member.email)}
                                 className="rounded text-purple-600"
                               />
                               <div className="text-sm flex-1">
