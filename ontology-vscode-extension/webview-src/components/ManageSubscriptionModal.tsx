@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
-import { X, Loader2, CreditCard, XCircle, CheckCircle, Shield, AlertTriangle } from 'lucide-react';
+import { X, Loader2, CreditCard, XCircle, CheckCircle, Shield, AlertTriangle, Crown } from 'lucide-react';
 import { getGatewayUrl } from '../config/deploymentConfig';
 import { usePlanPricing } from '../hooks/usePlanPricing';
 
