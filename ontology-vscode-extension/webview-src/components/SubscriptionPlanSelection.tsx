@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Check, X, Sparkles, Zap, Crown, ArrowRight, LogOut, Bug, Star, Shield, Gift } from 'lucide-react';
 import ReportIssueModal from './ReportIssueModal';
 import { usePlanPricing } from '../hooks/usePlanPricing';
+import { isInheritedPlanFeature, orderPlanFeatures } from '../utils/planFeatures';
 
 interface SubscriptionPlanSelectionProps {
     username: string;
@@ -386,10 +387,10 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
 
                                         {/* Features */}
                                         <div className="flex-1 space-y-2">
-                                            {plan.features.map((f, i) => (
+                                            {orderPlanFeatures(plan.features).map((f, i) => (
                                                 <div key={i} className="flex items-start gap-2">
                                                     <Check size={13} className="text-green-400 flex-shrink-0 mt-0.5" />
-                                                    <span className="text-slate-300 text-xs leading-relaxed">{f}</span>
+                                                    <span className={`text-xs leading-relaxed ${isInheritedPlanFeature(f) ? 'font-semibold text-white' : 'text-slate-300'}`}>{f}</span>
                                                 </div>
                                             ))}
                                             {plan.limitations?.map((l, i) => (

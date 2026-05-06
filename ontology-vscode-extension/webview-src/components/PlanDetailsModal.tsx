@@ -5,6 +5,7 @@ import { X, Check, Crown, Zap, Sparkles, Users, HardDrive, Shield, Rocket, Loade
 import { useSubscription } from '../hooks/useSubscription';
 import { getGatewayUrl } from '../config/deploymentConfig';
 import { usePlanPricing } from '../hooks/usePlanPricing';
+import { isInheritedPlanFeature, orderPlanFeatures } from '../utils/planFeatures';
 
 function safeGetStorage(key: string): string | null { try { return localStorage.getItem(key); } catch { return null; } }
 
@@ -242,8 +243,20 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
         const ranks = { free: 1, pro: 2, enterprise: 3 };
         return ranks[id.toLowerCase() as keyof typeof ranks] || 0;
     };
+    const getAnnualSavings = (plan: typeof plans[number]) => {
+        if (plan.monthlyPrice === 0) return 0;
+        return (plan.monthlyPrice - plan.annualPrice) * 12;
+    };
+    const getDiscountPercent = (plan: typeof plans[number]) => {
+        if (plan.monthlyPrice === 0) return 0;
+        return Math.round(((plan.monthlyPrice - plan.annualPrice) / plan.monthlyPrice) * 100);
+    };
     const currentRank = getPlanRank(subscription.plan);
     const availablePlans = plans.filter(plan => currentRank >= 2 ? getPlanRank(plan.id) >= currentRank : true);
+    const discountPercentages = availablePlans
+        .filter(plan => plan.monthlyPrice > 0)
+        .map(getDiscountPercent);
+    const maxDiscount = discountPercentages.length > 0 ? Math.max(...discountPercentages) : 0;
     const currentIntervalLabel = billingInterval === 'annual' ? 'Annual' : 'Monthly';
 
     const handleClose = () => {
@@ -335,13 +348,22 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                     </button>
                                     <button
                                         onClick={() => setBillingInterval('annual')}
-                                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
                                             billingInterval === 'annual'
                                                 ? 'bg-violet-600 text-white shadow-sm'
                                                 : 'text-slate-400 hover:text-white'
                                         }`}
                                     >
                                         Annual
+                                        {maxDiscount > 0 && (
+                                            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
+                                                billingInterval === 'annual'
+                                                    ? 'bg-green-500 text-white'
+                                                    : 'bg-green-600/30 text-green-400'
+                                            }`}>
+                                                Save {maxDiscount}%
+                                            </span>
+                                        )}
                                     </button>
                                 </div>
                             </div>
@@ -431,6 +453,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                     {availablePlans.map((plan) => {
                                         const isCurrent = plan.id === subscription.plan;
                                         const displayPrice = billingInterval === 'annual' ? plan.annualPrice : plan.monthlyPrice;
+                                        const savings = getAnnualSavings(plan);
                                         const secondary = plan.monthlyPrice === 0
                                             ? 'Free forever'
                                             : billingInterval === 'annual'
@@ -477,19 +500,33 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                                             <span className="text-slate-400 text-xs">/ mo</span>
                                                         </div>
                                                         {billingInterval === 'annual' && (
-                                                            <p className="text-[11px] text-slate-500">Billed annually</p>
+                                                            <p className="text-[11px] text-slate-500">
+                                                                Billed annually
+                                                                {savings > 0 && (
+                                                                    <span className="ml-1.5 text-green-400 font-medium">
+                                                                        Save {getDiscountPercent(plan)}%
+                                                                    </span>
+                                                                )}
+                                                            </p>
                                                         )}
                                                         {billingInterval === 'monthly' && (
-                                                            <p className="text-[11px] text-slate-500">Billed monthly</p>
+                                                            <p className="text-[11px] text-slate-500">
+                                                                Billed monthly
+                                                                {savings > 0 && (
+                                                                    <span className="ml-1.5 text-green-400 font-medium">
+                                                                        Save {getDiscountPercent(plan)}% with annual
+                                                                    </span>
+                                                                )}
+                                                            </p>
                                                         )}
                                                     </div>
                                                 )}
 
                                                 <ul className="space-y-1.5 mb-4 flex-1">
-                                                    {plan.features.map((f, i) => (
+                                                    {orderPlanFeatures(plan.features).map((f, i) => (
                                                         <li key={i} className="flex items-start gap-1.5">
                                                             <Check size={12} className="text-green-400 flex-shrink-0 mt-0.5" />
-                                                            <span className="text-xs text-slate-300 leading-relaxed">{f}</span>
+                                                            <span className={`text-xs leading-relaxed ${isInheritedPlanFeature(f) ? 'font-semibold text-white' : 'text-slate-300'}`}>{f}</span>
                                                         </li>
                                                     ))}
                                                 </ul>

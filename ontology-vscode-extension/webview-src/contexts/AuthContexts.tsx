@@ -1,6 +1,7 @@
 
 import React, { createContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import apiClient from '../services/apiClient';
+import { clearSessionCache } from '../utils/sessionCleanup';
 
 interface User {
     token: string;
@@ -30,7 +31,7 @@ interface AuthContextType {
     updateSubscriptionPlan: (planId: string) => Promise<void>;
     updateUserRole: (deploymentType: 'self-hosted' | 'cloud') => Promise<void>;
     refreshPermissions: () => Promise<void>;
-    logout: () => void;
+    logout: (showExpiredMessage?: boolean) => void;
     sessionExpiredMessage: string | null;
 }
 
@@ -126,9 +127,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const logout = useCallback((showExpiredMessage = false) => {
         console.log('[AuthContext] Logging out...');
 
-        // Always start fresh after logout: do not carry workspace context into next login.
-        localStorage.removeItem('lastWorkspaceId');
-        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
+        clearSessionCache();
         ignoringWorkspaceRef.current = false;
         
         setUser(null);
@@ -138,9 +137,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (window.vscode) {
             window.vscode.postMessage({ type: 'logout' });
-        } else {
-            // Clear local token in browser/web mode.
-            localStorage.removeItem('authToken');
         }
         console.log('[AuthContext]  Logout successful');
     }, []);

@@ -160,6 +160,9 @@ public class IssueReportController {
             if (result.getJiraIssueUrl() != null) {
                 response.put("jiraIssueUrl", result.getJiraIssueUrl());
             }
+            if (result.getJiraFailureReason() != null) {
+                response.put("jiraFailureReason", result.getJiraFailureReason());
+            }
             
             if (result.isSuccess()) {
                 return ResponseEntity.ok(response);

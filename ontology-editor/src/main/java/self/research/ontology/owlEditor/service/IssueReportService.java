@@ -126,6 +126,7 @@ public class IssueReportService {
                             .success(true)
                             .message("Issue saved locally but failed to create Jira ticket. Our team has been notified.")
                             .issueReportId(saved.getId())
+                            .jiraFailureReason(jiraResult.getErrorMessage())
                             .build();
                     }
                     
@@ -139,6 +140,7 @@ public class IssueReportService {
                         .success(true)
                         .message("Issue saved locally but failed to create Jira ticket: " + e.getMessage())
                         .issueReportId(saved.getId())
+                        .jiraFailureReason(e.getMessage())
                         .build();
                 }
             } else {
@@ -242,5 +244,6 @@ public class IssueReportService {
         private String issueReportId;
         private String jiraIssueKey;
         private String jiraIssueUrl;
+        private String jiraFailureReason;
     }
 }
