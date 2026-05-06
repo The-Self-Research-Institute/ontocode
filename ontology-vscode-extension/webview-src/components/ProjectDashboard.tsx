@@ -37,6 +37,7 @@ import {
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
+import { clearSessionCache } from "../utils/sessionCleanup";
 import InviteMemberModal from "./InviteMemberModal";
 import SettingsModal from "./SettingsModal";
 import CreateProjectModal from "./CreateProjectModal";
@@ -70,7 +71,7 @@ interface Project {
   updatedAt: string;
 }
 
-interface WorkspaceMember {
+interface TeamMember {
   id: string;
   username: string;
   email: string;
@@ -105,7 +106,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   const subscription = useSubscription();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -220,6 +221,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     type?: "danger" | "warning" | "info";
   }) => {
     setConfirmModal(options);
+  };
+
+  const clearCacheAndLogout = () => {
+    clearSessionCache();
+    logout();
   };
 
   useEffect(() => {
@@ -357,8 +363,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       }
     } catch (error) {
       console.error("Error loading dashboard data:", error);
-      setLoadError("Failed to load projects. Click retry to try again.");
-      showToast("Failed to load projects", "error");
+      clearCacheAndLogout();
     } finally {
       setLoading(false);
     }
@@ -735,12 +740,20 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         <div className="text-center">
           <XCircle size={48} className="text-red-400 mx-auto mb-4" />
           <p className="text-gray-700 mb-4">{loadError}</p>
-          <button
-            onClick={loadData}
-            className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-          >
-            Retry
-          </button>
+          <div className="flex flex-wrap justify-center gap-3">
+            <button
+              onClick={loadData}
+              className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+            >
+              Retry
+            </button>
+            <button
+              onClick={clearCacheAndLogout}
+              className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              Clear Cache & Log Out
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1107,7 +1120,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
                 <Users size={24} className="text-purple-600" />
                 Workspace Members
-                <span className="text-sm font-normal text-gray-500">({workspaceMembers.length})</span>
+                <span className="text-sm font-normal text-gray-500">({teamMembers.length})</span>
               </h2>
               {!subscription.canAccessFeature("hasBasicCollaboration") ? (
                 // FREE plan — collaboration locked
@@ -1128,7 +1141,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       : ""
                   }`}
                   title={
-                    !subscription.isWithinLimit(workspaceMembers.length, "maxTeamMembers")
+                    !subscription.isWithinLimit(teamMembers.length, "maxTeamMembers")
                       ? `Limit reached (${subscription.limits.maxTeamMembers} members). Upgrade to add more.`
                       : "Invite a new workspace member"
                   }

@@ -48,6 +48,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     success: boolean;
     message: string;
     jiraUrl?: string;
+    jiraFailureReason?: string;
   } | null>(null);
 
   // Get system info
@@ -278,16 +279,20 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       const result = await response.json();
 
       if (result.success) {
+        const jiraFailureReason = result.jiraFailureReason || undefined;
         setSubmitResult({
           success: true,
           message: result.message || "Issue reported successfully!",
           jiraUrl: result.jiraIssueUrl,
+          jiraFailureReason,
         });
 
-        // Close modal after 3 seconds on success
-        setTimeout(() => {
-          onClose();
-        }, 3000);
+        if (!jiraFailureReason) {
+          // Close modal after 3 seconds only when Jira creation succeeded.
+          setTimeout(() => {
+            onClose();
+          }, 3000);
+        }
       } else {
         setSubmitResult({
           success: false,
@@ -354,6 +359,8 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     }
   };
 
+  const isPartialSuccess = !!submitResult?.success && !!submitResult?.jiraFailureReason;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[95vh] overflow-hidden flex flex-col">
@@ -381,22 +388,35 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         {submitResult && (
           <div
             className={`mx-6 mt-6 p-5 rounded-lg flex items-start gap-4 shadow-md ${
-              submitResult.success
+              isPartialSuccess
+                ? "bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300"
+                : submitResult.success
                 ? "bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300"
                 : "bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-300"
             }`}
           >
-            <div className={`flex-shrink-0 p-2 rounded-full ${submitResult.success ? "bg-green-100" : "bg-red-100"}`}>
-              {submitResult.success ? (
+            <div className={`flex-shrink-0 p-2 rounded-full ${
+              isPartialSuccess ? "bg-amber-100" : submitResult.success ? "bg-green-100" : "bg-red-100"
+            }`}>
+              {isPartialSuccess ? (
+                <AlertCircle className="text-amber-600" size={24} />
+              ) : submitResult.success ? (
                 <CheckCircle className="text-green-600" size={24} />
               ) : (
                 <AlertCircle className="text-red-600" size={24} />
               )}
             </div>
             <div className="flex-1">
-              <p className={`text-base font-semibold mb-2 ${submitResult.success ? "text-green-900" : "text-red-900"}`}>
+              <p className={`text-base font-semibold mb-2 ${
+                isPartialSuccess ? "text-amber-900" : submitResult.success ? "text-green-900" : "text-red-900"
+              }`}>
                 {submitResult.message}
               </p>
+              {submitResult.jiraFailureReason && (
+                <p className="text-sm text-amber-900 bg-amber-100 border border-amber-200 rounded-md px-3 py-2">
+                  Jira sync failed: {submitResult.jiraFailureReason}
+                </p>
+              )}
               {submitResult.success && (
                 <div className="flex items-center gap-3 mt-3">
                   <span
