@@ -107,6 +107,30 @@ public class CitationController {
         }
     }
 
+    @GetMapping("/validate-doi")
+    public ResponseEntity<?> validateDoi(
+            @RequestParam String doi,
+            @RequestParam(required = false) String title,
+            @RequestParam(required = false) String publicationTitle,
+            @RequestParam(required = false) String year) {
+        try {
+            return ResponseEntity.ok(citationService.validateDoi(doi, title, publicationTitle, year));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "valid", false,
+                "relevant", false,
+                "error", e.getMessage()
+            ));
+        } catch (Exception e) {
+            log.error("[CitationController] Error validating DOI {}", doi, e);
+            return ResponseEntity.status(502).body(Map.of(
+                "valid", false,
+                "relevant", false,
+                "error", e.getMessage()
+            ));
+        }
+    }
+
     /**
      * Delete a citation from the ontology
      * DELETE /api/citations/{projectId}/{citationId}

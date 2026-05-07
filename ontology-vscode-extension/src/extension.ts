@@ -245,6 +245,7 @@ type ExtensionMessage =
     | { type: 'uploadFileToProject'; projectId: string; fileName: string; fileContent: string; fileSize: number }
     | { type: 'showSubscriptionPlans' } // Request to show subscription plans page
     | { type: 'setApiBaseUrl'; url: string; deploymentType?: 'self-hosted' | 'cloud' }
+    | { type: 'clearLastProjectState' }
     | { type: 'requestZoteroLibrary'; searchQuery?: string } // Zotero quick search (`q`), optional — empty = whole library
     | { type: 'requestZoteroLibraryMore' } // Request next Zotero page (infinite scroll)
     | { type: 'insertCitation'; citationKey: string; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert citation from Zotero
@@ -794,6 +795,9 @@ class OntoCodePanel {
                         break;
                     case 'error':
                         vscode.window.showErrorMessage(message.value);
+                        break;
+                    case 'clearLastProjectState':
+                        this._lastProjectId = null;
                         break;
                     case 'saveAuthToken':
                         if (message.token) {

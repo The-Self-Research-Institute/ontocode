@@ -23,7 +23,10 @@ export interface ZoteroItem {
         }>;
         abstractNote?: string;
         date?: string;
+        /** Zotero canonical name. Lowercase variants exist in older translators. */
         DOI?: string;
+        /** Free-text field; users often stash "DOI: 10.x/y", "PMID: ..." etc. here. */
+        extra?: string;
         url?: string;
         publicationTitle?: string;
         volume?: string;

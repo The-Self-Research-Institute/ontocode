@@ -96,7 +96,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   onOpenEditor,
   onManageSubscription,
 }) => {
-  const { user, logout, switchWorkspace, updateSubscriptionPlan } = useAuth();
+  const { user, logout, switchWorkspace, updateSubscriptionPlan, refreshPermissions } = useAuth();
   console.log("[ProjectDashboard] Rendered with user:", {
     email: user?.email,
     workspaceId: user?.workspaceId,
@@ -232,9 +232,17 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     loadData();
   }, []);
 
-  // Poll for workspace member changes (e.g. when invitees accept)
+  // Poll workspace state every 15s. Two responsibilities:
+  //   1. Surface member changes (pending → active when invitees accept).
+  //   2. Bug #38: detect when the owner upgrades / downgrades / cancels
+  //      and force-refresh the JWT so members pick up the new plan
+  //      without having to switch workspaces and back.
   useEffect(() => {
     if (!user?.workspaceId) return;
+
+    let lastSeenPlan = (user.subscriptionPlan || "").toUpperCase();
+    let lastSeenStatus = "";
+
     const interval = setInterval(async () => {
       try {
         const workspaceResponse = await apiClient.get(`/api/workspaces/${user.workspaceId}`);
@@ -260,12 +268,29 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           return prev;
         });
         setWorkspaceOwnerId(workspaceData?.ownerId || null);
+
+        // ── Plan / billing-status change detection (Bug #38) ──
+        const currentPlan = String(workspaceData?.subscriptionPlan || "").toUpperCase();
+        const currentStatus = String(workspaceData?.billingStatus || "").toUpperCase();
+        const planChanged = currentPlan && currentPlan !== lastSeenPlan;
+        const statusChanged = currentStatus && currentStatus !== lastSeenStatus;
+        if ((planChanged || statusChanged) && (lastSeenPlan || lastSeenStatus)) {
+          console.log(
+            "[ProjectDashboard] Subscription state changed (%s/%s -> %s/%s) — refreshing permissions",
+            lastSeenPlan, lastSeenStatus, currentPlan, currentStatus,
+          );
+          // refreshPermissions re-issues the JWT and updates the user object,
+          // which propagates the new `subscriptionPlan` through useSubscription.
+          await refreshPermissions().catch(() => undefined);
+        }
+        lastSeenPlan = currentPlan || lastSeenPlan;
+        lastSeenStatus = currentStatus || lastSeenStatus;
       } catch (e) {
         // Silently ignore polling errors
       }
     }, 15000);
     return () => clearInterval(interval);
-  }, [user?.workspaceId]);
+  }, [user?.workspaceId, user?.subscriptionPlan, refreshPermissions]);
 
   // Refresh project list on workspace events (e.g. PROJECT_DELETED broadcast via WebSocket)
   useEffect(() => {
@@ -361,9 +386,26 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           console.error("[ProjectDashboard] Error loading workspace members:", error);
         }
       }
-    } catch (error) {
+    } catch (error: any) {
+      // Bug #41: previously this auto-called clearCacheAndLogout(), which
+      // wiped the session whenever projects failed to load (e.g. right
+      // after the owner cancelled and the workspace lost paid access).
+      // Result: the user couldn't even reach billing to renew. Now we
+      // surface the error and offer routes back to billing / workspace
+      // selection. Only an explicit 401 should force a re-login.
       console.error("Error loading dashboard data:", error);
-      clearCacheAndLogout();
+      const status = error?.status ?? error?.response?.status;
+      if (status === 401) {
+        clearCacheAndLogout();
+        return;
+      }
+      const fallback = "We couldn't load this workspace's projects.";
+      const message = error?.data?.error || error?.message || fallback;
+      setLoadError(
+        status === 402 || status === 403
+          ? `${message} This often means the workspace subscription was cancelled or expired. Renew the plan to restore access.`
+          : message
+      );
     } finally {
       setLoading(false);
     }
@@ -735,23 +777,40 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   }
 
   if (loadError) {
+    const isOwner = user?.workspaceRole === "OWNER";
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+        <div className="text-center max-w-md">
           <XCircle size={48} className="text-red-400 mx-auto mb-4" />
-          <p className="text-gray-700 mb-4">{loadError}</p>
+          <p className="text-gray-800 font-semibold mb-2">Couldn't open this workspace</p>
+          <p className="text-gray-600 mb-6 text-sm leading-relaxed">{loadError}</p>
           <div className="flex flex-wrap justify-center gap-3">
             <button
               onClick={loadData}
-              className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+              className="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
             >
               Retry
             </button>
+            {/* Bug #41: always offer a way out so the user isn't stranded. */}
+            <button
+              onClick={() => switchWorkspace()}
+              className="px-5 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              Switch Workspace
+            </button>
+            {isOwner && onManageSubscription && (
+              <button
+                onClick={onManageSubscription}
+                className="px-5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+              >
+                Manage Subscription
+              </button>
+            )}
             <button
               onClick={clearCacheAndLogout}
-              className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+              className="px-5 py-2 border border-gray-300 text-gray-500 rounded-lg hover:bg-gray-100 transition-colors text-sm"
             >
-              Clear Cache & Log Out
+              Log out
             </button>
           </div>
         </div>

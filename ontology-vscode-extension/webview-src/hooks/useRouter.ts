@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { generateUrlPath, parseUrlPath } from '../config/routes';
 
 export interface RouteState {
-    view: 'deployment' | 'login' | 'signup' | 'workspace' | 'projectDashboard' | 'projectLibrary' | 'dashboard' | 'invitation' | 'subscription';
+    view: 'deployment' | 'login' | 'signup' | 'workspace' | 'projectDashboard' | 'projectLibrary' | 'dashboard' | 'invitation' | 'subscription' | 'billing';
     projectId?: string | null;
     projectName?: string;
     fileId?: string | null;
@@ -52,7 +52,8 @@ export const useRouter = (
         return [];
     }, []);
 
-    // Helper to check if route has changed
+    // Helper to check if route has changed. `view` covers /billing
+    // because billing has its own view value, so no extra field is needed.
     const hasRouteChanged = useCallback((prev: RouteState, next: RouteState): boolean => {
         return (
             prev.view !== next.view ||
