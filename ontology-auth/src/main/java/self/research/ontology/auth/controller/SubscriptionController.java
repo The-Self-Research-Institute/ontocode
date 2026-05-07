@@ -104,6 +104,17 @@ public class SubscriptionController {
         ));
     }
 
+    @GetMapping("/subscription/details")
+    public ResponseEntity<?> getSubscriptionDetails(@AuthenticationPrincipal UserDetails principal) {
+        try {
+            User user = resolveUser(principal);
+            return ResponseEntity.ok(stripeService.getBillingSummary(user));
+        } catch (Exception e) {
+            log.error("Failed to load billing summary for {}: {}", principal.getUsername(), e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to load billing summary"));
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // POST /api/billing/checkout — start a new subscription
     // Body: { "planName": "PRO", "interval": "monthly" }
@@ -250,8 +261,17 @@ public class SubscriptionController {
                 stripeService.cancelAccountSubscription(user);
                 return ResponseEntity.ok(Map.of("message", "Account subscription canceled successfully."));
             }
-            if (!workspaceService.hasAccess(workspaceId, user.getId())) {
-                return ResponseEntity.status(403).body(Map.of("error", "You don't have access to this workspace"));
+            // Bug #42: cancellation is destructive and changes the
+            // billing relationship for every member of the workspace.
+            // hasAccess() only proves membership — we need ownership.
+            Workspace workspace = workspaceService.getWorkspace(workspaceId)
+                    .orElse(null);
+            if (workspace == null) {
+                return ResponseEntity.status(404).body(Map.of("error", "Workspace not found"));
+            }
+            if (!user.getId().equals(workspace.getOwnerId())) {
+                return ResponseEntity.status(403).body(Map.of(
+                        "error", "Only the workspace owner can cancel the subscription."));
             }
             stripeService.cancelWorkspaceSubscription(user, workspaceId);
             return ResponseEntity.ok(Map.of("message", "Subscription canceled successfully."));

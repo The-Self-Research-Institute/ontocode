@@ -11,6 +11,7 @@ import { usePlanPricing } from "../hooks/usePlanPricing";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { validateWorkspaceName, validateDescription } from "../utils/validation";
 import { useAuth } from "../custom-hook/useAuth";
+import { SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "../utils/sessionCleanup";
 
 // ─── Payment edge-case helpers ────────────────────────────────────────────────
 
@@ -190,6 +191,14 @@ interface WorkspaceSelectionProps {
   onWorkspaceSelected: (workspaceData: any) => void;
   onSkipWorkspace: () => void;
   onLogout: () => void;
+  /**
+   * Called when the user clicks the top-right "Manage Billing" pill on the
+   * workspace selection screen. Bug #44: the button used to open the legacy
+   * modal in-place; the host should now route to the new BillingManagement
+   * page in account-level mode (synthetic "Your Account" workspace).
+   * Falls back to the local modal if not provided.
+   */
+  onManageAccountBilling?: () => void;
 }
 
 const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
@@ -198,6 +207,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   onWorkspaceSelected,
   onSkipWorkspace,
   onLogout,
+  onManageAccountBilling,
 }) => {
   const { user, refreshPermissions } = useAuth();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -256,9 +266,16 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
   const autoRetryAttempted = useRef(false);
   const firstTimePlanShown = useRef(false);
+  const suppressAutoOpenRef = useRef(safeGetStorage(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY) === "true");
 
   // Account-level subscription state (Model B)
   const [accountSubscription, setAccountSubscription] = useState<{ planName: string; status: string; billingInterval: string } | null>(null);
+
+  useEffect(() => {
+    if (suppressAutoOpenRef.current) {
+      safeRemoveStorage(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY);
+    }
+  }, []);
 
   // Sync accountSubscription with user context (refreshed via JWT)
   useEffect(() => {
@@ -353,6 +370,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
   // First-time user: show plan selection automatically when login reveals no workspaces
   useEffect(() => {
+    if (suppressAutoOpenRef.current) return;
     if (firstTimePlanShown.current) return;
     if (loading) return;
     if (accountSubscription === null) return;
@@ -942,7 +960,16 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           {accountSubscription && (accountSubscription.status === "active" || accountSubscription.status === "trialing") && accountSubscription.planName !== "FREE" ? (
             <button
               type="button"
-              onClick={() => setShowManageAccount(true)}
+              // Bug #44: route to the new full-page BillingManagement view in
+              // account-level mode when the host provided a navigator;
+              // otherwise fall back to the legacy in-place modal.
+              onClick={() => {
+                if (onManageAccountBilling) {
+                  onManageAccountBilling();
+                } else {
+                  setShowManageAccount(true);
+                }
+              }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
               title={`${accountSubscription.planName} plan — manage billing`}
             >
@@ -1075,12 +1102,12 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         )}
 
         {/* Continue without workspace button - available for all users */}
-        <button
+        {/* <button
           onClick={onSkipWorkspace}
           className="w-full py-3 bg-transparent border-2 border-white/20 text-gray-300 font-medium rounded-lg hover:bg-white/5 hover:border-purple-400/50 hover:text-white transition-all flex items-center justify-center space-x-2 mt-3"
         >
           <span>Continue without workspace</span>
-        </button>
+        </button> */}
 
         {workspaces.length === 0 && !isAdmin && (
           <div className="text-center py-8">

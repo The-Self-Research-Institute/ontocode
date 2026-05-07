@@ -1,6 +1,11 @@
 // CitationPickerDialog.tsx
-import React, { useRef, useState, useEffect, useLayoutEffect, useCallback } from 'react';
-import { normalizeDoi as normalizeDoiUtil, isValidDoiFormat } from "../utils/doi";
+import React, { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
+import {
+  normalizeDoi as normalizeDoiUtil,
+  isValidDoiFormat,
+  extractDoiFromZoteroData,
+  toDoiUrl,
+} from "../utils/doi";
 import {
   X,
   Search,
@@ -12,12 +17,18 @@ import {
   ChevronDown,
   ChevronRight,
   AlertCircle,
+  CheckCircle2,
+  ShieldAlert,
   Settings,
   Loader2,
 } from "lucide-react";
 import { TreeNode } from "@/types";
 import ZoteroSettingsDialog from "./ZoteroSettingsDialog";
 import { loadCitationLibraryCache, saveCitationLibraryCache } from "../services/citationLibraryCache";
+import {
+  validateDoiOnline,
+  type DoiValidationResult,
+} from "../services/doiValidationService";
 
 function mergeFreshFirstPage<T extends { key: string }>(networkPage: T[], priorFull: T[]): T[] {
   const netKeys = new Set(networkPage.map((x) => x.key));
@@ -30,7 +41,12 @@ interface CitationItem {
     title: string;
     creators: Array<{ firstName: string; lastName: string; creatorType: string }>;
     date: string;
+    /** Zotero canonical name for journal articles, books, theses, etc. */
+    DOI?: string;
+    /** Lowercase variant some translators / older exports emit. */
     doi?: string;
+    /** Free-text field; users often stash "DOI: 10.x/y" or "PMID: ..." here. */
+    extra?: string;
     url?: string;
     itemType: string;
     abstractNote?: string;
@@ -42,6 +58,13 @@ interface CitationItem {
     tags?: Array<{ tag: string }>;
   };
 }
+
+type DoiCheckState =
+  | { status: "idle" }
+  | { status: "checking" }
+  | { status: "ok"; result: DoiValidationResult }
+  | { status: "warn"; result: DoiValidationResult }
+  | { status: "fail"; result: DoiValidationResult };
 
 interface CitationPickerDialogProps {
   isOpen: boolean;
@@ -61,6 +84,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
   const [selectedCitation, setSelectedCitation] = useState<CitationItem | null>(null);
   const [manualDoi, setManualDoi] = useState("");
   const [manualDoiError, setManualDoiError] = useState<string | null>(null);
+  const [manualDoiCheck, setManualDoiCheck] = useState<DoiCheckState>({ status: "idle" });
   const [showZoteroSettings, setShowZoteroSettings] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -404,105 +428,170 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     }
   }, [requestMoreFire]);
 
-  const extractYear = (dateStr: string): string => {
+  const extractYear = useCallback((dateStr: string): string => {
     if (!dateStr) return "";
     const match = dateStr.match(/\d{4}/);
     return match ? match[0] : "";
-  };
+  }, []);
 
-  const normalizeDoiUrl = (doi: string): string => {
-    if (!doi) return "";
-    // If DOI already has http:// or https://, use it as-is
-    if (doi.startsWith("http://") || doi.startsWith("https://")) {
-      return doi;
-    }
-    // Otherwise, prepend https://doi.org/
-    return `https://doi.org/${doi}`;
-  };
+  /** Pull a normalized DOI from any of the Zotero fields (DOI/doi/extra/url). */
+  const extractDoiFromCitation = useCallback(
+    (citation: CitationItem): string => extractDoiFromZoteroData(citation.data),
+    []
+  );
 
-  // Try to extract a normalized DOI from several citation fields (doi, url, extra),
-  // with a regex fallback for values embedded in longer strings.
-  const extractDoiFromCitation = (citation: CitationItem): string => {
-    const candidates = [
-      citation.data?.doi,
-      citation.data?.url,
-      // Zotero sometimes stores metadata in the `extra` field like 'DOI: 10.1234/xyz'
-      // so include it as a candidate.
-      // @ts-ignore
-      citation.data?.extra,
-    ].filter(Boolean) as string[];
+  /** Open the resolver for the verified DOI, with safe fallback. */
+  const buildDoiHref = (doi: string): string => toDoiUrl(doi) || "#";
 
-    const DOI_EXTRACT_RE = /10\.\d{4,9}\/[\w.\-;()\/:@,]+/i;
-
-    for (const cand of candidates) {
-      const norm = normalizeDoiUtil(cand);
-      if (norm && isValidDoiFormat(norm)) return norm;
-
-      const m = String(cand).match(DOI_EXTRACT_RE);
-      if (m && m[0]) {
-        const norm2 = normalizeDoiUtil(m[0]);
-        if (isValidDoiFormat(norm2)) return norm2;
-      }
-    }
-
-    return "";
-  };
-
-  const handleSelectCitation = (citation: CitationItem) => {
-    // Check if DOI is present and looks valid after normalization
+  /**
+   * Validate the DOI authoritatively (doi.org content negotiation) before
+   * inserting. We never block on the network — if validation fails we
+   * surface the result to the user but still allow override via the
+   * existing DOI prompt.
+   */
+  const handleSelectCitation = async (citation: CitationItem) => {
     const norm = extractDoiFromCitation(citation);
-    if (!norm || !isValidDoiFormat(norm)) {
-      // Show prompt to add DOI when missing or malformed
+
+    if (!norm) {
+      // Truly absent — open the manual-DOI prompt as before.
       setSelectedCitation(citation);
       setShowDoiWarning(true);
       setShowDoiPrompt(true);
+      setManualDoiCheck({ status: "idle" });
       return;
     }
 
-    // DOI exists and appears valid — normalize stored value and proceed
-    const updatedCitation = {
-      ...citation,
-      data: {
-        ...citation.data,
-        doi: norm,
-      },
-    };
-    onSelectCitation(updatedCitation);
-    onClose();
+    setSelectedCitation(citation);
+    setManualDoi(norm);
+    setManualDoiError(null);
+    setManualDoiCheck({ status: "checking" });
+
+    const result = await validateDoiOnline({
+      doi: norm,
+      title: citation.data?.title,
+      publicationTitle: citation.data?.publicationTitle,
+      year: extractYear(citation.data?.date || ""),
+    });
+
+    if (result.valid && result.relevant) {
+      // Authoritative pass — insert with the registrar-canonical DOI.
+      const finalDoi = result.normalizedDoi || norm;
+      onSelectCitation({
+        ...citation,
+        data: { ...citation.data, DOI: finalDoi, doi: finalDoi },
+      });
+      setManualDoiCheck({ status: "idle" });
+      setSelectedCitation(null);
+      onClose();
+      return;
+    }
+
+    // DOI didn't resolve, or registrar metadata disagrees with the
+    // citation. Show the prompt so the user can fix or override.
+    setManualDoiCheck({
+      status: result.valid ? "warn" : "fail",
+      result,
+    });
+    setShowDoiWarning(true);
+    setShowDoiPrompt(true);
+  };
+
+  const closeDoiPrompt = () => {
+    setShowDoiPrompt(false);
+    setShowDoiWarning(false);
+    setSelectedCitation(null);
+    setManualDoi("");
+    setManualDoiError(null);
+    setManualDoiCheck({ status: "idle" });
   };
 
   const handleConfirmWithoutDoi = () => {
-    if (selectedCitation) {
-      onSelectCitation(selectedCitation);
-      setShowDoiPrompt(false);
-      setShowDoiWarning(false);
-      setSelectedCitation(null);
-      onClose();
-    }
+    if (!selectedCitation) return;
+    onSelectCitation(selectedCitation);
+    closeDoiPrompt();
+    onClose();
   };
 
-  const handleAddDoiAndConfirm = () => {
-    if (selectedCitation && manualDoi.trim()) {
-      const norm = normalizeDoiUtil(manualDoi.trim());
-      // If malformed, keep showing error (should be prevented by UI check)
-      if (!isValidDoiFormat(norm)) return;
-      // Add normalized DOI to citation data
-      const updatedCitation = {
-        ...selectedCitation,
-        data: {
-          ...selectedCitation.data,
-          doi: norm,
-        },
-      };
-      onSelectCitation(updatedCitation);
-      setShowDoiPrompt(false);
-      setShowDoiWarning(false);
-      setSelectedCitation(null);
-      setManualDoi("");
-      setManualDoiError(null);
-      onClose();
+  const handleAddDoiAndConfirm = async () => {
+    if (!selectedCitation) return;
+    const norm = normalizeDoiUtil(manualDoi.trim());
+    if (!isValidDoiFormat(norm)) {
+      setManualDoiError("DOI looks malformed");
+      return;
     }
+
+    setManualDoiCheck({ status: "checking" });
+    const result = await validateDoiOnline({
+      doi: norm,
+      title: selectedCitation.data?.title,
+      publicationTitle: selectedCitation.data?.publicationTitle,
+      year: extractYear(selectedCitation.data?.date || ""),
+    });
+
+    if (!result.valid) {
+      setManualDoiCheck({ status: "fail", result });
+      return; // Block insertion: the DOI does not resolve at doi.org.
+    }
+
+    if (!result.relevant) {
+      // Resolves but registrar disagrees with the citation. Surface the
+      // mismatch and let the user override on a second click.
+      if (manualDoiCheck.status !== "warn") {
+        setManualDoiCheck({ status: "warn", result });
+        return;
+      }
+    }
+
+    const finalDoi = result.normalizedDoi || norm;
+    onSelectCitation({
+      ...selectedCitation,
+      data: { ...selectedCitation.data, DOI: finalDoi, doi: finalDoi },
+    });
+    closeDoiPrompt();
+    onClose();
   };
+
+  /**
+   * Debounced background validation while the user types a DOI manually.
+   * We only fire when the shape is valid to avoid blasting the resolver.
+   */
+  useEffect(() => {
+    if (!showDoiPrompt) return;
+    const trimmed = manualDoi.trim();
+    if (!trimmed) {
+      setManualDoiCheck({ status: "idle" });
+      return;
+    }
+    const norm = normalizeDoiUtil(trimmed);
+    if (!isValidDoiFormat(norm)) {
+      setManualDoiCheck({ status: "idle" });
+      return;
+    }
+
+    let cancelled = false;
+    setManualDoiCheck({ status: "checking" });
+    const handle = window.setTimeout(async () => {
+      const result = await validateDoiOnline({
+        doi: norm,
+        title: selectedCitation?.data?.title,
+        publicationTitle: selectedCitation?.data?.publicationTitle,
+        year: extractYear(selectedCitation?.data?.date || ""),
+      });
+      if (cancelled) return;
+      if (!result.valid) {
+        setManualDoiCheck({ status: "fail", result });
+      } else if (!result.relevant) {
+        setManualDoiCheck({ status: "warn", result });
+      } else {
+        setManualDoiCheck({ status: "ok", result });
+      }
+    }, 600);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [manualDoi, showDoiPrompt, selectedCitation, extractYear]);
 
   const handleManualEntry = () => {
     onSelectCitation("manual");
@@ -764,15 +853,15 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
                         )}
                         {(() => {
                           const normDoi = extractDoiFromCitation(citation);
-                          const doiValid = !!normDoi && isValidDoiFormat(normDoi);
-                          if (doiValid) {
+                          if (normDoi) {
                             return (
                               <a
-                                href={normalizeDoiUrl(normDoi)}
+                                href={buildDoiHref(normDoi)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 mt-1 hover:underline"
                                 onClick={(e) => e.stopPropagation()}
+                                title="Open at doi.org. Authoritative validation runs when you select this citation."
                               >
                                 <ExternalLink size={12} />
                                 <span className="truncate">DOI: {normDoi}</span>
@@ -841,72 +930,24 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
 
       {/* DOI Prompt Dialog */}
       {showDoiPrompt && selectedCitation && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70"
-          onClick={() => setShowDoiPrompt(false)}
-        >
-          <div className="bg-white rounded-lg shadow-2xl p-6 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start gap-3 mb-4">
-              <div className="flex-shrink-0 w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
-                <AlertCircle className="text-yellow-600" size={24} />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-bold text-gray-900 mb-1">DOI Missing</h3>
-                <p className="text-sm text-gray-700 mb-2">
-                  The selected citation <strong>"{selectedCitation.data.title}"</strong> does not have a DOI.
-                </p>
-                <p className="text-sm text-gray-600">Would you like to add a DOI manually or proceed without it?</p>
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Add DOI (optional):</label>
-              <input
-                type="text"
-                value={manualDoi}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setManualDoi(v);
-                  const norm = normalizeDoiUtil(v);
-                  if (v.trim() && !isValidDoiFormat(norm)) {
-                    setManualDoiError("DOI looks malformed");
-                  } else {
-                    setManualDoiError(null);
-                  }
-                }}
-                onKeyPress={(e) => {
-                  if (e.key === "Enter" && manualDoi.trim() && !manualDoiError) {
-                    handleAddDoiAndConfirm();
-                  }
-                }}
-                placeholder="10.1234/example"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              {manualDoiError && <div className="text-sm text-red-600 mt-1">{manualDoiError}</div>}
-              <p className="text-xs text-gray-500 mt-1">
-                Enter the DOI (e.g., "10.1234/example") or leave blank to skip
-              </p>
-            </div>
-
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={handleConfirmWithoutDoi}
-                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-medium transition-colors"
-              >
-                Proceed Without DOI
-              </button>
-              {manualDoi.trim() && (
-                <button
-                  onClick={handleAddDoiAndConfirm}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
-                  disabled={!!manualDoiError}
-                >
-                  Add DOI & Insert
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <DoiPromptDialog
+          citation={selectedCitation}
+          manualDoi={manualDoi}
+          manualDoiError={manualDoiError}
+          checkState={manualDoiCheck}
+          onClose={closeDoiPrompt}
+          onChange={(value) => {
+            setManualDoi(value);
+            if (!value.trim()) {
+              setManualDoiError(null);
+              return;
+            }
+            const norm = normalizeDoiUtil(value);
+            setManualDoiError(isValidDoiFormat(norm) ? null : "DOI looks malformed");
+          }}
+          onConfirmWithoutDoi={handleConfirmWithoutDoi}
+          onConfirmWithDoi={handleAddDoiAndConfirm}
+        />
       )}
 
       {showZoteroSettings && (
@@ -923,6 +964,220 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
 };
 
 export default CitationPickerDialog;
+
+// ─── DOI prompt dialog ─────────────────────────────────────────────────────
+//
+// Renders the manual-DOI / proceed-without-DOI prompt with live status
+// from the authoritative validator (doi.org -> Crossref/DataCite metadata).
+
+interface DoiPromptDialogProps {
+  citation: CitationItem;
+  manualDoi: string;
+  manualDoiError: string | null;
+  checkState: DoiCheckState;
+  onClose: () => void;
+  onChange: (value: string) => void;
+  onConfirmWithoutDoi: () => void;
+  onConfirmWithDoi: () => void;
+}
+
+const DoiPromptDialog: React.FC<DoiPromptDialogProps> = ({
+  citation,
+  manualDoi,
+  manualDoiError,
+  checkState,
+  onClose,
+  onChange,
+  onConfirmWithoutDoi,
+  onConfirmWithDoi,
+}) => {
+  const trimmed = manualDoi.trim();
+  const checking = checkState.status === "checking";
+  const hasResult = checkState.status === "ok" || checkState.status === "warn" || checkState.status === "fail";
+
+  const insertDisabled =
+    !trimmed ||
+    !!manualDoiError ||
+    checking ||
+    checkState.status === "fail";
+
+  const insertLabel = useMemo(() => {
+    if (checking) return "Validating…";
+    if (checkState.status === "warn") return "Insert anyway";
+    if (checkState.status === "fail") return "Cannot insert (invalid)";
+    return "Add DOI & Insert";
+  }, [checking, checkState.status]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-70 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-6 overflow-y-auto">
+          <div className="flex items-start gap-3 mb-4">
+            <div className="flex-shrink-0 w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
+              <AlertCircle className="text-yellow-600" size={24} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-lg font-bold text-gray-900 mb-1">
+                {checkState.status === "fail"
+                  ? "DOI does not resolve"
+                  : checkState.status === "warn"
+                  ? "DOI resolves but metadata differs"
+                  : "DOI Missing or Unverified"}
+              </h3>
+              <p className="text-sm text-gray-700 mb-2 break-words">
+                Citation: <strong>"{citation.data.title}"</strong>
+              </p>
+              <p className="text-sm text-gray-600">
+                Validation queries doi.org and compares the registrar metadata
+                (Crossref / DataCite) against this citation. Pattern matches
+                alone do not prove a DOI exists.
+              </p>
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2" htmlFor="manualDoiInput">
+              DOI:
+            </label>
+            <div className="relative">
+              <input
+                id="manualDoiInput"
+                type="text"
+                value={manualDoi}
+                onChange={(e) => onChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !manualDoiError && !checking && trimmed) {
+                    e.preventDefault();
+                    onConfirmWithDoi();
+                  }
+                }}
+                placeholder="10.1234/example"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                className="w-full pl-3 pr-9 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                aria-invalid={!!manualDoiError}
+                aria-describedby="manualDoiHint"
+              />
+              {checking && (
+                <Loader2
+                  size={16}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 animate-spin"
+                  aria-hidden
+                />
+              )}
+            </div>
+
+            {manualDoiError && (
+              <div className="text-sm text-red-600 mt-1" role="alert">
+                {manualDoiError}
+              </div>
+            )}
+
+            <p id="manualDoiHint" className="text-xs text-gray-500 mt-1">
+              Paste the full DOI (e.g. <code>10.1038/s41586-020-2649-2</code>) or a doi.org URL.
+            </p>
+
+            {/* Live validation status block */}
+            {hasResult && (
+              <DoiValidationStatus state={checkState} />
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 justify-end p-4 border-t border-gray-200 bg-gray-50">
+          <button
+            type="button"
+            onClick={onConfirmWithoutDoi}
+            className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-medium transition-colors"
+          >
+            Proceed Without DOI
+          </button>
+          {trimmed && (
+            <button
+              type="button"
+              onClick={onConfirmWithDoi}
+              disabled={insertDisabled}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+            >
+              {checking && <Loader2 size={16} className="animate-spin" />}
+              {insertLabel}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DoiValidationStatus: React.FC<{ state: DoiCheckState }> = ({ state }) => {
+  if (state.status === "ok") {
+    return (
+      <div
+        className="mt-3 flex items-start gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900"
+        role="status"
+      >
+        <CheckCircle2 size={16} className="mt-0.5 flex-shrink-0 text-green-600" aria-hidden />
+        <div className="min-w-0">
+          <p className="font-semibold">DOI verified at doi.org</p>
+          {state.result.resolvedTitle && (
+            <p className="text-xs text-green-900/90 truncate" title={state.result.resolvedTitle}>
+              {state.result.resolvedTitle}
+              {state.result.resolvedYear ? ` (${state.result.resolvedYear})` : ""}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (state.status === "warn") {
+    return (
+      <div
+        className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+        role="status"
+      >
+        <ShieldAlert size={16} className="mt-0.5 flex-shrink-0 text-amber-600" aria-hidden />
+        <div className="min-w-0 space-y-1">
+          <p className="font-semibold">{state.result.error || "Registrar metadata differs from this citation."}</p>
+          {state.result.resolvedTitle && (
+            <p className="text-xs">
+              Registrar title: <span className="font-medium">{state.result.resolvedTitle}</span>
+              {state.result.resolvedYear ? ` (${state.result.resolvedYear})` : ""}
+            </p>
+          )}
+          {state.result.resolvedPublicationTitle && (
+            <p className="text-xs italic">{state.result.resolvedPublicationTitle}</p>
+          )}
+          <p className="text-xs">Click again to insert anyway, or correct the DOI above.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.status === "fail") {
+    return (
+      <div
+        className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"
+        role="alert"
+      >
+        <AlertCircle size={16} className="mt-0.5 flex-shrink-0 text-red-600" aria-hidden />
+        <div className="min-w-0">
+          <p className="font-semibold">{state.result.error || "DOI did not resolve."}</p>
+          <p className="text-xs">doi.org could not find a registered record for this string.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+};
 
 // Helper component for rendering class hierarchy tree
 interface ClassTreeNodeProps {

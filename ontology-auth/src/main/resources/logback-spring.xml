@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logback configuration for the OntoCode auth service.
+
+  Behavior:
+    - Console appender keeps the existing one-line layout.
+    - File appender writes to ${LOG_DIR:-logs}/auth-service.log.
+    - Rolling policy is size + time:
+        * one new file per day  (auth-service.YYYY-MM-DD.N.log.gz)
+        * each capped at 50 MB  → split into .1, .2, ... within the day
+        * compressed with gzip the moment it rolls
+        * 30-day retention, total cap 5 GB
+    - LOG_DIR / LOG_LEVEL_* can be overridden via env vars without
+      touching this file (Spring resolves them through the Logback
+      "springProperty" tag).
+
+  Notes:
+    - We deliberately use `logback-spring.xml` (not `logback.xml`) so
+      Spring Boot picks it up after profile/property resolution. That
+      lets us reference `spring.application.name` at evaluation time.
+    - SizeAndTimeBasedRollingPolicy compresses on roll, not at write
+      time, so logging itself stays cheap.
+-->
+<configuration>
+
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="ontology-auth"/>
+    <property name="LOG_DIR" value="${LOG_DIR:-logs}"/>
+    <property name="LOG_FILE" value="${LOG_DIR}/${APP_NAME}.log"/>
+    <property name="ARCHIVE_PATTERN" value="${LOG_DIR}/archive/${APP_NAME}.%d{yyyy-MM-dd}.%i.log.gz"/>
+
+    <!-- ──── Console (unchanged from previous behaviour) ──── -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [${APP_NAME},%thread] %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ──── Rolling file appender ──── -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_FILE}</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [${APP_NAME},%thread] %logger{36} - %msg%n</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- Compressed archive name decides BOTH compression (.gz) and
+                 the per-day index field. -->
+            <fileNamePattern>${ARCHIVE_PATTERN}</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>5GB</totalSizeCap>
+            <!-- Run cleanup on application start instead of waiting for the
+                 next roll — important for short-lived deployments. -->
+            <cleanHistoryOnStart>true</cleanHistoryOnStart>
+        </rollingPolicy>
+    </appender>
+
+    <!-- ──── Async wrapper to keep request threads off disk I/O ──── -->
+    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="FILE"/>
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+    </appender>
+
+    <!-- ──── Levels ──── -->
+    <root level="${LOGGING_LEVEL_ROOT:-INFO}">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="ASYNC_FILE"/>
+    </root>
+
+    <!-- Service-specific loggers stay verbose by default; override via
+         `logging.level.<package>` in application.properties or env vars. -->
+    <logger name="self.research.ontology" level="${LOGGING_LEVEL_APP:-DEBUG}"/>
+    <logger name="org.springframework.web" level="INFO"/>
+    <logger name="org.springframework.security" level="INFO"/>
+    <logger name="com.stripe" level="INFO"/>
+</configuration>

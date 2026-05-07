@@ -1237,7 +1237,12 @@ const TopMenuBar = ({
                             onClick={async (e) => {
                               e.preventDefault();
                               if (!currentProjectId) return;
-                              if (!subscription.canAccessFeature('hasMultipleExportFormats')) {
+                              // Gate at the master export key first; multi-format
+                              // is implied by hasExport on paid tiers but we
+                              // keep both keys explicit so future tiers can
+                              // diverge (e.g. a Starter plan with TTL-only).
+                              if (!subscription.canAccessFeature('hasExport')
+                                  || !subscription.canAccessFeature('hasMultipleExportFormats')) {
                                 onExportProAction?.();
                                 return;
                               }
@@ -2008,16 +2013,34 @@ const DetailsPanel = ({
 };
 // #endregion
 
-// Helper function to show notifications
+// Helper function to show notifications.
+// Bug #47: previously this only postMessage'd to VS Code. In the standalone
+// webapp `window.vscode` is undefined, so warnings (e.g. "select a class
+// first") silently went to the console and the user saw nothing. Now we
+// route through `notificationService` which already abstracts both
+// environments (system notif in VS Code, toast/Notification API on web).
 const showNotification = (message: string, type: "info" | "error" | "warning" = "info") => {
   console.log(`[${type.toUpperCase()}]`, message);
   if (window.vscode) {
     window.vscode.postMessage({
       type: "notification",
       level: type,
-      message: message,
+      message,
     });
+    return;
   }
+  // Webapp path — show a visible toast / browser notification.
+  const titleByType: Record<typeof type, string> = {
+    info: "Notice",
+    warning: "Heads up",
+    error: "Error",
+  };
+  notificationService.notify({
+    title: titleByType[type],
+    message,
+    type: type === "warning" ? "warning" : type === "error" ? "error" : "info",
+    duration: type === "error" ? 8000 : 5000,
+  });
 };
 
 interface DashboardProps {
@@ -2127,31 +2150,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   );
   const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
 
-  // In non-workspace mode, restore the last opened file from localStorage
-  const storedProjectId = isNonWorkspaceMode
-    ? typeof localStorage !== "undefined"
-      ? localStorage.getItem("ontocode_lastProjectId")
-      : null
-    : null;
+  const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || null);
 
-  const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || storedProjectId || null);
-
-  // Wrapper to persist projectId to localStorage in non-workspace mode
   const setProjectId = useCallback(
     (value: string | null | ((prev: string | null) => string | null)) => {
-      setProjectIdInternal((prev) => {
-        const newValue = typeof value === "function" ? value(prev) : value;
-        if (isNonWorkspaceMode && typeof localStorage !== "undefined") {
-          if (newValue) {
-            localStorage.setItem("ontocode_lastProjectId", newValue);
-          } else {
-            localStorage.removeItem("ontocode_lastProjectId");
-          }
-        }
-        return newValue;
-      });
+      setProjectIdInternal((prev) => (typeof value === "function" ? value(prev) : value));
     },
-    [isNonWorkspaceMode],
+    [],
   );
 
   // Helper function to encode project ID for use in URL paths
@@ -8314,23 +8319,40 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      // Bug #46 / #45 — primary "Add" button is contextual:
+      //   • sibling + no selection  → create at top level (under
+      //     owl:Thing / owl:topObjectProperty / owl:topDataProperty / no
+      //     parent for annotation properties).
+      //   • sibling + selection     → create as sibling of selection.
+      //   • subclass + no selection → notify; subclass always needs a parent.
+      //   • subclass + selection    → create as child of selection.
+
       if (entitiesTab === "ObjectProperties") {
-        if (!selectedItem) {
-          showNotification("Select an object property first.", "warning");
+        if (type === "subclass" && !selectedItem) {
+          showNotification(
+            "Select an object property first to add a sub-property.",
+            "warning",
+          );
           return;
         }
 
-        // Prevent creating sibling of top-level object property
+        if (!selectedItem) {
+          // Top-level object property under owl:topObjectProperty.
+          setAddPropertyType("root");
+          setPropertyParentLabel("owl:topObjectProperty");
+          setAddPropertyDialogOpen(true);
+          return;
+        }
+
+        // Sibling of an already top-level property is just another root.
         if (type === "sibling") {
           const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
           const isTopLevel =
             !parent || selectedItem.id.includes("topObjectProperty") || selectedItem.label === "owl:topObjectProperty";
-
           if (isTopLevel) {
-            showNotification(
-              "Cannot create sibling of top-level object property. Please create a subproperty instead.",
-              "warning",
-            );
+            setAddPropertyType("root");
+            setPropertyParentLabel("owl:topObjectProperty");
+            setAddPropertyDialogOpen(true);
             return;
           }
         }
@@ -8347,22 +8369,29 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       if (entitiesTab === "DataProperties") {
-        if (!selectedItem) {
-          showNotification("Select a data property first.", "warning");
+        if (type === "subclass" && !selectedItem) {
+          showNotification(
+            "Select a data property first to add a sub-property.",
+            "warning",
+          );
           return;
         }
 
-        // Prevent creating sibling of top-level data property
+        if (!selectedItem) {
+          setAddPropertyType("root");
+          setPropertyParentLabel("owl:topDataProperty");
+          setAddPropertyDialogOpen(true);
+          return;
+        }
+
         if (type === "sibling") {
           const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
           const isTopLevel =
             !parent || selectedItem.id.includes("topDataProperty") || selectedItem.label === "owl:topDataProperty";
-
           if (isTopLevel) {
-            showNotification(
-              "Cannot create sibling of top-level data property. Please create a subproperty instead.",
-              "warning",
-            );
+            setAddPropertyType("root");
+            setPropertyParentLabel("owl:topDataProperty");
+            setAddPropertyDialogOpen(true);
             return;
           }
         }
@@ -8379,8 +8408,33 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       if (entitiesTab === "AnnotationProperties") {
-        setAddPropertyType("root");
-        setPropertyParentLabel("Annotation Property");
+        // Bug #45 — annotation properties were always created at root and
+        // had no toolbar add. Now matches the other property panes.
+        if (type === "subclass" && !selectedItem) {
+          showNotification(
+            "Select an annotation property first to add a sub-property.",
+            "warning",
+          );
+          return;
+        }
+
+        if (!selectedItem) {
+          setAddPropertyType("root");
+          setPropertyParentLabel("Annotation Property");
+          setAddPropertyDialogOpen(true);
+          return;
+        }
+
+        // Annotation properties currently render as a flat list in
+        // asserted mode (only inferredAnnotationPropertyHierarchy is built).
+        // "sibling" therefore means "another root-level annotation property"
+        // until the asserted hierarchy is wired through; "subclass" creates
+        // a sub-annotation-property under the selected one.
+        const parentLabel =
+          type === "subclass" ? selectedItem.label : "Annotation Property";
+
+        setAddPropertyType(type === "subclass" ? "subproperty" : "root");
+        setPropertyParentLabel(parentLabel);
         setAddPropertyDialogOpen(true);
         return;
       }
@@ -8390,31 +8444,42 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      if ((type === "subclass" || type === "sibling") && !selectedItem) {
-        showNotification("Please select a class first.", "warning");
-        return;
-      }
-
       if (entitiesTab !== "Classes") {
         showNotification("This action is available only for classes right now.", "warning");
         return;
       }
 
-      // Prevent creating sibling of top-level class
+      // Subclass without a selected class can't proceed — owl:Thing children
+      // ARE the top level, so use the contextual sibling button instead.
+      if (type === "subclass" && !selectedItem) {
+        showNotification("Select a class first to add a subclass.", "warning");
+        return;
+      }
+
+      // Sibling without selection: create a top-level class under owl:Thing.
+      if (!selectedItem) {
+        setAddClassType("subclass"); // creates as child of owl:Thing
+        setClassParentLabel("owl:Thing");
+        setAddClassDialogOpen(true);
+        return;
+      }
+
+      // Sibling of owl:Thing → top-level class (same effect, friendlier).
       if (type === "sibling") {
         const parent = findParentNode(classHierarchy, selectedItem.id);
         const isTopLevel = !parent || selectedItem.id.includes("Thing") || selectedItem.label === "owl:Thing";
 
         if (isTopLevel) {
-          showNotification("Cannot create sibling of owl:Thing. Please create a subclass instead.", "warning");
+          setAddClassType("subclass");
+          setClassParentLabel("owl:Thing");
+          setAddClassDialogOpen(true);
           return;
         }
       }
 
-      // For parent label, we'll compute it from state accessor
+      // For parent label, compute via functional state accessor.
       let parentLabel = selectedItem.label;
       if (type === "sibling") {
-        // Use functional update to get parent label without dependency
         setClassHierarchy((currentHierarchy) => {
           const parent = findParentNode(currentHierarchy, selectedItem.id);
           parentLabel = parent?.label || "owl:Thing";
@@ -8426,7 +8491,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       setClassParentLabel(parentLabel);
       setAddClassDialogOpen(true);
     },
-    [projectId, entitiesTab, selectedItem, showNotification],
+    [projectId, entitiesTab, selectedItem, showNotification, objectPropertyHierarchy, dataPropertyHierarchy, classHierarchy],
   );
 
   const handleCreateClass = useCallback(
@@ -8766,6 +8831,26 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         await ontologyMutationService.createAnnotationProperty(projectId, newIri, name);
 
+        // Bug #45: support sub-annotation-properties. The backend's
+        // createAnnotationProperty mutation doesn't accept a parent IRI, but
+        // the generic addSubPropertyOf does (it just emits
+        // `<child> rdfs:subPropertyOf <parent>`, which is the correct
+        // assertion for annotation properties under OWL 2).
+        if (addPropertyType === "subproperty" && selectedItem?.id) {
+          try {
+            await ontologyMutationService.addSubPropertyOf(projectId, newIri, selectedItem.id);
+          } catch (linkErr) {
+            console.error(
+              "[Dashboard] Created annotation property but failed to link as sub-property:",
+              linkErr,
+            );
+            showNotification(
+              "Annotation property created, but the sub-property relationship could not be saved.",
+              "warning",
+            );
+          }
+        }
+
         const newProp: AnnotationProperty = {
           id: newIri,
           label: name,
@@ -8785,7 +8870,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create annotation property. See console for details.", "error");
       }
     },
-    [projectId, metadata, markAsUnsaved, showNotification],
+    [projectId, metadata, markAsUnsaved, showNotification, addPropertyType, selectedItem],
   );
 
   const handleAddIndividual = useCallback(
@@ -9397,6 +9482,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Citation insertion handlers
   const handleCitationSelection = useCallback((citation: any) => {
     if (citation === "manual") {
+      setPendingCitation(null);
+      setCitationInsertionMode(false);
       setShowCitationPicker(false);
       setShowManualCitationDialog(true);
       return;
@@ -11790,6 +11877,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                       onSaveContent={handleSaveCodeContent}
                       syntaxError={codeViewSyntaxError}
                       readOnly={isViewOnlyMember}
+                      canExport={subscription.canAccessFeature('hasExport')}
+                      onExportProAction={handleExportProAction}
                     />
                   )}
                 </div>
@@ -15488,7 +15577,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       {/* Manual Citation Dialog */}
       <ManualCitationDialog
         isOpen={showManualCitationDialog}
-        onClose={() => setShowManualCitationDialog(false)}
+        onClose={() => {
+          setShowManualCitationDialog(false);
+          setPendingCitation(null);
+        }}
         onSubmit={handleManualCitationSubmit}
       />
 

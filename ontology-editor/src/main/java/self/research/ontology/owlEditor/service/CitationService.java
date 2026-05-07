@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.query.BindingSet;
@@ -12,8 +14,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * Service for managing citations in ontologies.
@@ -23,12 +33,21 @@ import java.util.*;
 public class CitationService {
 
     private static final Logger log = LoggerFactory.getLogger(CitationService.class);
+    private static final Pattern DOI_PATTERN = Pattern.compile("^10\\.\\d{4,9}/.+$", Pattern.CASE_INSENSITIVE);
 
     @Autowired
     private GraphDBDatasetService datasetService;
 
     @Autowired
     private GraphDBHistoryService historyService;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    private final HttpClient doiResolverClient = HttpClient.newBuilder()
+        .followRedirects(HttpClient.Redirect.NORMAL)
+        .connectTimeout(Duration.ofSeconds(10))
+        .build();
 
     /**
      * Insert citation RDF data into the project's GraphDB repository at a specific line
@@ -157,6 +176,57 @@ public class CitationService {
      */
     public void insertCitation(String projectId, String citationContent, String format, Map<String, Object> metadata) {
         insertCitation(projectId, citationContent, format, metadata, 0);
+    }
+
+    public Map<String, Object> validateDoi(String rawDoi, String expectedTitle, String expectedPublicationTitle, String expectedYear) {
+        String normalizedDoi = normalizeDoi(rawDoi);
+        if (normalizedDoi == null) {
+            throw new IllegalArgumentException("Invalid DOI format. Expected format: 10.XXXX/suffix");
+        }
+
+        try {
+            DoiMetadata metadata = resolveDoiMetadata(normalizedDoi);
+            if (!metadata.exists()) {
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("valid", false);
+                result.put("relevant", false);
+                result.put("normalizedDoi", normalizedDoi);
+                result.put("error", "DOI was not found.");
+                return result;
+            }
+
+            List<String> mismatches = new ArrayList<>();
+            if (hasText(expectedTitle) && hasText(metadata.title()) && !isMetadataMatch(expectedTitle, metadata.title())) {
+                mismatches.add("title");
+            }
+            if (hasText(expectedPublicationTitle)
+                && hasText(metadata.publicationTitle())
+                && !isMetadataMatch(expectedPublicationTitle, metadata.publicationTitle())) {
+                mismatches.add("journal or publication name");
+            }
+            if (hasText(expectedYear) && hasText(metadata.year()) && !expectedYear.trim().equals(metadata.year())) {
+                mismatches.add("year");
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("valid", true);
+            result.put("relevant", mismatches.isEmpty());
+            result.put("normalizedDoi", metadata.normalizedDoi());
+            result.put("resolvedTitle", metadata.title());
+            result.put("resolvedPublicationTitle", metadata.publicationTitle());
+            result.put("resolvedYear", metadata.year());
+            if (mismatches.isEmpty()) {
+                result.put("message", "DOI is valid.");
+            } else {
+                result.put("error", "DOI is real, but it does not match the provided " + String.join(", ", mismatches) + ".");
+            }
+            return result;
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("[CitationService] DOI validation failed for {}", normalizedDoi, e);
+            throw new RuntimeException("Unable to validate DOI right now.", e);
+        }
     }
 
     /**
@@ -344,5 +414,140 @@ public class CitationService {
         }
         
         return "unknown";
+    }
+
+    private DoiMetadata resolveDoiMetadata(String normalizedDoi) throws Exception {
+        String encodedDoi = URLEncoder.encode(normalizedDoi, StandardCharsets.UTF_8);
+        HttpRequest metadataRequest = HttpRequest.newBuilder(URI.create("https://doi.org/" + encodedDoi))
+            .header("Accept", "application/vnd.citationstyles.csl+json")
+            .header("User-Agent", "OntoCode DOI Validator/1.0")
+            .timeout(Duration.ofSeconds(15))
+            .GET()
+            .build();
+
+        HttpResponse<String> metadataResponse = doiResolverClient.send(metadataRequest, HttpResponse.BodyHandlers.ofString());
+        if (metadataResponse.statusCode() == 404) {
+            return new DoiMetadata(false, normalizedDoi, null, null, null);
+        }
+
+        if (metadataResponse.statusCode() >= 200 && metadataResponse.statusCode() < 300) {
+            try {
+                JsonNode root = objectMapper.readTree(metadataResponse.body());
+                String resolvedDoi = firstText(root.path("DOI"));
+                if (!hasText(resolvedDoi)) {
+                    resolvedDoi = normalizedDoi;
+                }
+                return new DoiMetadata(
+                    true,
+                    resolvedDoi,
+                    firstText(root.path("title")),
+                    firstText(root.path("container-title")),
+                    extractYear(root)
+                );
+            } catch (Exception parseError) {
+                log.warn("[CitationService] Could not parse DOI metadata for {}. Falling back to existence check.", normalizedDoi, parseError);
+            }
+        }
+
+        HttpRequest existenceRequest = HttpRequest.newBuilder(URI.create("https://doi.org/" + encodedDoi))
+            .header("Accept", "text/plain")
+            .header("User-Agent", "OntoCode DOI Validator/1.0")
+            .timeout(Duration.ofSeconds(10))
+            .GET()
+            .build();
+        HttpResponse<Void> existenceResponse = doiResolverClient.send(existenceRequest, HttpResponse.BodyHandlers.discarding());
+        boolean exists = existenceResponse.statusCode() >= 200 && existenceResponse.statusCode() < 400;
+        return new DoiMetadata(exists, normalizedDoi, null, null, null);
+    }
+
+    private String normalizeDoi(String rawDoi) {
+        if (rawDoi == null) {
+            return null;
+        }
+        String stripped = rawDoi.trim()
+            .replaceFirst("(?i)^https?://(dx\\.)?doi\\.org/", "")
+            .replaceFirst("(?i)^doi:", "")
+            .trim();
+        return DOI_PATTERN.matcher(stripped).matches() ? stripped : null;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
+    private String firstText(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        if (node.isArray()) {
+            for (JsonNode item : node) {
+                String text = firstText(item);
+                if (hasText(text)) {
+                    return text;
+                }
+            }
+            return null;
+        }
+        if (node.isTextual()) {
+            String text = node.asText().trim();
+            return text.isEmpty() ? null : text;
+        }
+        return node.asText(null);
+    }
+
+    private String extractYear(JsonNode root) {
+        for (String fieldName : List.of("issued", "published-print", "published-online", "created")) {
+            JsonNode node = root.path(fieldName).path("date-parts");
+            if (!node.isArray() || node.isEmpty()) {
+                continue;
+            }
+            JsonNode firstDatePart = node.get(0);
+            if (firstDatePart != null && firstDatePart.isArray() && !firstDatePart.isEmpty()) {
+                JsonNode yearNode = firstDatePart.get(0);
+                if (yearNode != null && yearNode.canConvertToInt()) {
+                    return String.valueOf(yearNode.asInt());
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isMetadataMatch(String expected, String actual) {
+        String normalizedExpected = normalizeComparisonText(expected);
+        String normalizedActual = normalizeComparisonText(actual);
+        if (normalizedExpected.isEmpty() || normalizedActual.isEmpty()) {
+            return true;
+        }
+        if (normalizedExpected.equals(normalizedActual)
+            || normalizedExpected.contains(normalizedActual)
+            || normalizedActual.contains(normalizedExpected)) {
+            return true;
+        }
+
+        Set<String> expectedTokens = new LinkedHashSet<>(Arrays.asList(normalizedExpected.split(" ")));
+        expectedTokens.removeIf(token -> token.length() < 3);
+        Set<String> actualTokens = new LinkedHashSet<>(Arrays.asList(normalizedActual.split(" ")));
+        actualTokens.removeIf(token -> token.length() < 3);
+        if (expectedTokens.isEmpty() || actualTokens.isEmpty()) {
+            return false;
+        }
+
+        Set<String> smaller = expectedTokens.size() <= actualTokens.size() ? expectedTokens : actualTokens;
+        Set<String> larger = smaller == expectedTokens ? actualTokens : expectedTokens;
+        long matches = smaller.stream().filter(larger::contains).count();
+        double coverage = (double) matches / (double) smaller.size();
+        return coverage >= 0.7d;
+    }
+
+    private String normalizeComparisonText(String value) {
+        return value == null
+            ? ""
+            : value.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim()
+                .replaceAll("\\s+", " ");
+    }
+
+    private record DoiMetadata(boolean exists, String normalizedDoi, String title, String publicationTitle, String year) {
     }
 }
