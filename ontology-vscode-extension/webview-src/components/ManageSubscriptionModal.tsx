@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
 import { X, Loader2, CreditCard, XCircle, CheckCircle, Shield, AlertTriangle, Crown } from 'lucide-react';
@@ -36,6 +36,32 @@ interface ManageSubscriptionModalProps {
     onUpgradePlan?: () => void;
 }
 
+interface PaymentHistoryItem {
+    invoiceId: string;
+    number?: string;
+    status?: string;
+    amountPaid?: string;
+    amountDue?: string;
+    currency?: string;
+    createdAt?: string;
+    periodStart?: string;
+    periodEnd?: string;
+    hostedInvoiceUrl?: string;
+    invoicePdf?: string;
+    description?: string;
+}
+
+interface BillingSummary {
+    planName?: string;
+    status?: string;
+    billingInterval?: string;
+    autoRenewEnabled?: boolean;
+    cancelAtPeriodEnd?: boolean;
+    currentPeriodEnd?: string;
+    canceledAt?: string;
+    paymentHistory?: PaymentHistoryItem[];
+}
+
 
 function statusLabel(status?: string) {
     const s = (status ?? '').toUpperCase();
@@ -45,6 +71,17 @@ function statusLabel(status?: string) {
     if (s === 'EXPIRED') return { label: 'Expired', color: 'text-red-400 bg-red-400/10 border-red-400/30' };
     if (s === 'CANCELED') return { label: 'Canceled', color: 'text-gray-400 bg-gray-400/10 border-gray-400/30' };
     return { label: s || 'Active', color: 'text-green-400 bg-green-400/10 border-green-400/30' };
+}
+
+function formatBillingDate(iso?: string, fallback = 'Not available') {
+    if (!iso) return fallback;
+    const value = new Date(iso);
+    if (Number.isNaN(value.getTime())) return fallback;
+    return value.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+    });
 }
 
 // ─── Card update inner form ──────────────────────────────────────────────────
@@ -149,6 +186,9 @@ type View = 'info' | 'update-card' | 'cancel-confirm' | 'cancelling' | 'done';
 const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ workspace, onClose, onCancelled, onCompletePayment, onUpgradePlan }) => {
     const [view, setView] = useState<View>('info');
     const [error, setError] = useState<string | null>(null);
+    const [detailsError, setDetailsError] = useState<string | null>(null);
+    const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
+    const [loadingSummary, setLoadingSummary] = useState(true);
     const [setupClientSecret, setSetupClientSecret] = useState<string | null>(null);
     const [setupPublishableKey, setSetupPublishableKey] = useState<string>('');
     const [cardUpdated, setCardUpdated] = useState(false);
@@ -157,6 +197,7 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
     const handleClose = () => {
         setView('info');
         setError(null);
+        setDetailsError(null);
         setSetupClientSecret(null);
         setSetupPublishableKey('');
         setCardUpdated(false);
@@ -196,6 +237,58 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
         'Content-Type': 'application/json',
         Authorization: `Bearer ${safeGetStorage('authToken') ?? ''}`,
     };
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadBillingSummary = async () => {
+            setLoadingSummary(true);
+            setDetailsError(null);
+            try {
+                let res: Response;
+                try {
+                    res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/subscription/details`, {
+                        method: 'GET',
+                        headers: authHeaders,
+                    });
+                    if (!res.ok && res.status === 404) {
+                        res = await fetchWithTimeout(`${window.location.origin}/api/billing/subscription/details`, {
+                            method: 'GET',
+                            headers: authHeaders,
+                        });
+                    }
+                } catch (err: any) {
+                    throw new Error(err.message || 'Failed to load billing details.');
+                }
+
+                if (res.status === 401 || res.status === 403) {
+                    throw new Error('Your session has expired. Please sign in again.');
+                }
+
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error(data?.error ?? 'Failed to load billing details.');
+                }
+
+                if (!cancelled) {
+                    setBillingSummary(data);
+                }
+            } catch (err: any) {
+                if (!cancelled) {
+                    setDetailsError(err.message || 'Failed to load billing details.');
+                }
+            } finally {
+                if (!cancelled) {
+                    setLoadingSummary(false);
+                }
+            }
+        };
+
+        loadBillingSummary();
+        return () => {
+            cancelled = true;
+        };
+    }, [workspace.workspaceId]);
 
     const startCardUpdate = async () => {
         setError(null);
@@ -245,14 +338,23 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
     };
 
 
-    const plan = workspace.subscriptionPlan?.toUpperCase() ?? '';
-    const interval = workspace.billingInterval ?? 'monthly';
+    const plan = (billingSummary?.planName || workspace.subscriptionPlan || '').toUpperCase();
+    const isTopPlan = plan === 'ENTERPRISE';
+    const interval = billingSummary?.billingInterval || workspace.billingInterval || 'monthly';
     const price = getDisplayPrice(plan, interval);
-    const { label: statusText, color: statusColor } = statusLabel(workspace.billingStatus);
+    const summaryStatus = billingSummary?.status || workspace.billingStatus;
+    const { label: statusText, color: statusColor } = statusLabel(summaryStatus);
+    const nextRenewalLabel =
+        billingSummary?.autoRenewEnabled
+            ? 'Next auto-renewal'
+            : 'Access until';
+    const renewalDateLabel = formatBillingDate(billingSummary?.currentPeriodEnd);
+    const paymentHistory = billingSummary?.paymentHistory || [];
+    const planDisplayName = plan ? `${plan.charAt(0)}${plan.slice(1).toLowerCase()} Plan` : 'Subscription';
 
     return (
         <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">
-            <div className="dark-surface relative w-full max-w-xl bg-gradient-to-b from-slate-900 to-indigo-950 border border-white/15 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="dark-surface relative w-full max-w-2xl bg-gradient-to-b from-slate-900 to-indigo-950 border border-white/15 rounded-2xl shadow-2xl overflow-hidden">
 
                 {/* Header */}
                 <div className="flex items-center justify-between px-8 py-6 border-b border-white/10">
@@ -281,7 +383,7 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
                             <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-5 py-4">
                                 <div>
                                     <p className="text-xs uppercase tracking-widest text-gray-400 mb-1">Current plan</p>
-                                    <p className="text-white text-lg font-semibold">{plan.charAt(0) + plan.slice(1).toLowerCase()} Plan</p>
+                                    <p className="text-white text-lg font-semibold">{planDisplayName}</p>
                                     <p className="text-sm text-gray-400 mt-0.5 capitalize">{interval} billing</p>
                                 </div>
                                 <div className="text-right">
@@ -296,6 +398,109 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
                             <div className="bg-white/5 border border-white/10 rounded-xl px-5 py-3 text-xs text-gray-300 leading-relaxed">
                                 Paid plans renew automatically. Renewal reminders are sent 15, 7, and 1 day before renewal. Expired or canceled subscriptions block workspace access until renewed.
                             </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div className="bg-white/5 border border-white/10 rounded-xl px-5 py-4">
+                                    <p className="text-xs uppercase tracking-widest text-gray-400 mb-2">{nextRenewalLabel}</p>
+                                    {loadingSummary ? (
+                                        <div className="flex items-center gap-2 text-sm text-gray-400">
+                                            <Loader2 size={14} className="animate-spin" />
+                                            Loading billing details...
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <p className="text-white text-base font-semibold">{renewalDateLabel}</p>
+                                            <p className="text-xs text-gray-400 mt-1">
+                                                {billingSummary?.autoRenewEnabled
+                                                    ? 'Stripe will attempt the next renewal automatically on this date.'
+                                                    : 'Auto-renew is off. Access will end on this date unless you renew.'}
+                                            </p>
+                                        </>
+                                    )}
+                                </div>
+
+                                <div className="bg-white/5 border border-white/10 rounded-xl px-5 py-4">
+                                    <p className="text-xs uppercase tracking-widest text-gray-400 mb-2">Auto-renew</p>
+                                    {loadingSummary ? (
+                                        <div className="flex items-center gap-2 text-sm text-gray-400">
+                                            <Loader2 size={14} className="animate-spin" />
+                                            Checking...
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <p className="text-white text-base font-semibold">
+                                                {billingSummary?.autoRenewEnabled ? 'Enabled' : 'Disabled'}
+                                            </p>
+                                            <p className="text-xs text-gray-400 mt-1">
+                                                {billingSummary?.autoRenewEnabled
+                                                    ? 'The Stripe subscription is set to renew automatically.'
+                                                    : 'The Stripe subscription is set to stop at period end.'}
+                                            </p>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="bg-white/5 border border-white/10 rounded-xl px-5 py-4 space-y-3">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                        <p className="text-xs uppercase tracking-widest text-gray-400">Payment history</p>
+                                        <p className="text-xs text-gray-500 mt-1">Latest Stripe invoices for this billing account</p>
+                                    </div>
+                                </div>
+                                {loadingSummary ? (
+                                    <div className="flex items-center gap-2 text-sm text-gray-400 py-2">
+                                        <Loader2 size={14} className="animate-spin" />
+                                        Loading invoices...
+                                    </div>
+                                ) : paymentHistory.length === 0 ? (
+                                    <p className="text-sm text-gray-400 py-2">No invoice history available yet.</p>
+                                ) : (
+                                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                                        {paymentHistory.map((item) => {
+                                            const invoiceLink = item.hostedInvoiceUrl || item.invoicePdf;
+                                            const amount = item.amountPaid && item.amountPaid !== '0.00'
+                                                ? `${item.currency || 'USD'} ${item.amountPaid}`
+                                                : `${item.currency || 'USD'} ${item.amountDue || '0.00'}`;
+                                            return (
+                                                <div
+                                                    key={item.invoiceId}
+                                                    className="flex items-start justify-between gap-3 rounded-lg border border-white/10 bg-black/10 px-4 py-3"
+                                                >
+                                                    <div className="min-w-0">
+                                                        <p className="text-sm font-medium text-white truncate">
+                                                            {item.description || item.number || 'Subscription charge'}
+                                                        </p>
+                                                        <p className="text-xs text-gray-400 mt-1">
+                                                            {formatBillingDate(item.createdAt)}{item.periodEnd ? ` · Period end ${formatBillingDate(item.periodEnd)}` : ''}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right flex-shrink-0">
+                                                        <p className="text-sm font-semibold text-purple-200">{amount}</p>
+                                                        <p className="text-xs text-gray-400 mt-1 uppercase">{item.status || 'unknown'}</p>
+                                                        {invoiceLink && (
+                                                            <a
+                                                                href={invoiceLink}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="inline-block mt-2 text-xs text-purple-300 hover:text-purple-200"
+                                                            >
+                                                                View invoice
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            {detailsError && (
+                                <div className="bg-amber-500/10 border border-amber-400/30 text-amber-300 px-5 py-3.5 rounded-xl text-sm">
+                                    {detailsError}
+                                </div>
+                            )}
 
                             {error && (
                                 <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-5 py-3.5 rounded-xl text-sm">{error}</div>
@@ -344,8 +549,10 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
                                             <Crown size={20} className="text-indigo-300" />
                                         </div>
                                         <div className="text-left">
-                                            <p className="font-semibold text-base text-indigo-200">Upgrade plan</p>
-                                            <p className="text-sm text-gray-400 mt-0.5">Explore more advanced features</p>
+                                            <p className="font-semibold text-base text-indigo-200">{isTopPlan ? 'View plans' : 'Upgrade plan'}</p>
+                                            <p className="text-sm text-gray-400 mt-0.5">
+                                                {isTopPlan ? 'Compare billing options and plan details' : 'Explore more advanced features'}
+                                            </p>
                                         </div>
                                     </button>
                                 )}

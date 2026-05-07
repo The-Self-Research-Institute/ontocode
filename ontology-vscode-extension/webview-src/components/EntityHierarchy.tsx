@@ -1,5 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary, MousePointer2, Eye, Settings, Edit3, Check, Loader2 } from "lucide-react";
+import {
+  ChevronRight,
+  ChevronDown,
+  PlusCircle,
+  Trash2,
+  Search,
+  Package,
+  GitBranch,
+  Database,
+  Tag,
+  User,
+  Type,
+  CornerDownRight,
+  Rows3,
+  MousePointer2,
+  Eye,
+  Settings,
+  Edit3,
+  Check,
+  Loader2,
+} from "lucide-react";
 import type { SelectableItem, TreeNode } from '../types';
 import { useCollaboration } from '../contexts/CollaborationContext';
 import InlineRenameInput from './InlineRenameInput';
@@ -443,69 +463,120 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           
           {!hideToolbarActions && (
           <div className="flex items-center gap-0.5">
+              {/*
+                Toolbar layout, Bug #46 (matches Protégé):
+                  • Primary "Add" button is CONTEXTUAL — no selection creates
+                    a top-level entity (under owl:Thing / topObjectProperty /
+                    topDataProperty), with selection creates a sibling. This
+                    is what we pass to onAddItem('sibling') — Dashboard's
+                    handleAddItem now treats sibling-without-selection as
+                    "create at the top".
+                  • Secondary "Add Subclass / Sub-property" button always
+                    creates a child of the selection. It stays enabled even
+                    without a selection so the click can surface a clear
+                    "Select X first" notification (the previous disabled
+                    state was silent — the actual user complaint).
+                  • Icons:
+                      Rows3            – multiple rows at the same level
+                                         (Add Class / Add at root / Sibling)
+                      CornerDownRight  – arrow that visually indents (child)
+                                         (Add Subclass / Sub-property)
+              */}
               {entitiesTab === 'Classes' && viewMode === 'asserted' && (
                  <>
                  <button
-                    title={isViewOnly ? "View-only: upgrade to edit" : "Add subclass (Ctrl+E)"}
-                    aria-label="Add subclass"
-                    disabled={!isViewOnly && !selectedItem}
-                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
-                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
+                    title={isViewOnly
+                      ? "View-only: upgrade to edit"
+                      : selectedItem
+                        ? `Add sibling class to "${selectedItem.label}" (Ctrl+Shift+E)`
+                        : "Add class at top level (under owl:Thing)"}
+                    aria-label={selectedItem ? "Add sibling class" : "Add top-level class"}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('sibling')}
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600"
                  >
-                      <PlusCircle size={14} />
+                      <Rows3 size={14} />
                  </button>
                  <button
-                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sibling class (Ctrl+Shift+E)"}
-                    aria-label="Add sibling class"
-                    disabled={!isViewOnly && !selectedItem}
-                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('sibling')}
-                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add subclass (Ctrl+E)"}
+                    aria-label="Add subclass"
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600"
                  >
-                      <Binary size={14} />
+                      <CornerDownRight size={14} />
                  </button>
                  </>
               )}
               {entitiesTab === 'ObjectProperties' && viewMode === 'asserted' && (
                  <>
                  <button
-                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sub property"}
-                    aria-label="Add sub property"
-                    disabled={!isViewOnly && !selectedItem}
-                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
-                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
+                    title={isViewOnly
+                      ? "View-only: upgrade to edit"
+                      : selectedItem
+                        ? `Add sibling property to "${selectedItem.label}"`
+                        : "Add property at top level (under owl:topObjectProperty)"}
+                    aria-label={selectedItem ? "Add sibling property" : "Add top-level object property"}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('sibling')}
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600"
                  >
-                      <PlusCircle size={14} />
+                      <Rows3 size={14} />
                  </button>
                  <button
-                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sibling property"}
-                    aria-label="Add sibling property"
-                    disabled={!isViewOnly && !selectedItem}
-                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('sibling')}
-                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sub property"}
+                    aria-label="Add sub property"
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600"
                  >
-                      <Binary size={14} />
+                      <CornerDownRight size={14} />
                  </button>
                  </>
               )}
               {entitiesTab === 'DataProperties' && viewMode === 'asserted' && (
                  <>
                  <button
-                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sub property"}
-                    aria-label="Add sub property"
-                    disabled={!isViewOnly && !selectedItem}
-                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
-                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
+                    title={isViewOnly
+                      ? "View-only: upgrade to edit"
+                      : selectedItem
+                        ? `Add sibling property to "${selectedItem.label}"`
+                        : "Add property at top level (under owl:topDataProperty)"}
+                    aria-label={selectedItem ? "Add sibling property" : "Add top-level data property"}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('sibling')}
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600"
                  >
-                      <PlusCircle size={14} />
+                      <Rows3 size={14} />
                  </button>
                  <button
-                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sibling property"}
-                    aria-label="Add sibling property"
-                    disabled={!isViewOnly && !selectedItem}
-                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('sibling')}
-                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sub property"}
+                    aria-label="Add sub property"
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600"
                  >
-                      <Binary size={14} />
+                      <CornerDownRight size={14} />
+                 </button>
+                 </>
+              )}
+              {/* Bug #45: Annotation Properties tab now matches the other
+                  property tabs — Add (top / sibling) plus Add sub-property. */}
+              {entitiesTab === 'AnnotationProperties' && viewMode === 'asserted' && (
+                 <>
+                 <button
+                    title={isViewOnly
+                      ? "View-only: upgrade to edit"
+                      : selectedItem
+                        ? `Add sibling annotation property to "${selectedItem.label}"`
+                        : "Add annotation property at top level"}
+                    aria-label={selectedItem ? "Add sibling annotation property" : "Add top-level annotation property"}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('sibling')}
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600"
+                 >
+                      <Rows3 size={14} />
+                 </button>
+                 <button
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Add sub annotation property"}
+                    aria-label="Add sub annotation property"
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onAddItem('subclass')}
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600"
+                 >
+                      <CornerDownRight size={14} />
                  </button>
                  </>
               )}
@@ -709,7 +780,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                 onMakeSiblingsDisjoint();
               }}
             >
-              <Binary size={14} />
+              <Rows3 size={14} />
               Make Siblings Disjoint
             </button>
           )}

@@ -22,7 +22,10 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -234,18 +237,39 @@ public class StripeService {
             log.info("Updated subscription {} for user {} to {}/{}",
                     subscription.getId(), user.getUsername(), planName.toUpperCase(), interval);
         } else {
-            // Create subscription with trial
-            subscription = com.stripe.model.Subscription.create(
-                    SubscriptionCreateParams.builder()
-                            .setCustomer(customer.getId())
-                            .addItem(SubscriptionCreateParams.Item.builder().setPrice(priceId).build())
-                            .setTrialPeriodDays(trialPeriodDays)
-                            .setDefaultPaymentMethod(paymentMethodId)
-                            .putMetadata("userId", user.getId())
-                            .putMetadata("planName", planName.toUpperCase())
-                            .putMetadata("billingInterval", interval.toLowerCase())
-                            .putMetadata("workspaceId", workspaceId != null ? workspaceId : "")
-                            .build());
+            // Bug #39 / #40: Stripe does not track trial eligibility per
+            // customer, so a user who cancels and re-subscribes would
+            // otherwise be granted a brand-new trial each time. We enforce
+            // "trial only on first ever subscription" via `hasUsedFreeTrial`.
+            SubscriptionCreateParams.Builder createParams = SubscriptionCreateParams.builder()
+                    .setCustomer(customer.getId())
+                    .addItem(SubscriptionCreateParams.Item.builder().setPrice(priceId).build())
+                    .setDefaultPaymentMethod(paymentMethodId)
+                    .putMetadata("userId", user.getId())
+                    .putMetadata("planName", planName.toUpperCase())
+                    .putMetadata("billingInterval", interval.toLowerCase())
+                    .putMetadata("workspaceId", workspaceId != null ? workspaceId : "");
+
+            boolean firstEverSubscription = !user.isHasUsedFreeTrial()
+                    && user.getFirstSubscriptionAt() == null;
+            if (firstEverSubscription && trialPeriodDays != null && trialPeriodDays > 0L) {
+                createParams.setTrialPeriodDays(trialPeriodDays);
+                log.info("Granting {}-day trial to user {} (first ever subscription)",
+                        trialPeriodDays, user.getUsername());
+            } else {
+                log.info("Skipping trial for user {} (hasUsedFreeTrial={}, firstSubscriptionAt={}). " +
+                        "Card will be charged immediately.",
+                        user.getUsername(), user.isHasUsedFreeTrial(), user.getFirstSubscriptionAt());
+            }
+
+            subscription = com.stripe.model.Subscription.create(createParams.build());
+
+            // Mark trial as consumed in the same transaction as the
+            // subscription create — see userRepository.save below.
+            user.setHasUsedFreeTrial(true);
+            if (user.getFirstSubscriptionAt() == null) {
+                user.setFirstSubscriptionAt(LocalDateTime.now());
+            }
         }
 
         // Update user-level subscription reference
@@ -382,6 +406,18 @@ public class StripeService {
         String priceId = resolvePriceId(planName, interval);
         Customer customer = getOrCreateCustomer(user);
 
+        // Bug #39 / #40: trial is granted only on the first ever subscription.
+        SessionCreateParams.SubscriptionData.Builder subData = SessionCreateParams.SubscriptionData.builder()
+                .putMetadata("userId", user.getId())
+                .putMetadata("planName", planName.toUpperCase())
+                .putMetadata("billingInterval", interval.toLowerCase())
+                .putMetadata("workspaceId", workspaceId != null ? workspaceId : "");
+        boolean firstEverSubscription = !user.isHasUsedFreeTrial()
+                && user.getFirstSubscriptionAt() == null;
+        if (firstEverSubscription && trialPeriodDays != null && trialPeriodDays > 0L) {
+            subData.setTrialPeriodDays(trialPeriodDays);
+        }
+
         SessionCreateParams.Builder builder = SessionCreateParams.builder()
                 .setMode(SessionCreateParams.Mode.SUBSCRIPTION)
                 .setUiMode(SessionCreateParams.UiMode.EMBEDDED)
@@ -392,13 +428,7 @@ public class StripeService {
                         .setQuantity(1L)
                         .build())
                 .setReturnUrl(baseUrl + "/?checkout_complete=1&session_id={CHECKOUT_SESSION_ID}")
-                .setSubscriptionData(SessionCreateParams.SubscriptionData.builder()
-                        .setTrialPeriodDays(trialPeriodDays)
-                        .putMetadata("userId", user.getId())
-                        .putMetadata("planName", planName.toUpperCase())
-                        .putMetadata("billingInterval", interval.toLowerCase())
-                        .putMetadata("workspaceId", workspaceId != null ? workspaceId : "")
-                        .build());
+                .setSubscriptionData(subData.build());
 
         if (workspaceId != null && !workspaceId.isBlank()) {
             builder.putMetadata("workspaceId", workspaceId);
@@ -534,6 +564,46 @@ public class StripeService {
      */
     public String getPublishableKey() {
         return stripePublishableKey;
+    }
+
+    public Map<String, Object> getBillingSummary(User user) throws StripeException {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("planName", emptyIfNull(user.getSubscriptionPlanName()));
+        response.put("status", emptyIfNull(user.getSubscriptionStatus()));
+        response.put("billingInterval", emptyIfNull(user.getBillingInterval()));
+        response.put("autoRenewEnabled", user.isAutoRenewEnabled());
+        response.put("currentPeriodEnd", user.getSubscriptionCurrentPeriodEnd() != null ? user.getSubscriptionCurrentPeriodEnd().toString() : "");
+        response.put("canceledAt", user.getSubscriptionCanceledAt() != null ? user.getSubscriptionCanceledAt().toString() : "");
+        response.put("paymentHistory", List.of());
+
+        if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
+            Subscription subscription = Subscription.retrieve(user.getStripeSubscriptionId());
+            if (subscription.getCurrentPeriodEnd() != null) {
+                LocalDateTime periodEnd = LocalDateTime.ofInstant(
+                    Instant.ofEpochSecond(subscription.getCurrentPeriodEnd()),
+                    ZoneOffset.UTC
+                );
+                response.put("currentPeriodEnd", periodEnd.toString());
+            }
+            response.put("status", emptyIfNull(subscription.getStatus()));
+            response.put("autoRenewEnabled", !Boolean.TRUE.equals(subscription.getCancelAtPeriodEnd()));
+            response.put("cancelAtPeriodEnd", Boolean.TRUE.equals(subscription.getCancelAtPeriodEnd()));
+            if (subscription.getItems() != null
+                && subscription.getItems().getData() != null
+                && !subscription.getItems().getData().isEmpty()) {
+                SubscriptionItem item = subscription.getItems().getData().get(0);
+                String stripeInterval = item.getPrice() != null && item.getPrice().getRecurring() != null
+                    ? item.getPrice().getRecurring().getInterval()
+                    : null;
+                response.put("billingInterval", normalizeStripeInterval(stripeInterval));
+            }
+        }
+
+        if (user.getStripeCustomerId() != null && !user.getStripeCustomerId().isBlank()) {
+            response.put("paymentHistory", listPaymentHistory(user.getStripeCustomerId()));
+        }
+
+        return response;
     }
 
     public Event constructWebhookEvent(byte[] payload, String sigHeader) throws SignatureVerificationException {
@@ -828,6 +898,71 @@ public class StripeService {
         if (priceId.equals(priceProMonthly) || priceId.equals(priceProYearly)) return "PRO";
         if (priceId.equals(priceEnterpriseMonthly) || priceId.equals(priceEnterpriseYearly)) return "ENTERPRISE";
         return "UNKNOWN";
+    }
+
+    private List<Map<String, Object>> listPaymentHistory(String stripeCustomerId) throws StripeException {
+        InvoiceListParams params = InvoiceListParams.builder()
+            .setCustomer(stripeCustomerId)
+            .setLimit(12L)
+            .build();
+
+        InvoiceCollection invoices = Invoice.list(params);
+        List<Map<String, Object>> history = new ArrayList<>();
+        for (Invoice invoice : invoices.getData()) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("invoiceId", invoice.getId());
+            entry.put("number", emptyIfNull(invoice.getNumber()));
+            entry.put("status", emptyIfNull(invoice.getStatus()));
+            entry.put("amountPaid", centsToDisplay(invoice.getAmountPaid()));
+            entry.put("amountDue", centsToDisplay(invoice.getAmountDue()));
+            entry.put("currency", invoice.getCurrency() != null ? invoice.getCurrency().toUpperCase() : "USD");
+            entry.put("createdAt", epochToIso(invoice.getCreated()));
+            entry.put("periodStart", epochToIso(invoice.getPeriodStart()));
+            entry.put("periodEnd", epochToIso(invoice.getPeriodEnd()));
+            entry.put("hostedInvoiceUrl", emptyIfNull(invoice.getHostedInvoiceUrl()));
+            entry.put("invoicePdf", emptyIfNull(invoice.getInvoicePdf()));
+            entry.put("description", deriveInvoiceDescription(invoice));
+            history.add(entry);
+        }
+        return history;
+    }
+
+    private String deriveInvoiceDescription(Invoice invoice) {
+        if (invoice.getLines() != null && invoice.getLines().getData() != null && !invoice.getLines().getData().isEmpty()) {
+            String description = invoice.getLines().getData().get(0).getDescription();
+            if (description != null && !description.isBlank()) {
+                return description;
+            }
+        }
+        return "Subscription charge";
+    }
+
+    private String normalizeStripeInterval(String stripeInterval) {
+        if ("year".equalsIgnoreCase(stripeInterval)) {
+            return "annual";
+        }
+        if ("month".equalsIgnoreCase(stripeInterval)) {
+            return "monthly";
+        }
+        return emptyIfNull(stripeInterval);
+    }
+
+    private String centsToDisplay(Long amountInCents) {
+        if (amountInCents == null) {
+            return "0.00";
+        }
+        return String.format("%.2f", amountInCents / 100.0d);
+    }
+
+    private String epochToIso(Long epochSeconds) {
+        if (epochSeconds == null) {
+            return "";
+        }
+        return LocalDateTime.ofInstant(Instant.ofEpochSecond(epochSeconds), ZoneOffset.UTC).toString();
+    }
+
+    private String emptyIfNull(String value) {
+        return value != null ? value : "";
     }
 
     private void requireActiveSubscription(User user) {

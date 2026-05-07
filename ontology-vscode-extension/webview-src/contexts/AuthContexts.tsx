@@ -1,7 +1,11 @@
 
 import React, { createContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import apiClient from '../services/apiClient';
-import { clearSessionCache } from '../utils/sessionCleanup';
+import {
+    clearLastOpenedProjectState,
+    clearSessionCache,
+    SUPPRESS_WORKSPACE_AUTO_OPEN_KEY,
+} from '../utils/sessionCleanup';
 
 interface User {
     token: string;
@@ -690,9 +694,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.log('[AuthContext] Setting needsWorkspaceSelection to false');
             console.log('[AuthContext] User will proceed to editor without workspace context');
 
+            clearLastOpenedProjectState();
             localStorage.setItem(SKIP_WORKSPACE_MODE_KEY, 'true');
+            localStorage.removeItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY);
             localStorage.removeItem('lastWorkspaceId');
-            
+            apiClient.put('/api/auth/last-opened', { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
+
             // Set flag to ignore workspace restoration from next storedAuthToken message
             ignoringWorkspaceRef.current = true;
             console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
@@ -722,6 +729,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.log('[AuthContext] 💾 Saved workspace for future auto-login:', workspaceData.workspaceId);
         }
         localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
+        localStorage.removeItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY);
 
         // Save new workspace-scoped token
         // Always save to localStorage for webview API client
@@ -768,8 +776,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Set flag to ignore workspace restoration from next storedAuthToken message
         ignoringWorkspaceRef.current = true;
         console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
+        clearLastOpenedProjectState();
         localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
-        
+        localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, 'true');
+        apiClient.put('/api/auth/last-opened', { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'clearLastProjectState' });
+        }
+
         // Clear workspace-specific data but keep the user logged in with token
         const updatedUser = {
             ...user,

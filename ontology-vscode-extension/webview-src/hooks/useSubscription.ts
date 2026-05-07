@@ -17,6 +17,17 @@ export interface SubscriptionLimits {
     hasSLAGuarantee: boolean;
     hasOnPremise: boolean;
     hasWhiteLabel: boolean;
+    /**
+     * Master export gate — controls Dashboard "Export" menu, Code View
+     * "Copy All" and "Download" actions, and any other path that lets
+     * the user pull the ontology out of the platform.
+     */
+    hasExport: boolean;
+    /**
+     * Multi-format export (Turtle / RDF/XML / N-Triples / OWL/XML / Manchester / Functional).
+     * Implies {@link hasExport}. Free remains gated on this and on `hasExport`.
+     */
+    hasMultipleExportFormats: boolean;
     maxWorkspaces: number;
 }
 
@@ -37,13 +48,18 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
         hasSLAGuarantee: false,
         hasOnPremise: false,
         hasWhiteLabel: false,
+        hasExport: false,
+        hasMultipleExportFormats: false,
         maxWorkspaces: 3
     },
     pro: {
         maxTeamMembers: 10,
         storageGB: 100,
         hasBasicCollaboration: true,
-        hasAdvancedCollaboration: false,
+        // Bug #49: Pro now includes real-time collaboration. Enterprise
+        // remains differentiated by SLA, custom integrations, on-premise,
+        // dedicated support, and advanced security — not by collaboration.
+        hasAdvancedCollaboration: true,
         hasVersionControl: true,
         hasCustomPlugins: true,
         hasAdvancedReasoning: true,
@@ -55,6 +71,8 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
         hasSLAGuarantee: false,
         hasOnPremise: false,
         hasWhiteLabel: false,
+        hasExport: true,
+        hasMultipleExportFormats: true,
         maxWorkspaces: 10
     },
     enterprise: {
@@ -73,6 +91,8 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
         hasSLAGuarantee: true,
         hasOnPremise: true,
         hasWhiteLabel: true,
+        hasExport: true,
+        hasMultipleExportFormats: true,
         maxWorkspaces: Infinity
     }
 };
@@ -86,7 +106,10 @@ export const useSubscription = () => {
 
     const canAccessFeature = (feature: keyof SubscriptionLimits): boolean => {
         const value = limits[feature];
-        return typeof value === 'boolean' ? value : true;
+        // Strict default: unknown / non-boolean keys are treated as DENIED rather
+        // than allowed, so a missing entry can't accidentally unlock a paid
+        // feature for free users (this is the bug that allowed export on free).
+        return typeof value === 'boolean' ? value : false;
     };
 
     const isWithinLimit = (currentCount: number, limitKey: keyof SubscriptionLimits): boolean => {

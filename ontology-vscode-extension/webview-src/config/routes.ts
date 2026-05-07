@@ -63,6 +63,10 @@ export const routes: Record<string, RouteConfig> = {
         view: 'dashboard',
         params: ['projectName', 'fileName'],
     },
+    billing: {
+        path: '/billing',
+        view: 'billing',
+    },
 };
 
 const shouldUseHashRouting = (): boolean => {
@@ -120,6 +124,9 @@ export const generateUrlPath = (state: RouteState): string => {
             }
             // Non-workspace editor (continue without workspace)
             return withRoute(routes.editor.path);
+
+        case 'billing':
+            return withRoute(routes.billing.path);
 
         default:
             return useHashRouting ? `${baseUrl}#/` : `${baseUrl}/`;
@@ -181,6 +188,9 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
 
         case 'subscription':
             return { view: 'subscription', showSubscriptionPlan: true };
+
+        case 'billing':
+            return { view: 'billing' };
 
         case 'invitation':
         case 'invite':

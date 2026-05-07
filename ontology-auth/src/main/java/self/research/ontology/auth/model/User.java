@@ -69,6 +69,15 @@ public class User {
     private LocalDateTime subscriptionCurrentPeriodEnd;
     private boolean autoRenewEnabled = true;
     private LocalDateTime subscriptionCanceledAt;
+    /**
+     * Set to true the first time this account creates ANY paid subscription
+     * (whether or not the trial completed). Stripe itself does not track
+     * trial eligibility per customer, so we enforce one-trial-per-account
+     * server-side: if this is true, {@code setTrialPeriodDays} is omitted on
+     * subsequent subscription creations. Bug #39 / #40.
+     */
+    private boolean hasUsedFreeTrial = false;
+    private LocalDateTime firstSubscriptionAt;
 
     // Pending checkout lock — cleared once checkout.session.completed fires
     private String pendingCheckoutSessionId;
@@ -287,6 +296,12 @@ public class User {
 
     public LocalDateTime getSubscriptionCanceledAt() { return subscriptionCanceledAt; }
     public void setSubscriptionCanceledAt(LocalDateTime subscriptionCanceledAt) { this.subscriptionCanceledAt = subscriptionCanceledAt; }
+
+    public boolean isHasUsedFreeTrial() { return hasUsedFreeTrial; }
+    public void setHasUsedFreeTrial(boolean hasUsedFreeTrial) { this.hasUsedFreeTrial = hasUsedFreeTrial; }
+
+    public LocalDateTime getFirstSubscriptionAt() { return firstSubscriptionAt; }
+    public void setFirstSubscriptionAt(LocalDateTime firstSubscriptionAt) { this.firstSubscriptionAt = firstSubscriptionAt; }
 
     public String getPendingCheckoutSessionId() { return pendingCheckoutSessionId; }
     public void setPendingCheckoutSessionId(String pendingCheckoutSessionId) { this.pendingCheckoutSessionId = pendingCheckoutSessionId; }

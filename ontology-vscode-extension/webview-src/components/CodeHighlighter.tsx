@@ -60,6 +60,14 @@ interface CodeHighlighterProps {
   readOnly?: boolean;
   onSaveContent?: (content: string) => void;
   syntaxError?: string | null;
+  /**
+   * When false, "Copy All" and "Download" surface the upgrade prompt
+   * instead of running. Defaults to true so existing callers behave as
+   * before; pass `subscription.canAccessFeature('hasExport')` to gate.
+   */
+  canExport?: boolean;
+  /** Called when a gated export action is clicked on a non-paid plan. */
+  onExportProAction?: () => void;
 }
 
 const MAX_LINES_INITIAL = 500; // Show first 500 lines initially
@@ -83,6 +91,8 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
   readOnly = false,
   onSaveContent,
   syntaxError,
+  canExport = true,
+  onExportProAction,
 }) => {
   const [displayedLines, setDisplayedLines] = useState(MAX_LINES_INITIAL);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -175,6 +185,10 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
   };
 
   const handleDownload = () => {
+    if (!canExport) {
+      onExportProAction?.();
+      return;
+    }
     console.log("[CodeHighlighter] Download initiated - Format:", format, "Content length:", currentContent?.length);
 
     // Determine file extension based on format
@@ -1038,6 +1052,10 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
   };
 
   const handleCopyAll = async () => {
+    if (!canExport) {
+      onExportProAction?.();
+      return;
+    }
     try {
       await navigator.clipboard.writeText(content);
     } catch (err) {
@@ -1248,18 +1266,30 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
         <div className="flex items-center gap-1 border-l border-gray-600 pl-2">
           <button
             onClick={handleCopyAll}
-            className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded"
-            title="Copy entire code"
+            className={`px-2 py-1 text-xs rounded ${
+              canExport
+                ? "bg-gray-700 hover:bg-gray-600 text-white"
+                : "bg-gray-800 text-gray-400 cursor-not-allowed opacity-70"
+            }`}
+            title={canExport ? "Copy entire code" : "Available on Professional and Enterprise plans"}
+            aria-disabled={!canExport}
           >
             Copy All
+            {!canExport && <span className="ml-1 text-[10px] uppercase tracking-wider">Pro</span>}
           </button>
           <button
             onClick={handleDownload}
-            className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded flex items-center gap-1"
-            title="Download ontology file"
+            className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${
+              canExport
+                ? "bg-gray-700 hover:bg-gray-600 text-white"
+                : "bg-gray-800 text-gray-400 cursor-not-allowed opacity-70"
+            }`}
+            title={canExport ? "Download ontology file" : "Available on Professional and Enterprise plans"}
+            aria-disabled={!canExport}
           >
             <Download className="w-3 h-3" />
             Download
+            {!canExport && <span className="ml-1 text-[10px] uppercase tracking-wider">Pro</span>}
           </button>
         </div>
 

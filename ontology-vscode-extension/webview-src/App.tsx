@@ -20,7 +20,9 @@ import ForgotPasswordForm from "./components/ForgotPasswordForm";
 import ResetPasswordForm from "./components/ResetPasswordForm";
 import { Loader2 } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
+import { clearLastOpenedProjectState, SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "./utils/sessionCleanup";
 const ManageSubscriptionModal = lazy(() => import("./components/ManageSubscriptionModal"));
+const BillingManagement = lazy(() => import("./components/BillingManagement"));
 
 const getInitialInvitationFromLocation = (): { token: string | null; email: string | null } => {
   const pathname = window.location.pathname;
@@ -99,6 +101,7 @@ const AppContent = () => {
   const [showSubscriptionPlan, setShowSubscriptionPlan] = useState(false);
   const [workspaceBillingStatus, setWorkspaceBillingStatus] = useState<string | null>(null);
   const [showManageSubscription, setShowManageSubscription] = useState(false);
+  const [showBillingPage, setShowBillingPage] = useState(false);
   const [inviteToken, setInviteToken] = useState<string | null>(initialInvitation.token);
   const [inviteEmail, setInviteEmail] = useState<string | null>(initialInvitation.email);
   const [pendingFile, setPendingFile] = useState<{ fileName: string; fileContent: string; fileSize: number } | null>(
@@ -238,6 +241,14 @@ const AppContent = () => {
     (workspaceBillingStatus || "").toUpperCase() === "PENDING" &&
     (user?.subscriptionPlan || "FREE").toUpperCase() !== "FREE";
 
+  const clearLastOpenedSelection = useCallback(() => {
+    clearLastOpenedProjectState();
+    apiClient.put("/api/auth/last-opened", { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
+    if (window.vscode) {
+      window.vscode.postMessage({ type: "clearLastProjectState" });
+    }
+  }, []);
+
   // Auto-restore last project + file when workspace becomes available (e.g. after login with auto-select)
   const autoRestoredRef = useRef(false);
   useEffect(() => {
@@ -245,16 +256,6 @@ const AppContent = () => {
     autoRestoredRef.current = true;
 
     const goToDashboard = () => navigateTo({ view: "projectDashboard", projectId: null, projectName: "", fileId: null, fileName: "" });
-
-    const clearStoredIds = () => {
-      try {
-        localStorage.removeItem("ontocode_lastWorkspaceProjectId");
-        localStorage.removeItem("ontocode_lastWorkspaceProjectName");
-        localStorage.removeItem("ontocode_lastWorkspaceFileId");
-        localStorage.removeItem("ontocode_lastWorkspaceFileName");
-      } catch { /* ignore */ }
-      apiClient.put('/api/auth/last-opened', { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
-    };
 
     // Tab-switch restore threshold: if the user had a file open less than 30 minutes ago,
     // treat it as a VS Code tab-switch and restore directly to the editor.
@@ -269,7 +270,7 @@ const AppContent = () => {
         await apiClient.get(`/api/projects/${encodeURIComponent(projectId)}`);
       } catch {
         console.warn("[App] Stored project no longer exists, going to project dashboard");
-        clearStoredIds();
+        clearLastOpenedSelection();
         goToDashboard();
         return;
       }
@@ -307,7 +308,7 @@ const AppContent = () => {
           }
         } catch { /* ignore */ }
       });
-  }, [user?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clearLastOpenedSelection, user?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const currentRoute: RouteState = useMemo(() => {
@@ -336,6 +337,14 @@ const AppContent = () => {
     }
     if (!deploymentType) {
       return { view: "deployment", deploymentType };
+    }
+    // Bug #48: billing has its own URL (/billing) and must outrank the
+    // workspace-selection branch — otherwise the route is computed as
+    // 'workspace' on the next render and the URL flips back. The page is
+    // always account-level, so it doesn't depend on a workspace being
+    // chosen.
+    if (user && showBillingPage) {
+      return { view: "billing" };
     }
     if (user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending)) {
       return { view: "workspace" };
@@ -388,6 +397,7 @@ const AppContent = () => {
     inviteToken,
     showAuthForInvitation,
     showSubscriptionPlan,
+    showBillingPage,
     pendingFile,
     isWorkspacePaymentPending,
     shouldShowWorkspaceSelection,
@@ -505,8 +515,16 @@ const AppContent = () => {
       setShowSubscriptionPlan(updatedRoute.showSubscriptionPlan);
     }
 
+    // Update billing view
+    if (updatedRoute.view === 'billing') {
+      setShowBillingPage(true);
+    } else if (updatedRoute.view) {
+      setShowBillingPage(false);
+    }
+
     // Update view-specific flags
     if (updatedRoute.view === "workspace") {
+      clearLastOpenedSelection();
       setForceShowWorkspace(true);
     } else if (updatedRoute.view === "deployment") {
       setForceShowWorkspace(false);
@@ -517,6 +535,10 @@ const AppContent = () => {
       setForceShowWorkspace(false);
     }
 
+    if (updatedRoute.view === "projectDashboard") {
+      clearLastOpenedSelection();
+    }
+
     // Restore non-workspace editor state when navigating to dashboard without project context
     if (updatedRoute.view === "dashboard" && !updatedRoute.projectId && !updatedRoute.projectName) {
       setSkipWorkspaceRequested(true);
@@ -524,7 +546,7 @@ const AppContent = () => {
         setSelectedFileId("__editor__");
       }
     }
-  }, []);
+  }, [clearLastOpenedSelection]);
 
   // Initialize router
   const { clearHistory, navigateTo, goBack, goForward } = useRouter(currentRoute, handleRouteChange);
@@ -775,6 +797,7 @@ const AppContent = () => {
     selectWorkspace(workspaceData);
     setForceShowWorkspace(false); // Reset after workspace selection
     setRestoredRoute(null);
+    clearLastOpenedSelection();
     setSelectedProjectId(null);
     setSelectedProjectName("");
     setSelectedFileId(null);
@@ -834,6 +857,7 @@ const AppContent = () => {
   };
 
   const handleBackToProjects = () => {
+    clearLastOpenedSelection();
     // Navigate using router to update browser history
     navigateTo({
       view: "projectDashboard",
@@ -951,6 +975,7 @@ const AppContent = () => {
   };
 
   const handleBackToProjectDashboard = () => {
+    clearLastOpenedSelection();
     // Use deterministic route navigation so back works regardless of browser history state.
     navigateTo({
       view: "projectDashboard",
@@ -1171,6 +1196,42 @@ const AppContent = () => {
     return <DeploymentSelector onSelect={handleDeploymentSelected} />;
   }
 
+  // Bug #44 / #50: BillingManagement is ALWAYS account-level (Model B —
+  // one Stripe customer per user account, workspaces inherit the plan).
+  // We pass an empty workspaceId so every API call hits the account
+  // endpoints, and isOwner is always true because it's the user's own
+  // account. Must be checked BEFORE the workspace-selection short-circuit
+  // so navigating from WorkspaceSelection actually works.
+  if (user && showBillingPage) {
+    console.log("[App] 🎨 Rendering BillingManagement page (account-level)");
+    return (
+      <Suspense fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[#0f172a]">
+          <Loader2 size={40} className="text-purple-500 animate-spin" />
+        </div>
+      }>
+        <BillingManagement
+          workspace={{
+            workspaceId: "", // always account-level
+            name: "Your Account",
+            subscriptionPlan: user.subscriptionPlan || "FREE",
+            billingStatus: workspaceBillingStatus || "ACTIVE",
+            billingInterval: (user as any).billingInterval || "monthly",
+          }}
+          // Account-level billing — the user is always the owner of their
+          // own Stripe customer.
+          isOwner={true}
+          onBack={goBack}
+          onCancelled={() => navigateTo({ view: 'workspace' })}
+          onUpgradePlan={() => {
+            setShowSubscriptionPlan(true);
+            navigateTo({ view: 'subscription' });
+          }}
+        />
+      </Suspense>
+    );
+  }
+
   // Show workspace selection if user is logged in but hasn't selected a workspace
   const showWorkspaceSelectionScreen = user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending);
   console.log("[App] Render decision - showWorkspaceSelectionScreen:", showWorkspaceSelectionScreen);
@@ -1186,6 +1247,11 @@ const AppContent = () => {
         <WorkspaceSelection
           username={user.username}
           isAdmin={user.isAdmin || false}
+          // Bug #44: route the top-right "Manage Billing" pill to the new
+          // BillingManagement page in account-level mode instead of the
+          // legacy in-place modal. The page treats an empty workspaceId as
+          // "your account" and the backend's billing endpoints accept it.
+          onManageAccountBilling={() => navigateTo({ view: 'billing' })}
           onWorkspaceSelected={handleWorkspaceSelected}
           onSkipWorkspace={() => {
             console.log("[App] 🚀 User chose to continue without workspace");
@@ -1215,13 +1281,29 @@ const AppContent = () => {
     );
   }
 
-  // Show subscription plan selection for admins only (not for workspace members)
-  if (user && user.isAdmin && user.workspaceId && showSubscriptionPlan) {
+  // Show subscription plan selection. Bug #51: previously required admin
+  // AND workspaceId, which broke the "Upgrade Plan" button in
+  // BillingManagement when the user navigated from WorkspaceSelection (no
+  // workspaceId yet). Billing is account-level, so we just need a logged-in
+  // user. The view itself accepts an empty workspaceId for account-level.
+  if (user && showSubscriptionPlan) {
+    const status = (workspaceBillingStatus || "").toLowerCase();
+    // Renewal case: user cancelled or trial expired — they need to be able
+    // to re-select the same plan they had. Block re-selection only when
+    // the subscription is genuinely active or in a paid trial.
+    const allowCurrentPlanSelection =
+      !!user.subscriptionPlan
+      && user.subscriptionPlan.toUpperCase() !== "FREE"
+      && status !== "active"
+      && status !== "trialing";
     return (
       <SubscriptionPlanSelection
         username={user.username}
-        workspaceId={user.workspaceId}
-        workspaceName={user.workspaceName || "Workspace"}
+        workspaceId={user.workspaceId || ""}
+        workspaceName={user.workspaceName || "Your Account"}
+        currentPlanId={user.subscriptionPlan || "FREE"}
+        currentStatus={workspaceBillingStatus || ""}
+        allowCurrentPlanSelection={allowCurrentPlanSelection}
         onPlanSelected={handlePlanSelected}
         onSkip={handleSkipPlan}
         onLogout={handleLogout}
@@ -1267,29 +1349,13 @@ const AppContent = () => {
             setSelectedFileId("__editor__");
             setSelectedFileName("");
           }}
-          onManageSubscription={hasPaidPlan ? () => setShowManageSubscription(true) : undefined}
+          onManageSubscription={hasPaidPlan ? () => navigateTo({ view: 'billing' }) : undefined}
         />
-        {showManageSubscription && user.workspaceId && (
-          <Suspense fallback={null}>
-            <ManageSubscriptionModal
-              workspace={{
-                workspaceId: user.workspaceId,
-                name: user.workspaceName || "Workspace",
-                subscriptionPlan: user.subscriptionPlan || "FREE",
-                billingStatus: workspaceBillingStatus || "ACTIVE",
-                billingInterval: (user as any).billingInterval || "monthly",
-              }}
-              onClose={() => setShowManageSubscription(false)}
-              onCancelled={() => {
-                setShowManageSubscription(false);
-                setForceShowWorkspace(true);
-              }}
-            />
-          </Suspense>
-        )}
       </>
     );
   }
+
+  // (BillingManagement render moved earlier \u2014 see top of render fn.)
 
   // Show Project Library when a project is selected but no file is selected
   // Available to all workspace members (both admins and non-admins)
@@ -1328,7 +1394,16 @@ const AppContent = () => {
       <Dashboard
         onBackToProjects={user.workspaceId ? handleBackToProjectLibrary : undefined}
         onGoToProjectDashboard={user.workspaceId ? handleBackToProjectDashboard : undefined}
-        onGoToWorkspace={() => { setForceShowWorkspace(true); setRestoredRoute(null); }}
+        onGoToWorkspace={() => {
+          clearLastOpenedSelection();
+          try {
+            localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true");
+          } catch {
+            // ignore
+          }
+          setForceShowWorkspace(true);
+          setRestoredRoute(null);
+        }}
         onFileSelected={handleFileSelected}
         selectedFileId={selectedFileId || undefined}
         selectedFileName={selectedFileName || undefined}
