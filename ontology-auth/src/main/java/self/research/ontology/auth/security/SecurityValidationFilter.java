@@ -124,10 +124,59 @@ public class SecurityValidationFilter extends OncePerRequestFilter {
     }
 
     /**
-     * Sanitize log messages to prevent log injection
+     * Sanitize log messages so:
+     * <ol>
+     *   <li>CRLF can't be used to forge new log lines (log-injection),</li>
+     *   <li>values of sensitive query parameters never appear in the log,
+     *       even when this filter is logging the offending input as part
+     *       of a security alert. Names of parameters are kept so that
+     *       triage can still tell <em>which</em> sensitive params were
+     *       sent &mdash; just not their contents.</li>
+     * </ol>
+     *
+     * Kept in lock-step with
+     * {@code PerformanceLoggingInterceptor.SENSITIVE_PARAM_NEEDLES}.
      */
     private String sanitizeLog(String input) {
         if (input == null) return "";
-        return input.replaceAll("[\n\r]", "_");
+        String noCrlf = input.replaceAll("[\n\r]", "_");
+        return redactSensitiveParams(noCrlf);
+    }
+
+    private static final String[] SENSITIVE_PARAM_NEEDLES = {
+            "token", "password", "passwd", "secret", "apikey", "api_key",
+            "key", "auth", "authorization", "code", "signature", "sig",
+            "otp", "jwt", "session", "email", "card", "cvv", "ssn"
+    };
+    private static final String REDACTED = "***REDACTED***";
+
+    private static String redactSensitiveParams(String query) {
+        if (query == null || query.isEmpty()) return query;
+        // Only treat it as a query string if it looks like one. Keeps the
+        // method safe to call on non-query inputs (e.g. Referer header).
+        if (query.indexOf('=') < 0) return query;
+        String[] parts = query.split("&");
+        StringBuilder out = new StringBuilder(query.length());
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) out.append('&');
+            String part = parts[i];
+            int eq = part.indexOf('=');
+            if (eq < 0) {
+                out.append(part);
+                continue;
+            }
+            String name = part.substring(0, eq);
+            String lowered = name.toLowerCase();
+            boolean sensitive = false;
+            for (String needle : SENSITIVE_PARAM_NEEDLES) {
+                if (lowered.contains(needle)) {
+                    sensitive = true;
+                    break;
+                }
+            }
+            out.append(name).append('=');
+            out.append(sensitive ? REDACTED : part.substring(eq + 1));
+        }
+        return out.toString();
     }
 }

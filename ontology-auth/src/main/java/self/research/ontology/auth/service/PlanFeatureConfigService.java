@@ -73,7 +73,8 @@ public class PlanFeatureConfigService {
                 "Everything in Free",
                 "Workspace collaboration enabled",
                 "Shared editing in workspaces",
-                "Export to multiple formats"
+                "Export to multiple formats",
+                "Priority email support"
             ),
             List.of()
         );
@@ -83,7 +84,8 @@ public class PlanFeatureConfigService {
                 "Unlimited workspaces",
                 "Unlimited storage",
                 "Everything in Professional",
-                "Early access to new features"
+                "Early access to new features",
+                "Priority channel support"
             ),
             List.of()
         );

@@ -59,6 +59,20 @@ public class JwtUtil {
         return extractClaim(token, Claims::getSubject);
     }
 
+    /**
+     * Extract the email (subject) from a token that may already be expired.
+     * Used exclusively by the refresh endpoint so that a token expiring between
+     * the last 60-second client-side check and the actual refresh call does not
+     * produce a hard 401 and force the user out.
+     */
+    public String extractEmailAllowExpired(String token) {
+        try {
+            return extractClaim(token, Claims::getSubject);
+        } catch (io.jsonwebtoken.ExpiredJwtException e) {
+            return e.getClaims().getSubject();
+        }
+    }
+
     public String extractUsername(String token) {
         return extractEmail(token);
     }

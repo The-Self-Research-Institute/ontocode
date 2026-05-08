@@ -201,6 +201,45 @@ const extractLocalName = (uri: string): string => {
   return uri;
 };
 
+type OntologySchemaNames = {
+  classes: Set<string>;
+  objectProperties: Set<string>;
+  dataProperties: Set<string>;
+};
+
+const BUILT_IN_PREFIXES = new Set(['swrlb', 'swrlm', 'sqwrl', 'temporal']);
+const isBuiltinPredicate = (predicate: string) => {
+  const prefix = predicate.includes(':') ? predicate.split(':')[0] : '';
+  return BUILT_IN_PREFIXES.has(prefix);
+};
+
+const predicateLocalName = (predicate: string) => extractLocalName(predicate.split(':').pop() || predicate);
+
+const extractTemplatePredicates = (template: string): string[] => {
+  const predicates = new Set<string>();
+  const atomRegex = /([A-Za-z_][\w:.-]*)\s*\(/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = atomRegex.exec(template)) !== null) {
+    const predicate = match[1];
+    if (!predicate.startsWith('?') && !isBuiltinPredicate(predicate)) {
+      predicates.add(predicateLocalName(predicate));
+    }
+  }
+
+  return Array.from(predicates);
+};
+
+const templateMatchesOntology = (template: string, schema: OntologySchemaNames) => {
+  const validPredicates = new Set([
+    ...schema.classes,
+    ...schema.objectProperties,
+    ...schema.dataProperties,
+  ]);
+
+  return extractTemplatePredicates(template).every(predicate => validPredicates.has(predicate));
+};
+
 // Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -343,16 +382,21 @@ interface QuickInsertProps {
   onInsert: (text: string) => void;
   disabled?: boolean;
   dynamicTemplates?: typeof RULE_TEMPLATES;
+  generalTemplates?: typeof RULE_TEMPLATES;
+  schemaLoaded?: boolean;
 }
 
-const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dynamicTemplates = [] }) => {
+const QuickInsertPanel: React.FC<QuickInsertProps> = ({
+  onInsert,
+  disabled,
+  dynamicTemplates = [],
+  generalTemplates = RULE_TEMPLATES,
+  schemaLoaded = false
+}) => {
   const [expanded, setExpanded] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showGeneralTemplates, setShowGeneralTemplates] = useState(false);
   
-  // Combine static and dynamic templates
-  const allTemplates = [...dynamicTemplates, ...RULE_TEMPLATES];
-
   return (
     <div className="bg-gray-50 border-t border-gray-200">
       {/* Quick symbols */}
@@ -416,12 +460,12 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dyna
                   onClick={() => setShowGeneralTemplates(!showGeneralTemplates)}
                   className="w-full text-[10px] font-semibold text-purple-700 uppercase tracking-wide px-2 py-1 bg-purple-50 rounded flex items-center justify-between hover:bg-purple-100 transition-colors"
                 >
-                  <span>General Templates ({RULE_TEMPLATES.length})</span>
+                  <span>General Templates ({generalTemplates.length})</span>
                   {showGeneralTemplates ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                 </button>
                 {showGeneralTemplates && (
                   <div className="grid grid-cols-1 gap-1 mt-1">
-                    {RULE_TEMPLATES.map((t, i) => (
+                    {generalTemplates.length > 0 ? generalTemplates.map((t, i) => (
                       <button
                         key={i}
                         onClick={() => { onInsert(t.template); setShowTemplates(false); }}
@@ -431,7 +475,11 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dyna
                         <div className="font-medium text-gray-700 group-hover:text-purple-700">{t.name}</div>
                         <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
                       </button>
-                    ))}
+                    )) : (
+                      <div className="px-3 py-2 text-xs text-gray-500 bg-white border border-gray-200 rounded">
+                        No general templates match this ontology schema yet.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -439,10 +487,10 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dyna
           ) : (
             <div>
               <div className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide px-2 py-1 bg-purple-50 rounded">
-                General Templates ({RULE_TEMPLATES.length})
+                General Templates ({generalTemplates.length})
               </div>
               <div className="grid grid-cols-1 gap-1 mt-1">
-                {RULE_TEMPLATES.map((t, i) => (
+                {generalTemplates.length > 0 ? generalTemplates.map((t, i) => (
                   <button
                     key={i}
                     onClick={() => { onInsert(t.template); setShowTemplates(false); }}
@@ -452,7 +500,13 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dyna
                     <div className="font-medium text-gray-700 group-hover:text-purple-700">{t.name}</div>
                     <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
                   </button>
-                ))}
+                )) : (
+                  <div className="px-3 py-2 text-xs text-gray-500 bg-white border border-gray-200 rounded">
+                    {schemaLoaded
+                      ? 'No templates match the current ontology. Add the needed classes/properties first.'
+                      : 'Load an ontology schema to see validated templates.'}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1409,6 +1463,22 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   // Debounced validation
   const debouncedRuleText = useDebounce(editForm.ruleText, 500);
 
+  const schemaNames = useMemo<OntologySchemaNames | null>(() => {
+    if (!ontologySchema) return null;
+    return {
+      classes: new Set(ontologySchema.classes.map(extractLocalName)),
+      objectProperties: new Set(ontologySchema.objectProperties.map(extractLocalName)),
+      dataProperties: new Set(ontologySchema.dataProperties.map(extractLocalName)),
+    };
+  }, [ontologySchema]);
+
+  const validGeneralTemplates = useMemo(
+    () => schemaNames
+      ? RULE_TEMPLATES.filter(t => templateMatchesOntology(t.template, schemaNames))
+      : [],
+    [schemaNames]
+  );
+
   // Load ontology schema and generate dynamic templates
   const loadOntologySchema = useCallback(async () => {
     try {
@@ -1417,12 +1487,17 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         `/api/ontology/${projectId}/schema`
       );
       console.log('[SWRL] Schema loaded:', res);
-      setOntologySchema(res);
       
       // Generate dynamic templates based on actual ontology
       const classes = res.classes.map(c => extractLocalName(c)).filter(c => c && !c.startsWith('owl:') && !c.startsWith('rdf:'));
       const objProps = res.objectProperties.map(p => extractLocalName(p)).filter(p => p && !p.startsWith('owl:') && !p.startsWith('rdf:'));
       const dataProps = res.dataProperties.map(p => extractLocalName(p)).filter(p => p && !p.startsWith('owl:') && !p.startsWith('rdf:'));
+      const schemaNames: OntologySchemaNames = {
+        classes: new Set(classes),
+        objectProperties: new Set(objProps),
+        dataProperties: new Set(dataProps),
+      };
+      setOntologySchema({ classes, objectProperties: objProps, dataProperties: dataProps });
       
       const generated: typeof RULE_TEMPLATES = [];
       
@@ -1549,9 +1624,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
       }
       
       // Limit templates to avoid overwhelming UI
-      console.log('[SWRL] Generated', generated.length, 'dynamic templates');
-      setDynamicTemplates(generated.slice(0, 20));
-      console.log('[SWRL] Set', Math.min(generated.length, 20), 'dynamic templates');
+      const validGenerated = generated.filter(t => templateMatchesOntology(t.template, schemaNames));
+      console.log('[SWRL] Generated', generated.length, 'dynamic templates;', validGenerated.length, 'match ontology schema');
+      setDynamicTemplates(validGenerated.slice(0, 20));
+      console.log('[SWRL] Set', Math.min(validGenerated.length, 20), 'dynamic templates');
     } catch (e) {
       console.error('[SWRL] Failed to load ontology schema:', e);
       setDynamicTemplates([]);
@@ -2102,11 +2178,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                                 </button>
                               ))}
                               <div className="px-3 py-2 text-[10px] font-semibold text-purple-700 bg-purple-50 border-b border-purple-200">
-                                General Templates
+                                General Templates ({validGeneralTemplates.length})
                               </div>
                             </div>
                           )}
-                          {RULE_TEMPLATES.map((t, i) => (
+                          {validGeneralTemplates.length > 0 ? validGeneralTemplates.map((t, i) => (
                             <button
                               key={i}
                               onClick={() => setEditForm(prev => ({ ...prev, ruleText: t.template }))}
@@ -2115,7 +2191,13 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                               <div className="font-medium text-gray-800">{t.name}</div>
                               <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
                             </button>
-                          ))}
+                          )) : (
+                            <div className="px-3 py-3 text-xs text-gray-500">
+                              {ontologySchema
+                                ? 'No templates match this ontology schema. Add the needed classes/properties first.'
+                                : 'Loading ontology schema before showing templates...'}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2140,7 +2222,13 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                     )}
 
                     {/* Quick Insert */}
-                    <QuickInsertPanel onInsert={insertAtCursor} disabled={!isEditing} dynamicTemplates={dynamicTemplates} />
+                    <QuickInsertPanel
+                      onInsert={insertAtCursor}
+                      disabled={!isEditing}
+                      dynamicTemplates={dynamicTemplates}
+                      generalTemplates={validGeneralTemplates}
+                      schemaLoaded={!!ontologySchema}
+                    />
                   </div>
 
                   {/* Description */}

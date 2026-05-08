@@ -102,25 +102,26 @@ public class AuthController {
             HttpServletRequest httpRequest
     ) {
         String clientIp = getClientIP(httpRequest);
+        String loginIdentifier = request.getUsername() == null ? "" : request.getUsername().trim();
 
         // Rate limiting (5 requests per minute)
         Bucket bucket = rateLimitService.resolveBucket(clientIp);
         if (!bucket.tryConsume(1)) {
-            auditService.logRateLimitHit(request.getUsername(), clientIp);
+            auditService.logRateLimitHit(loginIdentifier, clientIp);
             return ResponseEntity.status(429).body(Map.of(
                 "error", "Too many login attempts. Please try again later."
             ));
         }
 
         // Check if user exists (support login with username or email)
-        Optional<User> userOpt = userRepository.findByUsername(request.getUsername());
+        Optional<User> userOpt = userRepository.findByUsername(loginIdentifier);
         if (userOpt.isEmpty()) {
             // Try finding by email if username not found
-            userOpt = userRepository.findByEmail(request.getUsername());
+            userOpt = userRepository.findByEmailIgnoreCase(loginIdentifier);
         }
         
         if (userOpt.isEmpty()) {
-            auditService.logLoginFailure(request.getUsername(), clientIp, "User not found");
+            auditService.logLoginFailure(loginIdentifier, clientIp, "User not found");
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Invalid username/email or password"
             ));
@@ -130,27 +131,23 @@ public class AuthController {
 
         // Check if account is locked
         if (user.isAccountLocked()) {
-            auditService.logAccountLocked(request.getUsername(), clientIp);
+            auditService.logAccountLocked(loginIdentifier, clientIp);
             return ResponseEntity.status(423).body(Map.of(
                 "error", "Account is locked due to too many failed attempts. Please try again later."
             ));
         }
 
-        // Authenticate
-        try {
-            authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(
-                    user.getUsername(), // Use actual username from DB
-                    request.getPassword()
-                )
-            );
+        // Check if account is verified before password auth. Otherwise Spring Security
+        // can report disabled accounts as generic bad credentials.
+        if (!user.isEnabled()) {
+            auditService.logLoginFailure(loginIdentifier, clientIp, "Account not verified");
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "Account not verified. Please check your email to verify your account."
+            ));
+        }
 
-            // Reset failed attempts on successful authentication
-            user.resetFailedAttempts();
-            user.setLastLoginAt(LocalDateTime.now());
-            userRepository.save(user);
-
-        } catch (AuthenticationException e) {
+        // Authenticate directly against the selected user's stored BCrypt hash.
+        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             // Increment failed attempts
             user.incrementFailedAttempts();
             
@@ -158,35 +155,33 @@ public class AuthController {
             if (user.getFailedLoginAttempts() >= 5) {
                 user.lockAccount(15); // 15 minutes lockout
                 userRepository.save(user);
-                auditService.logAccountLocked(request.getUsername(), clientIp);
+                auditService.logAccountLocked(loginIdentifier, clientIp);
                 return ResponseEntity.status(423).body(Map.of(
                     "error", "Account locked due to too many failed attempts. Please try again in 15 minutes."
                 ));
             }
 
             userRepository.save(user);
-            auditService.logLoginFailure(request.getUsername(), clientIp, e.getMessage());
+            auditService.logLoginFailure(loginIdentifier, clientIp, "Bad credentials");
             
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Invalid username or password"
             ));
         }
 
-        // Check if account is verified
-        if (!user.isEnabled()) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "error", "Account not verified. Please check your email to verify your account."
-            ));
-        }
+        // Reset failed attempts on successful authentication
+        user.resetFailedAttempts();
+        user.setLastLoginAt(LocalDateTime.now());
+        userRepository.save(user);
 
         // Generate JWT token
-        UserDetails userDetails = userDetailsService.loadUserByUsername(request.getUsername());
+        UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
         String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
 
         // Clear rate limit on successful login
         rateLimitService.clearLimit(clientIp);
 
-        auditService.logLoginSuccess(request.getUsername(), clientIp);
+        auditService.logLoginSuccess(loginIdentifier, clientIp);
 
         // Check if user is admin
         boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
@@ -211,9 +206,11 @@ public class AuthController {
             if (authHeader == null || !authHeader.startsWith("Bearer ")) {
                 return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
             }
-            
+
             String token = authHeader.substring(7);
-            String email = jwtUtil.extractEmail(token);
+            // Allow slightly-expired tokens: race condition between the 15s subscription poll
+            // and the 60s client-side expiry check means the token may have just expired.
+            String email = jwtUtil.extractEmailAllowExpired(token);
             
             Optional<User> userOpt = userRepository.findByEmail(email);
             if (userOpt.isEmpty()) {
@@ -248,15 +245,18 @@ public class AuthController {
      */
     @PostMapping("/signup")
     public ResponseEntity<?> signup(@Valid @RequestBody SignupRequest request) {
+        String username = request.getUsername() == null ? "" : request.getUsername().trim();
+        String email = request.getEmail() == null ? "" : request.getEmail().trim().toLowerCase(Locale.ROOT);
+
         // Check if username already exists
-        if (userRepository.findByUsername(request.getUsername()).isPresent()) {
+        if (userRepository.findByUsername(username).isPresent()) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Username already exists"
             ));
         }
 
         // Check if email already exists
-        if (userRepository.findByEmail(request.getEmail()).isPresent()) {
+        if (userRepository.findByEmailIgnoreCase(email).isPresent()) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Email already registered"
             ));
@@ -264,9 +264,9 @@ public class AuthController {
 
         // Create new user
         User user = new User();
-        user.setUsername(request.getUsername());
+        user.setUsername(username);
         user.setPassword(passwordEncoder.encode(request.getPassword()));
-        user.setEmail(request.getEmail());
+        user.setEmail(email);
         
         // Don't set role on signup - will be set after deployment selection
         user.setRoles(new HashSet<>());
@@ -288,7 +288,7 @@ public class AuthController {
             // Don't fail registration if email fails
         }
 
-        auditService.logSignup(request.getUsername(), request.getEmail());
+        auditService.logSignup(username, email);
 
         return ResponseEntity.ok(Map.of(
             "message", "Registration successful! Please check your email to verify your account.",
@@ -348,13 +348,13 @@ public class AuthController {
      */
     @PostMapping("/resend-verification")
     public ResponseEntity<?> resendVerification(@RequestBody Map<String, String> request) {
-        String email = request.get("email");
+        String email = request.get("email") == null ? "" : request.get("email").trim().toLowerCase(Locale.ROOT);
         if (email == null || email.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Email is required"));
         }
 
         // Always return success to prevent email enumeration
-        userRepository.findByEmail(email).ifPresent(user -> {
+        userRepository.findByEmailIgnoreCase(email).ifPresent(user -> {
             if (!user.isEnabled()) {
                 String verificationToken = UUID.randomUUID().toString();
                 user.setVerificationToken(verificationToken);
@@ -384,8 +384,9 @@ public class AuthController {
             HttpServletRequest httpRequest
     ) {
         String clientIp = getClientIP(httpRequest);
+        String email = request.getEmail() == null ? "" : request.getEmail().trim().toLowerCase(Locale.ROOT);
 
-        Optional<User> userOpt = userRepository.findByEmail(request.getEmail());
+        Optional<User> userOpt = userRepository.findByEmailIgnoreCase(email);
         if (userOpt.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "No account found with that email address."
@@ -564,9 +565,10 @@ public class AuthController {
                 ));
             }
             
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            Optional<User> userOpt = userRepository.findByUsername(username)
+                    .or(() -> userRepository.findByEmail(username));
             if (userOpt.isEmpty()) {
-                log.error("User not found: {}", username);
+                log.error("User not found by username or email: {}", username);
                 return ResponseEntity.notFound().build();
             }
             

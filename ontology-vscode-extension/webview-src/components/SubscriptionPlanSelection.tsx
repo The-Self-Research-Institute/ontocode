@@ -10,6 +10,7 @@ interface SubscriptionPlanSelectionProps {
     workspaceName: string;
     currentPlanId?: string;
     currentStatus?: string;
+    trialEligible?: boolean;
     allowCurrentPlanSelection?: boolean;
     onPlanSelected: (planId: string, interval: "monthly" | "annual") => Promise<void> | void;
     onSkip: () => void;
@@ -79,6 +80,7 @@ const PLANS: Plan[] = [
             'Everything in Free',
             'Role-based editing for members',
             'Export to multiple formats',
+            'Priority email support',
         ],
         popular: true,
         badge: 'Most Popular',
@@ -99,6 +101,7 @@ const PLANS: Plan[] = [
             'Unlimited storage',
             'Everything in Professional',
             'Early access to new features',
+            'Priority channel support',
         ],
         gradient: 'from-amber-500 to-orange-600',
         glowColor: 'shadow-amber-500/40',
@@ -111,6 +114,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     workspaceName,
     currentPlanId = 'FREE',
     currentStatus = '',
+    trialEligible = true,
     allowCurrentPlanSelection = false,
     onPlanSelected,
     onSkip,
@@ -170,9 +174,11 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     const isUpgrade = selectedRank > currentRank;
     const isCurrentPaidPlan = selectedPlan === normalizedCurrentPlanId && currentRank > 1;
     const disableContinue = isProcessing || isDowngradeAttempt || (isCurrentPaidPlan && !allowCurrentPlanSelection);
+    const isCurrentActivePaidPlan = isCurrentPaidPlan && !allowCurrentPlanSelection;
     const isInactiveCurrentPlan = allowCurrentPlanSelection && currentRank > 1;
     const isPaidSelected = (selectedPlanData?.monthlyPrice ?? 0) > 0;
     const isEnterpriseSelected = selectedPlan === 'ENTERPRISE';
+    const selectedPlanHasTrial = trialEligible && isPaidSelected && !isEnterpriseSelected;
     const normalizedCurrentStatus = currentStatus.toUpperCase();
 
     const handleContinue = async () => {
@@ -186,7 +192,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     };
 
     return (
-        <div className="dark-surface h-screen bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 relative overflow-y-auto">
+        <div className="dark-surface h-screen bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 relative overflow-hidden">
             {/* Background orbs */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute -top-32 -right-32 w-96 h-96 bg-violet-600 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" />
@@ -194,10 +200,10 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-purple-600 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-pulse" style={{ animationDelay: '2s' }} />
             </div>
 
-            <div className="relative z-10 min-h-full flex flex-col px-4 py-6 sm:px-6">
+            <div className="relative z-10 h-full min-h-0 flex flex-col px-4 py-4 sm:px-6">
 
                 {/* Top bar */}
-                <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center justify-between mb-3 shrink-0">
                     <div>
                         <div className="flex items-center gap-2 mb-1">
                             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
@@ -205,11 +211,11 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                             </div>
                             <span className="text-violet-300 text-xs font-semibold uppercase tracking-widest">OntoCode</span>
                         </div>
-                        <h1 className="text-2xl sm:text-3xl font-bold text-white">
+                        <h1 className="text-xl sm:text-2xl font-bold text-white">
                             {isInactiveCurrentPlan ? 'Renew your subscription' : currentRank > 1 ? 'Manage your plan' : 'Choose your plan'}
                         </h1>
-                        <p className="text-slate-400 text-sm mt-0.5">
-                            Hi <span className="text-violet-300 font-medium">{username}</span> — workspace <span className="text-violet-300 font-medium">{workspaceName}</span>
+                        <p className="text-slate-400 text-xs mt-0.5">
+                            Hi <span className="text-violet-300 font-medium">{username}</span> — account <span className="text-violet-300 font-medium">{workspaceName}</span>
                         </p>
                     </div>
                     <button
@@ -222,12 +228,18 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 </div>
 
                 {/* Billing terms banner */}
-                <div className="mb-5 flex justify-center">
-                    <div className="flex items-center gap-2.5 px-5 py-2.5 bg-gradient-to-r from-violet-600/30 to-indigo-600/30 border border-violet-500/40 rounded-full backdrop-blur-sm">
+                <div className="mb-3 flex justify-center shrink-0">
+                    <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600/30 to-indigo-600/30 border border-violet-500/40 rounded-full backdrop-blur-sm">
                         <Gift size={16} className="text-violet-300" />
                         <span className="text-white text-sm font-medium">
-                            {isPaidSelected ? (
-                                <>{trialPeriodDays}-day trial on paid plans <span className="text-violet-300">with renewal reminders at 15, 7, and 1 day{currentRank > 1 && normalizedCurrentStatus ? ` (${normalizedCurrentStatus})` : ''}</span></>
+                            {isCurrentActivePaidPlan ? (
+                                <>Current plan: {selectedPlanData?.name} <span className="text-violet-300">{normalizedCurrentStatus ? `(${normalizedCurrentStatus})` : ''}</span></>
+                            ) : isPaidSelected ? (
+                                selectedPlanHasTrial ? (
+                                    <>{trialPeriodDays}-day trial on paid plans <span className="text-violet-300">with renewal reminders at 15, 7, and 1 day{currentRank > 1 && normalizedCurrentStatus ? ` (${normalizedCurrentStatus})` : ''}</span></>
+                                ) : (
+                                    <>Trial already used <span className="text-violet-300">paid plans are charged when activated{currentRank > 1 && normalizedCurrentStatus ? ` (${normalizedCurrentStatus})` : ''}</span></>
+                                )
                             ) : (
                                 <>Free plan <span className="text-violet-300">with no card required</span></>
                             )}
@@ -242,6 +254,8 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                         <span className="text-white text-sm font-medium">
                             {isEnterpriseSelected ? (
                                 <>Enterprise Plan — <span className="text-violet-300">Unlimited scale with priority support</span></>
+                            ) : !trialEligible ? (
+                                <>Trial already used — <span className="text-violet-300">paid plans are charged when activated</span></>
                             ) : (
                                 <>{trialPeriodDays}-day free trial on Professional plan — <span className="text-violet-300">card saved, not charged until day {trialPeriodDays + 1}</span></>
                             )}
@@ -251,7 +265,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
 
                 {/* No-Downgrade Heads-up */}
                 {isUpgrade && (
-                    <div className="mb-5 flex justify-center">
+                    <div className="mb-3 flex justify-center shrink-0">
                         <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg backdrop-blur-sm">
                             <Shield size={14} className="text-amber-400" />
                             <p className="text-amber-200 text-xs">
@@ -262,7 +276,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 )}
 
                 {/* Billing toggle */}
-                <div className="flex justify-center mb-6">
+                <div className="flex justify-center mb-4 shrink-0">
                     <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-1">
                         <button
                             onClick={() => setBillingInterval('monthly')}
@@ -297,10 +311,10 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 </div>
 
                 {/* Plan cards (scrollable region) */}
-                <div className="flex-1 flex items-start justify-center">
-                    <div className="w-full max-w-5xl">
-                        <div className="pb-8">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 w-full">
+                <div className="flex-1 min-h-0 flex items-start justify-center overflow-y-auto px-1 pb-3">
+                    <div className={`w-full ${availablePlans.length <= 2 ? 'max-w-3xl' : 'max-w-5xl'}`}>
+                        <div className="pb-2">
+                            <div className={`grid grid-cols-1 sm:grid-cols-2 ${availablePlans.length <= 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-3'} gap-4 w-full`}>
                         {availablePlans.map((plan) => {
                             const isSelected = selectedPlan === plan.id;
                             const savings = getAnnualSavings(plan);
@@ -311,9 +325,9 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                     key={plan.id}
                                     onClick={() => setSelectedPlan(plan.id)}
                                     className={`
-                                        relative flex flex-col rounded-2xl cursor-pointer transition-all duration-200
+                                        relative flex flex-col h-full rounded-2xl cursor-pointer transition-all duration-200
                                         ${isSelected
-                                            ? `bg-white/10 border-2 border-violet-400 shadow-2xl ${plan.glowColor} scale-[1.02]`
+                                            ? `bg-white/10 border-2 border-violet-400 shadow-xl ${plan.glowColor}`
                                             : 'bg-white/5 border-2 border-white/10 hover:border-white/25 hover:bg-white/8'
                                         }
                                         ${plan.popular ? 'ring-2 ring-violet-500/50' : ''}
@@ -321,7 +335,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                 >
                                     {/* Badge */}
                                     {plan.badge && (
-                                        <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                                        <div className="absolute top-2 left-1/2 -translate-x-1/2">
                                             <span className={`bg-gradient-to-r ${plan.gradient} text-white px-3 py-0.5 rounded-full text-xs font-bold shadow-lg`}>
                                                 {plan.badge}
                                             </span>
@@ -335,9 +349,9 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                         </div>
                                     )}
 
-                                    <div className="p-5 flex flex-col flex-1">
+                                    <div className={`px-4 pb-4 ${plan.badge ? 'pt-8' : 'pt-4'} flex flex-col flex-1`}>
                                         {/* Header */}
-                                        <div className="flex items-center gap-3 mb-3">
+                                        <div className="flex items-center gap-3 mb-2">
                                             <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${plan.gradient} flex items-center justify-center text-white shadow-lg flex-shrink-0`}>
                                                 {plan.icon}
                                             </div>
@@ -350,7 +364,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                         {/* Price */}
                                         <div className="mb-1">
                                             <div className="flex items-baseline gap-1">
-                                                <span className="text-3xl font-extrabold text-white">${price}</span>
+                                                <span className="text-2xl font-extrabold text-white">${price}</span>
                                                 {plan.monthlyPrice > 0 && (
                                                     <span className="text-slate-400 text-xs">/ mo</span>
                                                 )}
@@ -381,12 +395,12 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                         </div>
 
                                         {/* Tagline */}
-                                        <p className="text-violet-200/70 text-xs mb-3 italic">{plan.tagline}</p>
+                                        <p className="text-violet-200/70 text-[11px] mb-2 italic">{plan.tagline}</p>
 
-                                        <hr className="border-white/10 mb-3" />
+                                        <hr className="border-white/10 mb-2" />
 
                                         {/* Features */}
-                                        <div className="flex-1 space-y-2">
+                                        <div className="flex-1 space-y-1.5">
                                             {orderPlanFeatures(plan.features).map((f, i) => (
                                                 <div key={i} className="flex items-start gap-2">
                                                     <Check size={13} className="text-green-400 flex-shrink-0 mt-0.5" />
@@ -403,10 +417,14 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
 
                                         {/* Trial note */}
                                         {plan.monthlyPrice > 0 && (
-                                            <div className="mt-3 pt-3 border-t border-white/10">
+                                            <div className="mt-2 pt-2 border-t border-white/10">
                                                 <div className="flex items-center gap-1.5 text-violet-300 text-xs">
                                                     <Shield size={12} />
-                                                    <span>{trialPeriodDays}-day trial • card not charged until day {trialPeriodDays + 1}</span>
+                                                    <span>
+                                                        {trialEligible && plan.id !== 'ENTERPRISE'
+                                                            ? `${trialPeriodDays}-day trial • card not charged until day ${trialPeriodDays + 1}`
+                                                            : 'No trial available • charged when activated'}
+                                                    </span>
                                                 </div>
                                             </div>
                                         )}
@@ -428,13 +446,29 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 </div>
 
                 {/* CTA */}
-                <div className="mt-4 flex flex-col items-center gap-3 sticky bottom-0 pt-4 pb-2 bg-gradient-to-t from-slate-950/90 via-slate-950/60 to-transparent backdrop-blur-sm">
+                <div className="shrink-0 flex flex-col items-center gap-2 pt-2 pb-1 bg-slate-950/30">
                     {selectedPlanData && selectedPlanData.monthlyPrice > 0 && (
                         <p className="text-slate-400 text-xs text-center">
-                            You'll start your{' '}
-                            <span className="text-white font-medium">{trialPeriodDays}-day free trial</span>
-                            {' '}of <span className="text-violet-300 font-medium">{selectedPlanData.name}</span>.
-                            {' '}Your card won't be charged until the trial ends.
+                            {isCurrentActivePaidPlan ? (
+                                <>
+                                    This is your current{' '}
+                                    <span className="text-violet-300 font-medium">{selectedPlanData.name}</span>
+                                    {' '}plan{normalizedCurrentStatus ? ` (${normalizedCurrentStatus})` : ''}.
+                                </>
+                            ) : selectedPlanHasTrial ? (
+                                <>
+                                    You'll start your{' '}
+                                    <span className="text-white font-medium">{trialPeriodDays}-day free trial</span>
+                                    {' '}of <span className="text-violet-300 font-medium">{selectedPlanData.name}</span>.
+                                    {' '}Your card won't be charged until the trial ends.
+                                </>
+                            ) : (
+                                <>
+                                    Your free trial has already been used.{' '}
+                                    <span className="text-violet-300 font-medium">{selectedPlanData.name}</span>
+                                    {' '}will be charged when activated.
+                                </>
+                            )}
                         </p>
                     )}
                     {false && isEnterpriseSelected && (
@@ -484,7 +518,9 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     <p className="hidden">
                         {isEnterpriseSelected 
                           ? "Instant activation • No trial for Enterprise • Billed monthly/annually"
-                          : `Card required • not charged for ${trialPeriodDays} days • cancel anytime before trial ends`}
+                          : selectedPlanHasTrial
+                            ? `Card required • not charged for ${trialPeriodDays} days • cancel anytime before trial ends`
+                            : "Card required • charged when activated"}
                     </p>
                 </div>
             </div>

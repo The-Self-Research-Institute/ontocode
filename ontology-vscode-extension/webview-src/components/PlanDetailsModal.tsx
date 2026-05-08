@@ -28,6 +28,7 @@ interface PlanDetailsModalProps {
     onUpgrade?: (planId: string) => void;
     isUpgrading?: boolean;
     workspaceId?: string;
+    currentPlanOnly?: boolean;
 }
 
 // ─── Card update inner form ──────────────────────────────────────────────────
@@ -159,6 +160,7 @@ const PLANS = [
             'Everything in Free',
             'Role-based editing for members',
             'Export to multiple formats',
+            'Priority email support',
         ],
     },
     {
@@ -175,6 +177,7 @@ const PLANS = [
             'Unlimited workspaces',
             'Everything in Professional',
             'Early access to new features',
+            'Priority channel support',
         ],
     },
 ];
@@ -185,6 +188,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
     onUpgrade,
     isUpgrading = false,
     workspaceId = '',
+    currentPlanOnly = false,
 }) => {
     const subscription = useSubscription();
     const { getPricing } = usePlanPricing();
@@ -334,7 +338,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                         <div className="p-6 space-y-6">
 
                             {/* Billing interval toggle (controls displayed price + upgrade intent) */}
-                            <div className="flex justify-center">
+                            {!currentPlanOnly && <div className="flex justify-center">
                                 <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-1">
                                     <button
                                         onClick={() => setBillingInterval('monthly')}
@@ -366,7 +370,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                         )}
                                     </button>
                                 </div>
-                            </div>
+                            </div>}
 
                             {/* Current plan stats card */}
                             <div className={`rounded-xl bg-gradient-to-br ${currentPlan.gradient} p-px`}>
@@ -381,13 +385,15 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                                 <h3 className="text-base font-bold text-white">{currentPlan.name}</h3>
                                             </div>
                                         </div>
-                                        <button
-                                            onClick={startCardUpdate}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/15 text-slate-300 hover:text-white rounded-lg transition-all text-xs font-medium"
-                                        >
-                                            <CreditCard size={13} />
-                                            Update payment method
-                                        </button>
+                                        {!currentPlanOnly && (
+                                            <button
+                                                onClick={startCardUpdate}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/15 text-slate-300 hover:text-white rounded-lg transition-all text-xs font-medium"
+                                            >
+                                                <CreditCard size={13} />
+                                                Update payment method
+                                            </button>
+                                        )}
                                     </div>
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                         <div className="bg-white/5 rounded-lg p-3">
@@ -426,8 +432,24 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                 <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-xl text-sm">{error}</div>
                             )}
 
+                            {currentPlanOnly && (
+                                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                                    <h3 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-widest">Included In Your Plan</h3>
+                                    <ul className="grid md:grid-cols-2 gap-2">
+                                        {orderPlanFeatures(currentPlan.features).map((feature, index) => (
+                                            <li key={index} className="flex items-start gap-2">
+                                                <Check size={13} className="text-green-400 flex-shrink-0 mt-0.5" />
+                                                <span className={`text-xs leading-relaxed ${isInheritedPlanFeature(feature) ? 'font-semibold text-white' : 'text-slate-300'}`}>
+                                                    {feature}
+                                                </span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+
                             {/* No-Downgrade Policy Warning */}
-                            {subscription.plan && subscription.plan.toLowerCase() !== 'free' && (
+                            {!currentPlanOnly && subscription.plan && subscription.plan.toLowerCase() !== 'free' && (
                                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
                                     <Shield size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
                                     <div>
@@ -439,15 +461,15 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                 </div>
                             )}
 
-                            <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-start gap-3">
+                            {!currentPlanOnly && <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-start gap-3">
                                 <Shield size={18} className="text-violet-300 flex-shrink-0 mt-0.5" />
                                 <p className="text-xs text-slate-300 leading-relaxed">
                                     Paid plans renew automatically on the selected interval. Renewal reminders are sent 15, 7, and 1 day before renewal. Expired or canceled paid subscriptions block workspace access until renewed.
                                 </p>
-                            </div>
+                            </div>}
 
                             {/* Plan comparison */}
-                            <div>
+                            {!currentPlanOnly && <div>
                                 <h3 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-widest">Compare Plans</h3>
                                 <div className="grid md:grid-cols-3 gap-4">
                                     {availablePlans.map((plan) => {
@@ -562,8 +584,6 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                                             onClick={() => {
                                                                 if (onUpgrade && !isUpgrading) {
                                                                     setSelectedPlan(plan.id);
-                                                                    // Persist interval so WorkspaceSelection auto-checkout can honor annual vs monthly
-                                                                    try { localStorage.setItem('pendingUpgradeInterval', billingInterval); } catch {}
                                                                     onUpgrade(plan.id);
                                                                 }
                                                             }}
@@ -581,7 +601,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                         );
                                     })}
                                 </div>
-                            </div>
+                            </div>}
                         </div>
                     )}
 

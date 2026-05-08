@@ -22,10 +22,12 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String identifier) throws UsernameNotFoundException {
+        String normalizedIdentifier = identifier == null ? "" : identifier.trim();
+
         // Favor email lookup first since we are transitioning to email-based identity
-        User authUser = userRepository.findByEmail(identifier)
-                .or(() -> userRepository.findByUsername(identifier))
-                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + identifier));
+        User authUser = userRepository.findByEmailIgnoreCase(normalizedIdentifier)
+                .or(() -> userRepository.findByUsername(normalizedIdentifier))
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + normalizedIdentifier));
 
         String[] authorities = buildAuthorities(authUser.getRoles());
 

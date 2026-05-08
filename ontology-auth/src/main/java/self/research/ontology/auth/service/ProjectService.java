@@ -209,16 +209,21 @@ public class ProjectService {
         
         Project project = projectOpt.get();
         
-        // Check permissions (only OWNER or WORKSPACE OWNER can add members)
+        // Check permissions: project owner, or workspace owner / workspace admin
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can add members");
+            throw new SecurityException("Only project owner or a workspace owner/admin can add members");
+        }
+
+        String normalizedRole = role == null ? "" : role.toUpperCase();
+        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(normalizedRole)) {
+            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, or VIEWER");
         }
         
         if (project.hasMember(targetUserId)) {
             throw new IllegalArgumentException("User is already a member");
         }
         
-        project.addMember(targetUserId, targetUsername, targetEmail, role);
+        project.addMember(targetUserId, targetUsername, targetEmail, normalizedRole);
         return projectRepository.save(project);
     }
 
@@ -233,9 +238,9 @@ public class ProjectService {
 
         Project project = projectOpt.get();
 
-        // Only project owner or workspace owner can update roles
+        // Only project owner or workspace owner/admin can update roles
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can update member roles");
+            throw new SecurityException("Only project owner or a workspace owner/admin can update member roles");
         }
 
         // Cannot change the owner's role
@@ -244,7 +249,8 @@ public class ProjectService {
         }
 
         // Validate role
-        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(newRole)) {
+        String normalizedRole = newRole == null ? "" : newRole.toUpperCase();
+        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(normalizedRole)) {
             throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, or VIEWER");
         }
 
@@ -253,7 +259,7 @@ public class ProjectService {
             throw new IllegalArgumentException("User is not a member of this project");
         }
 
-        member.setRole(newRole);
+        member.setRole(normalizedRole);
         return projectRepository.save(project);
     }
 
@@ -270,7 +276,7 @@ public class ProjectService {
         
         // Check permissions
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can remove members");
+            throw new SecurityException("Only project owner or a workspace owner/admin can remove members");
         }
         
         // Cannot remove owner
@@ -295,7 +301,7 @@ public class ProjectService {
         
         // Check permissions
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can archive the project");
+            throw new SecurityException("Only project owner or a workspace owner/admin can archive the project");
         }
         
         project.setStatus("ARCHIVED");
@@ -315,7 +321,7 @@ public class ProjectService {
         
         // Check permissions
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can delete the project");
+            throw new SecurityException("Only project owner or a workspace owner/admin can delete the project");
         }
         
         // Soft delete the project
@@ -347,7 +353,7 @@ public class ProjectService {
         
         // Check permissions
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can restore the project");
+            throw new SecurityException("Only project owner or a workspace owner/admin can restore the project");
         }
         
         if (!Boolean.TRUE.equals(project.getIsDeleted())) {
@@ -441,20 +447,40 @@ public class ProjectService {
     }
 
     /**
-     * Check if user is workspace owner
+     * Workspace owner or workspace admin may administer any project in the workspace.
      */
-    private boolean isWorkspaceOwner(String workspaceId, String userId) {
+    private boolean isWorkspaceOwnerOrAdmin(String workspaceId, String userId) {
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
-        return workspaceOpt.isPresent()
-                && canUseWorkspace(workspaceOpt.get())
-                && workspaceOpt.get().getOwnerId().equals(userId);
+        if (workspaceOpt.isEmpty()) {
+            return false;
+        }
+        Workspace workspace = workspaceOpt.get();
+        if (!canUseWorkspace(workspace)) {
+            return false;
+        }
+        if (workspace.getOwnerId().equals(userId)) {
+            return true;
+        }
+        Workspace.WorkspaceMember wsMember = workspace.getMember(userId);
+        if (wsMember == null) {
+            return false;
+        }
+        Workspace.WorkspaceRole wsRole = wsMember.getRole();
+        return wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
     }
 
     /**
-     * Check if user can manage project (owner or workspace owner)
+     * Project OWNER/ADMIN, or workspace OWNER/ADMIN (cross-project administration).
      */
     private boolean canManageProject(Project project, String userId) {
-        return isOwner(project, userId) || isWorkspaceOwner(project.getWorkspaceId(), userId);
+        if (isOwner(project, userId)) {
+            return true;
+        }
+        Project.ProjectMember member = project.getMember(userId);
+        if (member != null && "ADMIN".equals(member.getRole())) {
+            return true;
+        }
+        return isWorkspaceOwnerOrAdmin(project.getWorkspaceId(), userId);
     }
 
     /**

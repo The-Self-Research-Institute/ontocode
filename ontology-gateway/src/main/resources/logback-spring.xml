@@ -17,8 +17,11 @@
     <property name="LOG_DIR" value="${LOG_DIR:-logs}"/>
     <property name="APP_NAME" value="gateway"/>
 
+    <!-- Pattern matches the downstream services so logs concatenate cleanly.
+         The gateway is reactive (no per-thread MDC), so `ctx` is usually
+         empty here; downstream services populate it. -->
     <property name="LOG_PATTERN"
-              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] - %msg%n"/>
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] [%X{ctx:-no-ctx}] - %msg%n"/>
 
     <!-- ──── Console ──── -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">

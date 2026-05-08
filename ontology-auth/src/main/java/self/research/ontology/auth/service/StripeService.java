@@ -833,7 +833,10 @@ public class StripeService {
                     ? "annual"
                     : ("month".equalsIgnoreCase(stripeInterval) ? "monthly" : stripeInterval);
                 user.setBillingInterval(normalizedBillingInterval);
-                user.setSubscriptionPlanName(derivePlanName(priceId));
+                String derivedPlanName = derivePlanName(priceId);
+                if (derivedPlanName != null) {
+                    user.setSubscriptionPlanName(derivedPlanName);
+                }
             }
 
             // Set period end
@@ -897,7 +900,8 @@ public class StripeService {
     private String derivePlanName(String priceId) {
         if (priceId.equals(priceProMonthly) || priceId.equals(priceProYearly)) return "PRO";
         if (priceId.equals(priceEnterpriseMonthly) || priceId.equals(priceEnterpriseYearly)) return "ENTERPRISE";
-        return "UNKNOWN";
+        log.warn("Unknown Stripe price ID '{}' — cannot map to plan name; existing plan name preserved", priceId);
+        return null;
     }
 
     private List<Map<String, Object>> listPaymentHistory(String stripeCustomerId) throws StripeException {
@@ -909,6 +913,18 @@ public class StripeService {
         InvoiceCollection invoices = Invoice.list(params);
         List<Map<String, Object>> history = new ArrayList<>();
         for (Invoice invoice : invoices.getData()) {
+            InvoiceLineItem primaryLine = invoice.getLines() != null
+                && invoice.getLines().getData() != null
+                && !invoice.getLines().getData().isEmpty()
+                    ? invoice.getLines().getData().get(0)
+                    : null;
+            Long periodStart = primaryLine != null && primaryLine.getPeriod() != null
+                ? primaryLine.getPeriod().getStart()
+                : invoice.getPeriodStart();
+            Long periodEnd = primaryLine != null && primaryLine.getPeriod() != null
+                ? primaryLine.getPeriod().getEnd()
+                : invoice.getPeriodEnd();
+
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("invoiceId", invoice.getId());
             entry.put("number", emptyIfNull(invoice.getNumber()));
@@ -917,8 +933,8 @@ public class StripeService {
             entry.put("amountDue", centsToDisplay(invoice.getAmountDue()));
             entry.put("currency", invoice.getCurrency() != null ? invoice.getCurrency().toUpperCase() : "USD");
             entry.put("createdAt", epochToIso(invoice.getCreated()));
-            entry.put("periodStart", epochToIso(invoice.getPeriodStart()));
-            entry.put("periodEnd", epochToIso(invoice.getPeriodEnd()));
+            entry.put("periodStart", epochToIso(periodStart));
+            entry.put("periodEnd", epochToIso(periodEnd));
             entry.put("hostedInvoiceUrl", emptyIfNull(invoice.getHostedInvoiceUrl()));
             entry.put("invoicePdf", emptyIfNull(invoice.getInvoicePdf()));
             entry.put("description", deriveInvoiceDescription(invoice));

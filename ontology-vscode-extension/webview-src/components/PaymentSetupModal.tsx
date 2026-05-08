@@ -13,6 +13,7 @@ interface PaymentSetupModalProps {
     planName: string;
     interval: 'monthly' | 'annual';
     workspaceId: string;
+    trialEligible?: boolean;
     onConfirmed: (setupIntentId: string) => void;
     onClose: () => void;
 }
@@ -23,11 +24,12 @@ interface PaymentFormProps {
     planName: string;
     interval: 'monthly' | 'annual';
     workspaceId: string;
+    trialEligible: boolean;
     onConfirmed: (setupIntentId: string) => void;
     onClose: () => void;
 }
 
-const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspaceId, onConfirmed, onClose }) => {
+const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspaceId, trialEligible, onConfirmed, onClose }) => {
     const stripe = useStripe();
     const elements = useElements();
     const [submitting, setSubmitting] = useState(false);
@@ -87,7 +89,9 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                 </div>
                 <div className="text-right">
                     <p className="text-purple-300 font-semibold">{price}</p>
-                    <p className="text-[11px] text-green-400">First {trialPeriodDays} days free</p>
+                    <p className={`text-[11px] ${trialEligible ? 'text-green-400' : 'text-amber-300'}`}>
+                        {trialEligible ? `First ${trialPeriodDays} days free` : 'Charged when activated'}
+                    </p>
                 </div>
             </div>
 
@@ -113,7 +117,11 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
             </div>
             <div className="hidden">
                 <Shield size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
-                <span>Secured by Stripe — card not charged for {trialPeriodDays} days — cancel any time before trial ends</span>
+                <span>
+                    {trialEligible
+                        ? `Secured by Stripe — card not charged for ${trialPeriodDays} days — cancel any time before trial ends`
+                        : 'Secured by Stripe — your trial has already been used and your card will be charged when activated'}
+                </span>
             </div>
 
             {/* Actions */}
@@ -139,7 +147,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                     ) : (
                         <>
                             <CheckCircle size={18} />
-                            Start {trialPeriodDays}-day free trial
+                            {trialEligible ? `Start ${trialPeriodDays}-day free trial` : 'Confirm and activate plan'}
                         </>
                     )}
                 </button>
@@ -156,6 +164,7 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
     planName,
     interval,
     workspaceId,
+    trialEligible = true,
     onConfirmed,
     onClose,
 }) => {
@@ -213,8 +222,14 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-5 border-b border-white/10">
                     <div>
-                        <h2 className="text-lg font-bold text-white">Start your free trial</h2>
-                        <p className="text-xs text-gray-400 mt-0.5">Card saved securely — charged only after {trialPeriodDays} days</p>
+                        <h2 className="text-lg font-bold text-white">
+                            {trialEligible ? 'Start your free trial' : 'Activate your plan'}
+                        </h2>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                            {trialEligible
+                                ? `Card saved securely — charged only after ${trialPeriodDays} days`
+                                : 'Your trial was already used — your card will be charged when activated'}
+                        </p>
                     </div>
                     <button
                         onClick={onClose}
@@ -232,6 +247,7 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
                             planName={planName}
                             interval={interval}
                             workspaceId={workspaceId}
+                            trialEligible={trialEligible}
                             onConfirmed={onConfirmed}
                             onClose={onClose}
                         />

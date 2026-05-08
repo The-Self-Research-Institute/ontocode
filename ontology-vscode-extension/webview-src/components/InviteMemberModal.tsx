@@ -105,21 +105,21 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-w-md w-full text-slate-100">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-              <UserPlus size={20} className="text-purple-600" />
+            <div className="w-10 h-10 bg-purple-500/15 border border-purple-400/30 rounded-full flex items-center justify-center">
+              <UserPlus size={20} className="text-purple-300" />
             </div>
             <div>
-              <h3 className="text-xl font-semibold text-gray-900">Invite Workspace Member</h3>
-              <p className="text-sm text-gray-500">{workspaceName}</p>
+              <h3 className="text-xl font-semibold text-white">Invite Workspace Member</h3>
+              <p className="text-sm text-slate-300">{workspaceName}</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-            <X size={20} className="text-gray-500" />
+          <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-lg transition-colors">
+            <X size={20} className="text-slate-300" />
           </button>
         </div>
 
@@ -146,21 +146,20 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
               </div>
             </div>
 
-            {/* Upgrade Plan Button (only for workspace owner) */}
-            {/* {isWorkspaceOwner && onUpgradePlan && (
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    onClose();
-                                    onUpgradePlan();
-                                }}
-                                className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 font-medium transition-all shadow-lg hover:shadow-xl"
-                            >
-                                <Crown size={20} />
-                                Upgrade Subscription Plan
-                                <ArrowRight size={20} />
-                            </button>
-                        )} */}
+            {isWorkspaceOwner && onUpgradePlan && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onUpgradePlan();
+                }}
+                className="w-full h-11 inline-flex items-center justify-center gap-2 px-6 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 font-medium transition-all shadow-lg hover:shadow-xl"
+              >
+                <Crown size={20} />
+                Upgrade Subscription Plan
+                <ArrowRight size={20} />
+              </button>
+            )}
 
             {/* Info message if not owner */}
             {!isWorkspaceOwner && (
@@ -179,7 +178,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium transition-colors"
+                className="flex-1 px-4 py-2.5 border border-slate-600 rounded-lg hover:bg-slate-800 font-medium transition-colors text-slate-100"
               >
                 Close
               </button>
@@ -188,14 +187,14 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
         ) : (
           <form onSubmit={handleSubmit} className="p-6 space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Email Address *</label>
+              <label className="block text-sm font-semibold text-slate-100 mb-2">Email Address *</label>
               <div className="relative">
-                <Mail size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <Mail size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full pl-10 pr-4 py-2.5 border border-slate-600 bg-slate-800 text-white placeholder:text-slate-400 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-400 disabled:opacity-60"
                   placeholder="colleague@example.com"
                   required
                   disabled={inviting}
@@ -204,17 +203,25 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
+              <label className="block text-sm font-semibold text-slate-100 mb-2">Workspace role</label>
+              <p className="text-xs text-slate-300 mb-2 leading-relaxed">
+                This controls access across the whole workspace (not a single project). Project roles are set per project in Project settings.
+              </p>
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full px-4 py-2.5 border border-slate-600 bg-slate-800 text-white rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-400 disabled:opacity-60"
                 disabled={inviting}
               >
-                <option value="VIEWER">Viewer - Read only access</option>
-                <option value="MEMBER">Member - Can edit and collaborate</option>
-                <option value="ADMIN">Admin - Full access</option>
+                <option value="VIEWER">Viewer</option>
+                <option value="MEMBER">Member</option>
+                <option value="ADMIN">Admin</option>
               </select>
+              <div className="mt-3 rounded-lg border border-slate-700 bg-slate-800/60 p-3 space-y-1.5 text-xs text-slate-300">
+                <p><span className="font-semibold text-white">Viewer:</span> read-only workspace access.</p>
+                <p><span className="font-semibold text-white">Member:</span> can create projects and collaborate where added.</p>
+                <p><span className="font-semibold text-white">Admin:</span> can manage workspace members and all projects.</p>
+              </div>
             </div>
 
             {errorMessage && (
@@ -243,7 +250,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium transition-colors"
+                className="flex-1 px-4 py-2.5 border border-slate-600 rounded-lg hover:bg-slate-800 font-medium transition-colors text-slate-100 disabled:opacity-50"
                 disabled={inviting}
               >
                 Cancel

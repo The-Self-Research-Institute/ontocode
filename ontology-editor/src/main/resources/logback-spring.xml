@@ -4,9 +4,14 @@
     <property name="LOG_DIR" value="${LOG_DIR:-logs}" />
     <property name="APP_NAME" value="owl-editor" />
 
-    <!-- MDC context pattern — userId and projectId injected by MdcLoggingFilter.
-         Shows "-" when not present (unauthenticated or non-project endpoints). -->
-    <property name="MDC_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] [uid=%X{userId:--} usr=%X{userName:--} prj=%X{projectId:--}] - %msg%n" />
+    <!-- MDC context pattern — populated by MdcLoggingFilter.
+         The `ctx` field already encodes the cascade
+            email + file > email + project > email + workspace > email
+         so the pattern shows the most specific identifier available
+         in a single bracketed segment. Individual MDC fields are still
+         present for tools that need to filter by an exact id
+         (e.g. `zgrep 'projectId=proj-abc'`). -->
+    <property name="MDC_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] [%X{ctx:-no-ctx}] - %msg%n" />
 
     <!-- ==================== CONSOLE APPENDER ==================== -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
@@ -41,7 +46,9 @@
             <totalSizeCap>2GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [uid=%X{userId:--} prj=%X{projectId:--}] %msg%n</pattern>
+            <!-- Performance log: same cascading ctx so timing rows can be
+                 filtered alongside app rows by user / project / file. -->
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{ctx:-no-ctx}] %msg%n</pattern>
         </encoder>
     </appender>
 
