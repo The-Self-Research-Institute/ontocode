@@ -148,8 +148,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Register unauthorized callback with apiClient
     useEffect(() => {
         apiClient.setUnauthorizedCallback(() => {
-            console.log('[AuthContext] API returned 401 - Auto logout');
-            logout(true);
+            const token = localStorage.getItem('authToken');
+            if (!token || isTokenExpired(token)) {
+                // Token is genuinely expired — show "Session expired" and log out
+                console.log('[AuthContext] 401 + token expired — session expired, logging out');
+                logout(true);
+            } else {
+                // Token is still valid but got a 401 — this is an authorization error on a
+                // specific resource (e.g., billing, permissions), not a session expiry.
+                // Do NOT log the user out or show "Session expired".
+                console.warn('[AuthContext] 401 received but token is still valid — ignoring (not a session expiry)');
+            }
         });
     }, [logout]);
 
@@ -247,11 +256,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             skipWorkspaceMode ? undefined : userInfo.workspaceId
                         );
 
+                        // Sync token to localStorage so apiClient can read it for all
+                        // subsequent requests. Without this, a recreated webview has no
+                        // token in localStorage even though the user is "logged in".
+                        localStorage.setItem('authToken', message.token);
+
                         // Persist user state from token
-                        setUser({ 
+                        setUser({
                             token: message.token,
                             userId: userInfo.userId,
-                            username: userInfo.username, 
+                            username: userInfo.username,
                             email: userInfo.email,
                             roles: userInfo.roles,
                             isAdmin: isAdmin,
@@ -825,6 +839,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const refreshPermissions = async () => {
         try {
+            // Skip the network call if the token is already expired locally.
+            // The 60-second interval will handle logout; no need to race the backend.
+            const storedToken = localStorage.getItem('authToken');
+            if (!storedToken || isTokenExpired(storedToken)) {
+                console.log('[AuthContext] ⏭ Skipping refresh — token expired or missing');
+                return;
+            }
             console.log('[AuthContext] 🔄 Refreshing permissions from server...');
             const response = await apiClient.get('/api/auth/refresh');
             const data = response?.data || response;

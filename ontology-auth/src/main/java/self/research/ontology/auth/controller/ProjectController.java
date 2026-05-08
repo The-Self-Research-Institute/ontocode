@@ -1,6 +1,8 @@
 package self.research.ontology.auth.controller;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -1718,11 +1720,24 @@ public class ProjectController {
     }
 
     public static class AddMemberRequest {
+        @NotBlank(message = "Email is required")
         public String email;
-        public String role; // EDITOR, VIEWER
+
+        /** Project-level role: ADMIN, EDITOR, or VIEWER */
+        @NotBlank(message = "Role is required")
+        @Pattern(
+            regexp = "^(ADMIN|EDITOR|VIEWER)$",
+            message = "Invalid role. Must be ADMIN, EDITOR, or VIEWER"
+        )
+        public String role;
     }
 
     public static class UpdateMemberRoleRequest {
+        @NotBlank(message = "Role is required")
+        @Pattern(
+            regexp = "^(ADMIN|EDITOR|VIEWER)$",
+            message = "Invalid role. Must be ADMIN, EDITOR, or VIEWER"
+        )
         public String role; // ADMIN, EDITOR, VIEWER
     }
     

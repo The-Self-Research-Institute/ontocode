@@ -1,0 +1,148 @@
+package self.research.ontology.swrl.config;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.MDC;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.util.Base64;
+
+/**
+ * Mirror of the editor's MdcLoggingFilter, scoped to ontology-swrl.
+ * Same cascade rule: {@code email + file > email + project > email + workspace > email}.
+ *
+ * <p>SWRL endpoints are all project-scoped, so {@code projectId} and (when
+ * the request targets a specific file's rule set) {@code fileId} are
+ * usually present. Workspace context is rare but propagated when present.
+ */
+@Component
+@Order(1)
+public class MdcLoggingFilter extends OncePerRequestFilter {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
+                                    FilterChain filterChain) throws ServletException, IOException {
+        try {
+            extractUserFromJwt(request.getHeader("Authorization"));
+            extractWorkspaceFromQuery(request);
+            extractProjectAndFileFromUri(request.getRequestURI());
+            extractFileFromQuery(request);
+            MDC.put("ctx", buildContext());
+            filterChain.doFilter(request, response);
+        } finally {
+            MDC.clear();
+        }
+    }
+
+    private void extractUserFromJwt(String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) return;
+        String token = authHeader.substring(7);
+        String[] parts = token.split("\\.");
+        if (parts.length != 3) return;
+        try {
+            byte[] decoded = Base64.getUrlDecoder().decode(parts[1]);
+            JsonNode claims = MAPPER.readTree(decoded);
+
+            String email = textClaim(claims, "email");
+            if (email == null) email = textClaim(claims, "sub");
+            if (email != null) MDC.put("userEmail", email);
+
+            String userId = textClaim(claims, "userId");
+            if (userId != null) MDC.put("userId", userId);
+
+            String wsId = textClaim(claims, "workspaceId");
+            if (wsId != null) MDC.put("workspaceId", wsId);
+        } catch (Exception ignored) {
+            // Malformed token — silently leave MDC blank.
+        }
+    }
+
+    private void extractWorkspaceFromQuery(HttpServletRequest request) {
+        if (MDC.get("workspaceId") != null) return;
+        String fromQuery = request.getParameter("workspaceId");
+        if (fromQuery != null && !fromQuery.isBlank()) {
+            MDC.put("workspaceId", fromQuery);
+        }
+    }
+
+    private void extractProjectAndFileFromUri(String uri) {
+        if (uri == null) return;
+        String[] segments = uri.split("/");
+        for (int i = 0; i < segments.length; i++) {
+            String seg = segments[i];
+            if (seg.isEmpty()) continue;
+
+            if (seg.startsWith("proj-") && seg.contains("--")) {
+                int dash = seg.indexOf("--");
+                MDC.put("projectId", seg.substring(0, dash));
+                String filePart = seg.substring(dash + 2);
+                if (!filePart.isEmpty()) MDC.put("fileId", filePart);
+                continue;
+            }
+
+            if (seg.startsWith("proj-")) {
+                MDC.put("projectId", seg);
+                continue;
+            }
+
+            if (seg.startsWith("file-")) {
+                MDC.put("fileId", seg);
+                continue;
+            }
+
+            if ("files".equals(seg) && i + 1 < segments.length) {
+                String next = segments[i + 1];
+                if (!next.isEmpty() && MDC.get("fileId") == null) {
+                    MDC.put("fileId", next);
+                }
+            }
+        }
+    }
+
+    private void extractFileFromQuery(HttpServletRequest request) {
+        if (MDC.get("fileId") != null) return;
+        String fromQuery = request.getParameter("fileId");
+        if (fromQuery != null && !fromQuery.isBlank()) {
+            MDC.put("fileId", fromQuery);
+        }
+    }
+
+    private String buildContext() {
+        String email = MDC.get("userEmail");
+        String fileId = MDC.get("fileId");
+        String projectId = MDC.get("projectId");
+        String workspaceId = MDC.get("workspaceId");
+
+        StringBuilder sb = new StringBuilder();
+        if (email != null && !email.isBlank()) {
+            sb.append("email=").append(email);
+        } else {
+            sb.append("(anon)");
+        }
+        if (fileId != null && !fileId.isBlank()) {
+            sb.append(" file=").append(fileId);
+        } else if (projectId != null && !projectId.isBlank()) {
+            sb.append(" proj=").append(projectId);
+        } else if (workspaceId != null && !workspaceId.isBlank()) {
+            sb.append(" ws=").append(workspaceId);
+        }
+        return sb.toString();
+    }
+
+    private static String textClaim(JsonNode claims, String key) {
+        if (!claims.has(key)) return null;
+        JsonNode node = claims.get(key);
+        if (node == null || node.isNull()) return null;
+        String text = node.asText();
+        return (text == null || text.isBlank()) ? null : text;
+    }
+}

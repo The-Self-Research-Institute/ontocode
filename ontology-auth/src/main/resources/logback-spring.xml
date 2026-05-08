@@ -28,10 +28,17 @@
     <property name="LOG_FILE" value="${LOG_DIR}/${APP_NAME}.log"/>
     <property name="ARCHIVE_PATTERN" value="${LOG_DIR}/archive/${APP_NAME}.%d{yyyy-MM-dd}.%i.log.gz"/>
 
-    <!-- ──── Console (unchanged from previous behaviour) ──── -->
+    <!-- MDC pattern. `ctx` is populated by MdcLoggingFilter and already
+         encodes the cascade (email + project > email + workspace > email).
+         Individual MDC fields (userEmail, userId, workspaceId, projectId)
+         are still in MDC for tools that filter by exact id. -->
+    <property name="LOG_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [${APP_NAME},%thread] %logger{36} [%X{ctx:-no-ctx}] - %msg%n"/>
+
+    <!-- ──── Console ──── -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [${APP_NAME},%thread] %logger{36} - %msg%n</pattern>
+            <pattern>${LOG_PATTERN}</pattern>
         </encoder>
     </appender>
 
@@ -39,7 +46,7 @@
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_FILE}</file>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [${APP_NAME},%thread] %logger{36} - %msg%n</pattern>
+            <pattern>${LOG_PATTERN}</pattern>
         </encoder>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <!-- Compressed archive name decides BOTH compression (.gz) and

@@ -113,8 +113,8 @@ public class WorkspaceRequests {
         
         @NotBlank(message = "Role is required")
         @Pattern(
-            regexp = "^(OWNER|EDITOR|VIEWER)$", 
-            message = "Invalid role. Must be OWNER, EDITOR, or VIEWER"
+            regexp = "^(OWNER|ADMIN|MEMBER|VIEWER)$",
+            message = "Invalid role. Must be OWNER, ADMIN, MEMBER, or VIEWER"
         )
         private String role;
 
@@ -142,8 +142,8 @@ public class WorkspaceRequests {
         
         @NotBlank(message = "Role is required")
         @Pattern(
-            regexp = "^(OWNER|EDITOR|VIEWER)$", 
-            message = "Invalid role. Must be OWNER, EDITOR, or VIEWER"
+            regexp = "^(OWNER|ADMIN|MEMBER|VIEWER)$",
+            message = "Invalid role. Must be OWNER, ADMIN, MEMBER, or VIEWER"
         )
         private String role;
 

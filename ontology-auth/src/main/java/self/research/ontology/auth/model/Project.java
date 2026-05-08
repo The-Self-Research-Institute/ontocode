@@ -108,7 +108,7 @@ public class Project {
         private String userId;
         private String username;
         private String email;
-        private String role; // OWNER, EDITOR, VIEWER
+        private String role; // OWNER, ADMIN, EDITOR, VIEWER
         private LocalDateTime joinedAt;
         
         // Constructors

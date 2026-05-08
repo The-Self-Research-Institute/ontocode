@@ -21,8 +21,8 @@ import ResetPasswordForm from "./components/ResetPasswordForm";
 import { Loader2 } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
 import { clearLastOpenedProjectState, SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "./utils/sessionCleanup";
-const ManageSubscriptionModal = lazy(() => import("./components/ManageSubscriptionModal"));
 const BillingManagement = lazy(() => import("./components/BillingManagement"));
+const PaymentSetupModal = lazy(() => import("./components/PaymentSetupModal"));
 
 const getInitialInvitationFromLocation = (): { token: string | null; email: string | null } => {
   const pathname = window.location.pathname;
@@ -79,6 +79,7 @@ const AppContent = () => {
     logout,
     updateSubscriptionPlan,
     updateUserRole,
+    refreshPermissions,
     verifyEmailAndLogin,
   } = useAuth();
   console.log(
@@ -99,9 +100,19 @@ const AppContent = () => {
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string>("");
   const [showSubscriptionPlan, setShowSubscriptionPlan] = useState(false);
+  const [subscriptionCheckout, setSubscriptionCheckout] = useState<{
+    clientSecret: string;
+    publishableKey: string;
+    planName: string;
+    interval: "monthly" | "annual";
+    trialEligible: boolean;
+  } | null>(null);
   const [workspaceBillingStatus, setWorkspaceBillingStatus] = useState<string | null>(null);
+  const [accountSubscriptionStatus, setAccountSubscriptionStatus] = useState<string | null>(null);
+  const [trialEligible, setTrialEligible] = useState(true);
   const [showManageSubscription, setShowManageSubscription] = useState(false);
   const [showBillingPage, setShowBillingPage] = useState(false);
+  const [subscriptionReturnRoute, setSubscriptionReturnRoute] = useState<"billing" | null>(null);
   const [inviteToken, setInviteToken] = useState<string | null>(initialInvitation.token);
   const [inviteEmail, setInviteEmail] = useState<string | null>(initialInvitation.email);
   const [pendingFile, setPendingFile] = useState<{ fileName: string; fileContent: string; fileSize: number } | null>(
@@ -236,6 +247,35 @@ const AppContent = () => {
     };
   }, [user?.workspaceId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!user) {
+      setTrialEligible(true);
+      setAccountSubscriptionStatus(null);
+      return;
+    }
+
+    apiClient
+      .get("/api/billing/subscription")
+      .then((response: any) => {
+        if (cancelled) return;
+        const data = response?.data || response;
+        setTrialEligible(data?.trialEligible !== false);
+        setAccountSubscriptionStatus(data?.status || null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTrialEligible(true);
+          setAccountSubscriptionStatus(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.userId]);
+
   const isWorkspacePaymentPending =
     !!user?.workspaceId &&
     (workspaceBillingStatus || "").toUpperCase() === "PENDING" &&
@@ -346,11 +386,11 @@ const AppContent = () => {
     if (user && showBillingPage) {
       return { view: "billing" };
     }
+    if (user && showSubscriptionPlan) {
+      return { view: "subscription", showSubscriptionPlan };
+    }
     if (user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending)) {
       return { view: "workspace" };
-    }
-    if (user && user.isAdmin && user.workspaceId && showSubscriptionPlan) {
-      return { view: "subscription", showSubscriptionPlan };
     }
     if (user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile)) {
       return { view: "projectDashboard", projectId: selectedProjectId, projectName: selectedProjectName };
@@ -514,10 +554,16 @@ const AppContent = () => {
     if (updatedRoute.showSubscriptionPlan !== undefined) {
       setShowSubscriptionPlan(updatedRoute.showSubscriptionPlan);
     }
+    if (updatedRoute.view === "subscription") {
+      setShowSubscriptionPlan(true);
+      setSkipWorkspaceRequested(true);
+    }
 
     // Update billing view
     if (updatedRoute.view === 'billing') {
       setShowBillingPage(true);
+    } else if (updatedRoute.view === 'subscription') {
+      setShowBillingPage(false);
     } else if (updatedRoute.view) {
       setShowBillingPage(false);
     }
@@ -550,6 +596,15 @@ const AppContent = () => {
 
   // Initialize router
   const { clearHistory, navigateTo, goBack, goForward } = useRouter(currentRoute, handleRouteChange);
+
+  const openAccountSubscription = useCallback(() => {
+    setSubscriptionReturnRoute(currentRoute.view === "billing" || showBillingPage ? "billing" : null);
+    setShowBillingPage(false);
+    setShowSubscriptionPlan(true);
+    setSkipWorkspaceRequested(true);
+    setForceShowWorkspace(false);
+    navigateTo({ view: "subscription", showSubscriptionPlan: true });
+  }, [currentRoute.view, navigateTo, showBillingPage]);
 
   // While a real file is open in the editor, keep the "last active" timestamp fresh
   // so a tab-switch restore within the session correctly lands back in the editor.
@@ -590,6 +645,7 @@ const AppContent = () => {
   // (useRouter's init effect changes window.location.pathname before this effect
   //  runs, so we cannot rely on a pathname guard — use a ref instead.)
   const _verifyFetchStarted = useRef(false);
+  const paymentRecoveryAttempted = useRef(false);
 
   // Detect /verify-email?token=... URL, verify the account, and show success screen.
   // State is already initialised from the URL above; this effect just kicks off the fetch.
@@ -600,12 +656,9 @@ const AppContent = () => {
     if (_verifyFetchStarted.current) return;
     _verifyFetchStarted.current = true;
 
-    fetch(`/api/auth/verify?token=${encodeURIComponent(emailVerifyToken)}`)
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data?.error || data?.message || "Verification failed");
-        }
+    apiClient.get("/api/auth/verify", { token: emailVerifyToken })
+      .then((response: any) => {
+        const data = response?.data || response || {};
         const email = data?.email || "";
         setVerifiedEmail(email);
         setEmailVerifyStatus("success");
@@ -720,13 +773,13 @@ const AppContent = () => {
         console.log("[App] 📧 Invitation token state updated, page should show now");
       } else if (message.type === "showSubscriptionPlans") {
         console.log("[App] 📋 Showing subscription plans page");
-        setShowSubscriptionPlan(true);
+        openAccountSubscription();
       }
     };
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, []);
+  }, [openAccountSubscription]);
 
   // Browser-mode: upload a file directly via the API (no extension proxy needed)
   const uploadFileBrowserMode = useCallback(
@@ -897,28 +950,147 @@ const AppContent = () => {
     });
   };
 
-  const handlePlanSelected = async (planId: string, interval: string) => {
+  const startSubscriptionCheckout = async (planId: string, interval: "monthly" | "annual") => {
+    const response = await apiClient.post("/api/billing/setup", {});
+    const data = response?.data || response;
+
+    if (!data?.clientSecret || !data?.stripePublishableKey) {
+      throw new Error("Missing payment configuration from server");
+    }
+
+    setSubscriptionCheckout({
+      clientSecret: data.clientSecret,
+      publishableKey: data.stripePublishableKey,
+      planName: planId,
+      interval,
+      trialEligible: data?.trialEligible !== false,
+    });
+  };
+
+  const handlePaymentConfirmed = async (
+    setupIntentId: string,
+    planName?: string,
+    interval?: "monthly" | "annual",
+  ) => {
+    const resolvedPlan = planName ?? subscriptionCheckout?.planName;
+    const resolvedInterval = interval ?? subscriptionCheckout?.interval ?? "monthly";
+
+    if (!resolvedPlan) {
+      throw new Error("Missing selected plan");
+    }
+
+    try {
+      await apiClient.post("/api/billing/subscribe", {
+        setupIntentId,
+        planName: resolvedPlan,
+        interval: resolvedInterval,
+        workspaceId: "",
+      });
+
+      try { localStorage.removeItem("pendingPaymentRecovery"); } catch {}
+      setSubscriptionCheckout(null);
+      await refreshPermissions();
+      setShowSubscriptionPlan(false);
+      navigateTo({ view: "billing" });
+    } catch (error: any) {
+      console.error("Failed to complete subscription:", error);
+      const errMsg = error?.error || error?.data?.error || error?.response?.data?.error || error?.message || "";
+      if (errMsg.toLowerCase().includes("already") && errMsg.toLowerCase().includes("subscription")) {
+        try { localStorage.removeItem("pendingPaymentRecovery"); } catch {}
+        setSubscriptionCheckout(null);
+        await refreshPermissions().catch(() => {});
+        setShowSubscriptionPlan(false);
+        navigateTo({ view: "billing" });
+        return;
+      }
+      throw error;
+    }
+  };
+
+  const handlePlanSelected = async (planId: string, interval: "monthly" | "annual") => {
     console.log("Selected plan:", planId, "interval:", interval);
     try {
-      // Save plan to backend via auth context
-      await updateSubscriptionPlan(planId);
-      setShowSubscriptionPlan(false);
-    } catch (error: any) {
-      console.error("Failed to save subscription plan:", error);
-      const errMsg = error?.error || error?.data?.error || error?.response?.data?.error || error?.message || "";
-      const requiresBilling = error?.data?.requiresBilling || error?.requiresBilling || error?.response?.data?.requiresBilling;
-
-      if (requiresBilling || errMsg.toLowerCase().includes("payment required")) {
-        // Backend requires Stripe billing setup — redirect user to workspace selection
+      if (planId.toUpperCase() === "FREE") {
+        // Free plan changes do not require Stripe. Keep this path for first-time setup.
+        if (user?.workspaceId) {
+          await updateSubscriptionPlan(planId);
+        }
         setShowSubscriptionPlan(false);
-        setForceShowWorkspace(true);
+        return;
       }
+
+      await startSubscriptionCheckout(planId, interval);
+    } catch (error: any) {
+      console.error("Failed to start subscription flow:", error);
     }
   };
 
   const handleSkipPlan = () => {
+    if (subscriptionReturnRoute === "billing") {
+      setSubscriptionReturnRoute(null);
+      setShowSubscriptionPlan(false);
+      setShowBillingPage(true);
+      navigateTo({ view: "billing", showSubscriptionPlan: false });
+      return;
+    }
     setShowSubscriptionPlan(false);
   };
+
+  useEffect(() => {
+    // Only attempt payment recovery after the user is authenticated.
+    // Running before login means no auth token → billing API returns 401 →
+    // onUnauthorized fires logout() → clearSessionCache() removes the fresh token.
+    if (!user?.token || paymentRecoveryAttempted.current) return;
+    paymentRecoveryAttempted.current = true;
+
+    const params = new URLSearchParams(window.location.search);
+    const setupIntentId = params.get("setup_intent");
+    const redirectStatus = params.get("redirect_status");
+    if (setupIntentId) {
+      window.history.replaceState({}, "", window.location.pathname);
+
+      if (redirectStatus !== "succeeded") {
+        try {
+          localStorage.removeItem("pendingSubscription");
+          localStorage.removeItem("pendingPaymentRecovery");
+        } catch {}
+        return;
+      }
+
+      try {
+        const stored = localStorage.getItem("pendingSubscription");
+        localStorage.removeItem("pendingSubscription");
+        if (!stored) return;
+
+        const { planName, interval } = JSON.parse(stored);
+        localStorage.setItem(
+          "pendingPaymentRecovery",
+          JSON.stringify({ setupIntentId, workspaceId: "", planName, interval }),
+        );
+        handlePaymentConfirmed(setupIntentId, planName, interval).catch((err) => {
+          console.error("[App] Failed to resume subscription after redirect:", err);
+        });
+      } catch (err) {
+        console.error("[App] Failed to parse pending subscription:", err);
+      }
+      return;
+    }
+
+    try {
+      const recoveryRaw = localStorage.getItem("pendingPaymentRecovery");
+      if (!recoveryRaw) return;
+
+      const { setupIntentId: recoveryIntentId, planName, interval } = JSON.parse(recoveryRaw);
+      if (!recoveryIntentId || !planName) return;
+
+      handlePaymentConfirmed(recoveryIntentId, planName, interval).catch((err) => {
+        console.error("[App] Failed to retry pending subscription:", err);
+      });
+    } catch {
+      try { localStorage.removeItem("pendingPaymentRecovery"); } catch {}
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.token]);
 
   const handleDeploymentSelected = async (type: "self-hosted" | "cloud") => {
     console.log("[App] Deployment selected:", type);
@@ -1223,12 +1395,54 @@ const AppContent = () => {
           isOwner={true}
           onBack={goBack}
           onCancelled={() => navigateTo({ view: 'workspace' })}
-          onUpgradePlan={() => {
-            setShowSubscriptionPlan(true);
-            navigateTo({ view: 'subscription' });
-          }}
+          onUpgradePlan={openAccountSubscription}
         />
       </Suspense>
+    );
+  }
+
+  // Show subscription plan selection before workspace selection. Billing is
+  // account-level, so a selected workspace is not required to buy or renew.
+  if (user && showSubscriptionPlan) {
+    const status = (accountSubscriptionStatus || "").toLowerCase();
+    const allowCurrentPlanSelection =
+      !!user.subscriptionPlan
+      && user.subscriptionPlan.toUpperCase() !== "FREE"
+      && status !== "active"
+      && status !== "trialing";
+    return (
+      <>
+        <SubscriptionPlanSelection
+          username={user.username}
+          workspaceId=""
+          workspaceName="Your Account"
+          currentPlanId={user.subscriptionPlan || "FREE"}
+          currentStatus={accountSubscriptionStatus || ""}
+          trialEligible={trialEligible}
+          allowCurrentPlanSelection={allowCurrentPlanSelection}
+          onPlanSelected={handlePlanSelected}
+          onSkip={handleSkipPlan}
+          onLogout={handleLogout}
+        />
+        {subscriptionCheckout && (
+          <Suspense fallback={null}>
+            <PaymentSetupModal
+              publishableKey={subscriptionCheckout.publishableKey}
+              clientSecret={subscriptionCheckout.clientSecret}
+              planName={subscriptionCheckout.planName}
+              interval={subscriptionCheckout.interval}
+              workspaceId=""
+              trialEligible={subscriptionCheckout.trialEligible}
+              onConfirmed={(setupIntentId) => {
+                handlePaymentConfirmed(setupIntentId).catch((err) => {
+                  console.error("[App] Failed to confirm subscription:", err);
+                });
+              }}
+              onClose={() => setSubscriptionCheckout(null)}
+            />
+          </Suspense>
+        )}
+      </>
     );
   }
 
@@ -1252,6 +1466,7 @@ const AppContent = () => {
           // legacy in-place modal. The page treats an empty workspaceId as
           // "your account" and the backend's billing endpoints accept it.
           onManageAccountBilling={() => navigateTo({ view: 'billing' })}
+          onUpgradeAccountPlan={openAccountSubscription}
           onWorkspaceSelected={handleWorkspaceSelected}
           onSkipWorkspace={() => {
             console.log("[App] 🚀 User chose to continue without workspace");
@@ -1278,36 +1493,6 @@ const AppContent = () => {
           onLogout={handleLogout}
         />
       </Suspense>
-    );
-  }
-
-  // Show subscription plan selection. Bug #51: previously required admin
-  // AND workspaceId, which broke the "Upgrade Plan" button in
-  // BillingManagement when the user navigated from WorkspaceSelection (no
-  // workspaceId yet). Billing is account-level, so we just need a logged-in
-  // user. The view itself accepts an empty workspaceId for account-level.
-  if (user && showSubscriptionPlan) {
-    const status = (workspaceBillingStatus || "").toLowerCase();
-    // Renewal case: user cancelled or trial expired — they need to be able
-    // to re-select the same plan they had. Block re-selection only when
-    // the subscription is genuinely active or in a paid trial.
-    const allowCurrentPlanSelection =
-      !!user.subscriptionPlan
-      && user.subscriptionPlan.toUpperCase() !== "FREE"
-      && status !== "active"
-      && status !== "trialing";
-    return (
-      <SubscriptionPlanSelection
-        username={user.username}
-        workspaceId={user.workspaceId || ""}
-        workspaceName={user.workspaceName || "Your Account"}
-        currentPlanId={user.subscriptionPlan || "FREE"}
-        currentStatus={workspaceBillingStatus || ""}
-        allowCurrentPlanSelection={allowCurrentPlanSelection}
-        onPlanSelected={handlePlanSelected}
-        onSkip={handleSkipPlan}
-        onLogout={handleLogout}
-      />
     );
   }
 
@@ -1350,6 +1535,7 @@ const AppContent = () => {
             setSelectedFileName("");
           }}
           onManageSubscription={hasPaidPlan ? () => navigateTo({ view: 'billing' }) : undefined}
+          onOpenSubscriptionPlans={openAccountSubscription}
         />
       </>
     );

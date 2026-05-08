@@ -456,11 +456,11 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                         </div>
 
                         {/* Quick Actions Grid */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
                              {/* Complete Payment - Only if pending */}
                              {(workspace.billingStatus === 'PENDING' || workspace.billingStatus === 'PAYMENT_FAILED') && onCompletePayment && (
                                 <button onClick={onCompletePayment}
-                                    className="flex flex-col items-start gap-4 p-6 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white transition-all shadow-lg shadow-purple-900/20 group">
+                                    className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white transition-all shadow-lg shadow-purple-900/20 group">
                                     <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
                                         <CreditCard size={24} />
                                     </div>
@@ -475,7 +475,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 holder has a Stripe customer record on file) */}
                             {isOwner && (
                                 <button onClick={startCardUpdate}
-                                    className="flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-purple-500/50 hover:bg-white/10 text-white transition-all group">
+                                    className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-purple-500/50 hover:bg-white/10 text-white transition-all group">
                                     <div className="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-transform">
                                         <CreditCard size={24} />
                                     </div>
@@ -489,7 +489,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                             {/* Upgrade Plan — owner only; members can't change billing */}
                             {isOwner && (
                                 <button onClick={onUpgradePlan}
-                                    className="flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-indigo-500/50 hover:bg-white/10 text-white transition-all group">
+                                    className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-indigo-500/50 hover:bg-white/10 text-white transition-all group">
                                     <div className="w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition-transform">
                                         <Crown size={24} />
                                     </div>
@@ -503,7 +503,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                             {/* Cancel — owner only; backend re-checks. Bug #42. */}
                             {isOwner && (
                                 <button onClick={() => setView('cancel-confirm')}
-                                    className="flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-red-500/50 hover:bg-red-500/5 text-white transition-all group">
+                                    className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-red-500/50 hover:bg-red-500/5 text-white transition-all group">
                                     <div className="w-12 h-12 rounded-xl bg-red-500/20 flex items-center justify-center text-red-400 group-hover:scale-110 transition-transform">
                                         <XCircle size={24} />
                                     </div>

@@ -200,7 +200,7 @@ public class JiraService {
         if (!isEnabled()) {
             throw new IllegalStateException("Jira integration is not enabled");
         }
-        
+
         try {
             ObjectNode issueData = buildIssuePayload(summary, description, priority, issueType);
             
@@ -307,31 +307,31 @@ public class JiraService {
     private ObjectNode buildIssuePayload(String summary, String description, String priority, String issueType) {
         ObjectNode payload = objectMapper.createObjectNode();
         ObjectNode fields = objectMapper.createObjectNode();
-        
+
         // Project
         ObjectNode project = objectMapper.createObjectNode();
         project.put("key", jiraProjectKey);
         fields.set("project", project);
-        
+
         // Issue type
         ObjectNode issueTypeNode = objectMapper.createObjectNode();
         issueTypeNode.put("name", issueType);
         fields.set("issuetype", issueTypeNode);
-        
+
         // Summary and description
         fields.put("summary", summary);
-        
+
         // Description in Atlassian Document Format (ADF)
         ObjectNode descriptionAdf = buildDescriptionAdf(description);
         fields.set("description", descriptionAdf);
-        
+
         // Priority
         if (priority != null && !priority.isEmpty()) {
             ObjectNode priorityNode = objectMapper.createObjectNode();
             priorityNode.put("name", priority);
             fields.set("priority", priorityNode);
         }
-        
+
         // Parent epic (if configured) - Note: Not all projects support parent field
         // If this fails, the epic can be linked manually or via a different mechanism
         if (jiraEpicKey != null && !jiraEpicKey.isEmpty()) {
@@ -344,7 +344,7 @@ public class JiraService {
                 log.warn("Could not set parent epic {}: {}", jiraEpicKey, e.getMessage());
             }
         }
-        
+
         payload.set("fields", fields);
         return payload;
     }

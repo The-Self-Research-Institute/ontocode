@@ -68,6 +68,7 @@ import type {
   Datatype,
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
+import { normalizeRole, parseWorkspaceRole, isWorkspaceViewerRole } from "../utils/roles";
 import { useCollaboration } from "../contexts/CollaborationContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useSubscription } from "../hooks/useSubscription";
@@ -2070,7 +2071,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const readonlyMode = false; // Allow editing by default
   // FREE plan members (non-owners inside a workspace) are view-only.
   // PRO plan allows members and admins to edit.
-  const isViewOnlyMember = (subscription.isFree && user?.workspaceRole != null && user.workspaceRole !== "OWNER") || user?.workspaceRole === "VIEWER";
+  const workspaceRoleParsed = parseWorkspaceRole(user?.workspaceRole, undefined);
+  const isViewOnlyMember =
+    (subscription.isFree && user?.workspaceRole != null && normalizeRole(user.workspaceRole) !== "OWNER") ||
+    isWorkspaceViewerRole(workspaceRoleParsed);
   const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | null>(null);
   const handleViewOnlyAction = () => setShowProPromptType('edit');
   const handleExportProAction = () => setShowProPromptType('export');
@@ -2149,6 +2153,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     [user?.email, user?.username], // collaboration.addNotification is stable, no need to include
   );
   const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
+  const storedProjectId = isNonWorkspaceMode ? localStorage.getItem("ontocode_lastProjectId") : null;
 
   const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || null);
 
