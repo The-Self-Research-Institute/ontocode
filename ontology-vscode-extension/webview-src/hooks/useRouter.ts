@@ -156,6 +156,14 @@ export const useRouter = (
 
             const route = event.state as RouteState | null;
 
+            // Never navigate back to workspace via browser history — it would re-trigger
+            // workspace selection mid-session. Pin the user on the current route instead.
+            if (route?.view === 'workspace') {
+                console.log('[Router] Blocked back navigation to workspace history entry');
+                window.history.replaceState(currentRoute, '', generateUrlPath(currentRoute));
+                return;
+            }
+
             if (route) {
                 isPopStateNavigation.current = true;
                 console.log('[Router] Restoring route:', route);

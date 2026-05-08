@@ -2072,11 +2072,17 @@ const Dashboard: React.FC<DashboardProps> = ({
   // FREE plan members (non-owners inside a workspace) are view-only.
   // PRO plan allows members and admins to edit.
   const workspaceRoleParsed = parseWorkspaceRole(user?.workspaceRole, undefined);
+  const [userProjectRole, setUserProjectRole] = useState<string | null>(null);
+  const isProjectViewerRole = userProjectRole === 'VIEWER';
   const isViewOnlyMember =
     (subscription.isFree && user?.workspaceRole != null && normalizeRole(user.workspaceRole) !== "OWNER") ||
-    isWorkspaceViewerRole(workspaceRoleParsed);
-  const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | null>(null);
-  const handleViewOnlyAction = () => setShowProPromptType('edit');
+    isWorkspaceViewerRole(workspaceRoleParsed) ||
+    isProjectViewerRole;
+  const viewOnlyMessage = isProjectViewerRole
+    ? "You have view-only access to this project. Contact the project owner to request edit permissions."
+    : "You have view-only access. Upgrade your plan to edit.";
+  const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | 'viewer' | null>(null);
+  const handleViewOnlyAction = () => setShowProPromptType(isProjectViewerRole ? 'viewer' : 'edit');
   const handleExportProAction = () => setShowProPromptType('export');
   const [showThemeSettings, setShowThemeSettings] = useState(false);
   const deploymentType = localStorage.getItem("deploymentType") as "self-hosted" | "cloud" | null;
@@ -2245,7 +2251,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       console.log("[Dashboard] 📂 Fetching files for project:", currentProjectId);
-      const filesResponse = await apiClient.get<{ files: any[]; count: number }>(
+      const filesResponse = await apiClient.get<{ files: any[]; count: number; userProjectRole?: string }>(
         `/api/projects/${currentProjectId}/files`,
       );
 
@@ -2282,6 +2288,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         console.log("[Dashboard] ✅ File menu updated with project files (listOfFiles only)");
         console.log("[Dashboard] ✅ projectFiles state updated with", projectFiles.length, "files");
+
+        // Capture the user's role in this project so isViewOnlyMember is correct in the editor
+        if (filesResponse.userProjectRole) {
+          setUserProjectRole(filesResponse.userProjectRole);
+        }
 
         return projectFiles; // Return the files for verification
       } else if (filesResponse && filesResponse.files === undefined) {
@@ -8123,7 +8134,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
       if (!projectId) return;
       if (isViewOnlyMember) {
-        showNotification("You have view-only access. Upgrade your plan to edit.", "error");
+        showNotification(viewOnlyMessage, "error");
         return;
       }
 
@@ -8174,7 +8185,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
       if (!projectId) return;
       if (isViewOnlyMember) {
-        showNotification("You have view-only access. Upgrade your plan to edit.", "error");
+        showNotification(viewOnlyMessage, "error");
         return;
       }
 
@@ -8225,7 +8236,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
       if (!projectId) return;
       if (isViewOnlyMember) {
-        showNotification("You have view-only access. Upgrade your plan to edit.", "error");
+        showNotification(viewOnlyMessage, "error");
         return;
       }
 
@@ -8885,7 +8896,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
       if (isViewOnlyMember) {
-        showNotification("You have view-only access. Upgrade your plan to edit.", "error");
+        showNotification(viewOnlyMessage, "error");
         return;
       }
 
@@ -14700,7 +14711,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <h3 className="text-[15px] font-semibold text-gray-900 leading-tight">
                   {showProPromptType === 'export' ? 'Pro Feature' : 'View-Only Access'}
                 </h3>
-                <p className="text-xs text-gray-400 mt-0.5">Your account is on the <span className="font-medium text-gray-500">Free plan</span></p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {showProPromptType === 'viewer'
+                    ? 'You are a viewer on this project'
+                    : <>Your account is on the <span className="font-medium text-gray-500">Free plan</span></>}
+                </p>
               </div>
               <button
                 onClick={() => setShowProPromptType(null)}
@@ -14718,6 +14733,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
                 {showProPromptType === 'export' ? (
                   <>Exporting ontologies is restricted to <span className="font-medium text-gray-800">Pro plan</span> members.</>
+                ) : showProPromptType === 'viewer' ? (
+                  <>You can <span className="font-medium text-gray-800">browse and explore</span> this ontology, but editing is restricted to <span className="font-medium text-gray-800">editors and above</span>.</>
                 ) : (
                   <>You can <span className="font-medium text-gray-800">browse and explore</span> this ontology, but editing is restricted to the <span className="font-medium text-gray-800">workspace owner</span> on the Free plan.</>
                 )}
@@ -14727,7 +14744,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
                 </svg>
-                <span>Ask your <span className="font-medium text-gray-800">workspace owner</span> to upgrade to Pro to unlock {showProPromptType === 'export' ? 'exporting' : 'editing for all members'}.</span>
+                {showProPromptType === 'viewer' ? (
+                  <span>Contact the <span className="font-medium text-gray-800">project owner</span> to request edit permissions.</span>
+                ) : (
+                  <span>Ask your <span className="font-medium text-gray-800">workspace owner</span> to upgrade to Pro to unlock {showProPromptType === 'export' ? 'exporting' : 'editing for all members'}.</span>
+                )}
               </div>
             </div>
 

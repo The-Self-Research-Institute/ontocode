@@ -758,8 +758,8 @@ public class ProjectController {
 
             Optional<Project> projectForCheck = projectService.getProject(projectId);
             if (projectForCheck.isPresent()) {
-                var viewOnlyBlock = checkFreeViewOnly(projectForCheck.get().getWorkspaceId(), user.getId());
-                if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+                var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
+                if (writeBlock.isPresent()) return writeBlock.get();
             }
 
             projectService.archiveProject(projectId, user.getId());
@@ -789,11 +789,10 @@ public class ProjectController {
 
             User user = userOpt.get();
 
-            // FREE plan members are view-only
             Optional<Project> projectForCheck = projectRepository.findByProjectId(projectId);
             if (projectForCheck.isPresent()) {
-                var viewOnlyBlock = checkFreeViewOnly(projectForCheck.get().getWorkspaceId(), user.getId());
-                if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+                var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
+                if (writeBlock.isPresent()) return writeBlock.get();
             }
 
             // Delete from GraphDB first (best-effort) for each file in the project
@@ -884,8 +883,8 @@ public class ProjectController {
 
             Optional<Project> projectForCheck = projectService.getProject(projectId);
             if (projectForCheck.isPresent()) {
-                var viewOnlyBlock = checkFreeViewOnly(projectForCheck.get().getWorkspaceId(), user.getId());
-                if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+                var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
+                if (writeBlock.isPresent()) return writeBlock.get();
             }
 
             projectService.restoreProject(projectId, user.getId(), restoreFiles);
@@ -1280,13 +1279,16 @@ public class ProjectController {
             }
             
             Project project = projectOpt.get();
-            
-            // Check user's project role - viewers cannot upload files
-            Project.ProjectMember projectMember = project.getMember(user.getId());
-            if (projectMember != null && "VIEWER".equals(projectMember.getRole())) {
-                return ResponseEntity.status(403).body(Map.of("error", "Viewers cannot upload files to this project"));
+
+            // Access check: non-members and non-workspace-admins are denied early
+            if (!projectService.hasAccess(projectId, user.getId())) {
+                return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
             }
-            
+
+            // Write-permission check (VIEWER role + FREE plan) — must run BEFORE any storage write
+            var writeBlock = checkProjectWriteAccess(project.getWorkspaceId(), projectId, user.getId());
+            if (writeBlock.isPresent()) return writeBlock.get();
+
             // Check GraphDB for duplicate data BEFORE uploading
             // This prevents loading the same ontology data multiple times into the same project graph
             // Skip for small files (< 10KB) as they are typically new empty ontologies
@@ -1351,10 +1353,6 @@ public class ProjectController {
             Workspace workspace = workspaceOpt.get();
             String subscriptionPlan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
             String ownerId = workspace.getOwnerId();
-
-            // FREE plan members are view-only
-            var viewOnlyBlock = checkFreeViewOnly(workspaceId, user.getId());
-            if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
 
             // Storage quota is shared across ALL workspaces owned by the same account.
             long currentStorageBytes = calculateOwnerStorageUsage(ownerId);
@@ -1485,11 +1483,10 @@ public class ProjectController {
 
             User user = userOpt.get();
 
-            // FREE plan members are view-only — resolve workspace via project
             Optional<Project> projectForCheck = projectService.getProject(projectId);
             if (projectForCheck.isPresent()) {
-                var viewOnlyBlock = checkFreeViewOnly(projectForCheck.get().getWorkspaceId(), user.getId());
-                if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+                var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
+                if (writeBlock.isPresent()) return writeBlock.get();
             }
 
             // DELETE FROM GRAPHDB FIRST (hierarchical project ID: parentProject/fileId)
@@ -1561,11 +1558,10 @@ public class ProjectController {
 
             User user = userOpt.get();
 
-            // FREE plan members are view-only
             Optional<Project> projectForCheck = projectService.getProject(projectId);
             if (projectForCheck.isPresent()) {
-                var viewOnlyBlock = checkFreeViewOnly(projectForCheck.get().getWorkspaceId(), user.getId());
-                if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+                var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
+                if (writeBlock.isPresent()) return writeBlock.get();
             }
 
             // Restore file metadata
@@ -1625,8 +1621,8 @@ public class ProjectController {
 
             Project project = projectOpt.get();
 
-            var viewOnlyBlock = checkFreeViewOnly(project.getWorkspaceId(), user.getId());
-            if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+            var writeBlock = checkProjectWriteAccess(project.getWorkspaceId(), projectId, user.getId());
+            if (writeBlock.isPresent()) return writeBlock.get();
 
             if (!project.getOwnerId().equals(user.getId())) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only project owner can update project settings"));
@@ -1680,8 +1676,8 @@ public class ProjectController {
             
             Project project = projectOpt.get();
 
-            var viewOnlyBlock = checkFreeViewOnly(project.getWorkspaceId(), user.getId());
-            if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+            var writeBlock = checkProjectWriteAccess(project.getWorkspaceId(), projectId, user.getId());
+            if (writeBlock.isPresent()) return writeBlock.get();
 
             if (!project.getOwnerId().equals(user.getId())) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only project owner can rename"));
@@ -1761,6 +1757,42 @@ public class ProjectController {
             )));
         }
         return Optional.empty();
+    }
+
+    /**
+     * Returns 403 for project-scoped write operations when the caller is a project VIEWER
+     * (unless they are a workspace OWNER/ADMIN, who override project role), or when the
+     * FREE-plan check fails. Use this instead of bare checkFreeViewOnly for any endpoint
+     * that mutates a specific project.
+     */
+    private Optional<ResponseEntity<?>> checkProjectWriteAccess(String workspaceId, String projectId, String userId) {
+        // 1. Project VIEWER role check — workspace OWNER/ADMIN override project role
+        if (projectId != null) {
+            Optional<Project> projectOpt = projectService.getProject(projectId);
+            if (projectOpt.isPresent()) {
+                Project.ProjectMember member = projectOpt.get().getMember(userId);
+                if (member != null && "VIEWER".equalsIgnoreCase(member.getRole())) {
+                    String wsId = workspaceId != null ? workspaceId : projectOpt.get().getWorkspaceId();
+                    boolean isWsAdmin = workspaceService.getWorkspace(wsId)
+                        .map(ws -> {
+                            self.research.ontology.auth.model.Workspace.WorkspaceMember wm = ws.getMember(userId);
+                            return wm != null && (wm.getRole() == self.research.ontology.auth.model.Workspace.WorkspaceRole.OWNER
+                                               || wm.getRole() == self.research.ontology.auth.model.Workspace.WorkspaceRole.ADMIN);
+                        }).orElse(false);
+                    if (!isWsAdmin) {
+                        return Optional.of(ResponseEntity.status(403).body(Map.of(
+                            "error", "You have view-only access to this project. Contact the project owner to request edit permissions.",
+                            "viewOnly", true
+                        )));
+                    }
+                }
+            }
+        }
+        // 2. FREE plan check
+        String effectiveWorkspaceId = workspaceId != null ? workspaceId
+            : (projectId != null ? projectService.getProject(projectId)
+                .map(Project::getWorkspaceId).orElse(null) : null);
+        return checkFreeViewOnly(effectiveWorkspaceId, userId);
     }
 
     /**
