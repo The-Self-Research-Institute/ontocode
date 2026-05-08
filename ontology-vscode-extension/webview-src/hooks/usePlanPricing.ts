@@ -27,6 +27,7 @@ const FALLBACK: PricingMap = {
         features: [
             'Up to 10 workspaces', 'Up to 10 workspace members', '100 GB storage',
             'Everything in Free', 'Team collaboration enabled', 'Export to multiple formats',
+            'Priority email support',
         ],
         limitations: [],
     },
@@ -34,7 +35,7 @@ const FALLBACK: PricingMap = {
         id: 'ENTERPRISE', monthlyPrice: 299, annualPrice: 299,
         features: [
             'Unlimited workspace members', 'Unlimited workspaces', 'Unlimited storage',
-            'Everything in Professional', 'Early access to new features',
+            'Everything in Professional', 'Early access to new features', 'Priority channel support',
         ],
         limitations: [],
     },

@@ -17,9 +17,6 @@ const SESSION_CACHE_KEYS = [
   ...LAST_OPENED_KEYS,
   "pendingSubscription",
   "pendingPaymentRecovery",
-  "pendingUpgradeWorkspaceId",
-  "pendingUpgradePlan",
-  "pendingUpgradeInterval",
 ];
 
 export function clearLastOpenedProjectState(): void {

@@ -1139,6 +1139,20 @@ public class SwrlEngineService {
             
             // Create SQWRL query engine
             org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
+
+            // SQWRL queries run on a fresh engine, so load the saved enabled
+            // SWRL rules first. Otherwise queries for inferred classes (for
+            // example HonorsStudent after a GPA rule) return no rows.
+            List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
+            for (SwrlRule rule : enabledRules) {
+                try {
+                    String resolvedRule = resolveEntityNames(rule.getRuleText(), ontology);
+                    queryEngine.createSWRLRule(rule.getRuleName(), resolvedRule);
+                } catch (org.swrlapi.parser.SWRLParseException e) {
+                    logger.warn("Skipping saved SWRL rule '{}' while preparing SQWRL query: {}",
+                            rule.getRuleName(), e.getMessage());
+                }
+            }
             
             logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);
             

@@ -137,22 +137,22 @@ public class ProjectRequests {
      */
     public static class AddMemberRequest {
         
-        @NotBlank(message = "Username or email is required")
-        private String username;
+        @NotBlank(message = "Email is required")
+        private String email;
         
         @NotBlank(message = "Role is required")
         @Pattern(
-            regexp = "^(EDITOR|VIEWER)$", 
-            message = "Invalid role. Must be EDITOR or VIEWER"
+            regexp = "^(ADMIN|EDITOR|VIEWER)$",
+            message = "Invalid role. Must be ADMIN, EDITOR, or VIEWER"
         )
         private String role;
 
-        public String getUsername() {
-            return username != null ? username.trim() : null;
+        public String getEmail() {
+            return email != null ? email.trim().toLowerCase() : null;
         }
 
-        public void setUsername(String username) {
-            this.username = username;
+        public void setEmail(String email) {
+            this.email = email;
         }
 
         public String getRole() {

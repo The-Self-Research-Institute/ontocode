@@ -57,7 +57,7 @@ const genReqId = () => `req-${Date.now()}-${Math.random().toString(36).slice(2, 
 // Map to track pending requests sent to the VS Code proxy
 const pending = new Map<
   string,
-  { resolve: (v: any) => void; reject: (r?: any) => void; timeout: ReturnType<typeof setTimeout> }
+  { resolve: (v: any) => void; reject: (r?: any) => void; timeout: ReturnType<typeof setTimeout>; url?: string }
 >();
 
 /**
