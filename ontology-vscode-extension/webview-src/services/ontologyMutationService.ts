@@ -52,7 +52,14 @@ export const ontologyMutationService = {
       });
     } catch (err: any) {
       if (err?.status === 403 && err?.data?.requiresUpgrade) {
-        throw new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
+        const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
+        (e as any).reason = 'requiresUpgrade';
+        throw e;
+      }
+      if (err?.status === 403 && err?.data?.viewOnly) {
+        const e = new Error('You have view-only access to this project. Contact the project owner to request edit permissions.');
+        (e as any).reason = 'viewOnly';
+        throw e;
       }
       throw err;
     }

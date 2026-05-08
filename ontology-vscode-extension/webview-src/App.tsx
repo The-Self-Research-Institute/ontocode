@@ -558,6 +558,11 @@ const AppContent = () => {
       setShowSubscriptionPlan(true);
       setSkipWorkspaceRequested(true);
     }
+    // Browser back away from subscription: always dismiss the overlay so the
+    // user isn't snapped back to it once restoredRoute clears after 100ms.
+    if (fromBrowserNav && updatedRoute.view !== "subscription") {
+      setShowSubscriptionPlan(false);
+    }
 
     // Update billing view
     if (updatedRoute.view === 'billing') {
@@ -1034,6 +1039,21 @@ const AppContent = () => {
       return;
     }
     setShowSubscriptionPlan(false);
+    // New user with no workspace yet — route to workspace creation.
+    // Set the suppress flag so WorkspaceSelection doesn't re-trigger the
+    // plan page on this fresh mount (user already made their choice above).
+    if (!user?.workspaceId) {
+      try { localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true"); } catch {}
+      navigateTo({ view: "workspace" });
+      return;
+    }
+    if (selectedFileId && selectedFileId !== "__editor__") {
+      navigateTo({ view: "dashboard", projectId: selectedProjectId, projectName: selectedProjectName ?? undefined, fileId: selectedFileId, fileName: selectedFileName ?? undefined });
+    } else if (selectedProjectId) {
+      navigateTo({ view: "projectLibrary", projectId: selectedProjectId, projectName: selectedProjectName ?? undefined });
+    } else {
+      navigateTo({ view: "projectDashboard" });
+    }
   };
 
   useEffect(() => {

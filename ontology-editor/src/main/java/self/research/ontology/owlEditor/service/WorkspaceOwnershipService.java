@@ -3,6 +3,9 @@ package self.research.ontology.owlEditor.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.document.WorkspaceDocument;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
@@ -24,11 +27,14 @@ public class WorkspaceOwnershipService {
 
     private final ProjectRepository projectRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final MongoTemplate mongoTemplate;
 
     public WorkspaceOwnershipService(ProjectRepository projectRepository,
-                                     WorkspaceRepository workspaceRepository) {
+                                     WorkspaceRepository workspaceRepository,
+                                     MongoTemplate mongoTemplate) {
         this.projectRepository = projectRepository;
         this.workspaceRepository = workspaceRepository;
+        this.mongoTemplate = mongoTemplate;
     }
 
     /**
@@ -133,6 +139,43 @@ public class WorkspaceOwnershipService {
             log.debug("resolveWorkspaceIdFromRequestPath decode failed uri={}: {}", uri, e.getMessage());
         } catch (Exception e) {
             log.debug("resolveWorkspaceIdFromRequestPath failed uri={}: {}", uri, e.getMessage());
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Returns true if the user's role in the given project is VIEWER (read-only).
+     * Uses the parent project ID (the proj-xxx segment before any "--" suffix).
+     * Fail-open on lookup errors so editor stays accessible if auth DB is temporarily unreachable.
+     */
+    public boolean isViewerInProject(String userId, String projectId) {
+        if (userId == null || projectId == null || projectId.isBlank()) return false;
+        String parentProjectId = projectId.contains("--")
+                ? projectId.substring(0, projectId.indexOf("--"))
+                : projectId;
+        try {
+            Query q = new Query(Criteria.where("projectId").is(parentProjectId)
+                    .and("members").elemMatch(
+                            Criteria.where("userId").is(userId).and("role").regex("^VIEWER$", "i")));
+            return mongoTemplate.exists(q, "projects");
+        } catch (Exception e) {
+            log.debug("isViewerInProject failed userId={} projectId={}: {}", userId, projectId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Extract the first proj-* segment from the request path (used to resolve project role).
+     */
+    public Optional<String> resolveProjectIdFromRequestPath(String uri) {
+        if (uri == null || uri.isBlank()) return Optional.empty();
+        try {
+            String decoded = URLDecoder.decode(uri, StandardCharsets.UTF_8);
+            for (String segment : decoded.split("/")) {
+                if (segment != null && segment.startsWith("proj-")) return Optional.of(segment);
+            }
+        } catch (Exception e) {
+            log.debug("resolveProjectIdFromRequestPath failed uri={}: {}", uri, e.getMessage());
         }
         return Optional.empty();
     }

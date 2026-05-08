@@ -75,6 +75,23 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         String plan = jwtClaims[0];
         String userId = jwtClaims[1];
 
+        // Check VIEWER role — blocked regardless of subscription plan
+        String projectId = request.getParameter("projectId");
+        if (projectId == null || projectId.isBlank()) {
+            projectId = workspaceOwnershipService.resolveProjectIdFromRequestPath(path).orElse(null);
+        }
+        if (projectId != null && workspaceOwnershipService.isViewerInProject(userId, projectId)) {
+            log.debug("VIEWER write block: userId={} projectId={} path={}", userId, projectId, path);
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            response.setContentType("application/json");
+            response.getWriter().write(
+                "{\"error\":\"You have view-only access to this project. " +
+                "Contact the project owner to request edit permissions.\"," +
+                "\"viewOnly\":true}"
+            );
+            return false;
+        }
+
         // PRO/ENTERPRISE users always allowed
         if (!"FREE".equalsIgnoreCase(plan)) return true;
 

@@ -165,10 +165,13 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
       JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
+    volumes:
+      - /var/log/ontocode/auth:/app/logs
     networks:
       - ontology-net
     deploy:
@@ -188,11 +191,14 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
       # Gateway buffers large file uploads (224MB+) in memory - needs generous heap
       JAVA_OPTS: -Xms256m -Xmx1536m -XX:+UseG1GC
     depends_on:
       auth:
         condition: service_started
+    volumes:
+      - /var/log/ontocode/gateway:/app/logs
     networks:
       - ontology-net
     deploy:
@@ -237,7 +243,7 @@ services:
         condition: service_healthy
     volumes:
       - graphdb-import:/opt/graphdb-import
-      - editor-logs:/app/logs
+      - /var/log/ontocode/editor:/app/logs
     networks:
       - ontology-net
     deploy:
@@ -272,7 +278,7 @@ services:
         -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
         -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m
     volumes:
-      - swrl-logs:/app/logs
+      - /var/log/ontocode/swrl:/app/logs
     depends_on:
       mongo:
         condition: service_healthy
@@ -387,8 +393,6 @@ volumes:
   mongo-data:
   graphdb-data:
   graphdb-import:
-  editor-logs:
-  swrl-logs:
 
 networks:
   ontology-net:
