@@ -126,6 +126,7 @@ services:
     image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-auth:${VERSION:-latest}
     container_name: ontocode-auth
     restart: unless-stopped
+    user: root
     ports:
       - "8086:8086"
     environment:
@@ -184,6 +185,7 @@ services:
     image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-gateway:${VERSION:-latest}
     container_name: ontocode-gateway
     restart: unless-stopped
+    user: root
     ports:
       - "80:80"
     environment:
@@ -211,6 +213,7 @@ services:
     image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-editor:${VERSION:-latest}
     container_name: ontocode-editor
     restart: unless-stopped
+    user: root
     ports:
       - "8083:8083"
     environment:
@@ -262,6 +265,7 @@ services:
     image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-swrl:${VERSION:-latest}
     container_name: ontocode-swrl
     restart: unless-stopped
+    user: root
     ports:
       - "8084:8084"
     environment:
