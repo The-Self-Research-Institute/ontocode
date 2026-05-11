@@ -39,9 +39,9 @@ interface Workspace {
   updatedAt: string;
 }
 
-// Model B: billing is account-level, but we still mirror the plan on the workspace for quick access.
-function workspaceStatusBadge(workspace: Workspace): { label: string; cls: string } | null {
-  const plan = (workspace.subscriptionPlan || "FREE").toUpperCase();
+// Billing is account-level. Always derive the badge from the account subscription.
+function accountPlanBadge(planName: string | undefined): { label: string; cls: string } {
+  const plan = (planName || "FREE").toUpperCase();
   if (plan === "ENTERPRISE") return { label: "ENTERPRISE", cls: "bg-amber-500/20 text-amber-300 border border-amber-500/30" };
   if (plan === "PRO") return { label: "PRO", cls: "bg-purple-500/20 text-purple-300 border border-purple-500/30" };
   return { label: "FREE", cls: "bg-white/5 text-gray-400 border border-white/10" };
@@ -422,6 +422,25 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     );
   };
 
+  const isPlanExpired = accountSubscription !== null &&
+    accountSubscription.planName !== "FREE" &&
+    accountSubscription.status !== "" &&
+    accountSubscription.status !== "active" &&
+    accountSubscription.status !== "trialing";
+
+  // Per-workspace: only block workspaces the current user OWNS when their plan expires.
+  // Member/viewer workspaces belong to another owner whose subscription may still be active.
+  const isCurrentUserOwnerOf = (workspace: Workspace): boolean =>
+    workspace.ownerId === user?.userId || workspace.ownerId === (user as any)?.id;
+
+  const isWorkspaceDisabled = (workspace: Workspace): boolean =>
+    isPlanExpired && isCurrentUserOwnerOf(workspace);
+
+  const getWorkspaceErrorMsg = (workspace: Workspace): string | null =>
+    isWorkspaceDisabled(workspace)
+      ? "Plan validity has ended. Please update your subscription to restore access."
+      : null;
+
   if (loading) {
     return (
       <div className="min-h-screen overflow-y-auto bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
@@ -518,11 +537,14 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             </div>
           ) : (
             <>
-              {workspaces.map((workspace) => (
+              {workspaces.map((workspace) => {
+                const disabled = isWorkspaceDisabled(workspace);
+                const errMsg = getWorkspaceErrorMsg(workspace);
+                return (
                 <div
                   key={workspace.id}
-                  onClick={() => !selecting && handleSelectWorkspace(workspace.workspaceId)}
-                  className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6 hover:bg-white/10 hover:border-purple-400/50 transition-all cursor-pointer group"
+                  onClick={() => !selecting && !disabled && handleSelectWorkspace(workspace.workspaceId)}
+                  className={`bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6 transition-all group ${disabled ? "opacity-60 cursor-not-allowed" : "hover:bg-white/10 hover:border-purple-400/50 cursor-pointer"}`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-start space-x-4 flex-1 min-w-0">
@@ -550,8 +572,8 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                               {workspace.memberCount} member{workspace.memberCount !== 1 ? "s" : ""}
                             </span>
                           </span>
-                          <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${workspaceStatusBadge(workspace)?.cls}`}>
-                            {workspaceStatusBadge(workspace)?.label}
+                          <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${accountPlanBadge(accountSubscription?.planName).cls}`}>
+                            {accountPlanBadge(accountSubscription?.planName).label}
                           </span>
                         </div>
                       </div>
@@ -566,14 +588,23 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                           <Trash size={18} />
                         </button>
                       )}
-                      <ChevronRight
-                        size={24}
-                        className="text-gray-400 group-hover:text-purple-400 transition-colors flex-shrink-0"
-                      />
+                      {!disabled && (
+                        <ChevronRight
+                          size={24}
+                          className="text-gray-400 group-hover:text-purple-400 transition-colors flex-shrink-0"
+                        />
+                      )}
                     </div>
                   </div>
+                  {errMsg && (
+                    <div className="mt-3 pt-3 border-t border-red-500/20 flex items-center gap-1.5 text-xs text-red-400">
+                      <AlertTriangle size={12} className="flex-shrink-0" />
+                      <span>{errMsg}</span>
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </>
           )}
         </div>

@@ -4,6 +4,7 @@ import { Panel, AnnotationsDisplay, AxiomSubsection } from './common';
 import { ClassExpressionDialog, MultiClassSelectorDialog, MultiPropertySelectorDialog, IRIEditorDialog, IndividualSelectorDialog, RestrictionData } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { notificationService } from '../../services/notificationService';
 import { useAuth } from '../../custom-hook/useAuth';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual } from '../../types';
 
@@ -339,11 +340,11 @@ const ClassEditor: React.FC<{
       // TODO: Add backend support for IRI renaming
       if (newIRI !== item.id) {
         console.warn("IRI renaming requires backend support - not yet implemented");
-        alert("IRI renaming is not yet supported. Only label changes are saved.");
+        notificationService.warning("Not Supported", "IRI renaming is not yet supported. Only label changes are saved.");
       }
     } catch (error) {
       console.error("Failed to update entity:", error);
-      alert("Failed to update entity. See console for details.");
+      notificationService.error("Update Failed", "Failed to update entity. See console for details.");
     }
   };
 
@@ -828,7 +829,7 @@ const ClassEditor: React.FC<{
 
     if (!editorType) {
       console.error("[ClassEditor] handleEditorConfirm - editorType is null!");
-      alert("Error: Editor type not set. Please try again.");
+      notificationService.error("Editor Error", "Editor type not set. Please try again.");
       return;
     }
 
@@ -992,8 +993,23 @@ const ClassEditor: React.FC<{
             // Wait for GraphDB to process the deletion
             await new Promise((resolve) => setTimeout(resolve, 500));
 
-            // Add the new complex expression axiom
-            await ontologyMutationService.addAxiom(projectId, item.id, editorType, expression);
+            // Re-add the complex expression using the same structured path as handleAddAxiom
+            const axiomTypeForEdit = editorType as "EquivalentTo" | "SubClassOf" | "DisjointWith";
+            const isIRI = expression.startsWith("http://") || expression.startsWith("https://") || expression.startsWith("urn:");
+            if (isIRI) {
+              await ontologyMutationService.addAxiom(projectId, item.id, axiomTypeForEdit, expression);
+            } else {
+              const parsed = parseManchesterExpression(expression);
+              if (parsed && axiomTypeForEdit !== "DisjointWith") {
+                if (parsed.expressionType === "intersection") {
+                  await ontologyMutationService.addIntersection(projectId, item.id, parsed.iris, axiomTypeForEdit as "EquivalentTo" | "SubClassOf");
+                } else {
+                  await ontologyMutationService.addUnion(projectId, item.id, parsed.iris, axiomTypeForEdit as "EquivalentTo" | "SubClassOf");
+                }
+              } else {
+                throw new Error(`Cannot re-add expression: "${expression}". Use a class IRI, intersection, or union.`);
+              }
+            }
 
             // Reload details to reflect the changes
             console.log("[ClassEditor] Reloading class details after complex expression edit");
@@ -1063,7 +1079,7 @@ const ClassEditor: React.FC<{
       }
     } catch (error) {
       console.error("[ClassEditor] handleEditorConfirm failed:", error);
-      alert(`Failed to save axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Save Failed", `Failed to save axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsEditorOpen(false);
       setEditorType(null);
@@ -1072,6 +1088,51 @@ const ClassEditor: React.FC<{
       setEditorInitialTab(undefined);
       setEditorInitialRestrictionData(undefined);
     }
+  };
+
+  // Recursively search for a class by exact IRI or label in the hierarchy tree
+  const findClassIriByLabelOrIri = (labelOrIri: string, nodes: TreeNode[]): string | null => {
+    for (const node of nodes) {
+      if (node.id === labelOrIri || node.label === labelOrIri) return node.id;
+      if (node.children?.length) {
+        const found = findClassIriByLabelOrIri(labelOrIri, node.children);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  // Parse a simple Manchester intersection ("A and B") or union ("A or B") expression.
+  // Each operand must be either a full IRI or a class label resolvable in the hierarchy.
+  // Returns null when the expression cannot be reliably parsed.
+  const parseManchesterExpression = (
+    expr: string,
+  ): { expressionType: "intersection" | "union"; iris: string[] } | null => {
+    const trimmed = expr.trim();
+    const andParts = trimmed.split(/\s+and\s+/i);
+    const orParts = trimmed.split(/\s+or\s+/i);
+
+    const tryResolve = (parts: string[]): string[] | null => {
+      const iris: string[] = [];
+      for (const part of parts) {
+        const p = part.trim();
+        if (!p) return null;
+        const iri = findClassIriByLabelOrIri(p, classHierarchy);
+        if (!iri) return null;
+        iris.push(iri);
+      }
+      return iris.length >= 2 ? iris : null;
+    };
+
+    if (andParts.length >= 2) {
+      const iris = tryResolve(andParts);
+      if (iris) return { expressionType: "intersection", iris };
+    }
+    if (orParts.length >= 2) {
+      const iris = tryResolve(orParts);
+      if (iris) return { expressionType: "union", iris };
+    }
+    return null;
   };
 
   const handleAddAxiom = async (type: AxiomType, definition: string, restrictionData?: RestrictionData) => {
@@ -1121,7 +1182,7 @@ const ClassEditor: React.FC<{
       }
 
       if (!item.id) {
-        alert("Cannot add axiom: class IRI is not yet available. Please wait for the class to finish loading.");
+        notificationService.warning("Not Ready", "Cannot add axiom: class IRI is not yet available. Please wait for the class to finish loading.");
         return;
       }
 
@@ -1185,16 +1246,29 @@ const ClassEditor: React.FC<{
           throw mutationError;
         }
       } else {
-        if (!item.id) {
-          alert("Cannot add axiom: class IRI is not yet available. Please wait for the class to finish loading.");
-          return;
-        }
         if (!definition.trim()) {
-          alert("Cannot add axiom: expression is empty.");
+          notificationService.warning("Empty Expression", "Cannot add axiom: expression is empty.");
           return;
         }
-        // For complex Manchester Syntax expressions, use addAxiom (requires backend Manchester parser)
-        await ontologyMutationService.addAxiom(projectId, item.id, type, definition);
+        if (type === "DisjointWith") {
+          notificationService.warning("Not Supported", "Complex expressions are not supported for Disjoint With. Please select a class from the hierarchy.");
+          return;
+        }
+        // Try to parse as a structured intersection/union expression (e.g., "Horse and Animal")
+        const parsed = parseManchesterExpression(definition);
+        if (parsed) {
+          console.log(`[ClassEditor] Parsed ${parsed.expressionType} expression:`, parsed.iris);
+          if (parsed.expressionType === "intersection") {
+            await ontologyMutationService.addIntersection(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
+          } else {
+            await ontologyMutationService.addUnion(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
+          }
+        } else {
+          notificationService.warning("Unsupported Expression",
+            `Cannot add: "${definition}". Supported: a single class IRI, "ClassA and ClassB" (intersection), "ClassA or ClassB" (union), or use the Restriction tab.`
+          );
+          return;
+        }
       }
       // Wait for GraphDB to index the new axiom (increased delay for SPARQL consistency)
       console.log("[ClassEditor] Waiting 800ms for GraphDB to index...");
@@ -1207,7 +1281,7 @@ const ClassEditor: React.FC<{
       // onUpdate(item); // We might not need this if we reload details
     } catch (error) {
       console.error("[ClassEditor] Failed to add axiom:", error);
-      alert(`Failed to add axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Axiom Failed", `Failed to add axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
@@ -1319,7 +1393,7 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("[ClassEditor] Failed to delete axiom:", error);
       console.error("[ClassEditor] Delete axiom details:", { type, id, classIri: item.id });
-      alert(`Failed to delete axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Delete Failed", `Failed to delete axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
@@ -1439,8 +1513,17 @@ const ClassEditor: React.FC<{
               break;
           }
         } else {
-          // For complex Manchester Syntax expressions
-          await ontologyMutationService.addAxiom(projectId, item.id, type, newDefinition);
+          // For complex expressions, parse intersection/union; otherwise report an error
+          const parsed = parseManchesterExpression(newDefinition);
+          if (parsed && type !== "DisjointWith") {
+            if (parsed.expressionType === "intersection") {
+              await ontologyMutationService.addIntersection(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
+            } else {
+              await ontologyMutationService.addUnion(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
+            }
+          } else {
+            throw new Error(`Cannot save expression: "${newDefinition}". Use a class IRI, intersection (A and B), or union (A or B).`);
+          }
         }
       }
 
@@ -1451,7 +1534,7 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] Edit completed successfully");
     } catch (error) {
       console.error("[ClassEditor] Failed to edit axiom:", error);
-      alert(`Failed to edit axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Edit Failed", `Failed to edit axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
@@ -1466,7 +1549,7 @@ const ClassEditor: React.FC<{
 
       if (classIris.length < 1) {
         console.warn("[ClassEditor] Please select at least 1 class");
-        alert("Please select at least 1 class");
+        notificationService.warning("Selection Required", "Please select at least 1 class.");
         return;
       }
 
@@ -1490,7 +1573,7 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] loadClassDetails completed after disjoint with");
     } catch (error) {
       console.error("[ClassEditor] Failed to add disjoint with:", error);
-      alert(`Failed to add disjoint with: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Failed", `Failed to add disjoint with: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsDisjointWithOpen(false);
       setEditingDisjointWithId(undefined);
@@ -1555,7 +1638,7 @@ const ClassEditor: React.FC<{
 
       if (memberIris.length < 2) {
         console.warn("[ClassEditor] Disjoint Union requires at least 2 classes");
-        alert("Please select at least 2 classes for the disjoint union.");
+        notificationService.warning("Selection Required", "Please select at least 2 classes for the disjoint union.");
         return;
       }
 
@@ -1578,7 +1661,7 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] loadClassDetails completed after disjoint union");
     } catch (error) {
       console.error("[ClassEditor] Failed to add disjoint union:", error);
-      alert(`Failed to add disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Failed", `Failed to add disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsDisjointUnionOpen(false);
       setEditingDisjointUnionId(undefined);
@@ -1621,7 +1704,7 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] loadClassDetails completed after delete disjoint union");
     } catch (error) {
       console.error("[ClassEditor] Failed to delete disjoint union:", error);
-      alert(`Failed to delete disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Delete Failed", `Failed to delete disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
@@ -1657,7 +1740,7 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] loadClassDetails completed after delete has key");
     } catch (error) {
       console.error("[ClassEditor] Failed to delete has key:", error);
-      alert(`Failed to delete has key: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Delete Failed", `Failed to delete has key: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
@@ -1670,7 +1753,7 @@ const ClassEditor: React.FC<{
     try {
       if (propertyIris.length < 1) {
         console.warn("[ClassEditor] HasKey requires at least 1 property");
-        alert("Please select at least 1 property for the key.");
+        notificationService.warning("Selection Required", "Please select at least 1 property for the key.");
         return;
       }
 
@@ -1692,7 +1775,7 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] loadClassDetails completed after has key");
     } catch (error) {
       console.error("[ClassEditor] Failed to add has key:", error);
-      alert(`Failed to add has key: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Failed", `Failed to add has key: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsHasKeyOpen(false);
       setEditingHasKeyId(undefined);
@@ -1722,7 +1805,7 @@ const ClassEditor: React.FC<{
       }
     } catch (error) {
       console.error("[ClassEditor] Failed to add instance:", error);
-      alert(`Failed to add instance: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Failed", `Failed to add instance: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
@@ -1743,7 +1826,7 @@ const ClassEditor: React.FC<{
       }
     } catch (error) {
       console.error("[ClassEditor] Failed to remove instance:", error);
-      alert(`Failed to remove instance: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Remove Failed", `Failed to remove instance: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
@@ -1776,7 +1859,7 @@ const ClassEditor: React.FC<{
       await loadClassDetails();
     } catch (error) {
       console.error("[ClassEditor] Failed to delete GCA:", error);
-      alert(`Failed to delete general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Delete Failed", `Failed to delete general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
@@ -1784,20 +1867,31 @@ const ClassEditor: React.FC<{
     console.log("[ClassEditor] GCA confirm:", { expression, editing: editingGCAId });
     try {
       if (editingGCAId) {
-        // Edit existing GCA - delete old and add new
         await ontologyMutationService.deleteAxiom(projectId, editingGCAId);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      // Add the new GCA - the expression should be in format "AnonymousExpression SubClassOf ClassName"
-      // For now, we'll add it as a SubClassOf axiom mentioning this class
-      await ontologyMutationService.addAxiom(projectId, item.id, "GeneralClassAxiom", expression);
+      // Parse expression: supports "A and B" (intersection) or "A or B" (union)
+      // These create GCAs of the form: (A and B) rdfs:subClassOf <classIri>
+      const parsed = parseManchesterExpression(expression);
+      if (!parsed) {
+        notificationService.warning("Unsupported Expression",
+          `Cannot create GCA: "${expression}". Supported: "ClassA and ClassB" (intersection) or "ClassA or ClassB" (union). Class names must match labels or IRIs in the hierarchy.`
+        );
+        return;
+      }
+
+      if (parsed.expressionType === "intersection") {
+        await ontologyMutationService.addGCAIntersection(projectId, item.id, parsed.iris);
+      } else {
+        await ontologyMutationService.addGCAUnion(projectId, item.id, parsed.iris);
+      }
 
       await new Promise((resolve) => setTimeout(resolve, 500));
       await loadClassDetails();
     } catch (error) {
       console.error("[ClassEditor] Failed to save GCA:", error);
-      alert(`Failed to save general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Save Failed", `Failed to save general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsGCAEditorOpen(false);
       setEditingGCAId(undefined);
@@ -1842,7 +1936,7 @@ const ClassEditor: React.FC<{
       }
     } catch (error) {
       console.error("[ClassEditor] Failed to add instances:", error);
-      alert(`Failed to add instances: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Failed", `Failed to add instances: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsInstancesOpen(false);
       setEditingInstanceId(undefined);

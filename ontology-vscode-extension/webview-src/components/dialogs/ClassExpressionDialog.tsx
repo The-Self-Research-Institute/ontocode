@@ -1081,34 +1081,22 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           {activeTab === 'classExpression' && (
             <div className="h-full p-6 flex flex-col">
               <div className="flex-1 flex flex-col min-h-0">
-                <label className="text-sm font-semibold text-gray-700 mb-2">Manchester OWL Syntax</label>
+                <label className="text-sm font-semibold text-gray-700 mb-2">Class Expression</label>
                 <textarea
                   value={manchesterExpression}
                   onChange={(e) => setManchesterExpression(e.target.value)}
-                  placeholder="e.g., Cell and hasPart some Nucleus&#10;      Person and hasAge some xsd:integer&#10;      hasSibling min 2 Person"
+                  placeholder="e.g., Horse and Animal&#10;      Cat or Dog&#10;      http://example.org/MyClass"
                   className="flex-1 p-4 border border-gray-300 rounded font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none bg-white text-black"
                 />
               </div>
-              <div className="mt-4 p-4 bg-blue-50 rounded border border-blue-200">
-                <p className="text-xs font-semibold text-blue-900 mb-2">KEYWORDS</p>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {manchesterKeywords.map(kw => (
-                    <button
-                      key={kw}
-                      onClick={() => setManchesterExpression(prev => prev + (prev ? ' ' : '') + kw + ' ')}
-                      className="px-3 py-1 bg-white hover:bg-blue-100 text-blue-900 text-xs font-mono rounded border border-blue-300 transition-colors"
-                    >
-                      {kw}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs font-semibold text-blue-900 mb-1.5">EXAMPLES</p>
-                <ul className="text-xs text-blue-800 space-y-1">
-                  <li className="font-mono">• Cell and hasPart some Nucleus</li>
-                  <li className="font-mono">• Person and hasAge some xsd:integer</li>
-                  <li className="font-mono">• hasSibling min 2 Person</li>
-                  <li className="font-mono">• (Cat or Dog) and hasFur value true</li>
+              <div className="mt-4 p-4 bg-amber-50 rounded border border-amber-200">
+                <p className="text-xs font-semibold text-amber-900 mb-2">SUPPORTED EXPRESSIONS</p>
+                <ul className="text-xs text-amber-800 space-y-1 mb-3">
+                  <li className="font-mono">• ClassA and ClassB [and ClassC…]  (intersection)</li>
+                  <li className="font-mono">• ClassA or ClassB [or ClassC…]    (union)</li>
+                  <li className="font-mono">• http://example.org/ClassName      (single class IRI)</li>
                 </ul>
+                <p className="text-xs text-amber-700">Class names must match labels or IRIs in the class hierarchy. For restrictions (some, only, min…) use the <strong>Restriction</strong> tab instead.</p>
               </div>
             </div>
           )}

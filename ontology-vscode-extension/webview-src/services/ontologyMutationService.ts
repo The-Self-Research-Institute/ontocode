@@ -9,6 +9,11 @@ export interface MutationOp {
   value?: string;
   target?: string;
   classIri?: string;
+  // Restriction and axiom fields (match backend MutationOp record)
+  restrictionType?: string;
+  cardinality?: number;
+  axiomType?: string;
+  oldValue?: string;
 }
 
 // Global flag to control real-time sync behavior
@@ -712,10 +717,69 @@ export const ontologyMutationService = {
   async addAxiom(projectId: string, classIri: string, type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith' | 'GeneralClassAxiom', expression: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addAxiom',
+      iri: classIri,
       classIri,
-      target: expression, // We use 'target' for the expression
-      value: type // We use 'value' for the axiom type
+      target: expression,
+      value: type
     }], false); // Apply immediately
+  },
+
+  /**
+   * Add a General Class Axiom where an anonymous intersection is the subject:
+   * (A and B) rdfs:subClassOf <classIri>
+   */
+  async addGCAIntersection(projectId: string, classIri: string, memberIris: string[]): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addGCAIntersection',
+      iri: classIri,
+      value: memberIris.join(',')
+    }], false);
+  },
+
+  /**
+   * Add a General Class Axiom where an anonymous union is the subject:
+   * (A or B) rdfs:subClassOf <classIri>
+   */
+  async addGCAUnion(projectId: string, classIri: string, memberIris: string[]): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addGCAUnion',
+      iri: classIri,
+      value: memberIris.join(',')
+    }], false);
+  },
+
+  /**
+   * Add an intersection class expression (classIri EquivalentTo/SubClassOf: A and B and ...)
+   */
+  async addIntersection(
+    projectId: string,
+    classIri: string,
+    memberIris: string[],
+    axiomType: 'EquivalentTo' | 'SubClassOf'
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addIntersection',
+      iri: classIri,
+      value: memberIris.join(','),
+      axiomType
+    }], false);
+  },
+
+  /**
+   * Add a union class expression (classIri EquivalentTo/SubClassOf: A or B or ...)
+   */
+  async addUnion(
+    projectId: string,
+    classIri: string,
+    memberIris: string[],
+    axiomType: 'EquivalentTo' | 'SubClassOf'
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addUnion',
+      iri: classIri,
+      value: memberIris.join(','),
+      axiomType
+    }], false);
   },
 
   /**

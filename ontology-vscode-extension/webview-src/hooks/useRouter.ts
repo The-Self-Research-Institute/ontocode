@@ -156,11 +156,10 @@ export const useRouter = (
 
             const route = event.state as RouteState | null;
 
-            // Never navigate back to workspace via browser history — it would re-trigger
-            // workspace selection mid-session. Pin the user on the current route instead.
+            // If history leads back to workspace, trigger workspace selection properly
             if (route?.view === 'workspace') {
-                console.log('[Router] Blocked back navigation to workspace history entry');
-                window.history.replaceState(currentRoute, '', generateUrlPath(currentRoute));
+                console.log('[Router] Back navigation to workspace — navigating to workspace selection');
+                onRouteChange({ view: 'workspace' }, true);
                 return;
             }
 
@@ -233,11 +232,16 @@ export const useRouter = (
         console.log('[Router] Route history size:', historyStackRef.current.length);
     }, [currentRoute, hasRouteChanged, saveRouteHistory]);
 
-    // Navigate back programmatically
+    // Navigate back programmatically; falls back to workspace selection if no history
     const goBack = useCallback(() => {
-        console.log('[Router] Programmatic back navigation');
-        window.history.back();
-    }, []);
+        console.log('[Router] Programmatic back navigation, stack size:', historyStackRef.current.length);
+        if (historyStackRef.current.length > 1) {
+            window.history.back();
+        } else {
+            // Nothing to go back to — navigate to workspace selection
+            onRouteChange({ view: 'workspace' }, false);
+        }
+    }, [onRouteChange]);
 
     // Navigate forward programmatically
     const goForward = useCallback(() => {

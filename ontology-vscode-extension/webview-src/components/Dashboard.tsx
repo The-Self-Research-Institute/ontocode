@@ -52,6 +52,7 @@ import {
   Bug,
   FolderOpen,
   LayoutDashboard,
+  AlertTriangle,
 } from "lucide-react";
 import apiClient, { getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -1290,7 +1291,7 @@ const TopMenuBar = ({
                       </div>
                     )}
                     <div className="border-t border-gray-100 my-1" />
-                    <button
+                    {/* <button
                       onClick={(e) => {
                         e.preventDefault();
                         if (currentProjectId) {
@@ -1307,7 +1308,7 @@ const TopMenuBar = ({
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Share
-                    </button>
+                    </button> */}
                     <button
                       onClick={(e) => {
                         e.preventDefault();
@@ -1397,6 +1398,7 @@ const OpenFileDialog = ({
   onPartitionStrategyChange,
   isWorkspaceMode,
   onRefresh,
+  isPlanExpired,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -1417,6 +1419,7 @@ const OpenFileDialog = ({
   isWorkspaceMode?: boolean;
   onRefresh?: () => void;
   onCreateNewFile?: () => void;
+  isPlanExpired?: boolean;
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const canOpenLocalFile = typeof window !== "undefined" && !!(window as any).vscode;
@@ -1525,6 +1528,12 @@ const OpenFileDialog = ({
             )}
           </div>
         </div>
+        {isPlanExpired && (
+          <div className="mx-3 mt-3 px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 flex items-center gap-2 text-xs text-red-400">
+            <AlertTriangle size={13} className="flex-shrink-0" />
+            <span>Plan validity has ended. Please renew your subscription to open files.</span>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto">
           {filteredFiles.length > 0 ? (
             <div className="p-3">
@@ -1544,6 +1553,7 @@ const OpenFileDialog = ({
                     <div
                       key={file.id}
                       onClick={() => {
+                        if (isPlanExpired) return;
                         if (!isActive) {
                           if (parentProjectId && onLoadProjectFile) {
                             onLoadProjectFile(file.id, file.filename);
@@ -1553,8 +1563,12 @@ const OpenFileDialog = ({
                         }
                         onClose();
                       }}
-                      className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${
-                        isActive ? "selected" : "hover-overlay border border-transparent"
+                      className={`flex items-center gap-3 p-2 px-3 rounded-md transition-all ${
+                        isPlanExpired
+                          ? "opacity-50 cursor-not-allowed"
+                          : isActive
+                            ? "selected cursor-pointer"
+                            : "hover-overlay border border-transparent cursor-pointer"
                       }`}
                     >
                       <FileText size={18} className={isSharedFile ? "text-blue-500" : "text-accent"} />
@@ -1600,7 +1614,7 @@ const OpenFileDialog = ({
         <div className="p-3 border-t space-y-2" style={{ borderColor: "var(--color-border)" }}>
           <button
             onClick={handleCreateNewFile}
-            disabled={!canOpenLocalFile}
+            disabled={!canOpenLocalFile || isPlanExpired}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               borderColor: "var(--color-border)",
@@ -1612,7 +1626,7 @@ const OpenFileDialog = ({
           </button>
           <button
             onClick={handleOpenLocalFile}
-            disabled={!canOpenLocalFile}
+            disabled={!canOpenLocalFile || isPlanExpired}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               borderColor: "var(--color-border)",
@@ -2085,8 +2099,41 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleViewOnlyAction = () => setShowProPromptType(isProjectViewerRole ? 'viewer' : 'edit');
   const handleExportProAction = () => setShowProPromptType('export');
   const [showThemeSettings, setShowThemeSettings] = useState(false);
+  const [isPlanExpired, setIsPlanExpired] = useState(false);
+  const isCurrentWorkspaceOwner = user?.workspaceRole == null || normalizeRole(user?.workspaceRole ?? "") === "OWNER";
+  const openFileIsPlanExpired = isPlanExpired && isCurrentWorkspaceOwner;
   const deploymentType = localStorage.getItem("deploymentType") as "self-hosted" | "cloud" | null;
   const isCloudDeployment = deploymentType === "cloud";
+
+  useEffect(() => {
+    apiClient.get("/api/billing/subscription")
+      .then((res: any) => {
+        const d = res?.data || res;
+        const status = d.status || "";
+        const planName = (d.planName || "FREE").toUpperCase();
+        setIsPlanExpired(
+          planName !== "FREE" &&
+          status !== "" &&
+          status !== "active" &&
+          status !== "trialing"
+        );
+      })
+      .catch(() => {});
+  }, []);
+
+  // If the current workspace's owner has an expired paid plan, redirect back to workspace selection.
+  useEffect(() => {
+    const wid = user?.workspaceId;
+    if (!wid) return;
+    apiClient.get(`/api/billing/workspace-owner-status/${wid}`)
+      .then((res: any) => {
+        const d = res?.data || res;
+        if (d.isExpired) {
+          onGoToWorkspace?.();
+        }
+      })
+      .catch(() => {});
+  }, [user?.workspaceId]);
 
   const applyInstanceCountsToTree = useCallback(
     (nodes: TreeNode[], counts: Record<string, { direct?: number; inferred?: number; total?: number }>): TreeNode[] => {
@@ -4916,6 +4963,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     setSelectedClassIndividualDetails(null);
     loadClassInstances();
   }, [loadClassInstances]);
+
+  // Refresh instances whenever the IndividualsByClass tab becomes active (handles stale data
+  // after individuals are created in the Entities tab while this tab was in the background)
+  useEffect(() => {
+    if (mainTab === "IndividualsByClass" && selectedClassForIndividuals) {
+      loadClassInstances();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainTab]);
 
   const refreshSelectedClassIndividualDetails = useCallback(async () => {
     if (!projectId || !selectedClassIndividual?.id) {
@@ -14245,6 +14301,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             : undefined
         }
         onCreateNewFile={() => { autoLoadNewFileRef.current = true; }}
+        isPlanExpired={openFileIsPlanExpired}
       />
       <DuplicateFileDialog
         isOpen={duplicatePrompt.isOpen}

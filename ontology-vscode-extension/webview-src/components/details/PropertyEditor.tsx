@@ -4,6 +4,7 @@ import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
 import { ManchesterSyntaxEditor, PropertyChainDialog, IRIEditorDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { notificationService } from '../../services/notificationService';
 import type { Property } from '../../types';
 
 type PropertyUsageItem = {
@@ -371,11 +372,11 @@ const PropertyEditor: React.FC<{
             }
             if (newIRI !== item.id) {
                 console.warn("IRI renaming requires backend support - not yet implemented");
-                alert("IRI renaming is not yet supported. Only label changes are saved.");
+                notificationService.warning("Not Supported", "IRI renaming is not yet supported. Only label changes are saved.");
             }
         } catch (error) {
             console.error("Failed to update property:", error);
-            alert("Failed to update property. See console for details.");
+            notificationService.error("Update Failed", "Failed to update property. See console for details.");
         }
     };
 
