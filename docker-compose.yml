@@ -194,8 +194,9 @@ services:
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
-      # Gateway buffers large file uploads (224MB+) in memory - needs generous heap
-      JAVA_OPTS: -Xms256m -Xmx1536m -XX:+UseG1GC
+      # Gateway streams file uploads via Netty — does not buffer bodies in heap.
+      # codec buffer reduced to 64MB (application.properties). 768m heap is sufficient.
+      JAVA_OPTS: -Xms128m -Xmx768m -XX:+UseG1GC
     depends_on:
       auth:
         condition: service_started
@@ -206,7 +207,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2g
+          memory: 1500m
 
   # Ontology Editor Service
   owl-editor:
@@ -239,6 +240,8 @@ services:
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
       JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
       JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+      # Import concurrency: 1 on t3.large, 2 on t3.xlarge, 3 on t3.2xlarge
+      ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-1}
     depends_on:
       mongo:
         condition: service_healthy
