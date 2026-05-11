@@ -207,7 +207,16 @@ public class ProjectController {
             log.info("[createProject] User: {}, userId: {}, email: {}, workspaceId: {}", 
                 username, user.getId(), user.getEmail(), request.workspaceId);
             
-            // FREE plan members are view-only — only the workspace owner can create projects
+            // Workspace VIEWERs cannot create projects
+            Optional<self.research.ontology.auth.model.Workspace> wsForRoleCheck = workspaceService.getWorkspace(request.workspaceId);
+            if (wsForRoleCheck.isPresent()) {
+                self.research.ontology.auth.model.Workspace.WorkspaceMember wsm = wsForRoleCheck.get().getMember(user.getId());
+                if (wsm != null && wsm.getRole() == self.research.ontology.auth.model.Workspace.WorkspaceRole.VIEWER) {
+                    return ResponseEntity.status(403).body(Map.of("error", "Workspace viewers cannot create projects"));
+                }
+            }
+
+            // FREE plan workspace — only the owner can create projects
             var viewOnlyBlock = checkFreeViewOnly(request.workspaceId, user.getId());
             if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
 
@@ -295,32 +304,41 @@ public class ProjectController {
             User user = userOpt.get();
             List<Project> projects = projectService.getWorkspaceProjects(workspaceId);
             
-            // Filter projects based on workspace role and project privacy.
-            // OWNER/ADMIN: see all shared projects (>1 member) plus their own private ones.
-            // MEMBER: only sees projects they are explicitly added to.
+            // Role-based project visibility:
+            // OWNER: sees all projects including private (restricted access indicator set below)
+            // ADMIN: sees shared (>1 member) projects plus own
+            // MEMBER/VIEWER: sees only projects explicitly added to
             Optional<Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
-            boolean isWsOwnerOrAdmin = false;
+            boolean isWsOwner = false;
+            boolean isWsAdmin = false;
             if (wsOpt.isPresent()) {
                 Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
                 if (wsMember != null) {
-                    isWsOwnerOrAdmin = wsMember.getRole() == Workspace.WorkspaceRole.OWNER
-                            || wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
+                    isWsOwner = wsMember.getRole() == Workspace.WorkspaceRole.OWNER;
+                    isWsAdmin = wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
                 }
             }
-            if (isWsOwnerOrAdmin) {
-                // Owners and admins see all shared projects (> 1 member) plus their own
+            if (isWsOwner) {
+                // Owner sees all projects (no filter)
+            } else if (isWsAdmin) {
                 projects = projects.stream()
                         .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
                         .collect(Collectors.toList());
             } else {
-                // Regular members only see projects they are explicitly added to
                 projects = projects.stream()
                         .filter(p -> p.hasMember(user.getId()))
                         .collect(Collectors.toList());
             }
 
+            final boolean isOwner = isWsOwner;
+            final String callerId = user.getId();
             List<Map<String, Object>> projectDTOs = projects.stream()
-                    .map(this::convertToDTO)
+                    .map(p -> {
+                        Map<String, Object> dto = convertToDTO(p);
+                        boolean restricted = isOwner && !p.hasMember(callerId) && p.getMembers().size() <= 1;
+                        dto.put("isPrivateRestricted", restricted);
+                        return dto;
+                    })
                     .collect(Collectors.toList());
 
             return ResponseEntity.ok(Map.of(
@@ -409,7 +427,8 @@ public class ProjectController {
             
             // Check if user has no workspace - use user-based storage
             boolean hasNoWorkspace = effectiveWorkspaceId == null || effectiveWorkspaceId.isEmpty();
-            
+            boolean isWsOwnerForDTO = false; // set inside workspace branch if user is workspace owner
+
             if (hasNoWorkspace) {
                 log.info("[getMyProjects] User {} has no workspace - fetching user-based projects", username);
                 // Get user's own projects (not workspace-based)
@@ -446,22 +465,29 @@ public class ProjectController {
                         p.getProjectId(), p.getName(), p.getOwnerId(), p.getMembers().size(), p.getActiveFiles().size());
                 }
                 
-                // OWNER/ADMIN: see all shared projects plus their own.
-                // MEMBER: only sees projects they are explicitly added to.
+                // Role-based project visibility:
+                // OWNER: sees all projects including private (restricted access indicator set below)
+                // ADMIN: sees shared (>1 member) projects plus own
+                // MEMBER/VIEWER: sees only projects explicitly added to
                 Optional<Workspace> wsOpt = workspaceService.getWorkspace(effectiveWorkspaceId);
-                boolean isWsOwnerOrAdmin = false;
+                boolean isWsOwner = false;
+                boolean isWsAdmin = false;
                 if (wsOpt.isPresent()) {
                     Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
                     if (wsMember != null) {
-                        isWsOwnerOrAdmin = wsMember.getRole() == Workspace.WorkspaceRole.OWNER
-                                || wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
+                        isWsOwner = wsMember.getRole() == Workspace.WorkspaceRole.OWNER;
+                        isWsAdmin = wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
                     }
                 }
-                if (isWsOwnerOrAdmin) {
+                isWsOwnerForDTO = isWsOwner;
+                if (isWsOwner) {
+                    // Owner sees all projects (no filter)
+                    log.info("[getMyProjects] No filter for workspace owner {}, showing all {} projects", username, projects.size());
+                } else if (isWsAdmin) {
                     projects = projects.stream()
                             .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
                             .collect(Collectors.toList());
-                    log.info("[getMyProjects] Filtered to {} projects for owner/admin {}", projects.size(), username);
+                    log.info("[getMyProjects] Filtered to {} projects for admin {}", projects.size(), username);
                 } else {
                     projects = projects.stream()
                             .filter(p -> p.hasMember(user.getId()))
@@ -469,9 +495,17 @@ public class ProjectController {
                     log.info("[getMyProjects] Filtered to {} projects for member {}", projects.size(), username);
                 }
             }
-            
+
+            final boolean isOwnerForDTO = isWsOwnerForDTO;
+            final String callerUserId = user.getId();
             List<Map<String, Object>> projectDTOs = projects.stream()
-                    .map(this::convertToDTO)
+                    .map(p -> {
+                        Map<String, Object> dto = convertToDTO(p);
+                        // Private projects the workspace owner can see metadata but cannot enter
+                        boolean restricted = isOwnerForDTO && !p.hasMember(callerUserId) && p.getMembers().size() <= 1;
+                        dto.put("isPrivateRestricted", restricted);
+                        return dto;
+                    })
                     .collect(Collectors.toList());
 
             return ResponseEntity.ok(Map.of(
@@ -1742,17 +1776,18 @@ public class ProjectController {
      * FREE plan members get view-only access — they cannot create, modify, or delete content.
      */
     private Optional<ResponseEntity<?>> checkFreeViewOnly(String workspaceId, String userId) {
-        Optional<User> userOpt = userRepository.findById(userId);
-        if (userOpt.isEmpty()) return Optional.empty();
-        String plan = userOpt.get().getSubscriptionPlanName();
-        if (plan == null || "FREE".equalsIgnoreCase(plan)) {
-            // Workspace owner can always edit their own workspace content on any plan
-            Optional<self.research.ontology.auth.model.Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
-            if (wsOpt.isPresent() && userId.equals(wsOpt.get().getOwnerId())) {
-                return Optional.empty();
-            }
+        if (workspaceId == null) return Optional.empty();
+        Optional<self.research.ontology.auth.model.Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
+        if (wsOpt.isEmpty()) return Optional.empty();
+        String ownerId = wsOpt.get().getOwnerId();
+        // Workspace owner is always allowed on any plan
+        if (userId.equals(ownerId)) return Optional.empty();
+        // Members operate under the workspace owner's subscription plan
+        Optional<User> ownerOpt = userRepository.findById(ownerId);
+        String ownerPlan = ownerOpt.map(User::getSubscriptionPlanName).orElse(null);
+        if (ownerPlan == null || "FREE".equalsIgnoreCase(ownerPlan)) {
             return Optional.of(ResponseEntity.status(403).body(Map.of(
-                "error", "Your current plan is Free. Upgrade to Pro to edit ontologies.",
+                "error", "This workspace is on the Free plan. The workspace owner needs to upgrade to Pro to enable collaboration.",
                 "requiresUpgrade", true
             )));
         }
@@ -1793,6 +1828,42 @@ public class ProjectController {
             : (projectId != null ? projectService.getProject(projectId)
                 .map(Project::getWorkspaceId).orElse(null) : null);
         return checkFreeViewOnly(effectiveWorkspaceId, userId);
+    }
+
+    /**
+     * GET /api/projects/storage-usage
+     * Returns the authenticated user's account-level storage usage and plan limit.
+     */
+    @GetMapping("/storage-usage")
+    public ResponseEntity<?> getStorageUsage() {
+        try {
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.status(404).body(Map.of("error", "User not found"));
+            }
+            User user = userOpt.get();
+            String ownerId = user.getId();
+            String plan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "FREE";
+
+            long usedBytes = calculateOwnerStorageUsage(ownerId);
+            double limitGB = getStorageLimitForPlan(plan);
+            long limitBytes = limitGB == Double.MAX_VALUE ? Long.MAX_VALUE : (long) (limitGB * 1024 * 1024 * 1024);
+            double usedMB = usedBytes / (1024.0 * 1024.0);
+            double usagePercent = limitBytes == Long.MAX_VALUE ? 0 : Math.min(100.0, (usedBytes * 100.0) / limitBytes);
+
+            return ResponseEntity.ok(Map.of(
+                "usedBytes", usedBytes,
+                "usedMB", String.format("%.2f", usedMB),
+                "limitGB", limitGB == Double.MAX_VALUE ? -1 : limitGB,
+                "limitBytes", limitBytes == Long.MAX_VALUE ? -1 : limitBytes,
+                "planName", plan,
+                "usagePercent", String.format("%.1f", usagePercent)
+            ));
+        } catch (Exception e) {
+            log.error("Error fetching storage usage", e);
+            return ResponseEntity.status(500).body(Map.of("error", "Failed to fetch storage usage"));
+        }
     }
 
     /**

@@ -366,6 +366,46 @@ public class SubscriptionController {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // GET /api/billing/workspace-owner-status/{workspaceId}
+    // Returns the workspace owner's subscription status so members/viewers
+    // can be redirected out if the owner's plan has expired.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @GetMapping("/workspace-owner-status/{workspaceId}")
+    public ResponseEntity<?> getWorkspaceOwnerStatus(
+            @AuthenticationPrincipal UserDetails principal,
+            @PathVariable String workspaceId) {
+        try {
+            User caller = resolveUser(principal);
+            if (!workspaceService.hasAccess(workspaceId, caller.getId())) {
+                return ResponseEntity.status(403).body(Map.of("error", "No access to this workspace"));
+            }
+            var workspace = workspaceService.getWorkspace(workspaceId)
+                    .orElseThrow(() -> new IllegalStateException("Workspace not found"));
+            User owner = userRepository.findById(workspace.getOwnerId())
+                    .orElseThrow(() -> new IllegalStateException("Workspace owner not found"));
+
+            String planName = owner.getSubscriptionPlanName() != null ? owner.getSubscriptionPlanName() : "FREE";
+            String status   = owner.getSubscriptionStatus()   != null ? owner.getSubscriptionStatus()   : "";
+            boolean isExpired = !planName.equalsIgnoreCase("FREE")
+                    && !status.isEmpty()
+                    && !status.equalsIgnoreCase("active")
+                    && !status.equalsIgnoreCase("trialing");
+
+            return ResponseEntity.ok(Map.of(
+                    "planName",  planName,
+                    "status",    status,
+                    "isExpired", isExpired
+            ));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Failed to get workspace owner status for {}: {}", workspaceId, e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to check workspace status"));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────
 

@@ -503,6 +503,23 @@ public class OntologyMutationService {
             return buildIntersectionSparql(op.iri(), memberIris, op.axiomType());
         } else if (type.equals("deleteIntersection")) {
             return buildDeleteComplexExpressionSparql(op.iri(), op.target(), op.axiomType());
+        } else if (type.equals("addGCAIntersection")) {
+            // General Class Axiom: (A and B) SubClassOf <classIri>
+            // The anonymous intersection is the SUBJECT of SubClassOf
+            String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
+            if (memberIris.length < 2) {
+                log.warn("[MUTATION] GCA intersection requires at least 2 member classes");
+                return "";
+            }
+            return buildGCAIntersectionSparql(op.iri(), memberIris);
+        } else if (type.equals("addGCAUnion")) {
+            // General Class Axiom: (A or B) SubClassOf <classIri>
+            String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
+            if (memberIris.length < 2) {
+                log.warn("[MUTATION] GCA union requires at least 2 member classes");
+                return "";
+            }
+            return buildGCAUnionSparql(op.iri(), memberIris);
         } else if (type.equals("addUnion")) {
             String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
             if (memberIris.length < 2) {
@@ -1082,12 +1099,51 @@ public class OntologyMutationService {
         }
         
         insertBuilder.append("} WHERE { }");
-        
+
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated union SPARQL: {}", sparql);
         return sparql;
     }
-    
+
+    /**
+     * Build SPARQL for a General Class Axiom (GCA) where the subject is an anonymous intersection.
+     * Produces: (A and B) rdfs:subClassOf <classIri>
+     */
+    private String buildGCAIntersectionSparql(String classIri, String[] memberIris) {
+        log.info("[MUTATION] buildGCAIntersectionSparql: classIri={}, members={}", classIri, String.join(", ", memberIris));
+        StringBuilder sb = new StringBuilder("INSERT {\n");
+        sb.append("  _:gcaIntersection owl:intersectionOf _:gcaList0 .\n");
+        sb.append("  _:gcaIntersection rdfs:subClassOf <").append(classIri).append("> .\n");
+        for (int i = 0; i < memberIris.length; i++) {
+            String cur = "_:gcaList" + i;
+            String next = (i == memberIris.length - 1) ? "rdf:nil" : "_:gcaList" + (i + 1);
+            sb.append("  ").append(cur).append(" rdf:first <").append(memberIris[i].trim()).append("> ;\n");
+            sb.append("             rdf:rest ").append(next).append(" .\n");
+        }
+        sb.append("} WHERE { }");
+        return sb.toString();
+    }
+
+    /**
+     * Build SPARQL for a General Class Axiom (GCA) where the subject is an anonymous union.
+     * Produces: (A or B) rdfs:subClassOf <classIri>
+     */
+    private String buildGCAUnionSparql(String classIri, String[] memberIris) {
+        log.info("[MUTATION] buildGCAUnionSparql: classIri={}, members={}", classIri, String.join(", ", memberIris));
+        StringBuilder sb = new StringBuilder("INSERT {\n");
+        sb.append("  _:gcaUnion owl:unionOf _:gcaList0 .\n");
+        sb.append("  _:gcaUnion rdfs:subClassOf <").append(classIri).append("> .\n");
+        for (int i = 0; i < memberIris.length; i++) {
+            String cur = "_:gcaList" + i;
+            String next = (i == memberIris.length - 1) ? "rdf:nil" : "_:gcaList" + (i + 1);
+            sb.append("  ").append(cur).append(" rdf:first <").append(memberIris[i].trim()).append("> ;\n");
+            sb.append("             rdf:rest ").append(next).append(" .\n");
+        }
+        sb.append("} WHERE { }");
+        return sb.toString();
+    }
+
+
     /**
      * Build SPARQL INSERT to add an owl:complementOf class expression
      * Format: :Class rdfs:subClassOf/:equivalentClass [ owl:complementOf :A ]

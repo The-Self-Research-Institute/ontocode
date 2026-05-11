@@ -65,8 +65,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     message: "",
     type: "success",
   });
-  const [openMenuFileId, setOpenMenuFileId] = useState<string | null>(null); // Track which file menu is open
+  const [showFreePlanDialog, setShowFreePlanDialog] = useState(false);
+  const [openMenuFileId, setOpenMenuFileId] = useState<string | null>(null);
   const [userProjectRole, setUserProjectRole] = useState<string>("VIEWER");
+  const [storageUsage, setStorageUsage] = useState<{
+    usedMB: string; limitGB: number; usagePercent: string; planName: string;
+  } | null>(null);
   const { user } = useAuth();
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
@@ -87,6 +91,20 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   useEffect(() => {
     loadFiles();
   }, [projectId]);
+
+  useEffect(() => {
+    apiClient.get("/api/projects/storage-usage")
+      .then((res: any) => {
+        const d = res?.data || res;
+        setStorageUsage({
+          usedMB: d.usedMB,
+          limitGB: d.limitGB,
+          usagePercent: d.usagePercent,
+          planName: d.planName,
+        });
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -295,6 +313,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       console.error("Error status:", error.status);
       console.error("Error data:", error.data);
 
+      // Free plan restriction — show the styled dialog instead of a toast
+      if (error.status === 403 && error.data?.requiresUpgrade) {
+        setShowFreePlanDialog(true);
+        return;
+      }
+
       // Provide specific error messages
       // Note: apiClient transforms errors into ApiError with status and data properties (not response.status/response.data)
       let errorMessage = "Failed to upload file";
@@ -462,6 +486,27 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 <p className="text-sm text-gray-500">Project Library</p>
               </div>
             </div>
+
+            {storageUsage && (
+              <div className="flex flex-col gap-1 min-w-[180px]">
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span>{storageUsage.usedMB} MB used</span>
+                  <span>{storageUsage.limitGB === -1 ? "Unlimited" : `${storageUsage.limitGB} GB`}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-gray-200 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      parseFloat(storageUsage.usagePercent) >= 90
+                        ? "bg-red-500"
+                        : parseFloat(storageUsage.usagePercent) >= 70
+                          ? "bg-amber-400"
+                          : "bg-purple-500"
+                    }`}
+                    style={{ width: `${Math.min(100, parseFloat(storageUsage.usagePercent))}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center gap-3">
               <button
@@ -820,6 +865,71 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           projectId={projectId}
           onClose={() => setIsReportIssueModalOpen(false)}
         />
+      )}
+
+      {/* Free Plan Upload Restriction Dialog */}
+      {showFreePlanDialog && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]"
+          onClick={() => setShowFreePlanDialog(false)}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Top accent bar */}
+            <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500" />
+
+            {/* Header */}
+            <div className="px-6 pt-5 pb-4 flex items-start gap-4">
+              <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                  <line x1="2" y1="2" x2="22" y2="22"/>
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-[15px] font-semibold text-gray-900 leading-tight">Upload Not Available</h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Your workspace is on the <span className="font-medium text-gray-500">Free plan</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setShowFreePlanDialog(false)}
+                className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100 -mt-1 -mr-1"
+                aria-label="Close"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 pb-5">
+              <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
+                You can <span className="font-medium text-gray-800">browse and explore</span> this project, but file uploads require a <span className="font-medium text-gray-800">Pro plan</span>.
+              </div>
+              <div className="flex items-start gap-2.5 text-sm text-gray-600">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                </svg>
+                <span>Ask your <span className="font-medium text-gray-800">workspace owner</span> to upgrade to Pro to unlock file uploads for all members.</span>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 pb-5 flex justify-end">
+              <button
+                onClick={() => setShowFreePlanDialog(false)}
+                className="px-5 py-2 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-700 transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -109,6 +109,7 @@ const AppContent = () => {
   } | null>(null);
   const [workspaceBillingStatus, setWorkspaceBillingStatus] = useState<string | null>(null);
   const [accountSubscriptionStatus, setAccountSubscriptionStatus] = useState<string | null>(null);
+  const [accountPlanName, setAccountPlanName] = useState<string | null>(null);
   const [trialEligible, setTrialEligible] = useState(true);
   const [showManageSubscription, setShowManageSubscription] = useState(false);
   const [showBillingPage, setShowBillingPage] = useState(false);
@@ -261,11 +262,14 @@ const AppContent = () => {
       .then((response: any) => {
         if (cancelled) return;
         const data = response?.data || response;
+        const planName = (data?.planName || "FREE").toUpperCase();
+        setAccountPlanName(planName);
         setTrialEligible(data?.trialEligible !== false);
         setAccountSubscriptionStatus(data?.status || null);
       })
       .catch(() => {
         if (!cancelled) {
+          setAccountPlanName(null);
           setTrialEligible(true);
           setAccountSubscriptionStatus(null);
         }
@@ -600,7 +604,7 @@ const AppContent = () => {
   }, [clearLastOpenedSelection]);
 
   // Initialize router
-  const { clearHistory, navigateTo, goBack, goForward } = useRouter(currentRoute, handleRouteChange);
+  const { clearHistory, navigateTo } = useRouter(currentRoute, handleRouteChange);
 
   const openAccountSubscription = useCallback(() => {
     setSubscriptionReturnRoute(currentRoute.view === "billing" || showBillingPage ? "billing" : null);
@@ -1031,29 +1035,22 @@ const AppContent = () => {
   };
 
   const handleSkipPlan = () => {
+    setShowSubscriptionPlan(false);
+    setSubscriptionReturnRoute(null);
+    // Explicit route — never rely on history stack.
+    // Came from billing → go back to billing.
+    // Everything else → workspace selection (new user or existing user upgrading).
     if (subscriptionReturnRoute === "billing") {
-      setSubscriptionReturnRoute(null);
-      setShowSubscriptionPlan(false);
       setShowBillingPage(true);
       navigateTo({ view: "billing", showSubscriptionPlan: false });
       return;
     }
-    setShowSubscriptionPlan(false);
-    // New user with no workspace yet — route to workspace creation.
-    // Set the suppress flag so WorkspaceSelection doesn't re-trigger the
-    // plan page on this fresh mount (user already made their choice above).
-    if (!user?.workspaceId) {
-      try { localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true"); } catch {}
-      navigateTo({ view: "workspace" });
-      return;
-    }
-    if (selectedFileId && selectedFileId !== "__editor__") {
-      navigateTo({ view: "dashboard", projectId: selectedProjectId, projectName: selectedProjectName ?? undefined, fileId: selectedFileId, fileName: selectedFileName ?? undefined });
-    } else if (selectedProjectId) {
-      navigateTo({ view: "projectLibrary", projectId: selectedProjectId, projectName: selectedProjectName ?? undefined });
-    } else {
-      navigateTo({ view: "projectDashboard" });
-    }
+    // Suppress WorkspaceSelection auto-trigger so it doesn't re-open the plan page.
+    try { localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true"); } catch {}
+    // Pass showSubscriptionPlan: false explicitly — navigateTo merges with the current
+    // route which still has showSubscriptionPlan: true in the same render cycle, and
+    // handleRouteChange would re-apply it, keeping the subscription page open.
+    navigateTo({ view: "workspace", showSubscriptionPlan: false });
   };
 
   useEffect(() => {
@@ -1413,7 +1410,7 @@ const AppContent = () => {
           // Account-level billing — the user is always the owner of their
           // own Stripe customer.
           isOwner={true}
-          onBack={goBack}
+          onBack={() => navigateTo({ view: 'workspace' })}
           onCancelled={() => navigateTo({ view: 'workspace' })}
           onUpgradePlan={openAccountSubscription}
         />
@@ -1425,20 +1422,23 @@ const AppContent = () => {
   // account-level, so a selected workspace is not required to buy or renew.
   if (user && showSubscriptionPlan) {
     const status = (accountSubscriptionStatus || "").toLowerCase();
+    // Use plan name from billing API (authoritative); fall back to JWT value only if API hasn't loaded yet.
+    const resolvedPlanId = accountPlanName || (user.subscriptionPlan ? user.subscriptionPlan.toUpperCase() : "FREE");
     const allowCurrentPlanSelection =
-      !!user.subscriptionPlan
-      && user.subscriptionPlan.toUpperCase() !== "FREE"
+      resolvedPlanId !== "FREE"
       && status !== "active"
       && status !== "trialing";
+    // Anyone who has had a paid plan before must not get a free trial again.
+    const effectiveTrialEligible = trialEligible && resolvedPlanId === "FREE";
     return (
       <>
         <SubscriptionPlanSelection
           username={user.username}
           workspaceId=""
           workspaceName="Your Account"
-          currentPlanId={user.subscriptionPlan || "FREE"}
+          currentPlanId={resolvedPlanId}
           currentStatus={accountSubscriptionStatus || ""}
-          trialEligible={trialEligible}
+          trialEligible={effectiveTrialEligible}
           allowCurrentPlanSelection={allowCurrentPlanSelection}
           onPlanSelected={handlePlanSelected}
           onSkip={handleSkipPlan}
@@ -1598,8 +1598,8 @@ const AppContent = () => {
     );
     return (
       <Dashboard
-        onBackToProjects={user.workspaceId ? handleBackToProjectLibrary : undefined}
-        onGoToProjectDashboard={user.workspaceId ? handleBackToProjectDashboard : undefined}
+        onBackToProjects={user.workspaceId ? handleBackToProjectLibrary : () => { clearLastOpenedSelection(); setForceShowWorkspace(true); }}
+        onGoToProjectDashboard={user.workspaceId ? handleBackToProjectDashboard : () => { clearLastOpenedSelection(); setForceShowWorkspace(true); }}
         onGoToWorkspace={() => {
           clearLastOpenedSelection();
           try {
