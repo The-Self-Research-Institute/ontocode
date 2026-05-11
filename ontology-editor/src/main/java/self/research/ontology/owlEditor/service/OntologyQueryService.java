@@ -708,7 +708,10 @@ public class OntologyQueryService {
 
     private List<OntologyDto.TreeNode> mapTreeNodes(String projectId, String query, String parentIri) {
         TupleQueryResult rs = datasetService.execSelect(projectId, query);
-        List<OntologyDto.TreeNode> nodes = new ArrayList<>();
+        // Use LinkedHashMap to deduplicate by IRI while preserving query order.
+        // Multiple rows for the same IRI arise when a class has several rdfs:label annotations;
+        // we keep the first (non-blank) label encountered and merge hasChildren truthfully.
+        Map<String, OntologyDto.TreeNode> seen = new java.util.LinkedHashMap<>();
         System.out.println("=== MAPPING TREE NODES ===");
         System.out.println("Available binding names: " + rs.getBindingNames());
         int count = 0;
@@ -723,9 +726,21 @@ public class OntologyQueryService {
                 continue;
             }
             System.out.println("Row " + count + ": IRI = " + iri);
+
+            if (seen.containsKey(iri)) {
+                // Duplicate row (extra label/description) — merge hasChildren only
+                if (sol.hasBinding("hasChildren")) {
+                    Value hcv = sol.getValue("hasChildren");
+                    if (hcv != null && hcv.isLiteral() && Boolean.parseBoolean(hcv.stringValue())) {
+                        seen.get(iri).setHasChildren(true);
+                    }
+                }
+                continue;
+            }
+
             OntologyDto.TreeNode node = new OntologyDto.TreeNode();
             node.setId(iri);
-            String label = literal(sol, parentIri == null ? "label" : "label");
+            String label = literal(sol, "label");
             node.setLabel(label.isBlank() ? localName(iri) : label);
             String description = literal(sol, "description");
             node.setDescription(description);
@@ -736,8 +751,9 @@ public class OntologyQueryService {
                 }
             }
             node.setParent(parentIri);
-            nodes.add(node);
+            seen.put(iri, node);
         }
+        List<OntologyDto.TreeNode> nodes = new ArrayList<>(seen.values());
         System.out.println("=== MAPPED " + nodes.size() + " NODES FROM " + count + " ROWS ===");
         return nodes;
     }

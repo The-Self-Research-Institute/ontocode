@@ -4,6 +4,7 @@ import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
 import type { Individual, PropertyAssertion, TreeNode } from '../../types';
 import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDialog, ClassExpressionDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
 
 interface UsageItem {
@@ -223,7 +224,7 @@ const IndividualEditor: React.FC<{
     // We will pass them if the service supports it.
 
     if (!propLabel || !targetLabel) {
-        alert("Property and value cannot be empty.");
+        notificationService.warning("Validation Error", "Property and value cannot be empty.");
         return;
     }
     
@@ -278,7 +279,7 @@ const IndividualEditor: React.FC<{
       setIsNegativeAssertion(false);
     } catch (error) {
       console.error('Failed to add property assertion:', error);
-      alert('Failed to add property assertion. See console for details.');
+      notificationService.error("Add Failed", "Failed to add property assertion. See console for details.");
     }
   };
 
@@ -382,7 +383,7 @@ const IndividualEditor: React.FC<{
       onUpdate({ ...item, propertyAssertions: item.propertyAssertions?.filter(a => a.id !== assertion.id) });
     } catch (error) {
       console.error('Failed to delete property assertion:', error);
-      alert('Failed to delete property assertion. See console for details.');
+      notificationService.error("Delete Failed", "Failed to delete property assertion. See console for details.");
     }
   };
 

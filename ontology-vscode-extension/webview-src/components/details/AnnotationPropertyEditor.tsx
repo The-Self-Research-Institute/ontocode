@@ -3,6 +3,7 @@ import { Plus, Tag, Edit3, Search } from 'lucide-react';
 import { AnnotationsDisplay, MultiSelectSection } from './common';
 import { IRIEditorDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
 import type { AnnotationProperty } from '../../types';
 
@@ -210,11 +211,11 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
       }
       if (newIRI !== item.id) {
         console.warn("IRI renaming requires backend support - not yet implemented");
-        alert("IRI renaming is not yet supported. Only label changes are saved.");
+        notificationService.warning("Not Supported", "IRI renaming is not yet supported. Only label changes are saved.");
       }
     } catch (error) {
       console.error("Failed to update annotation property:", error);
-      alert("Failed to update annotation property. See console for details.");
+      notificationService.error("Update Failed", "Failed to update annotation property. See console for details.");
     }
   };
 

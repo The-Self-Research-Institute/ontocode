@@ -297,20 +297,40 @@ function handleBrowserMessage(message: any) {
                 if (!fileData) return;
 
                 if (message.projectId) {
-                    // Project context is known — hand off directly to the uploadOntology
-                    // handler so the full upload + GraphDB polling flow runs immediately.
-                    // (Without this, projectId is dropped and the upload never starts when
-                    // the user is already inside a project dashboard.)
-                    handleBrowserMessage({
-                        type: 'uploadOntology',
-                        projectId: message.projectId,
-                        fileName: fileData.fileName,
-                        fileContent: fileContentToBase64(fileData.fileContent),
-                        ownerEmail: getOwnerEmailFromToken(),
-                        workspaceId: getWorkspaceIdFromToken(),
-                        importMode: message.importMode,
-                        partition: message.partition,
-                    });
+                    // Workspace flow: save to project library (GridFS) first, then let
+                    // handleLoadProjectFile handle the GraphDB import via fileReady.
+                    try {
+                        const fileContent = fileContentToBase64(fileData.fileContent);
+                        let contentStr = fileContent;
+                        if (/^[A-Za-z0-9+/=]+$/.test(contentStr)) {
+                            const binaryStr = atob(contentStr);
+                            const bytes = new Uint8Array(binaryStr.length);
+                            for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+                            contentStr = new TextDecoder().decode(bytes);
+                        }
+                        const fileBlob = new Blob([contentStr], { type: 'application/rdf+xml' });
+                        const formData = new FormData();
+                        formData.append('file', fileBlob, fileData.fileName);
+                        formData.append('fileName', fileData.fileName);
+                        formData.append('fileType', 'owl');
+                        const respData: any = await apiClient.post(`/api/projects/${message.projectId}/files`, formData);
+                        const uploadedFileId = respData?.fileId || respData?.id;
+                        const uploadedFileName = respData?.filename || fileData.fileName;
+                        postToSelf({
+                            type: 'fileReady',
+                            projectId: message.projectId,
+                            uploadedFileId,
+                            uploadedFileName,
+                        });
+                    } catch (err: any) {
+                        const errData = err?.data || err?.response?.data;
+                        if (err?.status === 413 || err?.response?.status === 413) {
+                            const detail = errData?.message || errData?.error || 'Storage limit exceeded. Please upgrade your plan or delete existing files.';
+                            notificationService.error('Storage Limit Exceeded', detail);
+                        } else {
+                            notificationService.error('Upload Failed', errData?.error || err?.message || 'File upload to project failed');
+                        }
+                    }
                 } else {
                     // No project context yet — store as pending so the user can pick
                     // a project and the upload will trigger via handleProjectSelected.
@@ -986,7 +1006,13 @@ function handleBrowserMessage(message: any) {
                     console.log('[BrowserBridge] uploadFileToProject success');
                 } catch (err: any) {
                     console.error('[BrowserBridge] uploadFileToProject error:', err);
-                    notificationService.error('Upload Failed', err?.message || 'File upload failed');
+                    const errData = err?.data || err?.response?.data;
+                    if (err?.status === 413 || err?.response?.status === 413) {
+                        const detail = errData?.message || errData?.error || 'Storage limit exceeded. Please upgrade your plan or delete existing files.';
+                        notificationService.error('Storage Limit Exceeded', detail);
+                    } else {
+                        notificationService.error('Upload Failed', errData?.error || err?.message || 'File upload failed');
+                    }
                 }
             })();
             break;

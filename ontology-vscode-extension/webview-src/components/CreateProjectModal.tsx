@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { X, Users, Check } from "lucide-react";
+import { X, Users, AlertCircle } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
 import { validateProjectName, validateDescription } from "../utils/validation";
@@ -25,6 +25,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [loadingMembers, setLoadingMembers] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showFreePlanDialog, setShowFreePlanDialog] = useState(false);
 
   useEffect(() => {
     if (isOpen && shareWith === "specific") {
@@ -32,26 +34,23 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
     }
   }, [isOpen, shareWith]);
 
+  // Clear error when modal opens/closes
+  useEffect(() => {
+    if (!isOpen) setErrorMessage(null);
+  }, [isOpen]);
+
   const loadWorkspaceMembers = async () => {
     try {
       setLoadingMembers(true);
-      // Get workspace members from workspace endpoint
       const response = await apiClient.get(`/api/workspaces/${user?.workspaceId}`);
-      console.log("Workspace response:", response);
-
-      // Backend returns workspace data directly in response.data
       const workspaceData = response?.data || response;
       const members = workspaceData?.members || [];
-
-      // Filter out the current user (project creator/owner) - they always have OWNER access
-      // Guard against both `userId` and `id` field names returned by different API versions
       const filteredMembers = members.filter(
         (m: any) =>
           m.userId !== user?.id &&
           m.id !== user?.id &&
           m.email?.toLowerCase() !== user?.email?.toLowerCase(),
       );
-      console.log("Loaded workspace members (excluding owner):", filteredMembers);
       setWorkspaceMembers(filteredMembers);
     } catch (error) {
       console.error("Error loading workspace members:", error);
@@ -63,57 +62,45 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
 
-    // Check workspace context first
     if (!user?.workspaceId) {
-      alert("⚠️ No Workspace Selected\n\nPlease select a workspace before creating a project.");
+      setErrorMessage("No workspace selected. Please select a workspace before creating a project.");
       return;
     }
 
-    // Validate project name
     const nameValidation = validateProjectName(projectName);
     if (!nameValidation.isValid) {
-      alert(`❌ Invalid Project Name\n\n${nameValidation.error}`);
+      setErrorMessage(nameValidation.error || "Invalid project name.");
       return;
     }
 
-    // Validate description (optional, but if provided must be valid)
     if (description) {
       const descValidation = validateDescription(description);
       if (!descValidation.isValid) {
-        alert(`❌ Invalid Description\n\n${descValidation.error}`);
+        setErrorMessage(descValidation.error || "Invalid description.");
         return;
       }
     }
 
-    // Validate member selection for specific sharing
     if (shareWith === "specific" && selectedMembers.length === 0) {
-      alert(
-        "⚠️ No Members Selected\n\nPlease select at least one member to share with, or choose a different sharing option.",
-      );
+      setErrorMessage("Please select at least one member to share with, or choose a different sharing option.");
       return;
     }
 
     try {
       setCreating(true);
 
-      // Check if project name already exists in workspace
       const checkResponse = await apiClient.get(
         `/api/projects/check?name=${encodeURIComponent(projectName.trim())}&workspaceId=${user?.workspaceId || "default"}`,
       );
 
       if (checkResponse?.data?.exists || checkResponse?.exists) {
-        const data = checkResponse?.data || checkResponse;
-        alert(
-          `⚠️ Project Already Exists\n\n` +
-            `A project named "${projectName.trim()}" already exists in this workspace.\n\n` +
-            `Please try a different name.`,
-        );
+        setErrorMessage(`A project named "${projectName.trim()}" already exists in this workspace. Please try a different name.`);
         setCreating(false);
         return;
       }
 
-      // Prepare request payload
       const payload: any = {
         workspaceId: user?.workspaceId || "default",
         name: projectName.trim(),
@@ -121,12 +108,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
         shareWith: shareWith === "none" ? null : shareWith,
       };
 
-      // Add member emails only when shareWith is 'specific' and members are selected
       if (shareWith === "specific" && selectedMembers.length > 0) {
         payload.memberEmails = selectedMembers;
       }
-
-      console.log("Creating project with payload:", payload);
 
       await apiClient.post("/api/projects", payload);
 
@@ -134,11 +118,23 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
       setDescription("");
       setShareWith("none");
       setSelectedMembers([]);
+      setErrorMessage(null);
       onSuccess();
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating project:", error);
-      alert("Failed to create project");
+      if (error?.status === 403 && error?.data?.requiresUpgrade) {
+        setShowFreePlanDialog(true);
+        return;
+      }
+      const msg =
+        error?.data?.error ||
+        error?.data?.message ||
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "Failed to create project. Please try again.";
+      setErrorMessage(msg);
     } finally {
       setCreating(false);
     }
@@ -161,12 +157,19 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {errorMessage && (
+            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Project Name *</label>
             <input
               type="text"
               value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
+              onChange={(e) => { setProjectName(e.target.value); setErrorMessage(null); }}
               placeholder="Enter project name"
               maxLength={255}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
@@ -256,25 +259,24 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                       ) : workspaceMembers.length === 0 ? (
                         <div className="text-center text-sm text-gray-500 py-4">No other members in workspace</div>
                       ) : (
-                        workspaceMembers
-                          .map((member) => (
-                            <label
-                              key={member.userId}
-                              className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedMembers.includes(member.email)}
-                                onChange={() => toggleMember(member.email)}
-                                className="rounded text-purple-600"
-                              />
-                              <div className="text-sm flex-1">
-                                <div className="font-medium text-gray-900">{member.username}</div>
-                                <div className="text-gray-500 text-xs">{member.email}</div>
-                              </div>
-                              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">Viewer</span>
-                            </label>
-                          ))
+                        workspaceMembers.map((member) => (
+                          <label
+                            key={member.userId}
+                            className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedMembers.includes(member.email)}
+                              onChange={() => toggleMember(member.email)}
+                              className="rounded text-purple-600"
+                            />
+                            <div className="text-sm flex-1">
+                              <div className="font-medium text-gray-900">{member.username}</div>
+                              <div className="text-gray-500 text-xs">{member.email}</div>
+                            </div>
+                            <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">Viewer</span>
+                          </label>
+                        ))
                       )}
                     </div>
                   )}
@@ -301,6 +303,63 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
           </div>
         </form>
       </div>
+
+      {/* Free Plan Creation Restriction Dialog */}
+      {showFreePlanDialog && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]"
+          onClick={() => setShowFreePlanDialog(false)}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500" />
+            <div className="px-6 pt-5 pb-4 flex items-start gap-4">
+              <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                  <line x1="2" y1="2" x2="22" y2="22"/>
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-[15px] font-semibold text-gray-900 leading-tight">Project Creation Not Available</h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Your workspace is on the <span className="font-medium text-gray-500">Free plan</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setShowFreePlanDialog(false)}
+                className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100 -mt-1 -mr-1"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 pb-5">
+              <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
+                Creating new projects requires a <span className="font-medium text-gray-800">Pro plan</span>. Only the workspace owner can create projects on the Free plan.
+              </div>
+              <div className="flex items-start gap-2.5 text-sm text-gray-600">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                </svg>
+                <span>Ask your <span className="font-medium text-gray-800">workspace owner</span> to upgrade to Pro to unlock project creation for all members.</span>
+              </div>
+            </div>
+            <div className="px-6 pb-5 flex justify-end">
+              <button
+                onClick={() => setShowFreePlanDialog(false)}
+                className="px-5 py-2 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-700 transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

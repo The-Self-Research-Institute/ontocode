@@ -23,6 +23,7 @@ import {
   Building2,
   FileText,
   Shield,
+  Lock,
   UserMinus,
   Save,
   Loader2,
@@ -79,6 +80,7 @@ interface Project {
   fileCount: number;
   createdAt: string;
   updatedAt: string;
+  isPrivateRestricted?: boolean;
 }
 
 interface TeamMember {
@@ -1108,17 +1110,28 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   {filteredProjects.map((project) => (
                     <div
                       key={project.id}
-                      onClick={() => onSelectProject(project.projectId, project.name)}
+                      onClick={() => {
+                        if (project.isPrivateRestricted) return;
+                        onSelectProject(project.projectId, project.name);
+                      }}
                       className={`
-                                        border border-gray-200 rounded-lg p-4 cursor-pointer
-                                        hover:border-purple-400 hover:shadow-md transition-all flex
+                                        border rounded-lg p-4 transition-all flex
+                                        ${project.isPrivateRestricted
+                                          ? "border-gray-200 bg-gray-50 cursor-not-allowed opacity-70"
+                                          : "border-gray-200 cursor-pointer hover:border-purple-400 hover:shadow-md"}
                                         ${viewMode === "list" ? "items-center" : "items-start"}
                                     `}
+                      title={project.isPrivateRestricted ? "Private project — you can rename or delete but cannot open it" : undefined}
                     >
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-2">
-                          <FolderOpen size={20} className="text-purple-600 flex-shrink-0" />
+                          {project.isPrivateRestricted
+                            ? <Lock size={20} className="text-gray-400 flex-shrink-0" />
+                            : <FolderOpen size={20} className="text-purple-600 flex-shrink-0" />}
                           <span className="truncate">{project.name}</span>
+                          {project.isPrivateRestricted && (
+                            <span className="ml-1 text-xs text-gray-400 font-normal">(private)</span>
+                          )}
                         </h3>
                         <p className="text-sm text-gray-600 mb-3 line-clamp-2">
                           {project.description || "No description"}
@@ -1153,16 +1166,18 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                             </button>
                             {openMenuProjectId === project.projectId && (
                               <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openProjectSettings(project);
-                                  }}
-                                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                                >
-                                  <Settings size={14} />
-                                  Project Settings
-                                </button>
+                                {!project.isPrivateRestricted && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openProjectSettings(project);
+                                    }}
+                                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                  >
+                                    <Settings size={14} />
+                                    Project Settings
+                                  </button>
+                                )}
                                 {canManageProjectRow(project) && (
                                   <>
                                     <button
@@ -1191,7 +1206,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                               </div>
                             )}
                           </div>
-                        {viewMode === "list" && <ChevronRight size={20} className="text-gray-400" />}
+                        {viewMode === "list" && !project.isPrivateRestricted && <ChevronRight size={20} className="text-gray-400" />}
                       </div>
                     </div>
                   ))}
@@ -1609,7 +1624,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                             >
                               <option value="VIEWER">Viewer — read-only in this project</option>
                               <option value="EDITOR">Editor — can edit ontology content</option>
-                              <option value="ADMIN">Admin — manage this project</option>
                             </select>
                           </div>
                           <button
@@ -1673,7 +1687,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                                   disabled={member.role === "OWNER"}
                                 >
                                   {member.role === "OWNER" && <option value="OWNER">Owner</option>}
-                                  <option value="ADMIN">Admin</option>
+                                  {member.role === "ADMIN" && <option value="ADMIN">Admin</option>}
                                   <option value="EDITOR">Editor</option>
                                   <option value="VIEWER">Viewer</option>
                                 </select>

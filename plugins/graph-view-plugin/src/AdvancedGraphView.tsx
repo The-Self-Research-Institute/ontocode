@@ -29,7 +29,8 @@ import {
   GitBranch,
   Trash2,
   Maximize,
-  MinusSquare
+  MinusSquare,
+  Save
 } from 'lucide-react';
 import type {
   OntologyNode,
@@ -66,6 +67,10 @@ import {
 interface D3Node extends OntologyNode, d3.SimulationNodeDatum {
   x?: number;
   y?: number;
+  z?: number;
+  projectedX?: number;
+  projectedY?: number;
+  depthScale?: number;
   fx?: number | null;
   fy?: number | null;
   vx?: number;
@@ -84,6 +89,8 @@ interface AdvancedGraphViewProps {
   onEdgeClick?: (edgeId: string) => void;
   readonly?: boolean;
 }
+
+type AssertionViewMode = 'asserted' | 'inferred' | 'all';
 
 // Type normalization helpers
 const normalizeNodeType = (type: string): NodeType => {
@@ -167,6 +174,50 @@ const DEFAULT_FILTERS: GraphFilters = {
   edgeTypes: new Set(['subClassOf', 'instanceOf', 'propertyRelation', 'equivalentClass', 'domain', 'range', 'disjointWith', 'inverseOf', 'custom', 'subPropertyOf'])
 };
 
+const RELATIONSHIP_VISIBILITY_CONTROLS: Array<{
+  label: string;
+  shortLabel: string;
+  title: string;
+  edgeTypes: EdgeType[];
+}> = [
+  {
+    label: 'SubClass',
+    shortLabel: 'Sub',
+    title: 'Show or hide class hierarchy edges',
+    edgeTypes: ['subClassOf']
+  },
+  {
+    label: 'Equivalent',
+    shortLabel: 'Eq',
+    title: 'Show or hide equivalent class/property edges',
+    edgeTypes: ['equivalentClass']
+  },
+  {
+    label: 'Disjoint',
+    shortLabel: 'Dis',
+    title: 'Show or hide disjointness edges',
+    edgeTypes: ['disjointWith']
+  },
+  {
+    label: 'Instance',
+    shortLabel: 'Inst',
+    title: 'Show or hide individual type assertions',
+    edgeTypes: ['instanceOf']
+  },
+  {
+    label: 'Properties',
+    shortLabel: 'Prop',
+    title: 'Show or hide object/data/custom property relationship edges',
+    edgeTypes: ['propertyRelation', 'subPropertyOf', 'inverseOf', 'custom']
+  },
+  {
+    label: 'Domain/Range',
+    shortLabel: 'D/R',
+    title: 'Show or hide property domain and range edges',
+    edgeTypes: ['domain', 'range']
+  }
+];
+
 type HierarchyState = {
   visible: Set<string>;
   expanded: Set<string>;
@@ -231,6 +282,22 @@ const resolveNamespaceFromNode = (node?: OntologyNode | null): string | null => 
   }
 
   return null;
+};
+
+const hashToUnit = (value: string): number => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+  }
+  return (Math.abs(hash) % 1000) / 1000;
+};
+
+const getNodeDegree = (nodeId: string, edges: OntologyEdge[]): number => {
+  return edges.reduce((count, edge) => count + (edge.from === nodeId || edge.to === nodeId ? 1 : 0), 0);
+};
+
+const isInferredEntity = (item: { metadata?: Record<string, any>; [key: string]: any }) => {
+  return item?.metadata?.inferred === true || item?.metadata?.assertion === 'inferred' || item?.inferred === true || item?.isInferred === true;
 };
 
 const resolveNodeIri = (node?: OntologyNode | null): string | null => {
@@ -382,12 +449,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const gRef = useRef<SVGGElement>(null);
   const simulationRef = useRef<d3.Simulation<D3Node, D3Edge> | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const currentTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
+  const assertedGraphRef = useRef<{ nodes: OntologyNode[]; edges: OntologyEdge[] } | null>(null);
+  const inferredGraphRef = useRef<{ nodes: OntologyNode[]; edges: OntologyEdge[] } | null>(null);
   // Persist node positions across expand/collapse re-renders (Protégé-style stability)
   const nodePositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   // State - Hierarchical Lazy Loading
   const [allNodes, setAllNodes] = useState<OntologyNode[]>([]);  // All data from API
   const [allEdges, setAllEdges] = useState<OntologyEdge[]>([]);  // All edges from API
+  const [assertionView, setAssertionView] = useState<AssertionViewMode>('asserted');
+  const [inferredGraphStatus, setInferredGraphStatus] = useState<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
   const [hierarchyState, setHierarchyState] = useState<HierarchyState>(() => ({
     visible: new Set<string>(),
     expanded: new Set<string>()
@@ -534,6 +606,218 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   // Advanced features
   const [zoomLevel, setZoomLevel] = useState(1);
+  type SavedGraphView = {
+    id: string;
+    name: string;
+    createdAt: string;
+    visualizationType: VisualizationType;
+    ontographLayoutType: typeof ontographLayoutType;
+    zoomTransform: { x: number; y: number; k: number };
+    hierarchy: { visible: string[]; expanded: string[] };
+    selectedNodeIds: string[];
+    filters: {
+      nodeTypes: NodeType[];
+      edgeTypes: EdgeType[];
+      searchQuery?: string;
+      namespaceFilter?: string[];
+      contextFilter?: string[];
+    };
+    vowlFilters: typeof vowlFilters;
+    settings: Pick<GraphSettings, 'showLabels' | 'showArrows' | 'physics' | 'nodeSize' | 'edgeWidth'>;
+    focusedNodeId: string | null;
+    nodePositions: Array<[string, { x: number; y: number }]>;
+  };
+  const savedViewsStorageKey = useMemo(() => `ontocode.graphView.savedViews.${projectId}`, [projectId]);
+  const [savedViews, setSavedViews] = useState<SavedGraphView[]>([]);
+  const [selectedSavedViewId, setSelectedSavedViewId] = useState('');
+
+  const toggleRelationshipVisibility = useCallback((edgeTypes: EdgeType[], visible?: boolean) => {
+    setFilters(prev => {
+      const nextEdgeTypes = new Set(prev.edgeTypes);
+      const shouldShow = visible ?? edgeTypes.some(type => !nextEdgeTypes.has(type));
+
+      edgeTypes.forEach(type => {
+        if (shouldShow) {
+          nextEdgeTypes.add(type);
+        } else {
+          nextEdgeTypes.delete(type);
+        }
+      });
+
+      return {
+        ...prev,
+        edgeTypes: nextEdgeTypes
+      };
+    });
+  }, []);
+
+  const showAllRelationshipTypes = useCallback(() => {
+    toggleRelationshipVisibility(
+      RELATIONSHIP_VISIBILITY_CONTROLS.flatMap(control => control.edgeTypes),
+      true
+    );
+  }, [toggleRelationshipVisibility]);
+
+  const hideAllRelationshipTypes = useCallback(() => {
+    toggleRelationshipVisibility(
+      RELATIONSHIP_VISIBILITY_CONTROLS.flatMap(control => control.edgeTypes),
+      false
+    );
+  }, [toggleRelationshipVisibility]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(savedViewsStorageKey);
+      setSavedViews(raw ? JSON.parse(raw) : []);
+      setSelectedSavedViewId('');
+    } catch (error) {
+      console.warn('[GraphView] Failed to load saved graph views', error);
+      setSavedViews([]);
+      setSelectedSavedViewId('');
+    }
+  }, [savedViewsStorageKey]);
+
+  const persistSavedViews = useCallback((views: SavedGraphView[]) => {
+    setSavedViews(views);
+    localStorage.setItem(savedViewsStorageKey, JSON.stringify(views));
+  }, [savedViewsStorageKey]);
+
+  const applyGraphForAssertionView = useCallback((
+    mode: AssertionViewMode,
+    assertedGraph: { nodes: OntologyNode[]; edges: OntologyEdge[] } | null,
+    inferredGraph: { nodes: OntologyNode[]; edges: OntologyEdge[] } | null
+  ) => {
+    const asserted = assertedGraph || { nodes: [], edges: [] };
+    const inferred = inferredGraph || { nodes: [], edges: [] };
+
+    let nextNodes: OntologyNode[];
+    let nextEdges: OntologyEdge[];
+
+    if (mode === 'inferred') {
+      nextNodes = inferred.nodes;
+      nextEdges = inferred.edges;
+    } else if (mode === 'all') {
+      const nodeMap = new Map<string, OntologyNode>();
+      asserted.nodes.forEach(node => nodeMap.set(node.id, node));
+      inferred.nodes.forEach(node => {
+        const existing = nodeMap.get(node.id);
+        nodeMap.set(node.id, existing ? {
+          ...existing,
+          metadata: { ...existing.metadata, hasInferredPlacement: true }
+        } : node);
+      });
+
+      const edgeMap = new Map<string, OntologyEdge>();
+      asserted.edges.forEach(edge => edgeMap.set(edge.id, edge));
+      inferred.edges.forEach(edge => {
+        const existing = edgeMap.get(edge.id);
+        edgeMap.set(edge.id, existing ? {
+          ...existing,
+          metadata: { ...existing.metadata, hasInferredSupport: true }
+        } : edge);
+      });
+
+      nextNodes = Array.from(nodeMap.values());
+      nextEdges = Array.from(edgeMap.values());
+    } else {
+      nextNodes = asserted.nodes.filter(node => !isInferredEntity(node));
+      nextEdges = asserted.edges.filter(edge => !isInferredEntity(edge));
+    }
+
+    setAllNodes(nextNodes);
+    setAllEdges(nextEdges);
+
+    const { newExpandedIds, newVisibleIds } = expandAllNodes(nextNodes);
+    updateHierarchyState(() => ({
+      visible: newVisibleIds,
+      expanded: newExpandedIds
+    }));
+  }, [updateHierarchyState]);
+
+  const buildInferredGraphFromHierarchy = useCallback((hierarchy: any[]): { nodes: OntologyNode[]; edges: OntologyEdge[] } => {
+    const nodeMap = new Map<string, OntologyNode>();
+    const edgeMap = new Map<string, OntologyEdge>();
+
+    const visit = (item: any, parentId?: string) => {
+      const id = item?.id || item?.iri;
+      if (!id) return;
+
+      nodeMap.set(id, {
+        id,
+        label: item.label || item.name || id.split(/[#/]/).pop() || id,
+        type: 'class',
+        uri: id,
+        metadata: {
+          ...(item.metadata || {}),
+          inferred: true,
+          assertion: 'inferred',
+          reasonerUnsatisfiable: item.isUnsatisfiable === true
+        }
+      });
+
+      if (parentId && id !== parentId) {
+        edgeMap.set(`${id}-inferred-subClassOf-${parentId}`, {
+          id: `${id}-inferred-subClassOf-${parentId}`,
+          from: id,
+          to: parentId,
+          type: 'subClassOf',
+          label: 'inferred subClassOf',
+          metadata: { inferred: true, assertion: 'inferred' }
+        });
+      }
+
+      const equivalents = Array.isArray(item.equivalentClasses) ? item.equivalentClasses : [];
+      equivalents.forEach((equivalent: any) => {
+        const equivId = equivalent?.iri || equivalent?.id;
+        if (!equivId || equivId === id) return;
+        nodeMap.set(equivId, {
+          id: equivId,
+          label: equivalent.label || equivalent.name || equivId.split(/[#/]/).pop() || equivId,
+          type: 'class',
+          uri: equivId,
+          metadata: { inferred: true, assertion: 'inferred', equivalentSource: id }
+        });
+        edgeMap.set(`${id}-inferred-equivalentClass-${equivId}`, {
+          id: `${id}-inferred-equivalentClass-${equivId}`,
+          from: id,
+          to: equivId,
+          type: 'equivalentClass',
+          label: 'inferred equivalentClass',
+          metadata: { inferred: true, assertion: 'inferred' }
+        });
+      });
+
+      (Array.isArray(item.children) ? item.children : []).forEach((child: any) => visit(child, id));
+    };
+
+    hierarchy.forEach(root => visit(root));
+    return { nodes: Array.from(nodeMap.values()), edges: Array.from(edgeMap.values()) };
+  }, []);
+
+  const fetchInferredGraphData = useCallback(async (apiBaseUrl: string, authToken: string | null) => {
+    setInferredGraphStatus('loading');
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=OPENLLET`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Reasoner hierarchy request failed: ${response.status}`);
+      }
+      const data = await response.json();
+      const inferred = buildInferredGraphFromHierarchy(Array.isArray(data?.hierarchy) ? data.hierarchy : []);
+      inferredGraphRef.current = inferred;
+      setInferredGraphStatus(inferred.nodes.length > 0 ? 'ready' : 'unavailable');
+      return inferred;
+    } catch (error) {
+      console.warn('[GraphView] Inferred graph data unavailable', error);
+      inferredGraphRef.current = { nodes: [], edges: [] };
+      setInferredGraphStatus('unavailable');
+      return inferredGraphRef.current;
+    }
+  }, [buildInferredGraphFromHierarchy, projectId]);
 
   // ---------------------------------------------------------------------------
   // FOCUS MODE — isolate a single class plus its N-hop parents/children
@@ -722,7 +1006,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   const filteredNodes = useMemo(() => {
 
-    let filtered = visibleNodes.filter(node => filters.nodeTypes.has(node.type));
+    let filtered = visibleNodes.filter(node => {
+      if (!filters.nodeTypes.has(node.type)) return false;
+      if (assertionView === 'asserted') return !isInferredEntity(node);
+      if (assertionView === 'inferred') return isInferredEntity(node);
+      return true;
+    });
 
     // **WebVOWL/OntoGraph Mode: Apply specific entity filters**
     if (visualizationType === 'vowl' || visualizationType === 'ontograph') {
@@ -797,14 +1086,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     console.log(`[Filtering] Final filtered nodes: ${filtered.length}`);
 
     return filtered;
-  }, [visibleNodes, filters, searchQuery, sidebarSearchTerm, visualizationType, vowlFilters]);
+  }, [visibleNodes, filters, searchQuery, sidebarSearchTerm, visualizationType, vowlFilters, assertionView]);
 
   const filteredEdges = useMemo(() => {
     const nodeIds = new Set(filteredNodes.map(n => n.id));
     let filtered = visibleEdges.filter(edge =>
       filters.edgeTypes.has(edge.type) &&
       nodeIds.has(edge.from) &&
-      nodeIds.has(edge.to)
+      nodeIds.has(edge.to) &&
+      (assertionView === 'all' ||
+        (assertionView === 'inferred' ? isInferredEntity(edge) : !isInferredEntity(edge)))
     );
     
     // **WebVOWL/OntoGraph Mode: Apply specific relationship filters**
@@ -918,15 +1209,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     if (visualizationType === 'ontograph') {
       const beforeFilter = filtered.length;
-      // In OntoGraph, we want to see all relations between visible nodes
+      // OntoGraph should honor Protégé-style relationship visibility controls
+      // instead of silently dropping non-hierarchy axiom edges.
+      const ontographRelationshipTypes = new Set(
+        RELATIONSHIP_VISIBILITY_CONTROLS.flatMap(control => control.edgeTypes)
+      );
       filtered = filtered.filter(edge => {
-        return edge.type === 'subClassOf' || 
-               edge.type === 'propertyRelation' || 
-               edge.type === 'instanceOf' ||
-               edge.type === 'domain' ||
-               edge.type === 'range';
+        return ontographRelationshipTypes.has(edge.type);
       });
-      console.log(`[Filtering] OntoGraph mode: Ensuring all edges are visible ${beforeFilter} -> ${filtered.length}`);
+      console.log(`[Filtering] OntoGraph mode: Applied relationship visibility ${beforeFilter} -> ${filtered.length}`);
     }
     
     console.log('[AdvancedGraphView] Filtered edges:', filtered.length);
@@ -936,7 +1227,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
     
     return filtered;
-  }, [visibleEdges, filteredNodes, filters, visualizationType, vowlFilters, allNodes]);
+  }, [visibleEdges, filteredNodes, filters, visualizationType, vowlFilters, allNodes, assertionView]);
 
   // Generate dynamic legend based on current graph
   const dynamicLegend = useMemo(() => {
@@ -1030,6 +1321,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const edgeTypes = new Set(filteredEdges.map(e => e.type));
       if (edgeTypes.has('subClassOf')) legend.push({ name: 'SubClass Of', type: 'edge', stroke: '#1976D2', strokeDasharray: '0' });
       if (edgeTypes.has('propertyRelation')) legend.push({ name: 'Property Relation', type: 'edge', stroke: '#059669', strokeDasharray: '0' });
+      if (filteredNodes.some(isInferredEntity) || filteredEdges.some(isInferredEntity)) {
+        legend.push({ name: 'Inferred', type: 'edge', stroke: '#10b981', strokeDasharray: '8 4' });
+      }
       
       return legend;
     }
@@ -1127,24 +1421,28 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           graphData.edges.filter((e: OntologyEdge) => e.type === 'propertyRelation').slice(0, 5)
         );
 
-        // Update state with fetched data
-        setAllNodes(graphData.nodes);
-        setAllEdges(graphData.edges);
+        const assertedGraph = {
+          nodes: graphData.nodes.map((node: OntologyNode) => ({
+            ...node,
+            metadata: { ...node.metadata, assertion: isInferredEntity(node) ? 'inferred' : 'asserted' }
+          })),
+          edges: graphData.edges.map((edge: OntologyEdge) => ({
+            ...edge,
+            metadata: { ...edge.metadata, assertion: isInferredEntity(edge) ? 'inferred' : 'asserted' }
+          }))
+        };
+        assertedGraphRef.current = assertedGraph;
+
+        const inferredGraph = await fetchInferredGraphData(apiBaseUrl, authToken);
+        applyGraphForAssertionView(assertionView, assertedGraph, inferredGraph);
         
         console.log('[AdvancedGraphView] ✅ Set allNodes:', graphData.nodes.length, 'allEdges:', graphData.edges.length);
         
         // Use expandAll for initial state - show full hierarchy like Protégé OntoGraf
         // This ensures all nodes and subClassOf edges are visible on load
-        const { newExpandedIds, newVisibleIds } = expandAllNodes(graphData.nodes);
-        
-        updateHierarchyState(() => ({
-          visible: newVisibleIds,
-          expanded: newExpandedIds
-        }));
-        
         console.log('[AdvancedGraphView] ✅ Initial hierarchy state:', {
-          visible: newVisibleIds.size,
-          expanded: newExpandedIds.size,
+          visible: graphData.nodes.length,
+          expanded: graphData.nodes.length,
           total: graphData.nodes.length
         });
 
@@ -1155,7 +1453,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       console.error('[AdvancedGraphView D3] ❌ Error fetching graph data:', errorMessage, error);
       setLoading(false);
     }
-  }, [projectId, updateHierarchyState]);
+  }, [projectId, updateHierarchyState, assertionView, applyGraphForAssertionView, fetchInferredGraphData]);
+
+  useEffect(() => {
+    if (!assertedGraphRef.current) return;
+    applyGraphForAssertionView(assertionView, assertedGraphRef.current, inferredGraphRef.current);
+  }, [assertionView, applyGraphForAssertionView]);
 
   /**
    * ========================================================================
@@ -1189,6 +1492,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       console.warn('[AdvancedGraphView D3] ⚠️ NO propertyRelation edges found!');
     }
 
+    const isSpatial3D = visualizationType === 'spatial3d';
+
     const svg = d3.select(svgRef.current)
       .on('click', () => {
         setSelectedNodes(new Set());
@@ -1199,6 +1504,28 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     const width = svgRef.current.clientWidth;
     const height = svgRef.current.clientHeight;
+
+    const project3DNode = (node: D3Node) => {
+      const z = node.z || 0;
+      const perspective = 900;
+      const scale = perspective / (perspective + z);
+      const x = width / 2 + ((node.x || width / 2) - width / 2) * scale;
+      const y = height / 2 + ((node.y || height / 2) - height / 2) * scale + z * 0.06;
+      node.projectedX = x;
+      node.projectedY = y;
+      node.depthScale = scale;
+      return { x, y, scale };
+    };
+
+    const getRenderPoint = (node: D3Node) => {
+      if (!isSpatial3D) {
+        return { x: node.x || 0, y: node.y || 0, scale: 1 };
+      }
+      if (node.projectedX == null || node.projectedY == null || node.depthScale == null) {
+        return project3DNode(node);
+      }
+      return { x: node.projectedX, y: node.projectedY, scale: node.depthScale };
+    };
 
     // Clear existing content
     g.selectAll('*').remove();
@@ -1348,6 +1675,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         
         x = 150 + col * cellWidth + (Math.random() - 0.5) * 120;
         y = 150 + row * cellHeight + (Math.random() - 0.5) * 120;
+      } else if (visualizationType === 'spatial3d') {
+        const angle = hashToUnit(node.id) * Math.PI * 2;
+        const ring = 140 + (index % 9) * 32;
+        const jitter = (hashToUnit(`${node.id}:jitter`) - 0.5) * 90;
+        x = width / 2 + Math.cos(angle) * (ring + jitter);
+        y = height / 2 + Math.sin(angle) * (ring + jitter);
       } else if (visualizationType === 'ontograph' && ontographLayoutType === 'spring') {
         x = width / 2 + (Math.random() - 0.5) * width * 0.6;
         y = height / 2 + (Math.random() - 0.5) * height * 0.6;
@@ -1356,8 +1689,20 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         y = height / 2 + (Math.random() - 0.5) * 100;
       }
       
-      return { ...node, x, y };
+      const z = visualizationType === 'spatial3d'
+        ? Math.max(-260, Math.min(420, (hashToUnit(`${node.id}:depth`) - 0.35) * 680 - getNodeDegree(node.id, filteredEdges) * 8))
+        : undefined;
+      return { ...node, x, y, z };
     });
+
+    if (isSpatial3D) {
+      d3Nodes.forEach(node => {
+        if (node.z == null) {
+          node.z = Math.max(-260, Math.min(420, (hashToUnit(`${node.id}:depth`) - 0.35) * 680 - getNodeDegree(node.id, filteredEdges) * 8));
+        }
+        project3DNode(node);
+      });
+    }
 
     let vowlLayout: VowlLayoutResult | null = null;
     if (visualizationType === 'vowl') {
@@ -1389,10 +1734,22 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           positionMap = layouts.applyRadialLayout(filteredNodes, filteredEdges, { width, height });
           break;
         case 'tree':
-          positionMap = layouts.applyTreeLayout(filteredNodes, filteredEdges, { width, height, orientation: 'vertical' });
+          positionMap = layouts.applyTreeLayout(filteredNodes, filteredEdges, {
+            width,
+            height,
+            orientation: 'vertical',
+            nodeSpacing: isLarge ? 140 : 220,
+            levelSpacing: isLarge ? 220 : 340
+          });
           break;
         case 'horizontal':
-          positionMap = layouts.applyTreeLayout(filteredNodes, filteredEdges, { width, height, orientation: 'horizontal' });
+          positionMap = layouts.applyTreeLayout(filteredNodes, filteredEdges, {
+            width,
+            height,
+            orientation: 'horizontal',
+            nodeSpacing: isLarge ? 140 : 220,
+            levelSpacing: isLarge ? 240 : 360
+          });
           break;
         case 'spring':
           // Spring layout uses the force simulation
@@ -1403,8 +1760,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           positionMap = layouts.applyOntoGraphLayout(filteredNodes, filteredEdges, {
             width,
             height,
-            horizontalSpacing: isLarge ? 200 : 280,
-            verticalSpacing: isLarge ? 70 : 90,
+            horizontalSpacing: isLarge ? 240 : 360,
+            verticalSpacing: isLarge ? 110 : 160,
             centerX: width / 2,
             centerY: height / 2
           });
@@ -1500,7 +1857,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const target = edge.target as D3Node;
       
       // Balanced distances in WebVOWL mode - increased for better visibility
-      const distanceMultiplier = visualizationType === 'vowl' ? 1.2 : 1.0;
+          const distanceMultiplier = visualizationType === 'vowl' ? 1.2 : (visualizationType === 'spatial3d' ? 1.45 : 1.0);
       
       // Hierarchy edges (subClassOf) should be shorter for better tree structure
       if (edge.type === 'subClassOf') {
@@ -1576,6 +1933,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }
             return node.type === 'class' ? -1500 : -800;
           }
+          if (visualizationType === 'spatial3d') {
+            const degree = getNodeDegree(node.id, filteredEdges);
+            return node.type === 'class' ? -1200 - degree * 25 : -700 - degree * 15;
+          }
           // Standard mode repulsion
           if (node.type === 'class') {
             return nodeCount > 100 ? -1000 : -1500;
@@ -1585,7 +1946,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         .distanceMax(visualizationType === 'vowl' ? Math.min(width, height) * 1.2 : (nodeCount > 10000 ? 800 : 1200))
         .theta(nodeCount > 50000 ? 0.9 : 0.7) : null)
       .force('center', usePhysics ? d3.forceCenter(width / 2, height / 2)
-        .strength(visualizationType === 'vowl' ? 0.02 : 0.03) : null)
+        .strength(visualizationType === 'vowl' ? 0.02 : (visualizationType === 'spatial3d' ? 0.018 : 0.03)) : null)
       .force('collision', usePhysics ? d3.forceCollide()
         .radius(d => {
           const node = d as D3Node;
@@ -1613,6 +1974,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }
             return size * 3.5 * scaleFactor;
           }
+          if (visualizationType === 'spatial3d') {
+            return size * (node.type === 'class' ? 4.2 : 3.4);
+          }
           // OntoGraph mode - larger collision to prevent overlap with card nodes
           if (visualizationType === 'ontograph') {
             if (node.type === 'class') {
@@ -1631,6 +1995,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         // Stronger vertical positioning in VOWL mode
         if (visualizationType === 'vowl') {
           return height / 2;
+        }
+        if (visualizationType === 'spatial3d') {
+          return height / 2 + ((node.z || 0) * 0.08);
         }
         // Standard mode positioning
         if (node.type === 'class') {
@@ -1658,10 +2025,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (visualizationType === 'vowl') {
           return width / 2;
         }
+        if (visualizationType === 'spatial3d') {
+          const sideBias = node.type === 'class' ? -0.04 : node.type === 'individual' ? 0.05 : 0;
+          return width / 2 + width * sideBias;
+        }
         return width / 2;
-      }).strength(visualizationType === 'force' ? 0.14 : visualizationType === 'vowl' ? 0.05 : 0.02) : null)
-      .alphaDecay(usePhysics ? (visualizationType === 'vowl' ? 0.02 : 0.03) : 1) // Increased for faster settling
-      .velocityDecay(usePhysics ? (visualizationType === 'vowl' ? 0.6 : 0.5) : 0.8) // Increased for more damping
+      }).strength(visualizationType === 'force' ? 0.14 : visualizationType === 'vowl' ? 0.05 : (visualizationType === 'spatial3d' ? 0.035 : 0.02)) : null)
+      .alphaDecay(usePhysics ? (visualizationType === 'vowl' ? 0.02 : (visualizationType === 'spatial3d' ? 0.025 : 0.03)) : 1) // Increased for faster settling
+      .velocityDecay(usePhysics ? (visualizationType === 'vowl' ? 0.6 : (visualizationType === 'spatial3d' ? 0.58 : 0.5)) : 0.8) // Increased for more damping
       .alpha(isLayoutPaused || !usePhysics ? 0 : (hasSavedPositions ? 0.15 : 1.0))
       .alphaMin(0.001)
       .alphaTarget(0);
@@ -1683,7 +2054,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Pre-calculate stable positions before rendering (run simulation silently)
     // Skip heavy pre-ticks when resuming from saved positions (expand/collapse)
     if (usePhysics && !isLayoutPaused) {
-      const preTicks = hasSavedPositions ? 10 : (visualizationType === 'vowl' ? 60 : 50);
+      const preTicks = hasSavedPositions ? 10 : (visualizationType === 'vowl' ? 60 : (visualizationType === 'spatial3d' ? 70 : 50));
       for (let i = 0; i < preTicks; i++) {
         simulation.tick();
       }
@@ -1700,6 +2071,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             node.x = Math.max(padding, Math.min(width - padding, node.x));
             node.y = Math.max(padding, Math.min(height - padding, node.y));
           }
+        });
+      });
+    }
+
+    if (isSpatial3D) {
+      simulation.force('depthOrbit', () => {
+        d3Nodes.forEach(node => {
+          const degree = getNodeDegree(node.id, filteredEdges);
+          const targetZ = Math.max(-300, Math.min(460, (hashToUnit(`${node.id}:depth`) - 0.35) * 700 - degree * 10));
+          node.z = (node.z || 0) + (targetZ - (node.z || 0)) * 0.08;
+          project3DNode(node);
         });
       });
     }
@@ -1736,6 +2118,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('class', 'edge-path')
       .attr('fill', 'none')
       .attr('stroke', d => {
+        if (isInferredEntity(d)) return '#10b981';
         const isDark = document.documentElement.classList.contains('dark');
         
         if (visualizationType === 'vowl') {
@@ -1786,18 +2169,27 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return isDark ? '#cbd5e1' : '#000000';
       })
       .attr('stroke-width', d => {
-        const baseWidth = visualizationType === 'vowl' ? 1 : (visualizationType === 'ontograph' ? 1.5 : 2);
-        return selectedEdgeId === d.id ? baseWidth + 2 : baseWidth;
+        const baseWidth = visualizationType === 'vowl' ? 1 : (visualizationType === 'ontograph' ? 1.5 : (visualizationType === 'spatial3d' ? 1.2 : 2));
+        const inferredBoost = isInferredEntity(d) ? 0.8 : 0;
+        return selectedEdgeId === d.id ? baseWidth + 2 : baseWidth + inferredBoost;
       })
       .attr('stroke-opacity', d => {
         if (selectedEdgeId) {
           return selectedEdgeId === d.id ? 1 : 0.3;
         }
+        if (isInferredEntity(d)) return 0.9;
         if (visualizationType === 'force') return 1; // Full opacity for force mode
+        if (visualizationType === 'spatial3d') {
+          const source = d.source as D3Node;
+          const target = d.target as D3Node;
+          const averageScale = ((source.depthScale || 1) + (target.depthScale || 1)) / 2;
+          return Math.max(0.28, Math.min(0.9, averageScale * 0.72));
+        }
         if (d.type === 'propertyRelation') return 1;
         return visualizationType === 'vowl' ? 1 : 0.6;
       })
       .attr('stroke-dasharray', d => {
+        if (isInferredEntity(d)) return '8 4';
         if (visualizationType === 'vowl') {
           const vowlEdge = vowlNotationService.edgeToVOWLEdge(d);
           return vowlEdge.strokeDasharray || null;
@@ -2115,19 +2507,25 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       } else {
         fill = d.color || TYPE_COLORS[d.type];
       }
+
+      if (isInferredEntity(d)) {
+        fill = isDark ? '#064e3b' : '#d1fae5';
+      }
       
       const stroke = visualizationType === 'vowl'
-        ? (isDark ? '#d1d5db' : '#000000')
-        : '#fff';
+        ? (isInferredEntity(d) ? '#10b981' : (isDark ? '#d1d5db' : '#000000'))
+        : (isInferredEntity(d) ? '#10b981' : '#fff');
       
       const strokeWidth = visualizationType === 'vowl'
-        ? 2
-        : (hasChildren(d.id, allEdges, allNodes) ? 3 : 2);
+        ? (isInferredEntity(d) ? 3 : 2)
+        : (isInferredEntity(d) ? 3 : (hasChildren(d.id, allEdges, allNodes) ? 3 : 2));
       
       // Thing nodes get dashed borders in WebVOWL
-      const strokeDasharray = visualizationType === 'vowl'
-        ? (isThing ? '5 3' : null)
-        : null;
+      const strokeDasharray = isInferredEntity(d)
+        ? '8 4'
+        : (visualizationType === 'vowl'
+          ? (isThing ? '5 3' : null)
+          : null);
 
       // Render different shapes based on node type (WebVOWL style)
       if (nodeType === 'dataProperty' || nodeType === 'property') {
@@ -2277,7 +2675,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           dataProperty: { bg: isDark ? '#1e293b' : '#f8fafc', border: isDark ? '#ec4899' : '#db2777', accent: isDark ? '#ec4899' : '#db2777', icon: '#db2777', text: isDark ? '#e2e8f0' : '#1e293b' },
           annotation: { bg: isDark ? '#1e293b' : '#f8fafc', border: isDark ? '#6366f1' : '#4f46e5', accent: isDark ? '#6366f1' : '#4f46e5', icon: '#4f46e5', text: isDark ? '#e2e8f0' : '#1e293b' },
         };
-        const colors = nodeColors[d.type] || nodeColors['class'];
+        const colors = isInferredEntity(d)
+          ? { bg: isDark ? '#052e2b' : '#ecfdf5', border: '#10b981', accent: '#10b981', icon: '#10b981', text: isDark ? '#d1fae5' : '#064e3b' }
+          : (nodeColors[d.type] || nodeColors['class']);
         
         // Main card background with subtle shadow
         nodeGroup.append('rect')
@@ -2290,6 +2690,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .attr('fill', colors.bg)
           .attr('stroke', colors.border)
           .attr('stroke-width', simplifiedLOD ? 1 : 1.5)
+          .attr('stroke-dasharray', isInferredEntity(d) ? '8 4' : null)
           .style('filter', simplifiedLOD ? 'none' : 'drop-shadow(0 1px 3px rgba(0,0,0,0.12)) drop-shadow(0 1px 2px rgba(0,0,0,0.06))')
           .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
           .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
@@ -2376,8 +2777,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('rx', ellipseWidth)
             .attr('ry', ellipseHeight)
             .attr('fill', '#FFE4B5')  // Light peach/moccasin color
-            .attr('stroke', '#000000')
-            .attr('stroke-width', 2)
+            .attr('stroke', isInferredEntity(d) ? '#10b981' : '#000000')
+            .attr('stroke-width', isInferredEntity(d) ? 3 : 2)
+            .attr('stroke-dasharray', isInferredEntity(d) ? '8 4' : null)
             .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
             .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
             .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
@@ -2402,6 +2804,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
             .on('mouseout', handleNodeMouseOut);
         }
+      }
+
+      if (isInferredEntity(d) && !isLargeGraph) {
+        nodeGroup.append('text')
+          .attr('x', visualizationType === 'ontograph' ? size * 3.2 : size * 1.4)
+          .attr('y', visualizationType === 'ontograph' ? -size * 1.05 : -size * 1.1)
+          .attr('text-anchor', 'middle')
+          .attr('font-size', '9px')
+          .attr('font-weight', '700')
+          .attr('fill', '#10b981')
+          .text('INF')
+          .style('pointer-events', 'none');
       }
 
       // Add expander +/- icon for non-ontograph modes (ontograph handles its own)
@@ -2492,29 +2906,34 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return -rectWidth / 2 + 16; // Aligned after accent stripe
         }
         if (visualizationType === 'force') return 0; // Centered labels for force mode
+        if (visualizationType === 'spatial3d') return 0; // Centered inside circle for 3D
         return (d.size || settings.nodeSize) + 8;
       })
       .attr('dy', d => {
         if (visualizationType === 'vowl') return 5;
         if (visualizationType === 'ontograph') return 6; // Vertically centered in taller card
         if (visualizationType === 'force') return 4; // Vertically centered for force mode
+        if (visualizationType === 'spatial3d') return 4; // Centered in circle
         return 4;
       })
       .attr('text-anchor', d => {
         if (visualizationType === 'vowl') return 'middle';
         if (visualizationType === 'ontograph') return 'start'; // Left-aligned for OntoGraph
         if (visualizationType === 'force') return 'middle'; // Center text for force mode
+        if (visualizationType === 'spatial3d') return 'middle'; // Center text in 3D node
         return 'start';
       })
       .attr('font-size', d => {
         if (visualizationType === 'vowl') return 11;
         if (visualizationType === 'ontograph') return 12;
         if (visualizationType === 'force') return 11; // Smaller font for better fit in ovals
+        if (visualizationType === 'spatial3d') return 10; // Compact to fit inside circle
         return 13;
       })
       .attr('font-weight', d => {
         if (visualizationType === 'vowl' || visualizationType === 'ontograph') return '500';
         if (visualizationType === 'force') return '600'; // Bold for better contrast
+        if (visualizationType === 'spatial3d') return '600';
         return '500';
       })
       .attr('font-family', d => {
@@ -2536,8 +2955,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           // Black text for good contrast on orange/blue backgrounds
           return '#000000';
         }
+        if (visualizationType === 'spatial3d') {
+          return '#ffffff'; // White text — always readable against node fills
+        }
         return '#333';
       })
+      .attr('stroke', d => visualizationType === 'spatial3d' ? 'rgba(0,0,0,0.75)' : 'none')
+      .attr('stroke-width', d => visualizationType === 'spatial3d' ? 3 : 0)
+      .style('paint-order', d => visualizationType === 'spatial3d' ? 'stroke' : 'normal')
       .text(d => {
         if (visualizationType === 'vowl') {
           // Truncate labels in WebVOWL mode to fit within rectangles
@@ -2568,6 +2993,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const label = d.label || '';
           return label.length > 20 ? label.substring(0, 17) + '...' : label;
         }
+        if (visualizationType === 'spatial3d') {
+          // Short truncation — text is centered inside the circle, so space is limited
+          const label = d.label || '';
+          return label.length > 12 ? label.substring(0, 10) + '..' : label;
+        }
         return settings.showLabels ? d.label : '';
       })
       .style('pointer-events', 'none')
@@ -2575,7 +3005,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     // Node type badge - positioned below node to avoid covering labels
     // Skip for ontograph mode since badges are built into the card design
-    node.filter(d => visualizationType !== 'ontograph')
+    // Skip badge for spatial3d — label is already centered inside the node
+    node.filter(d => visualizationType !== 'ontograph' && visualizationType !== 'spatial3d')
       .append('text')
       .attr('dx', 0)
       .attr('dy', d => {
@@ -2618,6 +3049,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (!ticking) {
         ticking = true;
         rafId = requestAnimationFrame(() => {
+          if (isSpatial3D) {
+            d3Nodes.forEach(project3DNode);
+          }
+
           // Update edge paths with curvature for multiple edges between same nodes
           const updatePath = (d: D3Edge) => {
             const source = d.source as D3Node;
@@ -2627,15 +3062,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               return '';
             }
             
+            const sourcePoint = getRenderPoint(source);
+            const targetPoint = getRenderPoint(target);
             const curve = edgeCurvature.get(d.id) || 0;
             
             // Calculate edge endpoints
-            const dx = target.x - source.x;
-            const dy = target.y - source.y;
+            const dx = targetPoint.x - sourcePoint.x;
+            const dy = targetPoint.y - sourcePoint.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
             
             if (dist === 0) {
-              return `M${source.x},${source.y}L${target.x},${target.y}`;
+              return `M${sourcePoint.x},${sourcePoint.y}L${targetPoint.x},${targetPoint.y}`;
             }
             
             // Shorten edge to stop at node boundary - dynamic based on visualization type and node shape
@@ -2675,17 +3112,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               r = r + 5;
             }
             
-            const targetX = target.x - (dx / dist) * r;
-            const targetY = target.y - (dy / dist) * r;
+            const targetX = targetPoint.x - (dx / dist) * r;
+            const targetY = targetPoint.y - (dy / dist) * r;
             
             if (curve === 0) {
               // Straight line
-              return `M${source.x},${source.y}L${targetX},${targetY}`;
+              return `M${sourcePoint.x},${sourcePoint.y}L${targetX},${targetY}`;
             } else {
               // Curved path - quadratic bezier curve
               // Calculate control point perpendicular to the line
-              const midX = (source.x + targetX) / 2;
-              const midY = (source.y + targetY) / 2;
+              const midX = (sourcePoint.x + targetX) / 2;
+              const midY = (sourcePoint.y + targetY) / 2;
               
               // Perpendicular offset
               const perpX = -dy / dist;
@@ -2694,7 +3131,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               const controlX = midX + perpX * curve;
               const controlY = midY + perpY * curve;
               
-              return `M${source.x},${source.y}Q${controlX},${controlY},${targetX},${targetY}`;
+              return `M${sourcePoint.x},${sourcePoint.y}Q${controlX},${controlY},${targetX},${targetY}`;
             }
           };
 
@@ -2702,10 +3139,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           edgeHitArea.attr('d', updatePath);
 
           linkLabel.each(function(d, i) {
-            const sourceX = (d.source as D3Node).x!;
-            const sourceY = (d.source as D3Node).y!;
-            const targetX = (d.target as D3Node).x!;
-            const targetY = (d.target as D3Node).y!;
+            const sourcePoint = getRenderPoint(d.source as D3Node);
+            const targetPoint = getRenderPoint(d.target as D3Node);
+            const sourceX = sourcePoint.x;
+            const sourceY = sourcePoint.y;
+            const targetX = targetPoint.x;
+            const targetY = targetPoint.y;
             const dx = targetX - sourceX;
             const dy = targetY - sourceY;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -2770,7 +3209,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }
           });
 
-          node.attr('transform', d => `translate(${d.x},${d.y})`);
+          node.attr('transform', d => {
+            const point = getRenderPoint(d);
+            return `translate(${point.x},${point.y}) scale(${visualizationType === 'spatial3d' ? Math.max(0.72, Math.min(1.28, point.scale)) : 1})`;
+          })
+          .style('opacity', d => {
+            if (visualizationType !== 'spatial3d') return 1;
+            const point = getRenderPoint(d);
+            return Math.max(0.58, Math.min(1, point.scale * 0.92));
+          });
           
           // Persist node positions so expand/collapse doesn't scramble the graph
           d3Nodes.forEach(n => {
@@ -2818,52 +3265,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         setSelectedNodes(newSelected);
       } else {
-        // Single click - select node and show hierarchical navigator for ALL nodes
+        // Single click — just select the node; hierarchy navigator opens only via right-click > Edit
         setSelectedNodes(new Set([d.id]));
         setSelectedNodeInfo(d as OntologyNode);
-        setHierarchyRootNode(d as OntologyNode);
-        setIsDialogMinimized(false); // Ensure dialog starts expanded
-        
-        // Position dialog in viewport - use mouse event position for better placement
-        const svgRect = svgRef.current?.getBoundingClientRect();
-        if (svgRect && event) {
-          // Use click position relative to viewport
-          const clickX = event.pageX || event.clientX;
-          const clickY = event.pageY || event.clientY;
-          
-          // Position dialog to the right of click, but keep within viewport
-          const dialogWidth = 380;
-          const dialogHeight = 500;
-          const padding = 20;
-          
-          let posX = clickX + padding;
-          let posY = clickY - 100; // Slightly above click point
-          
-          // Position on left side of graph area
-          const viewportHeight = window.innerHeight;
-          const leftMargin = 20; // Distance from left edge
-          
-          // Set X position to left edge
-          posX = leftMargin;
-          
-          // Adjust Y to keep within viewport
-          if (posY < padding) {
-            posY = padding;
-          }
-          if (posY + dialogHeight > viewportHeight - padding) {
-            posY = viewportHeight - dialogHeight - padding;
-          }
-          
-          setHierarchyDialogPosition({ x: posX, y: posY });
-        } else {
-          // Fallback: left side, centered vertically
-          setHierarchyDialogPosition({
-            x: 20,
-            y: 100
-          });
-        }
-        
-        setShowHierarchyDialog(true);
         onNodeClick?.(d.id);
       }
     }
@@ -2922,6 +3326,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .scaleExtent([0.1, 10])
       .on('zoom', (event) => {
         g.attr('transform', event.transform);
+        currentTransformRef.current = event.transform;
         setZoomLevel(event.transform.k);
         
         // Update viewport bounds for large graph optimization
@@ -2970,6 +3375,31 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       simulation.stop();
     };
   }, [filteredNodes, filteredEdges, settings, editMode, onNodeClick, onEdgeClick, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType]);
+
+  // Auto-fit the viewport when switching to ontograph or changing its layout type
+  // This ensures nodes are always in view after a layout recalculation
+  useEffect(() => {
+    if (visualizationType !== 'ontograph' || ontographLayoutType === 'spring') return;
+    const timerId = setTimeout(() => {
+      if (svgRef.current && gRef.current && zoomRef.current) {
+        const svg = d3.select(svgRef.current);
+        const bounds = (gRef.current as any).getBBox();
+        if (!bounds.width || !bounds.height) return;
+        const width = svgRef.current.clientWidth;
+        const height = svgRef.current.clientHeight;
+        const scale = Math.min(0.9, 0.9 / Math.max(bounds.width / width, bounds.height / height));
+        const translate = [
+          width / 2 - scale * (bounds.x + bounds.width / 2),
+          height / 2 - scale * (bounds.y + bounds.height / 2)
+        ];
+        svg.transition().duration(600).call(
+          zoomRef.current.transform as any,
+          d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
+        );
+      }
+    }, 350); // Wait for D3 render + layout to settle
+    return () => clearTimeout(timerId);
+  }, [visualizationType, ontographLayoutType, filteredNodes.length]);
 
   // Visual update effect to prevent graph movement on selection/hover
   useEffect(() => {
@@ -3553,6 +3983,107 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       );
     }
   };
+
+  const applySavedZoomTransform = useCallback((transform: { x: number; y: number; k: number }) => {
+    if (!svgRef.current || !zoomRef.current) return;
+    const svg = d3.select(svgRef.current);
+    const zoomTransform = d3.zoomIdentity.translate(transform.x, transform.y).scale(transform.k);
+    svg.transition().duration(350).call(zoomRef.current.transform as any, zoomTransform);
+  }, []);
+
+  const handleSaveCurrentView = useCallback(() => {
+    const defaultName = `${visualizationType}${visualizationType === 'ontograph' ? ` / ${ontographLayoutType}` : ''}`;
+    const name = window.prompt('Save graph view as:', defaultName);
+    if (!name || !name.trim()) return;
+
+    const transform = currentTransformRef.current;
+    const view: SavedGraphView = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: name.trim(),
+      createdAt: new Date().toISOString(),
+      visualizationType,
+      ontographLayoutType,
+      zoomTransform: { x: transform.x, y: transform.y, k: transform.k },
+      hierarchy: {
+        visible: Array.from(visibleNodeIds),
+        expanded: Array.from(expandedNodeIds)
+      },
+      selectedNodeIds: Array.from(selectedNodes),
+      filters: {
+        nodeTypes: Array.from(filters.nodeTypes),
+        edgeTypes: Array.from(filters.edgeTypes),
+        searchQuery: filters.searchQuery,
+        namespaceFilter: filters.namespaceFilter,
+        contextFilter: filters.contextFilter
+      },
+      vowlFilters,
+      settings: {
+        showLabels: settings.showLabels,
+        showArrows: settings.showArrows,
+        physics: settings.physics,
+        nodeSize: settings.nodeSize,
+        edgeWidth: settings.edgeWidth
+      },
+      focusedNodeId,
+      nodePositions: Array.from(nodePositionsRef.current.entries())
+    };
+
+    const nextViews = [view, ...savedViews.filter(existing => existing.name !== view.name)].slice(0, 20);
+    persistSavedViews(nextViews);
+    setSelectedSavedViewId(view.id);
+  }, [
+    expandedNodeIds,
+    filters,
+    focusedNodeId,
+    ontographLayoutType,
+    persistSavedViews,
+    savedViews,
+    selectedNodes,
+    settings.edgeWidth,
+    settings.nodeSize,
+    settings.physics,
+    settings.showArrows,
+    settings.showLabels,
+    vowlFilters,
+    visibleNodeIds,
+    visualizationType
+  ]);
+
+  const handleLoadSavedView = useCallback((viewId: string) => {
+    const view = savedViews.find(item => item.id === viewId);
+    if (!view) return;
+
+    setSelectedSavedViewId(view.id);
+    setVisualizationType(view.visualizationType);
+    setOntographLayoutType(view.ontographLayoutType || 'vertical');
+    setFilters(prev => ({
+      ...prev,
+      nodeTypes: new Set(view.filters.nodeTypes),
+      edgeTypes: new Set(view.filters.edgeTypes),
+      searchQuery: view.filters.searchQuery,
+      namespaceFilter: view.filters.namespaceFilter,
+      contextFilter: view.filters.contextFilter
+    }));
+    setVowlFilters(view.vowlFilters);
+    setSettings(prev => ({ ...prev, ...view.settings }));
+    setSearchQuery(view.filters.searchQuery || '');
+    setSelectedNodes(new Set(view.selectedNodeIds));
+    setFocusedNodeId(view.focusedNodeId);
+    nodePositionsRef.current = new Map(view.nodePositions || []);
+    updateHierarchyState(() => ({
+      visible: new Set(view.hierarchy.visible),
+      expanded: new Set(view.hierarchy.expanded)
+    }));
+
+    window.setTimeout(() => applySavedZoomTransform(view.zoomTransform), 150);
+  }, [applySavedZoomTransform, savedViews, updateHierarchyState]);
+
+  const handleDeleteSavedView = useCallback((viewId: string) => {
+    if (!viewId) return;
+    const nextViews = savedViews.filter(view => view.id !== viewId);
+    persistSavedViews(nextViews);
+    setSelectedSavedViewId('');
+  }, [persistSavedViews, savedViews]);
 
   const handleExport = (format: ExportFormat) => {
     if (format === 'svg' && svgRef.current) {
@@ -4275,7 +4806,105 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           <option value="force">Force-Directed Graph</option>
           <option value="vowl">WebVOWL Notation</option>
           <option value="ontograph">Hierarchical Graph</option>
+          <option value="spatial3d">3D Spatial Graph</option>
         </select>
+
+        <select
+          value={assertionView}
+          onChange={(e) => setAssertionView(e.target.value as AssertionViewMode)}
+          style={{
+            padding: '6px 12px',
+            border: '1px solid var(--border)',
+            borderRadius: '6px',
+            fontSize: '13px',
+            backgroundColor: 'var(--surface-1)',
+            color: 'var(--text-primary)',
+            cursor: 'pointer',
+            minWidth: '150px',
+            fontWeight: '500'
+          }}
+          title="Choose asserted, inferred, or combined graph data"
+        >
+          <option value="asserted">Asserted</option>
+          <option value="inferred">Inferred</option>
+          <option value="all">Asserted + Inferred</option>
+        </select>
+        {assertionView !== 'asserted' && (
+          <span
+            style={{
+              padding: '4px 8px',
+              borderRadius: 999,
+              fontSize: 11,
+              fontWeight: 600,
+              color: inferredGraphStatus === 'ready' ? '#047857' : '#92400e',
+              backgroundColor: inferredGraphStatus === 'ready' ? '#d1fae5' : '#fef3c7',
+              border: `1px solid ${inferredGraphStatus === 'ready' ? '#a7f3d0' : '#fde68a'}`
+            }}
+            title="Inferred graph data is generated from the current reasoner class hierarchy"
+          >
+            {inferredGraphStatus === 'loading'
+              ? 'Reasoning...'
+              : inferredGraphStatus === 'ready'
+                ? 'Inferred styling on'
+                : 'Run reasoner for inferred data'}
+          </span>
+        )}
+
+        <div style={styles.relationshipControlsGroup} title="Protégé-style relationship visibility">
+          <span style={styles.relationshipControlsLabel}>Relations</span>
+          {RELATIONSHIP_VISIBILITY_CONTROLS.map(control => {
+            const isEnabled = control.edgeTypes.every(type => filters.edgeTypes.has(type));
+            const isPartial = !isEnabled && control.edgeTypes.some(type => filters.edgeTypes.has(type));
+            return (
+              <button
+                key={control.label}
+                onClick={() => toggleRelationshipVisibility(control.edgeTypes)}
+                style={isEnabled || isPartial ? styles.relationshipPillActive : styles.relationshipPill}
+                title={control.title}
+              >
+                {control.shortLabel}
+              </button>
+            );
+          })}
+          <button onClick={showAllRelationshipTypes} style={styles.relationshipMiniAction} title="Show all relationship types">
+            All
+          </button>
+          <button onClick={hideAllRelationshipTypes} style={styles.relationshipMiniAction} title="Hide all relationship types">
+            None
+          </button>
+        </div>
+
+        {/* Protégé-style saved graph views */}
+        <div style={styles.savedViewsGroup}>
+          <button
+            onClick={handleSaveCurrentView}
+            style={styles.toolbarIconBtn}
+            title="Save current graph view"
+          >
+            <Save size={14} />
+          </button>
+          <select
+            value={selectedSavedViewId}
+            onChange={(e) => handleLoadSavedView(e.target.value)}
+            style={styles.savedViewsSelect}
+            title="Load saved graph view"
+          >
+            <option value="">Saved Views</option>
+            {savedViews.map(view => (
+              <option key={view.id} value={view.id}>
+                {view.name}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => handleDeleteSavedView(selectedSavedViewId)}
+            disabled={!selectedSavedViewId}
+            style={!selectedSavedViewId ? styles.toolbarIconBtnDisabled : styles.toolbarIconBtn}
+            title="Delete selected saved view"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
 
         {/* Hierarchical Graph Toolbar */}
         {visualizationType === 'ontograph' && (
@@ -4464,6 +5093,54 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </>
         )}
 
+        {/* Focus mode — enter via button when a node is selected, or Shift+double-click on any node */}
+        {focusedNodeId ? (
+          <button
+            onClick={exitFocusMode}
+            style={{ ...styles.btnActive, backgroundColor: '#7c3aed', borderColor: '#6d28d9', color: '#fff' }}
+            title="Exit focus mode — show full graph"
+          >
+            <Maximize2 size={16} />
+            Exit Focus
+          </button>
+        ) : (
+          <button
+            onClick={() => selectedNodeInfo && enterFocusMode(selectedNodeInfo.id)}
+            disabled={!selectedNodeInfo}
+            style={selectedNodeInfo ? styles.btn : { ...styles.btn, opacity: 0.4, cursor: 'not-allowed' }}
+            title={selectedNodeInfo ? `Focus on "${selectedNodeInfo.label}" and its neighborhood` : 'Select a node first, then click to focus'}
+          >
+            <Maximize size={16} />
+            Focus
+          </button>
+        )}
+
+        <div style={styles.divider} />
+
+        {/* Class Hierarchy Navigator toggle */}
+        <button
+          onClick={() => {
+            if (showHierarchyDialog) {
+              setShowHierarchyDialog(false);
+            } else {
+              const target = selectedNodeInfo?.type === 'class' ? selectedNodeInfo : allNodes.find(n => n.type === 'class');
+              if (target) {
+                setHierarchyRootNode(target);
+                setIsDialogMinimized(false);
+                setHierarchyDialogPosition({ x: 20, y: 120 });
+                setShowHierarchyDialog(true);
+              }
+            }
+          }}
+          style={showHierarchyDialog ? styles.btnActive : styles.btn}
+          title={showHierarchyDialog ? 'Hide Class Hierarchy Navigator' : 'Show Class Hierarchy Navigator'}
+        >
+          <GitBranch size={16} />
+          Hierarchy
+        </button>
+
+        <div style={styles.divider} />
+
         {/* Feature toggles */}
         <button onClick={() => setShowSearch(!showSearch)} style={showSearch ? styles.btnActive : styles.btn} title="Search">
           <Search size={16} />
@@ -4512,8 +5189,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
           {/* Graph Content Area */}
           <div style={styles.graphContentArea}>
-            {/* SVG Canvas for Force, WebVOWL, and OntoGraph */}
-            <svg ref={svgRef} style={styles.svg}>
+            {/* SVG Canvas for Force, WebVOWL, OntoGraph, and projected 3D Spatial mode */}
+            <svg ref={svgRef} style={visualizationType === 'spatial3d' ? { ...styles.svg, ...styles.spatial3dSvg } : styles.svg}>
                 <defs>
                   {/* Grid pattern */}
                   {showGrid && (
@@ -4532,9 +5209,26 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                     </feMerge>
                   </filter>
                 </defs>
+                {visualizationType === 'spatial3d' && (
+                  <>
+                    <radialGradient id="spatial3d-bg" cx="50%" cy="45%" r="75%">
+                      <stop offset="0%" stopColor="#312e81" stopOpacity="0.45" />
+                      <stop offset="55%" stopColor="#111827" stopOpacity="0.35" />
+                      <stop offset="100%" stopColor="#020617" stopOpacity="0.12" />
+                    </radialGradient>
+                    <rect width="100%" height="100%" fill="url(#spatial3d-bg)" />
+                  </>
+                )}
                 {showGrid && <rect width="100%" height="100%" fill="url(#grid)" />}
                 <g ref={gRef} />
             </svg>
+
+            {visualizationType === 'spatial3d' && (
+              <div style={styles.spatial3dHint}>
+                <Box size={14} />
+                3D Spatial Graph: wheel to zoom, drag to pan, drag nodes to reshape the graph, double-click to expand branches.
+              </div>
+            )}
 
             {/* Empty state overlay */}
             {!loading && filteredNodes.length === 0 && (
@@ -4725,9 +5419,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               position: 'fixed',
               left: `${hierarchyDialogPosition.x}px`,
               top: `${hierarchyDialogPosition.y}px`,
-              width: isDialogMinimized ? 'auto' : '380px',
-              minWidth: isDialogMinimized ? '280px' : 'auto',
-              maxHeight: isDialogMinimized ? 'auto' : '500px',
+              width: isDialogMinimized ? 'auto' : '300px',
+              minWidth: isDialogMinimized ? '220px' : 'auto',
+              maxHeight: isDialogMinimized ? 'auto' : '340px',
               backgroundColor: '#fff',
               border: '1px solid #d1d5db',
               borderRadius: '8px',
@@ -4743,11 +5437,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             {/* Dialog Header - Draggable */}
             <div
               style={{
-                padding: '12px 18px',
+                padding: '8px 12px',
                 background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                 color: '#fff',
                 fontWeight: '600',
-                fontSize: '14px',
+                fontSize: '13px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
@@ -4843,22 +5537,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 {/* Root Node Info */}
                 <div
                   style={{
-                    padding: '12px 16px',
+                    padding: '8px 12px',
                     backgroundColor: '#f9fafb',
                     borderBottom: '1px solid #e5e7eb'
                   }}
                 >
-              <div style={{ fontSize: '16px', fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>
+              <div style={{ fontSize: '13px', fontWeight: '600', color: '#1f2937', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {hierarchyRootNode.label}
               </div>
-              <div style={{ fontSize: '11px', color: '#6b7280', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              <div style={{ fontSize: '10px', color: '#9ca3af', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {hierarchyRootNode.id}
               </div>
-              {hierarchyRootNode.description && (
-                <div style={{ fontSize: '12px', color: '#4b5563', marginTop: '8px', fontStyle: 'italic' }}>
-                  {hierarchyRootNode.description}
-                </div>
-              )}
             </div>
 
             {/* Hierarchy Tree */}
@@ -4866,27 +5555,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               style={{
                 flex: 1,
                 overflow: 'auto',
-                padding: '16px',
+                padding: '8px 10px',
                 backgroundColor: '#fafafa'
               }}
             >
-              <div style={{ 
-                marginBottom: '14px', 
-                fontSize: '11px', 
-                fontWeight: '700', 
-                color: '#6b7280',
-                letterSpacing: '0.8px',
-                textTransform: 'uppercase',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                paddingBottom: '8px',
-                borderBottom: '2px solid #e5e7eb'
-              }}>
-                <Box size={14} style={{ color: '#667eea' }} />
-                Class Hierarchy
-              </div>
-              <div style={{ backgroundColor: '#ffffff', borderRadius: '6px', padding: '8px' }}>
+              <div style={{ backgroundColor: '#ffffff', borderRadius: '6px', padding: '4px' }}>
                 {renderHierarchyTree(hierarchyRootNode)}
               </div>
             </div>
@@ -4911,20 +5584,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             {/* Dialog Footer */}
             <div
               style={{
-                padding: '12px 16px',
+                padding: '5px 10px',
                 backgroundColor: '#f9fafb',
                 borderTop: '1px solid #e5e7eb',
-                fontSize: '11px',
-                color: '#6b7280'
+                fontSize: '10px',
+                color: '#9ca3af',
+                display: 'flex',
+                gap: '10px',
+                flexWrap: 'wrap'
               }}
             >
-              <div style={{ marginBottom: '4px' }}>
-                <strong>Navigation:</strong> Click arrow to expand/collapse
-              </div>
-              <div style={{ marginBottom: '4px' }}>
-                <strong>Actions:</strong> Use <Plus size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> to add child, <GitBranch size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> for sibling, <Trash2 size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> to delete
-              </div>
-              <div>Click class name to select and view properties</div>
+              <span>▸ expand/collapse</span>
+              <span><Plus size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> child &nbsp;<GitBranch size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> sibling &nbsp;<Trash2 size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> delete</span>
             </div>
               </>
             )}
@@ -5083,6 +5754,34 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             >
               ℹ️ View Properties
             </button>
+            {allNodes.find(n => n.id === contextMenu.nodeId)?.type === 'class' && (
+              <button
+                style={styles.contextMenuItem}
+                onClick={() => {
+                  const node = allNodes.find(n => n.id === contextMenu.nodeId);
+                  if (node) {
+                    setHierarchyRootNode(node);
+                    setIsDialogMinimized(false);
+                    const padding = 16;
+                    const dialogWidth = 300;
+                    const dialogHeight = 340;
+                    const viewportWidth = window.innerWidth;
+                    const viewportHeight = window.innerHeight;
+                    let posX = contextMenu.x + padding;
+                    let posY = contextMenu.y - 80;
+                    if (posX + dialogWidth > viewportWidth - padding) posX = contextMenu.x - dialogWidth - padding;
+                    if (posX < padding) posX = padding;
+                    if (posY < padding) posY = padding;
+                    if (posY + dialogHeight > viewportHeight - padding) posY = viewportHeight - dialogHeight - padding;
+                    setHierarchyDialogPosition({ x: posX, y: posY });
+                    setShowHierarchyDialog(true);
+                  }
+                  setContextMenu({ ...contextMenu, visible: false });
+                }}
+              >
+                🌿 Edit in Hierarchy Navigator
+              </button>
+            )}
             <button
               style={{ ...styles.contextMenuItem, background: focusedNodeId === contextMenu.nodeId ? '#ede9fe' : undefined, fontWeight: focusedNodeId === contextMenu.nodeId ? 600 : 400 }}
               onClick={() => {
@@ -5283,6 +5982,86 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--accent)',
     transition: 'all 0.1s'
   },
+  toolbarIconBtnDisabled: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '26px',
+    height: '26px',
+    background: 'transparent',
+    border: 'none',
+    borderRadius: '3px',
+    cursor: 'not-allowed',
+    color: 'var(--text-tertiary)',
+    opacity: 0.45
+  },
+  savedViewsGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '3px',
+    padding: '2px',
+    borderRadius: '6px',
+    border: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-2)'
+  },
+  savedViewsSelect: {
+    minWidth: '150px',
+    maxWidth: '220px',
+    padding: '4px 8px',
+    border: '1px solid var(--border)',
+    borderRadius: '4px',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-primary)',
+    fontSize: '12px',
+    fontWeight: 500
+  },
+  relationshipControlsGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '3px 4px',
+    borderRadius: '6px',
+    border: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-2)'
+  },
+  relationshipControlsLabel: {
+    padding: '0 4px',
+    fontSize: '11px',
+    fontWeight: 700,
+    color: 'var(--text-secondary)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em'
+  },
+  relationshipPill: {
+    padding: '3px 7px',
+    borderRadius: '999px',
+    border: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-secondary)',
+    fontSize: '11px',
+    fontWeight: 700,
+    cursor: 'pointer'
+  },
+  relationshipPillActive: {
+    padding: '3px 7px',
+    borderRadius: '999px',
+    border: '1px solid var(--accent)',
+    backgroundColor: 'var(--accent-tint)',
+    color: 'var(--accent)',
+    fontSize: '11px',
+    fontWeight: 700,
+    cursor: 'pointer'
+  },
+  relationshipMiniAction: {
+    padding: '3px 6px',
+    borderRadius: '4px',
+    border: '1px solid var(--border)',
+    backgroundColor: 'transparent',
+    color: 'var(--text-secondary)',
+    fontSize: '11px',
+    fontWeight: 600,
+    cursor: 'pointer'
+  },
   stats: {
     fontSize: '13px',
     color: 'var(--text-secondary)',
@@ -5314,6 +6093,26 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     height: '100%',
     cursor: 'grab'
+  },
+  spatial3dSvg: {
+    background: 'linear-gradient(135deg, #020617 0%, #111827 48%, #312e81 100%)'
+  },
+  spatial3dHint: {
+    position: 'absolute',
+    left: '16px',
+    bottom: '16px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 12px',
+    borderRadius: '999px',
+    color: '#dbeafe',
+    background: 'rgba(15, 23, 42, 0.78)',
+    border: '1px solid rgba(147, 197, 253, 0.35)',
+    boxShadow: '0 10px 30px rgba(15, 23, 42, 0.35)',
+    fontSize: '12px',
+    zIndex: 9,
+    pointerEvents: 'none'
   },
   searchPanel: {
     position: 'absolute',
