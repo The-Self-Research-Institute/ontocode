@@ -17,7 +17,9 @@ public class OntologyDto {
         private List<TreeNode> children;
         private Boolean hasChildren;
         private Map<String, String> annotations;
-        
+        /** Each entry: {iri, label} — populated for asserted hierarchy nodes that have owl:equivalentClass */
+        private List<Map<String, String>> equivalentClasses;
+
         // Getters & Setters
         public String getId() { return id; }
         public void setId(String id) { this.id = id; }
@@ -33,6 +35,8 @@ public class OntologyDto {
         public void setHasChildren(Boolean hasChildren) { this.hasChildren = hasChildren; }
         public Map<String, String> getAnnotations() { return annotations; }
         public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
+        public List<Map<String, String>> getEquivalentClasses() { return equivalentClasses; }
+        public void setEquivalentClasses(List<Map<String, String>> equivalentClasses) { this.equivalentClasses = equivalentClasses; }
     }
 
     // For PropertyEditor.tsx

@@ -3,6 +3,7 @@ import { X, Check, Package, ChevronRight, ChevronDown } from 'lucide-react';
 import type { TreeNode } from '../../types';
 import apiClient from '../../services/apiClient';
 import EntityHierarchy from '../EntityHierarchy';
+import { notificationService } from '../../services/notificationService';
 
 interface MultiClassSelectorDialogProps {
   isOpen: boolean;
@@ -252,7 +253,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
 
   const handleConfirm = () => {
     if (selectedClasses.length < minSelection) {
-      alert(`Please select at least ${minSelection} class${minSelection > 1 ? 'es' : ''}.`);
+      notificationService.warning('Selection Required', `Please select at least ${minSelection} class${minSelection > 1 ? 'es' : ''}.`);
       return;
     }
     onConfirm(selectedClasses);

@@ -122,6 +122,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [projects, setProjects] = useState<Project[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
+  const [workspaceDisplayName, setWorkspaceDisplayName] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -274,6 +275,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           return prev;
         });
         setWorkspaceOwnerId(workspaceData?.ownerId || null);
+        setWorkspaceDisplayName(workspaceData?.name || "");
 
         // ── Plan / billing-status change detection (Bug #38) ──
         const currentPlan = String(workspaceData?.subscriptionPlan || "").toUpperCase();
@@ -363,6 +365,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
           // Store workspace owner ID
           setWorkspaceOwnerId(workspaceData?.ownerId || null);
+          setWorkspaceDisplayName(workspaceData?.name || "");
 
           console.log("[ProjectDashboard] Workspace members from backend:", members);
           console.log("[ProjectDashboard] Workspace owner ID:", workspaceData?.ownerId);
@@ -913,7 +916,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">OntoCode</h1>
                 <p className="text-xs sm:text-sm text-gray-500 truncate">
                   Welcome, {user?.username}
-                  {user?.workspaceName && (
+                  {(workspaceDisplayName || user?.workspaceName) && (
                     <button
                       onClick={() => {
                         console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (inline)");
@@ -923,7 +926,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       title="Click to switch workspace"
                     >
                       <Building2 size={11} />
-                      <span className="truncate">{user.workspaceName}</span>
+                      <span className="truncate">{workspaceDisplayName || user?.workspaceName}</span>
                     </button>
                   )}
                 </p>

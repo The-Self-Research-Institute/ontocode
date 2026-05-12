@@ -363,28 +363,13 @@ public class StripeService {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Cancels the account subscription immediately and syncs all owned workspaces.
-     * Paid workspace access remains blocked until the user renews the plan.
-     * customer.subscription.deleted at period end — at which point handleSubscriptionDeleted
-     *
+     * Schedules account-level cancellation at the end of the current billing period.
+     * Access remains active until Stripe ends the subscription.
      */
     public void cancelAccountSubscription(User user) throws StripeException {
-        String subId = user.getStripeSubscriptionId();
-        if (subId == null || subId.isBlank()) {
-            throw new IllegalStateException("No active account subscription found.");
-        }
-
-        Subscription subscription = Subscription.retrieve(subId);
-        subscription.cancel();
-
-        // Mark locally as canceled so workspace access is blocked immediately.
-        user.setSubscriptionStatus("canceled");
-        user.setAutoRenewEnabled(false);
-        user.setSubscriptionCanceledAt(LocalDateTime.now());
-        // Keep status as "active"/"trialing" — access continues until period end
-        userRepository.save(user);
-        workspaceService.syncWorkspacesToOwnerPlan(user);
-        log.info("Account subscription {} canceled for user {}", subId, user.getUsername());
+        disableAutoRenew(user);
+        log.info("Account subscription {} scheduled to cancel at period end for user {}",
+                user.getStripeSubscriptionId(), user.getUsername());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -701,19 +686,11 @@ public class StripeService {
     }
 
     public void handleSubscriptionDeleted(Subscription subscription) {
-        String userId = subscription.getMetadata().get("userId");
-        Optional<User> optUser = userId != null
-                ? userRepository.findById(userId)
-                : userRepository.findAll().stream()
-                        .filter(u -> subscription.getCustomer().equals(u.getStripeCustomerId()))
-                        .findFirst();
+        Optional<User> optUser = resolveUserForSubscription(subscription);
 
         optUser.ifPresent(user -> {
             String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
-            String accessEndDate = subscription.getCurrentPeriodEnd() != null
-                    ? LocalDateTime.ofInstant(Instant.ofEpochSecond(subscription.getCurrentPeriodEnd()), ZoneOffset.UTC)
-                            .format(DATE_FMT)
-                    : "immediately";
+            String accessEndDate = formatSubscriptionAccessEnd(subscription);
 
             // Only clear user-level subscription if it matches this subscription
             if (subscription.getId().equals(user.getStripeSubscriptionId())) {
@@ -799,6 +776,25 @@ public class StripeService {
     // ─────────────────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────
+
+    private Optional<User> resolveUserForSubscription(Subscription subscription) {
+        String userId = subscription.getMetadata() != null ? subscription.getMetadata().get("userId") : null;
+        if (userId != null) {
+            return userRepository.findById(userId);
+        }
+        return userRepository.findAll().stream()
+                .filter(u -> subscription.getCustomer().equals(u.getStripeCustomerId()))
+                .findFirst();
+    }
+
+    private String formatSubscriptionAccessEnd(Subscription subscription) {
+        if (subscription.getCurrentPeriodEnd() != null) {
+            return LocalDateTime.ofInstant(
+                            Instant.ofEpochSecond(subscription.getCurrentPeriodEnd()), ZoneOffset.UTC)
+                    .format(DATE_FMT);
+        }
+        return "immediately";
+    }
 
     private void updateUserFromSubscription(Subscription subscription, String action) {
         Map<String, String> metadata = subscription.getMetadata();

@@ -39,8 +39,7 @@ interface Workspace {
   updatedAt: string;
 }
 
-// Billing is account-level. Always derive the badge from the account subscription.
-function accountPlanBadge(planName: string | undefined): { label: string; cls: string } {
+function workspacePlanBadge(planName: string | undefined): { label: string; cls: string } {
   const plan = (planName || "FREE").toUpperCase();
   if (plan === "ENTERPRISE") return { label: "ENTERPRISE", cls: "bg-amber-500/20 text-amber-300 border border-amber-500/30" };
   if (plan === "PRO") return { label: "PRO", cls: "bg-purple-500/20 text-purple-300 border border-purple-500/30" };
@@ -572,8 +571,8 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                               {workspace.memberCount} member{workspace.memberCount !== 1 ? "s" : ""}
                             </span>
                           </span>
-                          <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${accountPlanBadge(accountSubscription?.planName).cls}`}>
-                            {accountPlanBadge(accountSubscription?.planName).label}
+                          <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${workspacePlanBadge(workspace.subscriptionPlan).cls}`}>
+                            {workspacePlanBadge(workspace.subscriptionPlan).label}
                           </span>
                         </div>
                       </div>

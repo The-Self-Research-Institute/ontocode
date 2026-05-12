@@ -943,7 +943,7 @@ public class ProjectImportService {
             java.net.URL url = URI.create(uri).toURL();
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(15_000);   // 15 s
-            conn.setReadTimeout(600_000);     // 10 min for large imports
+            conn.setReadTimeout(60_000);      // 60 s max — 10 min was causing hung imports
             conn.setRequestProperty("Accept",
                     "application/rdf+xml, text/turtle, application/n-triples, */*");
             conn.connect();

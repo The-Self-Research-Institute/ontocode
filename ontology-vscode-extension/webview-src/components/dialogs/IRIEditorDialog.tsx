@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle, Check } from 'lucide-react';
+import { X, Check } from 'lucide-react';
 
 interface IRIEditorDialogProps {
   isOpen: boolean;
@@ -18,58 +18,25 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
   entityType,
   onSave
 }) => {
-  const [iri, setIRI] = useState(currentIRI);
   const [label, setLabel] = useState(currentLabel);
-  const [error, setError] = useState<string>('');
 
   useEffect(() => {
     if (isOpen) {
-      setIRI(currentIRI);
       setLabel(currentLabel);
-      setError('');
     }
-  }, [isOpen, currentIRI, currentLabel]);
+  }, [isOpen, currentLabel]);
 
   if (!isOpen) return null;
 
-  const validateIRI = (value: string): boolean => {
-    if (!value.trim()) {
-      setError('IRI cannot be empty');
-      return false;
-    }
-
-    // Basic IRI validation
-    try {
-      new URL(value);
-      setError('');
-      return true;
-    } catch {
-      // Check if it's a valid IRI format (namespace:localName)
-      if (value.includes(':') && value.split(':')[1]) {
-        setError('');
-        return true;
-      }
-      setError('Invalid IRI format. Must be a valid URL or namespace:localName format');
-      return false;
-    }
-  };
-
-  const handleIRIChange = (value: string) => {
-    setIRI(value);
-    validateIRI(value);
-  };
-
   const handleSave = () => {
-    if (validateIRI(iri) && label.trim()) {
-      onSave(iri.trim(), label.trim());
-      handleClose();
+    if (label.trim()) {
+      onSave(currentIRI, label.trim());
+      onClose();
     }
   };
 
   const handleClose = () => {
-    setIRI(currentIRI);
     setLabel(currentLabel);
-    setError('');
     onClose();
   };
 
@@ -98,8 +65,8 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
     return { namespace: '', localName: iriValue };
   };
 
-  const { namespace, localName } = getIRIParts(iri);
-  const hasChanged = iri !== currentIRI || label !== currentLabel;
+  const { namespace, localName } = getIRIParts(currentIRI);
+  const hasChanged = label !== currentLabel;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={handleClose}>
@@ -107,7 +74,7 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
         {/* Header */}
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <h3 className="text-lg font-semibold text-black">Edit IRI and Label</h3>
+            <h3 className="text-lg font-semibold text-black">Edit Label</h3>
             <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded font-semibold">
               {entityType}
             </span>
@@ -140,53 +107,21 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
             </p>
           </div>
 
-          {/* IRI */}
+          {/* IRI — read-only, renaming not yet supported */}
           <div>
             <label className="text-sm font-semibold text-gray-800 block mb-2">
-              Full IRI
+              Full IRI <span className="text-xs font-normal text-gray-400">(read-only)</span>
             </label>
-            <input
-              type="text"
-              value={iri}
-              onChange={(e) => handleIRIChange(e.target.value)}
-              className={`w-full px-3 py-2 border rounded-md focus:ring-purple-500 text-sm font-mono ${
-                error ? 'border-red-500 focus:border-red-500' : 'border-gray-300 focus:border-purple-500'
-              }`}
-              placeholder="http://example.com/ontology#EntityName"
-            />
-            {error && (
-              <div className="flex items-center gap-1 mt-2 text-xs text-red-600">
-                <AlertCircle size={14} />
-                <span>{error}</span>
-              </div>
-            )}
-            {!error && namespace && (
-              <div className="mt-2 p-2 bg-gray-50 rounded text-xs font-mono space-y-1">
-                <div>
-                  <span className="text-gray-500">Namespace:</span>{' '}
-                  <span className="text-blue-600">{namespace}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">Local Name:</span>{' '}
-                  <span className="text-green-600">{localName}</span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Warning */}
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-            <div className="flex items-start gap-2">
-              <AlertCircle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
-              <div className="text-xs text-amber-800">
-                <p className="font-semibold mb-1">⚠️ Warning: Changing IRI is a destructive operation</p>
-                <ul className="list-disc list-inside space-y-0.5 text-[11px]">
-                  <li>All references to this entity will need to be updated</li>
-                  <li>This may break relationships with other entities</li>
-                  <li>Consider creating a new entity instead if possible</li>
-                </ul>
-              </div>
+            <div className="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-sm font-mono text-gray-600 break-all select-all">
+              {currentIRI}
             </div>
+            {namespace && (
+              <div className="mt-2 p-2 bg-gray-50 rounded text-xs font-mono space-y-1">
+                <div><span className="text-gray-500">Namespace:</span>{' '}<span className="text-blue-600">{namespace}</span></div>
+                <div><span className="text-gray-500">Local Name:</span>{' '}<span className="text-green-600">{localName}</span></div>
+              </div>
+            )}
+            <p className="text-xs text-gray-400 mt-1">IRI renaming is not yet supported. Only the label can be changed.</p>
           </div>
         </div>
 
@@ -194,10 +129,7 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
         <div className="p-4 border-t border-gray-200 flex justify-between items-center">
           <div className="text-xs text-gray-600">
             {hasChanged && (
-              <div className="flex items-center gap-1 text-amber-600">
-                <AlertCircle size={12} />
-                <span>Unsaved changes</span>
-              </div>
+              <span className="text-amber-600">Unsaved changes</span>
             )}
           </div>
           <div className="flex gap-3">
@@ -209,9 +141,9 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
             </button>
             <button
               onClick={handleSave}
-              disabled={!!error || !label.trim() || !iri.trim() || !hasChanged}
+              disabled={!label.trim() || !hasChanged}
               className={`px-4 py-2 text-sm rounded-md flex items-center gap-2 ${
-                !!error || !label.trim() || !iri.trim() || !hasChanged
+                !label.trim() || !hasChanged
                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                   : 'bg-purple-600 text-white hover:bg-purple-700'
               }`}

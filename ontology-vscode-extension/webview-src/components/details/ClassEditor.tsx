@@ -257,6 +257,9 @@ const ClassEditor: React.FC<{
     "hierarchy" | "objectRestriction" | "dataRestriction" | "classExpression" | undefined
   >();
   const [editorInitialRestrictionData, setEditorInitialRestrictionData] = useState<any>();
+  const [editorAllowedTabs, setEditorAllowedTabs] = useState<("hierarchy" | "objectRestriction" | "dataRestriction" | "classExpression")[] | undefined>();
+  // Flat label→IRI lookup for resolving Manchester expressions (all classes, not just loaded tree)
+  const [allClassesLookup, setAllClassesLookup] = useState<Map<string, string>>(new Map());
 
   // Properties for restriction creators - use props if available, otherwise local state
   const [properties, setProperties] = useState<any[]>(propObjectProperties || []);
@@ -543,6 +546,12 @@ const ClassEditor: React.FC<{
   //   }
   // }, [isInstancesOpen, item.id, projectId]);
 
+  // Pre-load all-classes lookup when editor dialog opens so Manchester expressions can resolve labels
+  useEffect(() => {
+    if (isEditorOpen) loadAllClassesLookup();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditorOpen]);
+
   const loadProperties = async () => {
     try {
       // Load all properties (both object and data)
@@ -641,6 +650,25 @@ const ClassEditor: React.FC<{
       setDataPropertyHierarchy([topDataProperty]);
     } catch (error) {
       console.error("Failed to load properties:", error);
+    }
+  };
+
+  const loadAllClassesLookup = async () => {
+    if (allClassesLookup.size > 0) return;
+    try {
+      const resp = await apiClient.get<any>(`/api/ontology/classes/all/${projectId}?limit=5000`);
+      const classes: any[] = resp?.data?.classes ?? resp?.data ?? resp?.classes ?? (Array.isArray(resp) ? resp : []);
+      const lookup = new Map<string, string>();
+      for (const c of classes) {
+        if (!c?.id) continue;
+        if (c.label) lookup.set(c.label, c.id);
+        const fragment = c.id.split(/[#\/]/).pop();
+        if (fragment && fragment !== c.id) lookup.set(fragment, c.id);
+        lookup.set(c.id, c.id);
+      }
+      setAllClassesLookup(lookup);
+    } catch (e) {
+      console.warn("[ClassEditor] Failed to load all-classes lookup:", e);
     }
   };
 
@@ -815,6 +843,20 @@ const ClassEditor: React.FC<{
     }
     setEditorInitialTab(initialTab);
     setEditorInitialRestrictionData(restrictionData);
+
+    // Restrict visible tabs for EquivalentTo: show only relevant tabs
+    if (type === "EquivalentTo") {
+      if (initialTab === "objectRestriction" || (restrictionData && !restrictionData.isDataProperty)) {
+        setEditorAllowedTabs(["classExpression", "objectRestriction"]);
+      } else if (initialTab === "dataRestriction" || (restrictionData && restrictionData.isDataProperty)) {
+        setEditorAllowedTabs(["classExpression", "dataRestriction"]);
+      } else {
+        setEditorAllowedTabs(["hierarchy", "classExpression"]);
+      }
+    } else {
+      setEditorAllowedTabs(undefined); // no restriction for SubClassOf etc.
+    }
+
     setIsEditorOpen(true);
   };
 
@@ -1030,47 +1072,8 @@ const ClassEditor: React.FC<{
           editorType,
         });
 
-        // SAFETY CHECK: If this is a restriction edit, verify that we're not adding a duplicate
-        // Check if an axiom with the same property and filler already exists
-        if (restrictionData) {
-          // Get the correct axiom array based on axiom type
-          let existingAxioms: any[] = [];
-          if (editorType === "SubClassOf") {
-            existingAxioms = classDetails?.subClassOfAxioms || item.subClassOfAxioms || [];
-          } else if (editorType === "EquivalentTo") {
-            existingAxioms = classDetails?.equivalentClassesAxioms || item.equivalentClassesAxioms || [];
-          } else if (editorType === "DisjointWith") {
-            existingAxioms = classDetails?.disjointWithAxioms || item.disjointWithAxioms || [];
-          }
-
-          const isDuplicate = existingAxioms.some((axiom: any) => {
-            // Check if axiom has the same property and filler
-            return (
-              axiom.propertyIri === restrictionData.propertyIri &&
-              axiom.fillerIri === restrictionData.fillerIri &&
-              axiom.restrictionType === restrictionData.restrictionType
-            );
-          });
-
-          if (isDuplicate) {
-            console.warn(
-              "[ClassEditor] ⚠️  DUPLICATE DETECTED - Not adding axiom that already exists with same restriction:",
-              {
-                editorType,
-                propertyIri: restrictionData.propertyIri,
-                fillerIri: restrictionData.fillerIri,
-                restrictionType: restrictionData.restrictionType,
-                existingAxiomsCount: existingAxioms.length,
-              },
-            );
-            // Skip the add operation - the axiom already exists
-            setIsEditorOpen(false);
-            setEditorExistingId(undefined);
-            return;
-          }
-        }
-
-        // Add the new restriction axiom
+        // Add the new restriction axiom (duplicate check removed — stale classDetails after
+        // deletion would always falsely flag the just-deleted restriction as a duplicate)
         await handleAddAxiom(editorType, expression, restrictionData);
       } else {
         // Otherwise it's an add operation
@@ -1099,7 +1102,8 @@ const ClassEditor: React.FC<{
         if (found) return found;
       }
     }
-    return null;
+    // Fallback: flat lookup covers classes not yet lazily loaded into the tree
+    return allClassesLookup.get(labelOrIri) ?? null;
   };
 
   // Parse a simple Manchester intersection ("A and B") or union ("A or B") expression.
@@ -1176,7 +1180,8 @@ const ClassEditor: React.FC<{
             console.warn("Invalid restrictionType for data restriction:", restrictionData.restrictionType);
           }
         }
-        // Reload details to get the updated axioms
+        // Allow GraphDB to index the new restriction before reloading
+        await new Promise((resolve) => setTimeout(resolve, 600));
         await loadClassDetails();
         return;
       }
@@ -1871,12 +1876,29 @@ const ClassEditor: React.FC<{
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
+      // Support "Subject EquivalentTo Object" pattern — becomes a regular equivalentClass axiom
+      const equivMatch = expression.trim().match(/^(.+?)\s+EquivalentTo\s+(.+)$/i);
+      if (equivMatch) {
+        const subjectIri = findClassIriByLabelOrIri(equivMatch[1].trim(), classHierarchy);
+        const objectIri = findClassIriByLabelOrIri(equivMatch[2].trim(), classHierarchy);
+        if (!subjectIri || !objectIri) {
+          notificationService.warning("Class Not Found",
+            `Cannot resolve "${!subjectIri ? equivMatch[1].trim() : equivMatch[2].trim()}" to a class IRI. Check that the class name matches a label in the hierarchy.`
+          );
+          return;
+        }
+        await ontologyMutationService.addEquivalentClass(projectId, subjectIri, objectIri, user?.email, user?.displayName || user?.email);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await loadClassDetails();
+        return;
+      }
+
       // Parse expression: supports "A and B" (intersection) or "A or B" (union)
       // These create GCAs of the form: (A and B) rdfs:subClassOf <classIri>
       const parsed = parseManchesterExpression(expression);
       if (!parsed) {
         notificationService.warning("Unsupported Expression",
-          `Cannot create GCA: "${expression}". Supported: "ClassA and ClassB" (intersection) or "ClassA or ClassB" (union). Class names must match labels or IRIs in the hierarchy.`
+          `Cannot create GCA: "${expression}". Supported: "ClassA and ClassB" (intersection), "ClassA or ClassB" (union), or "ClassA EquivalentTo ClassB". Class names must match labels or IRIs in the hierarchy.`
         );
         return;
       }
@@ -2091,7 +2113,7 @@ const ClassEditor: React.FC<{
               {/* SubClass Of (Anonymous Ancestor) */}
               <AxiomSubsection
                 title="SubClass Of (Anonymous Ancestor)"
-                axioms={classDetails?.inheritedAnonymousAxioms || []}
+                axioms={classDetails?.anonymousAncestorAxioms || []}
                 onAdd={() => {}}
                 onDelete={() => {}}
                 themeColor="yellow"
@@ -2183,12 +2205,14 @@ const ClassEditor: React.FC<{
           setEditorExistingId(undefined);
           setEditorInitialTab(undefined);
           setEditorInitialRestrictionData(undefined);
+          setEditorAllowedTabs(undefined);
         }}
         onConfirm={handleEditorConfirm}
         title={editorTitle}
         initialValue={editorExistingValue}
         initialTab={editorInitialTab}
         initialRestrictionData={editorInitialRestrictionData}
+        allowedTabs={editorAllowedTabs}
         classHierarchy={classHierarchy}
         objectProperties={properties}
         dataProperties={dataProperties}

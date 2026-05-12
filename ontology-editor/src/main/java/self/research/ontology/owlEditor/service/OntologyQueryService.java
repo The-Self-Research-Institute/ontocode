@@ -55,19 +55,20 @@ public class OntologyQueryService {
     }
 
     /**
-     * Get top-level classes (direct children of owl:Thing or orphan classes).
+     * Get top-level classes (direct children of owl:Thing or implicit root classes).
      *
-     * Two-phase strategy to avoid O(n²) full-graph scan on large ontologies:
+     * Two-phase strategy, performance-safe:
      *
-     * Phase 1 — fast indexed lookup: just rdfs:subClassOf owl:Thing.
-     *   GraphDB resolves this via predicate index in O(k) where k = number of direct children.
-     *   Completes in <1s even for 100k-class ontologies.
+     * Phase 1 — fast indexed lookup (O(k), predicate index): finds classes with explicit
+     *   rdfs:subClassOf owl:Thing triples (e.g. Animal, Vehicle).
      *
-     * Phase 2 — full scan fallback: used only when Phase 1 returns nothing,
-     *   which means the ontology has no explicit rdfs:subClassOf owl:Thing triples
-     *   (malformed / all classes are orphans). Slower but correct.
+     * Phase 2 — orphan supplement (runs always, but only scans owl:Class declarations):
+     *   finds classes that are declared as owl:Class but have NO rdfs:subClassOf to any
+     *   named parent (e.g. Country, Company which are implicitly under owl:Thing by semantics).
+     *   Any class already returned by Phase 1 is excluded via VALUES filter — so the NOT EXISTS
+     *   scan is over a reduced set and Phase 1 classes are never re-scanned.
      *
-     * Results are @Cacheable — the slow path is only paid once.
+     * Results are @Cacheable — both phases are paid only once per project/limit combination.
      */
     @Cacheable(value = "topLevelClasses", key = "#projectId + '_' + #limit")
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
@@ -87,39 +88,66 @@ public class OntologyQueryService {
             LIMIT %d
             """.formatted(Math.max(1, limit));
 
-        log.info("[PERF] Loading top-level classes (fast path) for project: {}", projectId);
-        List<OntologyDto.TreeNode> result = mapTreeNodes(projectId, fastQuery, null);
-        long duration = System.currentTimeMillis() - startTime;
+        log.info("[PERF] Loading top-level classes (phase 1 - explicit subClassOf) for project: {}", projectId);
+        List<OntologyDto.TreeNode> phase1 = mapTreeNodes(projectId, fastQuery, null);
+        long p1Duration = System.currentTimeMillis() - startTime;
+        log.info("[PERF] Top-level classes phase 1: {} results in {}ms", phase1.size(), p1Duration);
 
-        if (!result.isEmpty()) {
-            log.info("[PERF] Top-level classes (fast path): {} results in {}ms", result.size(), duration);
-            return result;
-        }
+        // Phase 2: supplement with orphan classes (owl:Class declarations with no named parent).
+        // First, run a cheap ASK to detect if any orphans exist at all — skips the expensive
+        // NOT EXISTS scan entirely for well-structured ontologies (the common case).
+        Set<String> phase1Iris = phase1.stream()
+                .map(OntologyDto.TreeNode::getId)
+                .collect(java.util.stream.Collectors.toSet());
 
-        // Phase 2: fallback for ontologies with no explicit rdfs:subClassOf owl:Thing.
-        // Finds classes that have no named parent class other than owl:Thing.
-        // More expensive — avoid running this on large well-formed ontologies.
-        log.info("[PERF] Fast path returned 0 results. Falling back to full scan for project: {}", projectId);
-        String fallbackQuery = PREFIXES + """
-            SELECT DISTINCT ?c ?label ?description
-            (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c && isIRI(?child)) } AS ?hasChildren)
-            WHERE {
+        String exclusionValues = phase1Iris.isEmpty() ? "" :
+                "  FILTER(?c NOT IN (<" + String.join(">, <", phase1Iris) + ">))\n";
+
+        String orphanAsk = PREFIXES + """
+            ASK {
               ?c a owl:Class .
               FILTER(isIRI(?c) && ?c != <http://www.w3.org/2002/07/owl#Thing>)
-              FILTER NOT EXISTS {
-                ?c rdfs:subClassOf ?super .
-                FILTER(isIRI(?super) && ?super != <http://www.w3.org/2002/07/owl#Thing> && ?super != ?c)
+            %s  FILTER NOT EXISTS {
+                ?c rdfs:subClassOf ?any .
+                FILTER(isIRI(?any))
               }
-              OPTIONAL { ?c rdfs:label ?label }
-              OPTIONAL { ?c rdfs:comment ?description }
             }
-            ORDER BY COALESCE(LCASE(?label), STR(?c))
-            LIMIT %d
-            """.formatted(Math.max(1, limit));
+            """.formatted(exclusionValues);
 
-        result = mapTreeNodes(projectId, fallbackQuery, null);
-        duration = System.currentTimeMillis() - startTime;
-        log.info("[PERF] Top-level classes (fallback): {} results in {}ms", result.size(), duration);
+        boolean hasOrphans = datasetService.execAsk(projectId, orphanAsk);
+        long askDuration = System.currentTimeMillis() - startTime - p1Duration;
+        log.info("[PERF] Orphan ASK query: {} in {}ms", hasOrphans, askDuration);
+
+        List<OntologyDto.TreeNode> orphans = java.util.Collections.emptyList();
+        if (hasOrphans) {
+            String orphanQuery = PREFIXES + """
+                SELECT DISTINCT ?c ?label ?description
+                (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c && isIRI(?child)) } AS ?hasChildren)
+                WHERE {
+                  ?c a owl:Class .
+                  FILTER(isIRI(?c) && ?c != <http://www.w3.org/2002/07/owl#Thing>)
+                %s  FILTER NOT EXISTS {
+                    ?c rdfs:subClassOf ?super .
+                    FILTER(isIRI(?super) && ?super != <http://www.w3.org/2002/07/owl#Thing> && ?super != ?c)
+                  }
+                  OPTIONAL { ?c rdfs:label ?label }
+                  OPTIONAL { ?c rdfs:comment ?description }
+                }
+                ORDER BY COALESCE(LCASE(?label), STR(?c))
+                LIMIT %d
+                """.formatted(exclusionValues, Math.max(1, limit));
+            orphans = mapTreeNodes(projectId, orphanQuery, null);
+        }
+        long totalDuration = System.currentTimeMillis() - startTime;
+        log.info("[PERF] Top-level classes phase 2 (orphans): {} new results, total {}ms", orphans.size(), totalDuration);
+
+        // Merge and sort
+        List<OntologyDto.TreeNode> merged = new java.util.ArrayList<>(phase1);
+        merged.addAll(orphans);
+        merged.sort(java.util.Comparator.comparing(n ->
+                n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
+        List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
+        enrichWithEquivalentClasses(projectId, result);
         return result;
     }
 
@@ -222,10 +250,11 @@ public class OntologyQueryService {
             """.formatted(parentIri, parentIri, Math.max(1, limit), Math.max(0, offset));
         
         List<OntologyDto.TreeNode> result = mapTreeNodes(projectId, query, parentIri);
-        
+        enrichWithEquivalentClasses(projectId, result);
+
         long duration = System.currentTimeMillis() - startTime;
         log.debug("✅ [PERF] Loaded {} children for {} in {}ms", result.size(), parentIri, duration);
-        
+
         return result;
     }
 
@@ -756,6 +785,56 @@ public class OntologyQueryService {
         List<OntologyDto.TreeNode> nodes = new ArrayList<>(seen.values());
         System.out.println("=== MAPPED " + nodes.size() + " NODES FROM " + count + " ROWS ===");
         return nodes;
+    }
+
+    /**
+     * Enrich a list of tree nodes with their owl:equivalentClass partners.
+     * Runs one SPARQL query for the entire batch using a VALUES clause.
+     * Nodes with no equivalences are left unchanged.
+     */
+    private void enrichWithEquivalentClasses(String projectId, List<OntologyDto.TreeNode> nodes) {
+        if (nodes.isEmpty()) return;
+
+        String values = nodes.stream()
+                .map(n -> "(<" + n.getId() + ">)")
+                .collect(java.util.stream.Collectors.joining(" "));
+
+        String q = PREFIXES + """
+            SELECT DISTINCT ?cls ?equiv ?equivLabel WHERE {
+              VALUES (?cls) { %s }
+              {
+                ?cls owl:equivalentClass ?equiv .
+              } UNION {
+                ?equiv owl:equivalentClass ?cls .
+              }
+              FILTER(isIRI(?equiv) && ?equiv != ?cls)
+              OPTIONAL { ?equiv rdfs:label ?equivLabel }
+            }
+            """.formatted(values);
+
+        TupleQueryResult rs = datasetService.execSelect(projectId, q);
+        // Group results by class IRI
+        Map<String, List<Map<String, String>>> byClass = new java.util.LinkedHashMap<>();
+        while (rs.hasNext()) {
+            BindingSet sol = rs.next();
+            String cls = resource(sol, "cls");
+            String equiv = resource(sol, "equiv");
+            if (cls == null || equiv == null) continue;
+            String equivLabel = literal(sol, "equivLabel");
+            if (equivLabel.isBlank()) equivLabel = localName(equiv);
+            Map<String, String> entry = new java.util.LinkedHashMap<>();
+            entry.put("iri", equiv);
+            entry.put("label", equivLabel);
+            byClass.computeIfAbsent(cls, k -> new ArrayList<>()).add(entry);
+        }
+
+        // Attach results back to nodes
+        Map<String, OntologyDto.TreeNode> nodeMap = nodes.stream()
+                .collect(java.util.stream.Collectors.toMap(OntologyDto.TreeNode::getId, n -> n, (a, b) -> a));
+        byClass.forEach((cls, equivList) -> {
+            OntologyDto.TreeNode node = nodeMap.get(cls);
+            if (node != null) node.setEquivalentClasses(equivList);
+        });
     }
 
     private String resource(BindingSet sol, String var) {
@@ -1603,14 +1682,21 @@ public class OntologyQueryService {
         }, QUERY_POOL);
         
         // --- EquivalentClass simple ---
+        // owl:equivalentClass is symmetric, but we store only one direction.
+        // UNION covers both: ?classIri owl:equivalentClass ?equiv AND ?equiv owl:equivalentClass ?classIri
         CompletableFuture<TupleQueryResult> equivFuture = CompletableFuture.supplyAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?equiv ?label WHERE {
-                  <%s> owl:equivalentClass ?equiv .
-                  FILTER(isIRI(?equiv) && ?equiv != <%s>)
+                  {
+                    <%s> owl:equivalentClass ?equiv .
+                    FILTER(isIRI(?equiv) && ?equiv != <%s>)
+                  } UNION {
+                    ?equiv owl:equivalentClass <%s> .
+                    FILTER(isIRI(?equiv) && ?equiv != <%s>)
+                  }
                   OPTIONAL { ?equiv rdfs:label ?label }
                 }
-                """.formatted(classIri, classIri);
+                """.formatted(classIri, classIri, classIri, classIri);
             return datasetService.execSelect(projectId, q);
         }, QUERY_POOL);
         

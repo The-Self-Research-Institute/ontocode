@@ -263,7 +263,8 @@ public class SubscriptionController {
             // Empty workspaceId = account-level cancellation (Model B)
             if (workspaceId == null || workspaceId.isBlank()) {
                 stripeService.cancelAccountSubscription(user);
-                return ResponseEntity.ok(Map.of("message", "Account subscription canceled successfully."));
+                return ResponseEntity.ok(Map.of(
+                        "message", "Auto-renewal disabled. Your subscription remains active until the end of the current billing period."));
             }
             // Bug #42: cancellation is destructive and changes the
             // billing relationship for every member of the workspace.

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { X, Users, AlertCircle } from "lucide-react";
+import React, { useState, useEffect, useMemo } from "react";
+import { X, Users, AlertCircle, Search } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
 import { validateProjectName, validateDescription } from "../utils/validation";
@@ -14,47 +14,98 @@ interface WorkspaceMember {
   userId: string;
   username: string;
   email: string;
+  role?: string;
+  status?: string;
 }
+
+const MEMBER_SEARCH_THRESHOLD = 5;
+type ProjectShareRole = "VIEWER" | "EDITOR";
+
+const normalizeEmail = (email?: string | null) => (email || "").trim().toLowerCase();
+
+const isActiveWorkspaceMember = (member: WorkspaceMember) =>
+  String(member.status || "ACTIVE").toUpperCase() === "ACTIVE" &&
+  !!member.userId &&
+  !!member.email;
 
 const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const { user } = useAuth();
   const [projectName, setProjectName] = useState("");
   const [description, setDescription] = useState("");
-  const [shareWith, setShareWith] = useState<"none" | "all" | "specific">("all");
+  const [shareWith, setShareWith] = useState<"none" | "all" | "specific">("none");
+  const [selectedMemberRoles, setSelectedMemberRoles] = useState<Record<string, ProjectShareRole>>({});
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [memberSearch, setMemberSearch] = useState("");
   const [creating, setCreating] = useState(false);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showFreePlanDialog, setShowFreePlanDialog] = useState(false);
+  const [membersLoadError, setMembersLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isOpen && shareWith === "specific") {
-      loadWorkspaceMembers();
+    if (!isOpen) {
+      setErrorMessage(null);
+      setMembersLoadError(null);
+      return;
     }
-  }, [isOpen, shareWith]);
 
-  // Clear error when modal opens/closes
+    setShareWith("none");
+    setSelectedMemberRoles({});
+    setSelectedMembers([]);
+    setMemberSearch("");
+
+    if (user?.workspaceId) {
+      loadWorkspaceMembers();
+    } else {
+      setWorkspaceMembers([]);
+      setMembersLoadError("Select a workspace before choosing specific members.");
+    }
+  }, [isOpen, user?.workspaceId]);
+
   useEffect(() => {
-    if (!isOpen) setErrorMessage(null);
-  }, [isOpen]);
+    if (shareWith !== "specific") {
+      setSelectedMembers([]);
+      setSelectedMemberRoles({});
+      setMemberSearch("");
+    }
+  }, [shareWith]);
 
   const loadWorkspaceMembers = async () => {
+    if (!user?.workspaceId) {
+      setWorkspaceMembers([]);
+      setMembersLoadError("Select a workspace before choosing specific members.");
+      return;
+    }
+
     try {
       setLoadingMembers(true);
-      const response = await apiClient.get(`/api/workspaces/${user?.workspaceId}`);
+      setMembersLoadError(null);
+      const response = await apiClient.get(`/api/workspaces/${user.workspaceId}`);
       const workspaceData = response?.data || response;
       const members = workspaceData?.members || [];
-      const filteredMembers = members.filter(
-        (m: any) =>
-          m.userId !== user?.id &&
-          m.id !== user?.id &&
-          m.email?.toLowerCase() !== user?.email?.toLowerCase(),
-      );
+      const currentUserId = user?.userId;
+      const currentEmail = normalizeEmail(user?.email);
+      const filteredMembers = members
+        .filter((member: WorkspaceMember) => isActiveWorkspaceMember(member))
+        .filter((member: WorkspaceMember) => {
+          if (currentUserId && member.userId === currentUserId) return false;
+          if (currentEmail && normalizeEmail(member.email) === currentEmail) return false;
+          return true;
+        })
+        .map((member: WorkspaceMember) => ({
+          ...member,
+          email: member.email.trim(),
+          username: member.username || member.email.split("@")[0],
+        }))
+        .sort((a: WorkspaceMember, b: WorkspaceMember) =>
+          a.username.localeCompare(b.username, undefined, { sensitivity: "base" }),
+        );
       setWorkspaceMembers(filteredMembers);
     } catch (error) {
       console.error("Error loading workspace members:", error);
       setWorkspaceMembers([]);
+      setMembersLoadError("Could not load workspace members. Try again.");
     } finally {
       setLoadingMembers(false);
     }
@@ -109,7 +160,10 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
       };
 
       if (shareWith === "specific" && selectedMembers.length > 0) {
-        payload.memberEmails = selectedMembers;
+        payload.memberAccess = selectedMembers.map((email) => ({
+          email: email.trim(),
+          role: selectedMemberRoles[normalizeEmail(email)] || "VIEWER",
+        }));
       }
 
       await apiClient.post("/api/projects", payload);
@@ -117,7 +171,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
       setProjectName("");
       setDescription("");
       setShareWith("none");
+      setSelectedMemberRoles({});
       setSelectedMembers([]);
+      setMemberSearch("");
       setErrorMessage(null);
       onSuccess();
       onClose();
@@ -141,8 +197,49 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
   };
 
   const toggleMember = (email: string) => {
-    setSelectedMembers((prev) => (prev.includes(email) ? prev.filter((m) => m !== email) : [...prev, email]));
+    const normalizedEmail = normalizeEmail(email);
+    const trimmedEmail = email.trim();
+    const isSelected = selectedMembers.some((value) => normalizeEmail(value) === normalizedEmail);
+
+    if (isSelected) {
+      setSelectedMembers((prev) => prev.filter((value) => normalizeEmail(value) !== normalizedEmail));
+      setSelectedMemberRoles((roles) => {
+        const nextRoles = { ...roles };
+        delete nextRoles[normalizedEmail];
+        return nextRoles;
+      });
+      return;
+    }
+
+    setSelectedMembers((prev) => [...prev, trimmedEmail]);
+    setSelectedMemberRoles((roles) => ({
+      ...roles,
+      [normalizedEmail]: roles[normalizedEmail] || "VIEWER",
+    }));
   };
+
+  const getMemberRole = (email: string): ProjectShareRole =>
+    selectedMemberRoles[normalizeEmail(email)] || "VIEWER";
+
+  const handleMemberRoleChange = (email: string, role: ProjectShareRole) => {
+    const normalizedEmail = normalizeEmail(email);
+    setSelectedMemberRoles((roles) => ({
+      ...roles,
+      [normalizedEmail]: role,
+    }));
+  };
+
+  const hasShareableMembers = workspaceMembers.length > 0;
+  const shareableMemberCount = workspaceMembers.length;
+  const visibleMembers = useMemo(() => {
+    const query = memberSearch.trim().toLowerCase();
+    if (!query) return workspaceMembers;
+    return workspaceMembers.filter(
+      (member) =>
+        member.username.toLowerCase().includes(query) ||
+        member.email.toLowerCase().includes(query),
+    );
+  }, [workspaceMembers, memberSearch]);
 
   if (!isOpen) return null;
 
@@ -209,8 +306,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                   className="mt-0.5"
                 />
                 <div>
-                  <div className="font-medium text-gray-900">Private</div>
-                  <div className="text-sm text-gray-500">Only you can access this project</div>
+                  <div className="font-medium text-gray-900">Only me</div>
+                  <div className="text-sm text-gray-500">Start with a project only you can open</div>
                 </div>
               </label>
 
@@ -228,16 +325,31 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                     <Users size={16} />
                     All Workspace Members
                   </div>
-                  <div className="text-sm text-gray-500">All members will be added as <strong>Viewer</strong></div>
+                  <div className="text-sm text-gray-500">
+                    {loadingMembers ? (
+                      "Checking active workspace members..."
+                    ) : shareableMemberCount === 0 ? (
+                      "No other active members to add yet."
+                    ) : (
+                      <>
+                        {shareableMemberCount} active workspace member{shareableMemberCount === 1 ? "" : "s"} will be added as <strong>Viewer</strong>
+                      </>
+                    )}
+                  </div>
                 </div>
               </label>
 
-              <label className="flex items-start gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
+              <label
+                className={`flex items-start gap-3 p-3 border border-gray-200 rounded-lg ${
+                  hasShareableMembers ? "cursor-pointer hover:bg-gray-50" : "opacity-60 cursor-not-allowed"
+                }`}
+              >
                 <input
                   type="radio"
                   name="shareWith"
                   value="specific"
                   checked={shareWith === "specific"}
+                  disabled={!hasShareableMembers && !loadingMembers}
                   onChange={() => setShareWith("specific")}
                   className="mt-0.5"
                 />
@@ -250,38 +362,93 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                       </span>
                     )}
                   </div>
-                  <div className="text-sm text-gray-500 mb-2">Selected members will be added as <strong>Viewer</strong></div>
-
-                  {shareWith === "specific" && (
-                    <div className="mt-3 space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded p-2">
-                      {loadingMembers ? (
-                        <div className="text-center text-sm text-gray-500 py-4">Loading members...</div>
-                      ) : workspaceMembers.length === 0 ? (
-                        <div className="text-center text-sm text-gray-500 py-4">No other members in workspace</div>
-                      ) : (
-                        workspaceMembers.map((member) => (
-                          <label
-                            key={member.userId}
-                            className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedMembers.includes(member.email)}
-                              onChange={() => toggleMember(member.email)}
-                              className="rounded text-purple-600"
-                            />
-                            <div className="text-sm flex-1">
-                              <div className="font-medium text-gray-900">{member.username}</div>
-                              <div className="text-gray-500 text-xs">{member.email}</div>
-                            </div>
-                            <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">Viewer</span>
-                          </label>
-                        ))
-                      )}
-                    </div>
+                  <div className="text-sm text-gray-500">
+                    Choose active workspace members and their project role
+                  </div>
+                  {!hasShareableMembers && !loadingMembers && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Invite another member to the workspace first, or use All Workspace Members.
+                    </p>
                   )}
                 </div>
               </label>
+
+              {shareWith === "specific" && (
+                <div className="ml-8 space-y-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
+                  {workspaceMembers.length >= MEMBER_SEARCH_THRESHOLD && !loadingMembers && !membersLoadError && (
+                    <div className="relative">
+                      <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="search"
+                        value={memberSearch}
+                        onChange={(e) => setMemberSearch(e.target.value)}
+                        placeholder="Search by name or email"
+                        className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      />
+                    </div>
+                  )}
+
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {loadingMembers ? (
+                      <div className="text-center text-sm text-gray-500 py-4">Loading members...</div>
+                    ) : membersLoadError ? (
+                      <div className="space-y-3 py-2">
+                        <p className="text-sm text-red-600">{membersLoadError}</p>
+                        <button
+                          type="button"
+                          onClick={() => loadWorkspaceMembers()}
+                          className="text-sm font-medium text-purple-600 hover:text-purple-700"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : workspaceMembers.length === 0 ? (
+                      <p className="text-center text-sm text-gray-500 py-4">
+                        No other active members are available in this workspace.
+                      </p>
+                    ) : visibleMembers.length === 0 ? (
+                      <p className="text-center text-sm text-gray-500 py-4">
+                        No members match your search.
+                      </p>
+                    ) : (
+                      visibleMembers.map((member) => {
+                        const isSelected = selectedMembers.some(
+                          (value) => normalizeEmail(value) === normalizeEmail(member.email),
+                        );
+
+                        return (
+                          <div
+                            key={member.userId || member.email}
+                            className="flex items-center gap-2 p-2 bg-white hover:bg-gray-50 rounded border border-transparent hover:border-gray-200"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleMember(member.email)}
+                              className="rounded text-purple-600"
+                            />
+                            <div className="text-sm flex-1 min-w-0">
+                              <div className="font-medium text-gray-900 truncate">{member.username}</div>
+                              <div className="text-gray-500 text-xs truncate">{member.email}</div>
+                            </div>
+                            <select
+                              value={getMemberRole(member.email)}
+                              onChange={(e) =>
+                                handleMemberRoleChange(member.email, e.target.value as ProjectShareRole)
+                              }
+                              disabled={!isSelected}
+                              className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 disabled:text-gray-400 shrink-0"
+                            >
+                              <option value="VIEWER">Viewer</option>
+                              <option value="EDITOR">Editor</option>
+                            </select>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -304,7 +471,6 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
         </form>
       </div>
 
-      {/* Free Plan Creation Restriction Dialog */}
       {showFreePlanDialog && (
         <div
           className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]"
@@ -332,6 +498,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
               <button
                 onClick={() => setShowFreePlanDialog(false)}
                 className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100 -mt-1 -mr-1"
+                aria-label="Close"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>

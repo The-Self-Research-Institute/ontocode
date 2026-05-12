@@ -345,9 +345,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                 {item.label}
               </span>
               
-              {/* Equivalent classes/properties display */}
-              {viewMode === 'inferred' && (item as any).equivalentClasses && (item as any).equivalentClasses.length > 0 && (
-                <span className="text-[10px] text-gray-500 italic whitespace-nowrap">
+              {/* Equivalent classes/properties display — shown in both asserted and inferred modes */}
+              {(item as any).equivalentClasses && (item as any).equivalentClasses.length > 0 && (
+                <span className="text-[10px] text-amber-700 italic whitespace-nowrap ml-1">
                   ≡ {(item as any).equivalentClasses.map((c: any) => c.label).join(', ')}
                 </span>
               )}

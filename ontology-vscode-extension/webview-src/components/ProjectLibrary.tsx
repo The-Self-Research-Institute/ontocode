@@ -66,12 +66,32 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     type: "success",
   });
   const [showFreePlanDialog, setShowFreePlanDialog] = useState(false);
+  const [showOwnerMustImportDialog, setShowOwnerMustImportDialog] = useState(false);
   const [openMenuFileId, setOpenMenuFileId] = useState<string | null>(null);
   const [userProjectRole, setUserProjectRole] = useState<string>("VIEWER");
+  const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
+  const [workspacePlan, setWorkspacePlan] = useState<string>("FREE");
   const [storageUsage, setStorageUsage] = useState<{
     usedMB: string; limitGB: number; usagePercent: string; planName: string;
   } | null>(null);
   const { user } = useAuth();
+
+  const loadStorageUsage = async () => {
+    const workspaceId = user?.workspaceId;
+    const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+    try {
+      const res: any = await apiClient.get(`/api/projects/storage-usage${query}`);
+      const d = res?.data || res;
+      setStorageUsage({
+        usedMB: d.usedMB,
+        limitGB: d.limitGB,
+        usagePercent: d.usagePercent,
+        planName: d.planName,
+      });
+    } catch {
+      // Non-blocking
+    }
+  };
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ show: true, message, type });
@@ -93,18 +113,28 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   }, [projectId]);
 
   useEffect(() => {
-    apiClient.get("/api/projects/storage-usage")
-      .then((res: any) => {
-        const d = res?.data || res;
-        setStorageUsage({
-          usedMB: d.usedMB,
-          limitGB: d.limitGB,
-          usagePercent: d.usagePercent,
-          planName: d.planName,
-        });
+    loadStorageUsage();
+  }, [user?.workspaceId]);
+
+  useEffect(() => {
+    if (!user?.workspaceId) {
+      setWorkspaceOwnerId(null);
+      setWorkspacePlan("FREE");
+      return;
+    }
+
+    apiClient
+      .get(`/api/workspaces/${user.workspaceId}`)
+      .then((response: any) => {
+        const workspaceData = response?.data || response;
+        setWorkspaceOwnerId(workspaceData?.ownerId || null);
+        setWorkspacePlan(String(workspaceData?.subscriptionPlan || "FREE").toUpperCase());
       })
-      .catch(() => {});
-  }, []);
+      .catch(() => {
+        setWorkspaceOwnerId(null);
+        setWorkspacePlan((user?.subscriptionPlan || "FREE").toUpperCase());
+      });
+  }, [user?.workspaceId, user?.subscriptionPlan]);
 
   useEffect(() => {
     return () => {
@@ -194,7 +224,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             return false;
           };
 
-          fetchWithRetry();
+          fetchWithRetry().finally(() => {
+            loadStorageUsage();
+          });
         }
       }
     };
@@ -303,6 +335,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
       // Always reload files to refresh the file list after upload
       await loadFiles();
+      await loadStorageUsage();
 
       // Set the uploaded file as selected in the list, but don't automatically load it into the editor
       if (uploadedFileId) {
@@ -418,15 +451,38 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     await performUpload(file);
   };
 
-  const handleFileClick = (file: FileItem) => {
+  const handleFileClick = async (file: FileItem) => {
     setSelectedFile(file.id);
+
+    const effectivePlan = (workspacePlan || user?.subscriptionPlan || "FREE").toUpperCase();
+    const isWorkspaceOwner =
+      !!workspaceOwnerId &&
+      !!user?.userId &&
+      workspaceOwnerId === user.userId;
+
+    if (effectivePlan === "FREE" && !isWorkspaceOwner) {
+      try {
+        const ontologyProjectId = `${projectId}--${file.id}`;
+        const graphCheck: any = await apiClient.get(
+          `/api/ontology/${encodeURIComponent(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(file.name)}&fileId=${encodeURIComponent(file.id)}`,
+        );
+        const graphData = graphCheck?.data || graphCheck;
+        if (!graphData?.exists || (graphData.graphSize ?? 0) <= 0) {
+          setShowOwnerMustImportDialog(true);
+          return;
+        }
+      } catch {
+        setShowOwnerMustImportDialog(true);
+        return;
+      }
+    }
+
     // Single click now opens the file (previously required double-click)
     onFileSelect(file.id, file.name);
   };
 
   const handleFileDoubleClick = (file: FileItem) => {
-    // Keep for backward compatibility, but single click now handles opening
-    onFileSelect(file.id, file.name);
+    void handleFileClick(file);
   };
 
   const handleDeleteFile = async (fileId: string, fileName: string) => {
@@ -441,6 +497,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       await apiClient.delete(`/api/projects/${projectId}/files/${fileId}`);
       showToast("File deleted successfully", "success");
       await loadFiles();
+      await loadStorageUsage();
     } catch (error) {
       console.error("Error deleting file:", error);
       showToast("Failed to delete file", "error");
@@ -865,6 +922,64 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           projectId={projectId}
           onClose={() => setIsReportIssueModalOpen(false)}
         />
+      )}
+
+      {/* Free Plan Member Open Restriction Dialog */}
+      {showOwnerMustImportDialog && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]"
+          onClick={() => setShowOwnerMustImportDialog(false)}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500" />
+            <div className="px-6 pt-5 pb-4 flex items-start gap-4">
+              <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                  <line x1="2" y1="2" x2="22" y2="22"/>
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-[15px] font-semibold text-gray-900 leading-tight">File Not Ready Yet</h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  This workspace is on the <span className="font-medium text-gray-500">Free plan</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setShowOwnerMustImportDialog(false)}
+                className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100 -mt-1 -mr-1"
+                aria-label="Close"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 pb-5">
+              <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
+                The workspace owner must import this file first by opening it in the OntoCode editor.
+              </div>
+              <div className="flex items-start gap-2.5 text-sm text-gray-600">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                </svg>
+                <span>Ask the <span className="font-medium text-gray-800">workspace owner</span> to open this file once from the project library. After that, members can open it for viewing.</span>
+              </div>
+            </div>
+            <div className="px-6 pb-5 flex justify-end">
+              <button
+                onClick={() => setShowOwnerMustImportDialog(false)}
+                className="px-5 py-2 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-700 transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Free Plan Upload Restriction Dialog */}
