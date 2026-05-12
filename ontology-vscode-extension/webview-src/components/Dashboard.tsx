@@ -207,6 +207,88 @@ const extractResponseData = (payload: any) => {
   return payload ?? {};
 };
 
+const normalizePrefixMappings = (prefixesData: unknown): Array<{ prefix: string; namespace: string }> => {
+  if (Array.isArray(prefixesData)) {
+    return prefixesData.map((entry: any) => {
+      const prefixValue = entry?.prefix ?? entry?.p ?? "";
+      const namespaceValue = entry?.namespace ?? entry?.iri ?? entry?.uri ?? "";
+      return {
+        prefix: prefixValue ? (String(prefixValue).endsWith(":") ? String(prefixValue) : `${prefixValue}:`) : ":",
+        namespace: typeof namespaceValue === "string" ? namespaceValue : String(namespaceValue ?? ""),
+      };
+    });
+  }
+
+  if (prefixesData && typeof prefixesData === "object") {
+    return Object.entries(prefixesData as Record<string, unknown>).map(([prefix, namespace]) => ({
+      prefix: prefix ? (prefix.endsWith(":") ? prefix : `${prefix}:`) : ":",
+      namespace: typeof namespace === "string" ? namespace : String(namespace ?? ""),
+    }));
+  }
+
+  return [];
+};
+
+const normalizeOntologyAnnotation = (annotation: any) => {
+  if (!annotation || annotation.value === undefined) {
+    return null;
+  }
+  const propertyIri = annotation.propertyIri || annotation.property;
+  if (!propertyIri) {
+    return null;
+  }
+  return { ...annotation, propertyIri, property: propertyIri };
+};
+
+const normalizeOntologyAnnotations = (annotations: unknown) =>
+  (Array.isArray(annotations) ? annotations : [])
+    .map(normalizeOntologyAnnotation)
+    .filter((annotation): annotation is NonNullable<ReturnType<typeof normalizeOntologyAnnotation>> => annotation !== null);
+
+const mapAnnotationProperty = (prop: any): AnnotationProperty => {
+  const id = prop?.id || prop?.iri;
+  if (!id) {
+    return prop;
+  }
+  const annotations = { ...(prop?.annotations || {}) };
+  if (prop?.label && !annotations["http://www.w3.org/2000/01/rdf-schema#label"]) {
+    annotations["http://www.w3.org/2000/01/rdf-schema#label"] = String(prop.label);
+  }
+  if (prop?.description && !annotations["http://www.w3.org/2000/01/rdf-schema#comment"]) {
+    annotations["http://www.w3.org/2000/01/rdf-schema#comment"] = String(prop.description);
+  }
+  return {
+    ...prop,
+    id,
+    label: prop?.label || id.split("#").pop() || id.split("/").pop() || id,
+    annotations,
+  };
+};
+
+const STANDARD_ANNOTATION_PROPERTIES: AnnotationProperty[] = [
+  { id: "http://purl.org/dc/elements/1.1/description", label: "dc:description" },
+  { id: "http://purl.org/dc/elements/1.1/title", label: "dc:title" },
+  { id: "http://www.w3.org/2002/07/owl#backwardCompatibleWith", label: "owl:backwardCompatibleWith" },
+  { id: "http://www.w3.org/2002/07/owl#deprecated", label: "owl:deprecated" },
+  { id: "http://www.w3.org/2002/07/owl#incompatibleWith", label: "owl:incompatibleWith" },
+  { id: "http://www.w3.org/2002/07/owl#priorVersion", label: "owl:priorVersion" },
+  { id: "http://www.w3.org/2002/07/owl#versionInfo", label: "owl:versionInfo" },
+  { id: "http://www.w3.org/2000/01/rdf-schema#comment", label: "rdfs:comment" },
+  { id: "http://www.w3.org/2000/01/rdf-schema#isDefinedBy", label: "rdfs:isDefinedBy" },
+  { id: "http://www.w3.org/2000/01/rdf-schema#label", label: "rdfs:label" },
+  { id: "http://www.w3.org/2000/01/rdf-schema#seeAlso", label: "rdfs:seeAlso" },
+];
+
+const mergeAnnotationProperties = (properties: AnnotationProperty[]): AnnotationProperty[] => {
+  const merged = new Map<string, AnnotationProperty>();
+  STANDARD_ANNOTATION_PROPERTIES.forEach((property) => merged.set(property.id, property));
+  properties.forEach((property) => {
+    const existing = merged.get(property.id);
+    merged.set(property.id, existing ? { ...existing, ...property } : property);
+  });
+  return Array.from(merged.values());
+};
+
 const combineReasonerResults = (classificationPayload: any, statsPayload?: any) => {
   // Add validation to handle error responses
   if (!classificationPayload || (classificationPayload.error && !classificationPayload.data)) {
@@ -2788,12 +2870,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                 : []
             : dataPropertyHierarchy;
         return Array.isArray(dataPropData) ? dataPropData : [];
-      case "AnnotationProperties":
-        return hierarchyViewModes.AnnotationProperties === "inferred"
-          ? inferredAnnotationPropertyHierarchy.length > 0
-            ? inferredAnnotationPropertyHierarchy
-            : annotationProperties
-          : annotationProperties;
+      case "AnnotationProperties": {
+        const base =
+          hierarchyViewModes.AnnotationProperties === "inferred"
+            ? inferredAnnotationPropertyHierarchy.length > 0
+              ? inferredAnnotationPropertyHierarchy
+              : annotationProperties
+            : annotationProperties;
+        return mergeAnnotationProperties(Array.isArray(base) ? base : []);
+      }
       case "Individuals":
         return hierarchyViewModes.Individuals === "inferred"
           ? inferredIndividuals.length > 0
@@ -3744,20 +3829,10 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         // Use annotations from metadata response (already extracted above as annotationsData)
         // Filter out invalid annotations and ensure all have required fields
-        const validAnnotations = (Array.isArray(annotationsData) ? annotationsData : []).filter(
-          (ann) => ann && (ann.propertyIri || ann.property) && ann.value !== undefined,
-        );
+        const validAnnotations = normalizeOntologyAnnotations(annotationsData);
         setOntologyAnnotations(validAnnotations);
 
-        // Use prefixes from metadata response (already in metadataData.prefixes)
-        const prefixesData = metadataData?.prefixes || {};
-        const prefixList = Object.entries(prefixesData).map(([prefix, namespace]) => ({
-          // Ensure prefix has a colon for display if it's not empty
-          // If it's empty, it's the default namespace, show as ":"
-          prefix: prefix ? (prefix.endsWith(":") ? prefix : `${prefix}:`) : ":",
-          namespace: String(namespace),
-        }));
-        setPrefixMappings(prefixList);
+        setPrefixMappings(normalizePrefixMappings(metadataData?.prefixes));
 
         // ⚡ Load top-level classes eagerly so the user sees classes immediately
         console.log("[Dashboard] ⚡ Loading top-level classes for instant display");
@@ -3932,11 +4007,14 @@ const Dashboard: React.FC<DashboardProps> = ({
               : [],
         );
         setAnnotationProperties(
-          Array.isArray(annotationPropsRes?.data)
-            ? annotationPropsRes.data
-            : Array.isArray(annotationPropsRes?.annotationProperties)
-              ? annotationPropsRes.annotationProperties
-              : [],
+          mergeAnnotationProperties(
+            (Array.isArray(annotationPropsRes?.data)
+              ? annotationPropsRes.data
+              : Array.isArray(annotationPropsRes?.annotationProperties)
+                ? annotationPropsRes.annotationProperties
+                : []
+            ).map(mapAnnotationProperty),
+          ),
         );
         setDatatypes(
           Array.isArray(datatypesRes?.data)
@@ -4119,10 +4197,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       console.log("[Dashboard] 📥 Raw annotations data received:", data);
-      // Filter out invalid annotations - backend returns propertyIri
-      const validAnnotations = (Array.isArray(data) ? data : []).filter(
-        (ann) => ann && ann.propertyIri && ann.value !== undefined,
-      );
+      const validAnnotations = normalizeOntologyAnnotations(data);
       console.log("[Dashboard] ✅ Valid annotations after filtering:", validAnnotations);
 
       setOntologyAnnotations(validAnnotations);
@@ -4156,13 +4231,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const response = await apiClient.get<any>(`/api/ontology/ontology/prefixes/${encodeProjectId(projectId)}`);
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
-      const list = Object.entries(data).map(([prefix, namespace]) => ({
-        // Ensure prefix has a colon for display if it's not empty
-        // If it's empty, it's the default namespace, show as ":"
-        prefix: prefix ? (prefix.endsWith(":") ? prefix : `${prefix}:`) : ":",
-        namespace: String(namespace),
-      }));
-      setPrefixMappings(list);
+      setPrefixMappings(normalizePrefixMappings(data));
     } catch (error) {
       console.error("[Dashboard] Failed to refresh prefixes:", error);
     }
@@ -7708,9 +7777,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleRefreshAnnotationProperties = useCallback(async () => {
     if (!projectId) return;
     const res = await apiClient.get<any>(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`);
-    setAnnotationProperties(
-      Array.isArray(res?.data) ? res.data : Array.isArray(res?.annotationProperties) ? res.annotationProperties : [],
-    );
+    const rawProperties = Array.isArray(res?.data)
+      ? res.data
+      : Array.isArray(res?.annotationProperties)
+        ? res.annotationProperties
+        : [];
+    setAnnotationProperties(mergeAnnotationProperties(rawProperties.map(mapAnnotationProperty)));
   }, [projectId]);
 
   const handleDialogCreateAnnotationProperty = useCallback(
@@ -7920,17 +7992,46 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSaveOntologyIRIs = useCallback(
     async (ontologyIri: string, versionIri: string) => {
       if (!projectId) return;
-      try {
-        await apiClient.put(`/api/ontology/metadata/${projectId}/iri`, { ontologyIri, versionIri });
 
-        // Refresh metadata
+      const normalizedOntologyIri = ontologyIri.trim();
+      const normalizedVersionIri = versionIri.trim();
+      const absoluteIriPattern = /^https?:\/\/.+/i;
+
+      if (!absoluteIriPattern.test(normalizedOntologyIri)) {
+        showNotification("Ontology IRI must be an absolute http(s) URL.", "error");
+        throw new Error("Invalid ontology IRI");
+      }
+      if (normalizedVersionIri && !absoluteIriPattern.test(normalizedVersionIri)) {
+        showNotification("Version IRI must be an absolute http(s) URL when provided.", "error");
+        throw new Error("Invalid version IRI");
+      }
+
+      try {
+        const response = await apiClient.put<{ success?: boolean; error?: string }>(
+          `/api/ontology/metadata/${projectId}/iri`,
+          { ontologyIri: normalizedOntologyIri, versionIri: normalizedVersionIri },
+        );
+        if (response?.success === false) {
+          throw new Error(response.error || "Failed to update ontology IRIs.");
+        }
+
+        setMetadata((prev) => ({
+          ...(prev || {}),
+          ontologyIRI: normalizedOntologyIri,
+          versionIRI: normalizedVersionIri || undefined,
+        }));
+
         const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
-        setMetadata(metadataRes.data || metadataRes);
+        const metadataData = extractResponseData(metadataRes);
+        if (metadataData && typeof metadataData === "object") {
+          setMetadata((prev) => ({ ...(prev || {}), ...metadataData }));
+        }
 
         showNotification("Ontology IRIs updated successfully!", "info");
       } catch (error) {
         console.error("Failed to update ontology IRIs:", error);
         showNotification("Failed to update ontology IRIs.", "error");
+        throw error;
       }
     },
     [projectId],
@@ -12320,11 +12421,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </div>
                 {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
-                    {ontologyAnnotations
-                      .filter((ann) => ann && ann.propertyIri)
-                      .map((annotation, idx) => {
-                        const key = `${annotation.property}-${annotation.value}-${idx}`;
-                        const propertyIri = annotation.property || "";
+                    {ontologyAnnotations.map((annotation, idx) => {
+                        const key = `${annotation.propertyIri}-${annotation.value}-${idx}`;
+                        const propertyIri = annotation.propertyIri || annotation.property || "";
                         const propertyLabel = propertyIri.includes("#")
                           ? propertyIri.split("#").pop()
                           : propertyIri.includes("/")
@@ -14001,176 +14100,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         initialProperty={ontologyAnnotationEditTarget?.propertyIri || ""}
         initialValue={ontologyAnnotationEditTarget?.value || ""}
         initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
-      />
-      <AddAnnotationDialog
-        isOpen={isQuickNoteDialogOpen}
-        onClose={() => {
-          setQuickNoteDialogOpen(false);
-          setQuickEditNoteItem(null);
-        }}
-        onAdd={async (propertyIri, value) => {
-          if (!projectId || !quickEditNoteItem) return;
-          try {
-            const annotations = (quickEditNoteItem as any).annotations || {};
-            const existingValue = annotations[propertyIri];
-            if (existingValue) {
-              await ontologyMutationService.updateAnnotation(
-                projectId,
-                quickEditNoteItem.id,
-                propertyIri,
-                value,
-                user?.email || "anonymous",
-                user?.username || "Anonymous",
-                String(existingValue),
-              );
-            } else {
-              await ontologyMutationService.addAnnotation(
-                projectId,
-                quickEditNoteItem.id,
-                propertyIri,
-                value,
-                user?.email || "anonymous",
-                user?.username || "Anonymous",
-              );
-            }
-            updateItemInState({
-              ...quickEditNoteItem,
-              annotations: { ...annotations, [propertyIri]: value },
-            } as SelectableItem);
-          } catch (error) {
-            console.error("[Dashboard] Failed to save quick note:", error);
-            notificationService.error("Quick Note Failed", "Could not save note.");
-          } finally {
-            setQuickNoteDialogOpen(false);
-            setQuickEditNoteItem(null);
-          }
-        }}
-        availableProperties={annotationProperties}
-        editMode={true}
-        initialProperty={"http://www.w3.org/2000/01/rdf-schema#comment"}
-        initialValue={
-          quickEditNoteItem && (quickEditNoteItem as any).annotations
-            ? String((quickEditNoteItem as any).annotations["http://www.w3.org/2000/01/rdf-schema#comment"] || "")
-            : ""
-        }
-      />
-      <AddAnnotationDialog
-        isOpen={isClassIndividualAnnotationDialogOpen}
-        onClose={() => setClassIndividualAnnotationDialogOpen(false)}
-        onAdd={async (propertyIri, value) => {
-          if (!projectId || !selectedClassIndividualDetails) return;
-          try {
-            await ontologyMutationService.addAnnotation(
-              projectId,
-              selectedClassIndividualDetails.id,
-              propertyIri,
-              value,
-            );
-            await refreshSelectedClassIndividualDetails();
-          } catch (error) {
-            console.error("[Dashboard] Failed to add annotation:", error);
-            notificationService.error("Annotation Failed", "Could not add annotation.");
-          }
-        }}
-        availableProperties={annotationProperties}
-      />
-      <ClassSelectorDialog
-        isOpen={isClassIndividualTypeDialogOpen}
-        onClose={() => setClassIndividualTypeDialogOpen(false)}
-        onSelect={async (node) => {
-          if (!projectId || !selectedClassIndividualDetails) return;
-          try {
-            await ontologyMutationService.addClassAssertion(projectId, selectedClassIndividualDetails.id, node.id);
-            if (selectedClassForIndividuals?.id === node.id) {
-              await loadClassInstances();
-            }
-            await refreshSelectedClassIndividualDetails();
-          } catch (error) {
-            console.error("[Dashboard] Failed to add type assertion:", error);
-            notificationService.error("Type Failed", "Could not add type assertion.");
-          } finally {
-            setClassIndividualTypeDialogOpen(false);
-          }
-        }}
-        classHierarchy={classHierarchy}
-        projectId={projectId || undefined}
-        onToggleNode={toggleNode}
-        externalExpandedNodes={expandedNodes}
-        title="Add type"
-        onAddClass={handleAddClassInline}
-        onDeleteClass={() => handleDeleteItem()}
-        metadata={metadata}
-      />
-      <PropertyAssertionDialog
-        isOpen={isClassIndividualPropertyDialogOpen}
-        title={classIndividualPropertyIsObject ? "Add object property assertion" : "Add data property assertion"}
-        isObjectProperty={classIndividualPropertyIsObject}
-        objectPropertiesTree={objectPropertyHierarchy}
-        dataPropertiesTree={dataPropertyHierarchy}
-        onConfirm={async (data) => {
-          if (!projectId || !selectedClassIndividualDetails) return;
-          try {
-            if (data.isObjectProperty) {
-              const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, objectProperties);
-              const targetIri = resolveIndividualIriByLabel(data.targetLabel);
-              if (!propertyIri || !targetIri) {
-                notificationService.error("Add Failed", "Property or target individual not found.");
-                return;
-              }
-              await ontologyMutationService.addObjectPropertyAssertion(
-                projectId,
-                selectedClassIndividualDetails.id,
-                propertyIri,
-                targetIri,
-              );
-            } else {
-              const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, dataProperties);
-              if (!propertyIri) {
-                notificationService.error("Add Failed", "Data property not found.");
-                return;
-              }
-              await ontologyMutationService.addDataPropertyAssertion(
-                projectId,
-                selectedClassIndividualDetails.id,
-                propertyIri,
-                data.targetLabel,
-              );
-            }
-            await refreshSelectedClassIndividualDetails();
-          } catch (error) {
-            console.error("[Dashboard] Failed to add property assertion:", error);
-            notificationService.error("Add Failed", "Could not add property assertion.");
-          } finally {
-            setClassIndividualPropertyDialogOpen(false);
-          }
-        }}
-        onCancel={() => setClassIndividualPropertyDialogOpen(false)}
-      />
-      <AddAnnotationDialog
-        isOpen={isOntologyAnnotationDialogOpen}
-        onClose={() => {
-          setIsOntologyAnnotationDialogOpen(false);
-          setOntologyAnnotationEditTarget(null);
-        }}
-        onAdd={(propertyIri, value, datatype) => {
-          if (ontologyAnnotationEditTarget) {
-            handleUpdateOntologyAnnotation(
-              propertyIri,
-              ontologyAnnotationEditTarget.value,
-              value,
-              ontologyAnnotationEditTarget.datatype,
-            );
-          } else {
-            handleAddOntologyAnnotation(propertyIri, value, datatype);
-          }
-          setIsOntologyAnnotationDialogOpen(false);
-          setOntologyAnnotationEditTarget(null);
-        }}
-        availableProperties={annotationProperties}
-        editMode={!!ontologyAnnotationEditTarget}
-        initialProperty={ontologyAnnotationEditTarget?.propertyIri || ""}
-        initialValue={ontologyAnnotationEditTarget?.value || ""}
-        initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
+        onCreateProperty={handleDialogCreateAnnotationProperty}
+        onRefreshProperties={handleRefreshAnnotationProperties}
+        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
       />
       <AddAnnotationDialog
         isOpen={isQuickNoteDialogOpen}

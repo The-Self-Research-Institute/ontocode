@@ -508,11 +508,9 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                 </div>
                 {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
-                    {ontologyAnnotations
-                      .filter((ann) => ann && ann.propertyIri)
-                      .map((annotation, idx) => {
-                        const key = `${annotation.property}-${annotation.value}-${idx}`;
-                        const propertyIri = annotation.property || "";
+                    {ontologyAnnotations.map((annotation, idx) => {
+                        const key = `${annotation.propertyIri || annotation.property}-${annotation.value}-${idx}`;
+                        const propertyIri = annotation.propertyIri || annotation.property || "";
                         const propertyLabel = propertyIri.includes("#")
                           ? propertyIri.split("#").pop()
                           : propertyIri.includes("/")
