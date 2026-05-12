@@ -360,17 +360,18 @@ export function useDashboardInit(state: DashboardState) {
         // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
         // so we don't need to make separate calls for those
         const apiFetchStart = Date.now();
-        const dataFetchPromise = Promise.all([
-          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`),
-          apiClient
-            .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`)
-            .catch(() => null),
-          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`),
-        ]);
+        const metadataRes = await apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`);
+        const [topLevelRes, instanceCountsRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] =
+          await Promise.all([
+            apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`),
+            apiClient
+              .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`)
+              .catch(() => null),
+            apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`),
+            apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`),
+            apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`),
+            apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`),
+          ]);
 
         // Allow UI to be responsive immediately if not waiting
         if (!waitForCompletion) {
@@ -378,17 +379,6 @@ export function useDashboardInit(state: DashboardState) {
             setIsInitialLoading(false);
           }, 500);
         }
-
-        // Continue loading in background
-        const [
-          metadataRes,
-          topLevelRes,
-          instanceCountsRes,
-          propertiesRes,
-          individualsRes,
-          annotationPropsRes,
-          datatypesRes,
-        ] = await dataFetchPromise;
 
         const apiFetchDuration = Date.now() - apiFetchStart;
         console.log(`[Dashboard] [PERF] 7 parallel API fetches completed: ${apiFetchDuration}ms`);

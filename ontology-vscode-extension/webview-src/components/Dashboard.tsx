@@ -3709,31 +3709,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         fetchAbortControllerRef.current = abortController;
         const signal = abortController.signal;
 
-        // Fetch data in parallel to improve performance (GraphDB can handle concurrent queries)
-        // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
-        // Top-level classes are loaded eagerly now for instant display
-        // Instance counts are loaded in background (non-blocking) to not delay initial render
-        const dataFetchPromise = Promise.all([
-          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient
-            .get<any>(
-              `/api/ontology/classes/top-level/${encodedProjectId}?limit=200${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
-              undefined,
-              { signal },
-            )
-            .catch((e: any) => {
-              if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") throw e;
-              return null;
-            }),
-          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, {
-            signal,
-          }),
-          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-        ]);
-
-        // Load instance counts in background - don't block the main data fetch
         const instanceCountsPromise = apiClient
           .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
           .catch((e: any) => {
@@ -3741,6 +3716,10 @@ const Dashboard: React.FC<DashboardProps> = ({
             return null;
           });
 
+        // Fetch data in parallel to improve performance (GraphDB can handle concurrent queries)
+        // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
+        // Top-level classes are loaded eagerly now for instant display
+        // Instance counts are loaded in background (non-blocking) to not delay initial render
         // Allow UI to be responsive immediately if not waiting
         if (!waitForCompletion) {
           setTimeout(() => {
@@ -3748,9 +3727,27 @@ const Dashboard: React.FC<DashboardProps> = ({
           }, 500);
         }
 
-        // Continue loading in background
-        const [metadataRes, topLevelClassesRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] =
-          await dataFetchPromise;
+        const apiFetchStart = Date.now();
+        const metadataRes = await apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal });
+        const [topLevelClassesRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] =
+          await Promise.all([
+            apiClient
+              .get<any>(
+                `/api/ontology/classes/top-level/${encodedProjectId}?limit=200${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+                undefined,
+                { signal },
+              )
+              .catch((e: any) => {
+                if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") throw e;
+                return null;
+              }),
+            apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+            apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+            apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, {
+              signal,
+            }),
+            apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          ]);
 
         console.log("[Dashboard] ✅ Data loaded from GraphDB database successfully!");
         console.log("[Dashboard] 📊 This data includes all saved changes from the database");

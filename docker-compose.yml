@@ -195,6 +195,7 @@ services:
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
+      GATEWAY_HTTP_RESPONSE_TIMEOUT: ${GATEWAY_HTTP_RESPONSE_TIMEOUT:-7200s}
       # Gateway streams file uploads via Netty — does not buffer bodies in heap.
       # codec buffer reduced to 64MB (application.properties). 768m heap is sufficient.
       JAVA_OPTS: -Xms128m -Xmx768m -XX:+UseG1GC
@@ -226,6 +227,8 @@ services:
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
+      ONTOLOGY_HTTP_TIMEOUT_MS: ${ONTOLOGY_HTTP_TIMEOUT_MS:-7200000}
+      ONTOLOGY_HTTP_TIMEOUT_SECONDS: ${ONTOLOGY_HTTP_TIMEOUT_SECONDS:-7200s}
       JAVA_OPTS: >-
         -Xms1g -Xmx3g
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
