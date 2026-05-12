@@ -1,5 +1,7 @@
 package self.research.ontology.auth.controller;
 
+import com.stripe.Stripe;
+import com.stripe.exception.EventDataObjectDeserializationException;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.model.*;
 import com.stripe.model.checkout.Session;
@@ -96,12 +98,7 @@ public class StripeWebhookController {
     }
 
     private void dispatch(Event event) {
-        EventDataObjectDeserializer deserializer = event.getDataObjectDeserializer();
-        if (deserializer.getObject().isEmpty()) {
-            throw new IllegalStateException("Could not deserialize Stripe event object for type: " + event.getType());
-        }
-
-        StripeObject stripeObject = deserializer.getObject().get();
+        StripeObject stripeObject = deserializeStripeObject(event);
 
         switch (event.getType()) {
             case "checkout.session.completed" -> {
@@ -133,6 +130,30 @@ public class StripeWebhookController {
                 stripeService.handleInvoicePaymentFailed(invoice);
             }
             default -> log.debug("Unhandled Stripe event type: {}", event.getType());
+        }
+    }
+
+    private StripeObject deserializeStripeObject(Event event) {
+        EventDataObjectDeserializer deserializer = event.getDataObjectDeserializer();
+        if (deserializer.getObject().isPresent()) {
+            return deserializer.getObject().get();
+        }
+
+        log.warn(
+                "Stripe webhook {} ({}) API version {} does not match stripe-java {}; deserializing from raw JSON",
+                event.getId(),
+                event.getType(),
+                event.getApiVersion(),
+                Stripe.API_VERSION
+        );
+
+        try {
+            return deserializer.deserializeUnsafe();
+        } catch (EventDataObjectDeserializationException e) {
+            throw new IllegalStateException(
+                    "Could not deserialize Stripe event object for type: " + event.getType(),
+                    e
+            );
         }
     }
 }

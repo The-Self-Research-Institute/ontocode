@@ -24,8 +24,7 @@ public class InvitationCleanupService {
         this.workspaceRepository = workspaceRepository;
     }
 
-    // Runs daily at 02:00 server time
-    @Scheduled(cron = "0 0 2 * * *")
+    @Scheduled(cron = "${invitation.cleanup.cron:0 0 2 * * *}")
     public void expireStaleInvitations() {
         LocalDateTime now = LocalDateTime.now();
         List<Invitation> expired = invitationRepository.findByStatusAndExpiresAtBefore("PENDING", now);

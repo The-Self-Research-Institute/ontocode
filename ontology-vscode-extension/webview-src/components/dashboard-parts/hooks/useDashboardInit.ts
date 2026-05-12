@@ -850,10 +850,14 @@ export function useDashboardInit(state: DashboardState) {
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       console.log("[Dashboard] ðŸ“¥ Raw annotations data received:", data);
-      // Filter out invalid annotations - backend returns propertyIri
-      const validAnnotations = (Array.isArray(data) ? data : []).filter(
-        (ann) => ann && ann.propertyIri && ann.value !== undefined,
-      );
+      const validAnnotations = (Array.isArray(data) ? data : [])
+        .map((ann) => {
+          if (!ann || ann.value === undefined) return null;
+          const propertyIri = ann.propertyIri || ann.property;
+          if (!propertyIri) return null;
+          return { ...ann, propertyIri, property: propertyIri };
+        })
+        .filter(Boolean);
       console.log("[Dashboard] âœ… Valid annotations after filtering:", validAnnotations);
 
       // Only update if we got data, or if explicitly clearing (validAnnotations.length >= 0 always true, so always update)

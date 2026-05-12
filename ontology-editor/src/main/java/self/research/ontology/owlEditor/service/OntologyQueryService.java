@@ -521,25 +521,107 @@ public class OntologyQueryService {
             dto.setDescription(description);
             props.add(dto);
         }
+
+        Map<String, Map<String, String>> annotationsByProperty = loadAnnotationPropertyAnnotations(projectId);
+        for (AnnotationPropertyDto dto : props) {
+            Map<String, String> annotations = new LinkedHashMap<>(
+                    annotationsByProperty.getOrDefault(dto.getId(), Map.of()));
+            if (dto.getLabel() != null && !dto.getLabel().isBlank()) {
+                annotations.putIfAbsent("http://www.w3.org/2000/01/rdf-schema#label", dto.getLabel());
+            }
+            if (dto.getDescription() != null && !dto.getDescription().isBlank()) {
+                annotations.putIfAbsent("http://www.w3.org/2000/01/rdf-schema#comment", dto.getDescription());
+            }
+            dto.setAnnotations(annotations);
+        }
+
         long duration = System.currentTimeMillis() - startTime;
         log.info("[PERF] annotationProperties loaded {} (rows={}) in {}ms project={}", props.size(), count, duration, projectId);
         return props;
     }
 
+    private Map<String, Map<String, String>> loadAnnotationPropertyAnnotations(String projectId) {
+        String query = PREFIXES + """
+            SELECT ?entity ?annProp ?value WHERE {
+              ?entity a owl:AnnotationProperty .
+              ?entity ?annProp ?value .
+              FILTER(isLiteral(?value))
+              {
+                ?annProp a owl:AnnotationProperty .
+              } UNION {
+                VALUES ?annProp { rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy }
+              }
+            }
+            """;
+        TupleQueryResult rs = datasetService.execSelect(projectId, query);
+        Map<String, Map<String, String>> annotationsByProperty = new LinkedHashMap<>();
+        while (rs.hasNext()) {
+            BindingSet sol = rs.next();
+            String entityIri = resource(sol, "entity");
+            String annProp = resource(sol, "annProp");
+            String value = literal(sol, "value");
+            if (entityIri == null || annProp == null || value.isBlank()) {
+                continue;
+            }
+            annotationsByProperty
+                    .computeIfAbsent(entityIri, ignored -> new LinkedHashMap<>())
+                    .put(annProp, value);
+        }
+        return annotationsByProperty;
+    }
+
     public List<Map<String, String>> annotationPropertyUsage(String projectId, String propertyIri) {
+        List<Map<String, String>> usages = new ArrayList<>();
+        String propertyLabel = localName(propertyIri);
+
+        Map<String, String> declaration = new LinkedHashMap<>();
+        declaration.put("type", "declaration");
+        declaration.put("subject", propertyIri);
+        declaration.put("subjectLabel", propertyLabel);
+        declaration.put("context", "AnnotationProperty: '" + propertyLabel + "'");
+        usages.add(declaration);
+
+        String selfQuery = PREFIXES + """
+            SELECT ?annProp ?value WHERE {
+              <%s> ?annProp ?value .
+              FILTER(isLiteral(?value))
+              {
+                ?annProp a owl:AnnotationProperty .
+              } UNION {
+                VALUES ?annProp { rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy }
+              }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult selfRs = datasetService.execSelect(projectId, selfQuery);
+        while (selfRs.hasNext()) {
+            BindingSet sol = selfRs.next();
+            String annProp = resource(sol, "annProp");
+            String value = literal(sol, "value");
+            if (annProp == null || value.isBlank()) {
+                continue;
+            }
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "annotation");
+            usage.put("subject", propertyIri);
+            usage.put("subjectLabel", propertyLabel);
+            usage.put("predicate", annProp);
+            usage.put("value", value);
+            usage.put("context", "'" + propertyLabel + "' " + localName(annProp) + " \"" + value + "\"");
+            usages.add(usage);
+        }
+
         String query = PREFIXES + """
             SELECT ?subject ?subjectLabel ?value
             WHERE {
               ?subject <%s> ?value .
+              FILTER(?subject != <%s>)
               OPTIONAL { ?subject rdfs:label ?subjectLabel }
-              OPTIONAL { ?subject a ?type }
             }
             ORDER BY STR(?subject)
             LIMIT 1000
-            """.formatted(propertyIri);
+            """.formatted(propertyIri, propertyIri);
 
         TupleQueryResult rs = datasetService.execSelect(projectId, query);
-        List<Map<String, String>> usages = new ArrayList<>();
         while (rs.hasNext()) {
             BindingSet sol = rs.next();
             String subjectIri = resource(sol, "subject");
@@ -548,12 +630,16 @@ public class OntologyQueryService {
             }
             String subjectLabel = literal(sol, "subjectLabel");
             String value = sol.hasBinding("value") ? sol.getValue("value").toString() : "";
-            
-            usages.add(Map.of(
-                "subject", subjectIri,
-                "subjectLabel", subjectLabel.isBlank() ? localName(subjectIri) : subjectLabel,
-                "value", value
-            ));
+            String displaySubject = subjectLabel.isBlank() ? localName(subjectIri) : subjectLabel;
+
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "annotation");
+            usage.put("subject", subjectIri);
+            usage.put("subjectLabel", displaySubject);
+            usage.put("predicate", propertyIri);
+            usage.put("value", value);
+            usage.put("context", displaySubject + " '" + propertyLabel + "' " + value);
+            usages.add(usage);
         }
         return usages;
     }
