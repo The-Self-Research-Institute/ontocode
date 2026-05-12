@@ -836,7 +836,10 @@ function handleBrowserMessage(message: any) {
                         // Poll /api/ontology/status until COMPLETED (GraphDB processes async)
                         // Time-based timeout: 15 min baseline + 1 min per 50MB
                         const fileSizeMB = base64Length > 0 ? (base64Length * 3 / 4) / (1024 * 1024) : 50; // actual file size (base64 is 4/3x)
-                        const timeoutMs = Math.max(15 * 60 * 1000, Math.ceil(fileSizeMB / 50) * 60 * 1000 + 15 * 60 * 1000); // 15 min + 1 min per 50MB
+                        const timeoutMs = Math.min(
+                            7_200_000,
+                            Math.max(60 * 60 * 1000, Math.ceil(fileSizeMB / 50) * 60 * 1000 + 30 * 60 * 1000),
+                        );
                         console.log(`[BrowserBridge] File ~${fileSizeMB.toFixed(0)}MB, poll timeout: ${(timeoutMs / 60000).toFixed(1)} min`);
                         const getDelay = (att: number) => {
                             if (att <= 3) return 2000;

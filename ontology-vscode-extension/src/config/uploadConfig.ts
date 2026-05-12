@@ -32,7 +32,7 @@ export const DEFAULT_UPLOAD_CONFIG: UploadPerformanceConfig = {
     enableCompression: true,
     compressionThreshold: 1 * 1024 * 1024, // 1MB
     maxRetries: 3,
-    uploadTimeout: 30 * 60 * 1000, // 30 minutes for large files + GraphDB processing
+    uploadTimeout: 120 * 60 * 1000, // 2 hours for uploads up to 1GB
     enableChunkedUpload: false, // Disabled by default (requires backend support)
     chunkSize: 5 * 1024 * 1024, // 5MB chunks
     chunkedUploadThreshold: 50 * 1024 * 1024 // 50MB
@@ -42,7 +42,7 @@ export const DEFAULT_UPLOAD_CONFIG: UploadPerformanceConfig = {
 export const SLOW_NETWORK_CONFIG: UploadPerformanceConfig = {
     ...DEFAULT_UPLOAD_CONFIG,
     maxRetries: 5,
-    uploadTimeout: 20 * 60 * 1000, // 20 minutes
+    uploadTimeout: 120 * 60 * 1000, // 2 hours for uploads up to 1GB
     chunkSize: 2 * 1024 * 1024, // Smaller 2MB chunks
     chunkedUploadThreshold: 10 * 1024 * 1024 // Enable chunking at 10MB
 };
@@ -60,7 +60,7 @@ export const LARGE_FILE_GRAPHDB_CONFIG: UploadPerformanceConfig = {
     enableCompression: true,
     compressionThreshold: 512 * 1024, // Compress everything > 512KB
     maxRetries: 5,
-    uploadTimeout: 60 * 60 * 1000, // 60 minutes for large GraphDB imports
+    uploadTimeout: 120 * 60 * 1000, // 2 hours for uploads up to 1GB
     enableChunkedUpload: false, // Enable when backend supports it
     chunkSize: 10 * 1024 * 1024, // 10MB chunks for processing
     chunkedUploadThreshold: 100 * 1024 * 1024 // 100MB
