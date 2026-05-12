@@ -299,13 +299,10 @@ public class OWLFormatConverter {
             sanitizeNTriplesIRIs(filePath);
             reserializeWithOwlApi(filePath);
         } else {
-            // For large files: skip OWL API re-serialization (loads entire file into ~2GB of memory)
-            // and skip fixMalformedRdfXml (reads entire file as String).
-            // The RDF4J streaming parser in bulkLoadChunked handles these formats directly.
-            // If parsing fails, ProjectImportService has an OWL API fallback anyway.
-            fixMalformedRdfXml(filePath);
-            sanitizeNTriplesIRIs(filePath);
-            log.info("[PERFORMANCE] Large file sanitization complete (skipped OWL API re-serialization and RDF/XML fixup)");
+            // Large files: prefix strip only. Whole-file RDF/XML fixup and OWL API
+            // re-serialization load the entire ontology into memory; streaming GraphDB
+            // import handles RDF/XML directly, with OWL API fallback on structural errors.
+            log.info("[PERFORMANCE] Large file sanitization complete (prefix check only; skipped RDF/XML fixup and OWL API re-serialization)");
         }
     }
     

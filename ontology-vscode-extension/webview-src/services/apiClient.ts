@@ -25,7 +25,12 @@ export const updateBaseUrl = (deploymentType: DeploymentType) => {
 // Expose current base URL for WebSocket connection
 export const getBaseUrl = () => BASE_URL;
 
-const TIMEOUT = 600_000; // Allow up to 10 minutes for heavy ontology operations (increased for large files)
+const TIMEOUT = 600_000; // Default API timeout (10 minutes)
+const UPLOAD_TIMEOUT = 7_200_000; // Up to 1GB uploads through gateway/editor (2 hours)
+
+function isUploadRequest(url: string): boolean {
+  return url.includes('/api/ontology/upload/');
+}
 
 // VS Code API detection
 declare global {
@@ -156,12 +161,13 @@ class ApiClient {
         return;
       }
       const requestId = genReqId();
+      const requestTimeout = isUploadRequest(payload.url) ? UPLOAD_TIMEOUT : TIMEOUT;
       const timeout = setTimeout(() => {
         if (pending.has(requestId)) {
-          pending.get(requestId)?.reject(new ApiError(`Request ${requestId} timed out after ${TIMEOUT / 1000}s`, 408, null, 'TIMEOUT'));
+          pending.get(requestId)?.reject(new ApiError(`Request ${requestId} timed out after ${requestTimeout / 1000}s`, 408, null, 'TIMEOUT'));
           pending.delete(requestId);
         }
-      }, TIMEOUT);
+      }, requestTimeout);
 
       pending.set(requestId, { resolve, reject, timeout });
 
@@ -287,8 +293,12 @@ class ApiClient {
       // When sending FormData, remove the default Content-Type so axios/browser
       // can auto-set multipart/form-data with the correct boundary.
       const postConfig = body instanceof FormData
-        ? { ...config, headers: { ...config?.headers, 'Content-Type': undefined } }
-        : config;
+        ? {
+            ...config,
+            timeout: isUploadRequest(url) ? UPLOAD_TIMEOUT : TIMEOUT,
+            headers: { ...config?.headers, 'Content-Type': undefined },
+          }
+        : { ...config, timeout: isUploadRequest(url) ? UPLOAD_TIMEOUT : config?.timeout ?? TIMEOUT };
       const resp = await this.axiosClient!.post(url, body, postConfig);
       data = resp.data as T;
     }

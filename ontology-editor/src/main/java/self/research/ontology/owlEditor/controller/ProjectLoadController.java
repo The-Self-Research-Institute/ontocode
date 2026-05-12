@@ -304,7 +304,12 @@ public class ProjectLoadController {
             RDFFormat format = detectFormat(original);
             log.info("[ProjectLoadController] [TIMING] Format detection: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
-            preparseService.preparse(original, actualProjectId, format);
+            // Skip duplicate full-file streaming parse for large uploads; import already scans the file.
+            if (Files.size(original) <= 50L * 1024 * 1024) {
+                preparseService.preparse(original, actualProjectId, format);
+            } else {
+                log.info("[ProjectLoadController] Skipping preparse for large upload ({} bytes)", Files.size(original));
+            }
             
             long totalUploadMs = (System.nanoTime() - uploadStartTime) / 1_000_000;
             log.info("[ProjectLoadController] ═══ Upload endpoint COMPLETED in {} ms ({} sec) for project: {}",

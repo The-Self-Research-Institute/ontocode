@@ -1626,8 +1626,11 @@ class OntoCodePanel {
             const fullUrl = `${GATEWAY_URL}${url}`;
             console.log(`[Proxy] ${type.replace('api', '').toUpperCase()}: ${fullUrl}`, isPublicEndpoint ? '(public)' : '(authenticated)');
 
-            // Set a timeout for requests (600 seconds for large file uploads)
-            const axiosConfig: any = { headers, timeout: 600_000 };
+            // Set a timeout for requests (10 minutes default; 2 hours for ontology uploads up to 1GB)
+            const requestTimeoutMs = url.includes('/api/ontology/upload/')
+                ? 7_200_000
+                : 600_000;
+            const axiosConfig: any = { headers, timeout: requestTimeoutMs };
 
             // Detect multipart upload requests reconstructed from webview FormData
             const body = (message as any).body;
@@ -2468,7 +2471,7 @@ class OntoCodePanel {
             // Base: 10 min, add 1 min per 10MB for GraphDB processing
             const baseTimeout = 10 * 60 * 1000; // 10 minutes
             const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000; // 1 min per 10MB
-            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 60 * 60 * 1000); // Max 60 minutes
+            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 7_200_000); // Max 2 hours for uploads up to 1GB
 
             console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes (includes GraphDB processing time)`);
 
@@ -3026,7 +3029,7 @@ class OntoCodePanel {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    timeout: 300000, // 5 minute timeout for large files
+                    timeout: 7_200_000, // 2 hours for large ontology uploads (up to 1GB)
                     onUploadProgress: (progressEvent) => {
                         if (progressEvent.total) {
                             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -3380,7 +3383,7 @@ class OntoCodePanel {
             // Dynamic timeout based on file size
             const baseTimeout = 10 * 60 * 1000;
             const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000;
-            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 60 * 60 * 1000);
+            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 7_200_000);
 
             console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes`);
 
