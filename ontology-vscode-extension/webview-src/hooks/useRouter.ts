@@ -250,11 +250,22 @@ export const useRouter = (
     }, []);
 
     // Navigate to a specific route
-    const navigateTo = useCallback((route: Partial<RouteState>) => {
-        console.log('[Router] Navigating to:', route);
-        const newRoute = { ...currentRoute, ...route } as RouteState;
+    const navigateTo = useCallback((route: Partial<RouteState> & { replace?: boolean }) => {
+        const { replace, ...routeUpdate } = route;
+        console.log('[Router] Navigating to:', routeUpdate, replace ? '(replace)' : '');
+        const newRoute = { ...currentRoute, ...routeUpdate } as RouteState;
         onRouteChange(newRoute, false); // Not from browser navigation
-    }, [currentRoute, onRouteChange]);
+
+        if (replace) {
+            const url = generateUrlPath(newRoute);
+            window.history.replaceState(newRoute, '', url);
+            const stack = historyStackRef.current.length > 0
+                ? [...historyStackRef.current.slice(0, -1), newRoute]
+                : [newRoute];
+            historyStackRef.current = stack;
+            saveRouteHistory(stack);
+        }
+    }, [currentRoute, onRouteChange, saveRouteHistory]);
 
     // Clear route history (e.g., on logout)
     const clearHistory = useCallback(() => {

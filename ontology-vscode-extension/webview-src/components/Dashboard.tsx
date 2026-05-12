@@ -2430,6 +2430,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [importMode, setImportMode] = useState<"full" | "incremental" | "diff">("full");
   const [partitionStrategy, setPartitionStrategy] = useState<"none" | "namespace">("none");
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
+  const [isCreateIndividualForClassOpen, setCreateIndividualForClassOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
   const [isEditOntologyIRIDialogOpen, setEditOntologyIRIDialogOpen] = useState(false);
@@ -7685,9 +7686,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleAddAnnotation = useCallback(async () => {
     if (!projectId) return;
-    if (mainTab !== "ActiveOntology" && !selectedItem) return;
     setAddAnnotationDialogOpen(true);
-  }, [selectedItem, projectId, mainTab]);
+  }, [projectId]);
 
   const updateActiveOntologyAnnotations = useCallback((updater: (annotations: any[]) => any[]) => {
     setMetadata((prev) => {
@@ -7704,6 +7704,29 @@ const Dashboard: React.FC<DashboardProps> = ({
       } as OntologyMetadata;
     });
   }, []);
+
+  const handleRefreshAnnotationProperties = useCallback(async () => {
+    if (!projectId) return;
+    const res = await apiClient.get<any>(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`);
+    setAnnotationProperties(
+      Array.isArray(res?.data) ? res.data : Array.isArray(res?.annotationProperties) ? res.annotationProperties : [],
+    );
+  }, [projectId]);
+
+  const handleDialogCreateAnnotationProperty = useCallback(
+    async (iri: string, label: string) => {
+      if (!projectId) return;
+      await ontologyMutationService.createAnnotationProperty(
+        projectId,
+        iri,
+        label,
+        user?.email,
+        user?.username,
+      );
+      await handleRefreshAnnotationProperties();
+    },
+    [projectId, user?.email, user?.username, handleRefreshAnnotationProperties],
+  );
 
   const handleAnnotationDialogAdd = useCallback(
     async (propertyIri: string, value: string, datatype?: string, lang?: string) => {
@@ -8391,6 +8414,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      const activeEntitiesTab =
+        mainTab === "IndividualsByClass" ? "Classes" : entitiesTab;
+      const activeSelectedItem =
+        mainTab === "IndividualsByClass" ? selectedClassForIndividuals : selectedItem;
+
       // Bug #46 / #45 — primary "Add" button is contextual:
       //   • sibling + no selection  → create at top level (under
       //     owl:Thing / owl:topObjectProperty / owl:topDataProperty / no
@@ -8399,8 +8427,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       //   • subclass + no selection → notify; subclass always needs a parent.
       //   • subclass + selection    → create as child of selection.
 
-      if (entitiesTab === "ObjectProperties") {
-        if (type === "subclass" && !selectedItem) {
+      if (activeEntitiesTab === "ObjectProperties") {
+        if (type === "subclass" && !activeSelectedItem) {
           showNotification(
             "Select an object property first to add a sub-property.",
             "warning",
@@ -8408,7 +8436,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           return;
         }
 
-        if (!selectedItem) {
+        if (!activeSelectedItem) {
           // Top-level object property under owl:topObjectProperty.
           setAddPropertyType("root");
           setPropertyParentLabel("owl:topObjectProperty");
@@ -8418,9 +8446,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         // Sibling of an already top-level property is just another root.
         if (type === "sibling") {
-          const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
+          const parent = findParentNode(objectPropertyHierarchy, activeSelectedItem.id);
           const isTopLevel =
-            !parent || selectedItem.id.includes("topObjectProperty") || selectedItem.label === "owl:topObjectProperty";
+            !parent || activeSelectedItem.id.includes("topObjectProperty") || activeSelectedItem.label === "owl:topObjectProperty";
           if (isTopLevel) {
             setAddPropertyType("root");
             setPropertyParentLabel("owl:topObjectProperty");
@@ -8431,8 +8459,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         const parentLabel =
           type === "subclass"
-            ? selectedItem.label
-            : findParentNode(objectPropertyHierarchy, selectedItem.id)?.label || "owl:topObjectProperty";
+            ? activeSelectedItem.label
+            : findParentNode(objectPropertyHierarchy, activeSelectedItem.id)?.label || "owl:topObjectProperty";
 
         setAddPropertyType(type === "subclass" ? "subproperty" : "sibling");
         setPropertyParentLabel(parentLabel);
@@ -8440,8 +8468,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      if (entitiesTab === "DataProperties") {
-        if (type === "subclass" && !selectedItem) {
+      if (activeEntitiesTab === "DataProperties") {
+        if (type === "subclass" && !activeSelectedItem) {
           showNotification(
             "Select a data property first to add a sub-property.",
             "warning",
@@ -8449,7 +8477,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           return;
         }
 
-        if (!selectedItem) {
+        if (!activeSelectedItem) {
           setAddPropertyType("root");
           setPropertyParentLabel("owl:topDataProperty");
           setAddPropertyDialogOpen(true);
@@ -8457,9 +8485,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         if (type === "sibling") {
-          const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
+          const parent = findParentNode(dataPropertyHierarchy, activeSelectedItem.id);
           const isTopLevel =
-            !parent || selectedItem.id.includes("topDataProperty") || selectedItem.label === "owl:topDataProperty";
+            !parent || activeSelectedItem.id.includes("topDataProperty") || activeSelectedItem.label === "owl:topDataProperty";
           if (isTopLevel) {
             setAddPropertyType("root");
             setPropertyParentLabel("owl:topDataProperty");
@@ -8470,8 +8498,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         const parentLabel =
           type === "subclass"
-            ? selectedItem.label
-            : findParentNode(dataPropertyHierarchy, selectedItem.id)?.label || "owl:topDataProperty";
+            ? activeSelectedItem.label
+            : findParentNode(dataPropertyHierarchy, activeSelectedItem.id)?.label || "owl:topDataProperty";
 
         setAddPropertyType(type === "subclass" ? "subproperty" : "sibling");
         setPropertyParentLabel(parentLabel);
@@ -8479,10 +8507,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      if (entitiesTab === "AnnotationProperties") {
+      if (activeEntitiesTab === "AnnotationProperties") {
         // Bug #45 — annotation properties were always created at root and
         // had no toolbar add. Now matches the other property panes.
-        if (type === "subclass" && !selectedItem) {
+        if (type === "subclass" && !activeSelectedItem) {
           showNotification(
             "Select an annotation property first to add a sub-property.",
             "warning",
@@ -8490,7 +8518,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           return;
         }
 
-        if (!selectedItem) {
+        if (!activeSelectedItem) {
           setAddPropertyType("root");
           setPropertyParentLabel("Annotation Property");
           setAddPropertyDialogOpen(true);
@@ -8503,7 +8531,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // until the asserted hierarchy is wired through; "subclass" creates
         // a sub-annotation-property under the selected one.
         const parentLabel =
-          type === "subclass" ? selectedItem.label : "Annotation Property";
+          type === "subclass" ? activeSelectedItem.label : "Annotation Property";
 
         setAddPropertyType(type === "subclass" ? "subproperty" : "root");
         setPropertyParentLabel(parentLabel);
@@ -8511,25 +8539,25 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      if (entitiesTab === "Datatypes") {
+      if (activeEntitiesTab === "Datatypes") {
         setAddDatatypeDialogOpen(true);
         return;
       }
 
-      if (entitiesTab !== "Classes") {
+      if (activeEntitiesTab !== "Classes") {
         showNotification("This action is available only for classes right now.", "warning");
         return;
       }
 
       // Subclass without a selected class can't proceed — owl:Thing children
       // ARE the top level, so use the contextual sibling button instead.
-      if (type === "subclass" && !selectedItem) {
+      if (type === "subclass" && !activeSelectedItem) {
         showNotification("Select a class first to add a subclass.", "warning");
         return;
       }
 
       // Sibling without selection: create a top-level class under owl:Thing.
-      if (!selectedItem) {
+      if (!activeSelectedItem) {
         setAddClassType("subclass"); // creates as child of owl:Thing
         setClassParentLabel("owl:Thing");
         setAddClassDialogOpen(true);
@@ -8538,8 +8566,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Sibling of owl:Thing → top-level class (same effect, friendlier).
       if (type === "sibling") {
-        const parent = findParentNode(classHierarchy, selectedItem.id);
-        const isTopLevel = !parent || selectedItem.id.includes("Thing") || selectedItem.label === "owl:Thing";
+        const parent = findParentNode(classHierarchy, activeSelectedItem.id);
+        const isTopLevel = !parent || activeSelectedItem.id.includes("Thing") || activeSelectedItem.label === "owl:Thing";
 
         if (isTopLevel) {
           setAddClassType("subclass");
@@ -8550,10 +8578,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       // For parent label, compute via functional state accessor.
-      let parentLabel = selectedItem.label;
+      let parentLabel = activeSelectedItem.label;
       if (type === "sibling") {
         setClassHierarchy((currentHierarchy) => {
-          const parent = findParentNode(currentHierarchy, selectedItem.id);
+          const parent = findParentNode(currentHierarchy, activeSelectedItem.id);
           parentLabel = parent?.label || "owl:Thing";
           return currentHierarchy; // No change
         });
@@ -8563,7 +8591,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       setClassParentLabel(parentLabel);
       setAddClassDialogOpen(true);
     },
-    [projectId, entitiesTab, selectedItem, showNotification, objectPropertyHierarchy, dataPropertyHierarchy, classHierarchy],
+    [projectId, mainTab, entitiesTab, selectedItem, selectedClassForIndividuals, showNotification, objectPropertyHierarchy, dataPropertyHierarchy, classHierarchy],
   );
 
   const handleCreateClass = useCallback(
@@ -8990,7 +9018,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleMakeSiblingsDisjoint = useCallback(async () => {
     console.log("[DEBUG] handleMakeSiblingsDisjoint called");
-    if (!projectId || !selectedItem || entitiesTab !== "Classes") return;
+    const activeEntitiesTab =
+      mainTab === "IndividualsByClass" ? "Classes" : entitiesTab;
+    const activeSelectedItem =
+      mainTab === "IndividualsByClass" ? selectedClassForIndividuals : selectedItem;
+    if (!projectId || !activeSelectedItem || activeEntitiesTab !== "Classes") return;
 
     // Find siblings of selected class - use classHierarchy directly as a dependency
     const findSiblings = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode[] => {
@@ -9007,7 +9039,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       return [];
     };
 
-    const siblings = findSiblings(classHierarchy, selectedItem.id);
+    const siblings = findSiblings(classHierarchy, activeSelectedItem.id);
 
     if (siblings.length === 0) {
       showNotification("No siblings found for the selected class.", "info");
@@ -9022,7 +9054,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       onConfirm: async () => {
         try {
           // Include the selected class itself in the disjoint set
-          const allClasses = [selectedItem as TreeNode, ...siblings];
+          const allClasses = [activeSelectedItem as TreeNode, ...siblings];
           const classIds = allClasses.map((c) => c.id);
 
           // Call backend to create pairwise disjoint axioms
@@ -9036,8 +9068,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           showNotification(`Successfully made ${classIds.length} classes pairwise disjoint.`, "info");
 
           // Optionally refresh the selected item to show updated axioms
-          if (selectedItem) {
-            const updated = { ...selectedItem, disjointClassesAxioms: [] };
+          if (activeSelectedItem) {
+            const updated = { ...activeSelectedItem, disjointClassesAxioms: [] };
             updateItemInState(updated);
           }
         } catch (error) {
@@ -9046,7 +9078,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       },
     });
-  }, [projectId, selectedItem, entitiesTab, classHierarchy, updateItemInState]);
+  }, [projectId, mainTab, selectedItem, selectedClassForIndividuals, entitiesTab, classHierarchy, updateItemInState, showNotification, user]);
 
   const handleDeleteItem = useCallback(
     async (itemOverride?: SelectableItem, tabOverride?: typeof entitiesTab) => {
@@ -12927,14 +12959,27 @@ const Dashboard: React.FC<DashboardProps> = ({
                   expandedNodes={expandedNodes}
                   searchQuery={classTreeSearchQuery}
                   onSearchQueryChange={setClassTreeSearchQuery}
-                  onSelectItem={(item) => setSelectedClassForIndividuals(item as TreeNode)}
+                  onSelectItem={(item) => {
+                    const node = item as TreeNode;
+                    setSelectedClassForIndividuals(node);
+                    setSelectedItem(node);
+                  }}
                   onToggleNode={toggleNode}
-                  onAddItem={() => {
-                    /* not used here */
-                  }}
-                  onDeleteItem={() => {
-                    /* not used here */
-                  }}
+                  onAddItem={handleAddItem}
+                  onDeleteItem={() =>
+                    handleDeleteItem(selectedClassForIndividuals ?? undefined, "Classes")
+                  }
+                  onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
+                  onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
+                  onRenameItem={handleRenameItem}
+                  viewMode={hierarchyViewModes.Classes || "asserted"}
+                  onViewModeChange={(mode) =>
+                    setHierarchyViewModes((prev) => ({ ...prev, Classes: mode }))
+                  }
+                  isReasonerRunning={isReasonerRunning}
+                  loadingNodes={loadingNodes}
+                  isViewOnly={isViewOnlyMember}
+                  onViewOnlyAction={handleViewOnlyAction}
                 />
               </div>
             </aside>
@@ -12970,24 +13015,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                     />
                     {selectedClassForIndividuals && (
                       <button
-                        onClick={async () => {
-                          const name = window.prompt(`Create individual in ${selectedClassForIndividuals.label}`);
-                          if (!name || !projectId) return;
-                          try {
-                            await ontologyMutationService.addIndividual(
-                              projectId,
-                              name,
-                              selectedClassForIndividuals.id,
-                            );
-                            await loadClassInstances();
-                          } catch (error) {
-                            console.error("[Dashboard] Failed to create individual:", error);
-                            notificationService.error("Create Failed", "Could not create individual.");
-                          }
-                        }}
+                        onClick={() => setCreateIndividualForClassOpen(true)}
                         className="px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
                       >
-                        Add
+                        + Add Individual
                       </button>
                     )}
                   </div>
@@ -13765,6 +13796,21 @@ const Dashboard: React.FC<DashboardProps> = ({
         onClose={() => setCreateIndividualModalOpen(false)}
         onCreate={handleAddIndividual}
       />
+      <CreateIndividualModal
+        isOpen={isCreateIndividualForClassOpen}
+        onClose={() => setCreateIndividualForClassOpen(false)}
+        onCreate={async (name: string) => {
+          if (!projectId || !selectedClassForIndividuals) return;
+          try {
+            await ontologyMutationService.addIndividual(projectId, name, selectedClassForIndividuals.id);
+            await loadClassInstances();
+            setCreateIndividualForClassOpen(false);
+          } catch (error) {
+            console.error("[Dashboard] Failed to create individual:", error);
+            notificationService.error("Create Failed", "Could not create individual.");
+          }
+        }}
+      />
       <AddClassDialog
         isOpen={isAddClassDialogOpen}
         onClose={() => setAddClassDialogOpen(false)}
@@ -13804,6 +13850,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           dataProperties: dataProperties,
           individuals: individuals,
         }}
+        onCreateProperty={handleDialogCreateAnnotationProperty}
+        onRefreshProperties={handleRefreshAnnotationProperties}
+        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
       />
       <AddAnnotationDialog
         isOpen={isEditAnnotationDialogOpen}
@@ -13839,6 +13888,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         initialValue={editAnnotationData?.currentValue || ""}
         initialLang={editAnnotationData?.language || ""}
         initialDatatype={editAnnotationData?.datatype || ""}
+        onCreateProperty={handleDialogCreateAnnotationProperty}
+        onRefreshProperties={handleRefreshAnnotationProperties}
+        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
       />
       <AddImportDialog
         isOpen={showImportDialog}
