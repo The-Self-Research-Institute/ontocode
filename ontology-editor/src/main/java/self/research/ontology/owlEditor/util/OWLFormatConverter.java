@@ -16,6 +16,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -127,7 +130,25 @@ public class OWLFormatConverter {
 
         // Load ontology (OWL API will auto-detect format)
         long loadStart = System.nanoTime();
-        OWLOntology ontology = manager.loadOntologyFromOntologyDocument(fileToLoad.toFile());
+        OWLOntology ontology;
+        try {
+            ontology = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return manager.loadOntologyFromOntologyDocument(fileToLoad.toFile());
+                } catch (OWLOntologyCreationException e) {
+                    throw new java.util.concurrent.CompletionException(e);
+                }
+            }).get(30, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            throw new IOException("OWL API timed out after 30s loading " + inputPath.getFileName() + " (likely hung on owl:imports fetch)");
+        } catch (java.util.concurrent.ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof OWLOntologyCreationException owlEx) throw owlEx;
+            throw new IOException("OWL API load failed: " + cause.getMessage(), cause);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("OWL API load interrupted");
+        }
         long loadDuration = (System.nanoTime() - loadStart) / 1_000_000;
         log.info("Loaded ontology in {} ms. Axioms: {}", loadDuration, ontology.getAxiomCount());
         
@@ -750,11 +771,39 @@ public class OWLFormatConverter {
             return;
         }
         
-        log.info("Re-serializing file with OWL API to fix namespace issues: {}", filePath.getFileName());
-        
+        // Log any owl:imports declarations — these are the network-fetch candidates that can cause hangs
+        java.util.regex.Matcher importMatcher = java.util.regex.Pattern
+                .compile("owl:imports[^>]*rdf:resource=\"([^\"]+)\"")
+                .matcher(content);
+        java.util.List<String> imports = new java.util.ArrayList<>();
+        while (importMatcher.find()) imports.add(importMatcher.group(1));
+        if (imports.isEmpty()) {
+            log.info("Re-serializing {} with OWL API — no owl:imports declared", filePath.getFileName());
+        } else {
+            log.warn("Re-serializing {} with OWL API — {} owl:imports found (these may trigger network calls): {}",
+                    filePath.getFileName(), imports.size(), imports);
+        }
+
         try {
             OWLOntologyManager manager = createManagerWithSilentImports();
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(filePath.toFile());
+            OWLOntology ontology;
+            try {
+                ontology = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return manager.loadOntologyFromOntologyDocument(filePath.toFile());
+                    } catch (OWLOntologyCreationException e) {
+                        throw new java.util.concurrent.CompletionException(e);
+                    }
+                }).get(30, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                log.warn("OWL API load timed out after 30s for {} (likely hung on owl:imports fetch) — skipping re-serialization", filePath.getFileName());
+                return;
+            } catch (java.util.concurrent.ExecutionException e) {
+                throw new RuntimeException(e.getCause());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
             log.info("OWL API loaded ontology: {} axioms", ontology.getAxiomCount());
             
             // Get original format and prefixes
@@ -769,16 +818,27 @@ public class OWLFormatConverter {
                 prefixFormat.getPrefixName2PrefixMap().forEach(rdfXmlFormat::setPrefix);
             }
             
-            // Write clean RDF/XML back to the file
-            try (OutputStream out = Files.newOutputStream(filePath)) {
+            // Write to a temp file first — NOT directly to filePath.
+            // Files.newOutputStream(filePath) truncates the file to 0 bytes before any writing happens.
+            // If saveOntology() then throws StackOverflowError, the original file is already destroyed.
+            // Writing to a temp file and atomically moving it only on success prevents this data loss.
+            Path tempOut = filePath.resolveSibling("reserialized-" + filePath.getFileName());
+            try (OutputStream out = Files.newOutputStream(tempOut)) {
                 manager.saveOntology(ontology, rdfXmlFormat, out);
             }
-            
+            Files.move(tempOut, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
             log.info("Successfully re-serialized file as clean RDF/XML: {}", filePath.getFileName());
-            
-        } catch (Exception e) {
-            log.warn("OWL API re-serialization failed (will try original file): {}", e.getMessage());
-            // Don't throw - let the original file be used as-is
+
+        } catch (Throwable t) {
+            // Catch Throwable (not just Exception) because OWL API's RDF/XML serializer can throw
+            // StackOverflowError on deeply nested ontologies — StackOverflowError extends Error, not Exception,
+            // so a plain catch(Exception) misses it and kills the worker thread silently.
+            log.warn("OWL API re-serialization failed ({}) for {} — skipping, original file will be used: {}",
+                    t.getClass().getSimpleName(), filePath.getFileName(), t.getMessage());
+            // Clean up temp file if the write started before the error
+            try { Files.deleteIfExists(filePath.resolveSibling("reserialized-" + filePath.getFileName())); }
+            catch (Exception ignored) {}
         }
     }
 

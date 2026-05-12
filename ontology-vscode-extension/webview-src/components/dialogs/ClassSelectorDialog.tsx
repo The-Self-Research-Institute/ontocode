@@ -33,6 +33,7 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
 }) => {
   const [selectedClass, setSelectedClass] = useState<TreeNode | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [treeData, setTreeData] = useState<TreeNode[]>(classHierarchy);
   
   // Inline class creation state
@@ -233,8 +234,8 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
                 filteredData={treeData}
                 selectedItem={selectedClass}
                 expandedNodes={externalExpandedNodes || expandedNodes}
-                searchQuery=""
-                onSearchQueryChange={() => {}}
+                searchQuery={searchQuery}
+                onSearchQueryChange={setSearchQuery}
                 onSelectItem={(item) => setSelectedClass(item as TreeNode)}
                 onToggleNode={handleToggleNode}
                 onAddItem={projectId && onAddClass ? handleInlineAddClass : undefined}

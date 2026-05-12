@@ -79,6 +79,60 @@ public class ProjectController {
         return authentication.getName();
     }
 
+    private String normalizeSharedMemberRole(String memberRole) {
+        if (memberRole == null || memberRole.isBlank()) {
+            return "VIEWER";
+        }
+        String normalizedRole = memberRole.trim().toUpperCase();
+        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(normalizedRole)) {
+            return "VIEWER";
+        }
+        return normalizedRole;
+    }
+
+    private List<SharedProjectMemberAccess> resolveRequestedMemberAccess(CreateProjectRequest request) {
+        LinkedHashMap<String, SharedProjectMemberAccess> byEmail = new LinkedHashMap<>();
+
+        if (request.memberAccess != null) {
+            for (SharedProjectMemberAccess access : request.memberAccess) {
+                if (access == null || access.email == null) {
+                    continue;
+                }
+                String email = access.email.trim();
+                if (email.isEmpty()) {
+                    continue;
+                }
+                SharedProjectMemberAccess normalized = new SharedProjectMemberAccess();
+                normalized.email = email;
+                normalized.role = normalizeSharedMemberRole(access.role);
+                byEmail.put(email.toLowerCase(Locale.ROOT), normalized);
+            }
+        }
+
+        if (byEmail.isEmpty() && request.memberEmails != null) {
+            String fallbackRole = normalizeSharedMemberRole(request.memberRole);
+            for (String memberEmail : request.memberEmails) {
+                if (memberEmail == null) {
+                    continue;
+                }
+                String email = memberEmail.trim();
+                if (email.isEmpty()) {
+                    continue;
+                }
+                String key = email.toLowerCase(Locale.ROOT);
+                if (byEmail.containsKey(key)) {
+                    continue;
+                }
+                SharedProjectMemberAccess normalized = new SharedProjectMemberAccess();
+                normalized.email = email;
+                normalized.role = fallbackRole;
+                byEmail.put(key, normalized);
+            }
+        }
+
+        return new ArrayList<>(byEmail.values());
+    }
+
     /**
      * Extract workspaceId from JWT token
      */
@@ -244,9 +298,10 @@ public class ProjectController {
 
             Optional<self.research.ontology.auth.model.Workspace> workspaceOpt =
                 projectService.getWorkspace(request.workspaceId);
+            String sharedMemberRole = normalizeSharedMemberRole(request.memberRole);
 
             if ("all".equals(request.shareWith)) {
-                // Add all active workspace members as VIEWER (matching UI: "All members will have view access")
+                // Add all active workspace members with the requested project role.
                 // Skip the project creator — they are already added as OWNER
                 if (workspaceOpt.isPresent()) {
                     self.research.ontology.auth.model.Workspace workspace = workspaceOpt.get();
@@ -254,20 +309,56 @@ public class ProjectController {
                         if (member.getUserId() != null
                                 && !member.getUserId().equals(user.getId())
                                 && member.getStatus() == self.research.ontology.auth.model.Workspace.MemberStatus.ACTIVE) {
-                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), "VIEWER");
+                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), sharedMemberRole);
                             membersAdded = true;
                         }
                     }
                 }
-            } else if ("specific".equals(request.shareWith) && request.memberEmails != null) {
-                // Add specific members as VIEWER (matching UI: "Choose who can view this project")
-                for (String memberEmail : request.memberEmails) {
-                    Optional<User> memberOpt = userRepository.findByEmail(memberEmail);
-                    if (memberOpt.isPresent() && !memberOpt.get().getId().equals(user.getId())) {
-                        User member = memberOpt.get();
-                        project.addMember(member.getId(), member.getUsername(), member.getEmail(), "VIEWER");
-                        membersAdded = true;
+            } else if ("specific".equals(request.shareWith)) {
+                List<SharedProjectMemberAccess> requestedMembers = resolveRequestedMemberAccess(request);
+                Workspace workspace = workspaceOpt.orElse(null);
+
+                List<String> skippedMembers = new ArrayList<>();
+                for (SharedProjectMemberAccess requestedMember : requestedMembers) {
+                    String memberEmail = requestedMember.email;
+                    String memberRole = requestedMember.role;
+                    boolean added = false;
+
+                    if (workspace != null) {
+                        Workspace.WorkspaceMember workspaceMember = workspace.getMemberByEmail(memberEmail);
+                        if (workspaceMember != null
+                                && workspaceMember.getUserId() != null
+                                && !workspaceMember.getUserId().equals(user.getId())
+                                && workspaceMember.getStatus() == Workspace.MemberStatus.ACTIVE) {
+                            project.addMember(
+                                    workspaceMember.getUserId(),
+                                    workspaceMember.getUsername(),
+                                    workspaceMember.getEmail(),
+                                    memberRole);
+                            membersAdded = true;
+                            added = true;
+                        }
                     }
+
+                    if (!added) {
+                        Optional<User> memberOpt = userRepository.findByEmail(memberEmail);
+                        if (memberOpt.isPresent()
+                                && !memberOpt.get().getId().equals(user.getId())
+                                && (workspace == null || workspace.isMember(memberOpt.get().getId()))) {
+                            User member = memberOpt.get();
+                            project.addMember(member.getId(), member.getUsername(), member.getEmail(), memberRole);
+                            membersAdded = true;
+                        } else {
+                            skippedMembers.add(memberEmail);
+                        }
+                    }
+                }
+
+                if (!requestedMembers.isEmpty() && !membersAdded) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                            "error", "None of the selected members could be added to this project.",
+                            "skippedMembers", skippedMembers
+                    ));
                 }
             }
 
@@ -1740,8 +1831,14 @@ public class ProjectController {
         public String name;
         public String description;
         public String shareWith; // "none", "all", "specific"
-        public List<String> memberEmails; // List of emails when shareWith="specific"
-        public String memberRole; // Role for shared members: VIEWER (default), EDITOR, ADMIN
+        public List<String> memberEmails; // Legacy list of emails when shareWith="specific"
+        public String memberRole; // Legacy default role for shared members
+        public List<SharedProjectMemberAccess> memberAccess; // Preferred per-member access
+    }
+
+    public static class SharedProjectMemberAccess {
+        public String email;
+        public String role; // VIEWER (default), EDITOR, ADMIN
     }
 
     public static class UpdateProjectRequest {
@@ -1835,7 +1932,7 @@ public class ProjectController {
      * Returns the authenticated user's account-level storage usage and plan limit.
      */
     @GetMapping("/storage-usage")
-    public ResponseEntity<?> getStorageUsage() {
+    public ResponseEntity<?> getStorageUsage(@RequestParam(required = false) String workspaceId) {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
@@ -1845,8 +1942,29 @@ public class ProjectController {
             User user = userOpt.get();
             String ownerId = user.getId();
             String plan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "FREE";
-
             long usedBytes = calculateOwnerStorageUsage(ownerId);
+
+            if (workspaceId != null && !workspaceId.isBlank()) {
+                if (!workspaceService.hasAccess(workspaceId, user.getId())) {
+                    return ResponseEntity.status(403).body(Map.of(
+                        "error", "You don't have access to this workspace"
+                    ));
+                }
+
+                Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
+                if (workspaceOpt.isPresent()) {
+                    Workspace workspace = workspaceOpt.get();
+                    ownerId = workspace.getOwnerId();
+                    Optional<User> ownerOpt = userRepository.findById(ownerId);
+                    if (ownerOpt.isPresent()) {
+                        User owner = ownerOpt.get();
+                        plan = owner.getSubscriptionPlanName() != null ? owner.getSubscriptionPlanName() : "FREE";
+                    } else {
+                        plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+                    }
+                    usedBytes = calculateWorkspaceStorageUsage(workspaceId);
+                }
+            }
             double limitGB = getStorageLimitForPlan(plan);
             long limitBytes = limitGB == Double.MAX_VALUE ? Long.MAX_VALUE : (long) (limitGB * 1024 * 1024 * 1024);
             double usedMB = usedBytes / (1024.0 * 1024.0);

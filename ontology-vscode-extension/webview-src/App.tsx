@@ -293,6 +293,14 @@ const AppContent = () => {
     }
   }, []);
 
+  const resetWorkspaceHubNavigation = useCallback(() => {
+    setSelectedProjectId(null);
+    setSelectedProjectName("");
+    setSelectedFileId(null);
+    setSelectedFileName("");
+    clearLastOpenedSelection();
+  }, [clearLastOpenedSelection]);
+
   // Auto-restore last project + file when workspace becomes available (e.g. after login with auto-select)
   const autoRestoredRef = useRef(false);
   useEffect(() => {
@@ -307,6 +315,8 @@ const AppContent = () => {
     const EDITOR_RESTORE_THRESHOLD_MS = 30 * 60 * 1000;
     const lastEditorActiveAt = Number(localStorage.getItem("ontocode_lastEditorActiveAt") || "0");
     const wasRecentlyEditing = Date.now() - lastEditorActiveAt < EDITOR_RESTORE_THRESHOLD_MS;
+    const isFreshTab = !sessionStorage.getItem("ontocode_tab_active");
+    sessionStorage.setItem("ontocode_tab_active", "true");
 
     const restoreWithIds = async (projectId: string, projectName: string, fileId: string | null, fileName: string | null) => {
       // Validate project still exists
@@ -318,8 +328,8 @@ const AppContent = () => {
         goToDashboard();
         return;
       }
-      if (fileId && fileName && wasRecentlyEditing) {
-        // User had a file open recently (tab-switch) — restore directly to editor
+      if (fileId && fileName && wasRecentlyEditing && isFreshTab) {
+        // New browser tab with a recent editor session — restore directly to the editor.
         console.log("[App] Tab-switch restore: reopening last file in editor:", fileId);
         navigateTo({ view: "dashboard", projectId, projectName, fileId, fileName });
       } else {
@@ -580,6 +590,8 @@ const AppContent = () => {
     // Update view-specific flags
     if (updatedRoute.view === "workspace") {
       clearLastOpenedSelection();
+      setSelectedFileId(null);
+      setSelectedFileName("");
       setForceShowWorkspace(true);
     } else if (updatedRoute.view === "deployment") {
       setForceShowWorkspace(false);
@@ -592,6 +604,10 @@ const AppContent = () => {
 
     if (updatedRoute.view === "projectDashboard") {
       clearLastOpenedSelection();
+      if (updatedRoute.fileId === undefined || updatedRoute.fileId === null) {
+        setSelectedFileId(null);
+        setSelectedFileName("");
+      }
     }
 
     // Restore non-workspace editor state when navigating to dashboard without project context
@@ -614,6 +630,33 @@ const AppContent = () => {
     setForceShowWorkspace(false);
     navigateTo({ view: "subscription", showSubscriptionPlan: true });
   }, [currentRoute.view, navigateTo, showBillingPage]);
+
+  const goToWorkspaceHub = useCallback(() => {
+    resetWorkspaceHubNavigation();
+    setShowBillingPage(false);
+    setShowSubscriptionPlan(false);
+    setSubscriptionReturnRoute(null);
+    if (user?.workspaceId) {
+      navigateTo({
+        view: "projectDashboard",
+        projectId: null,
+        projectName: "",
+        fileId: null,
+        fileName: "",
+        replace: true,
+      });
+      return;
+    }
+    try { localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true"); } catch {}
+    navigateTo({
+      view: "workspace",
+      projectId: null,
+      projectName: "",
+      fileId: null,
+      fileName: "",
+      replace: true,
+    });
+  }, [navigateTo, resetWorkspaceHubNavigation, user?.workspaceId]);
 
   // While a real file is open in the editor, keep the "last active" timestamp fresh
   // so a tab-switch restore within the session correctly lands back in the editor.
@@ -1000,7 +1043,18 @@ const AppContent = () => {
       setSubscriptionCheckout(null);
       await refreshPermissions();
       setShowSubscriptionPlan(false);
-      navigateTo({ view: "billing" });
+      setSubscriptionReturnRoute(null);
+      resetWorkspaceHubNavigation();
+      clearHistory();
+      navigateTo({
+        view: "billing",
+        showSubscriptionPlan: false,
+        projectId: null,
+        projectName: "",
+        fileId: null,
+        fileName: "",
+        replace: true,
+      });
     } catch (error: any) {
       console.error("Failed to complete subscription:", error);
       const errMsg = error?.error || error?.data?.error || error?.response?.data?.error || error?.message || "";
@@ -1009,7 +1063,18 @@ const AppContent = () => {
         setSubscriptionCheckout(null);
         await refreshPermissions().catch(() => {});
         setShowSubscriptionPlan(false);
-        navigateTo({ view: "billing" });
+        setSubscriptionReturnRoute(null);
+        resetWorkspaceHubNavigation();
+        clearHistory();
+        navigateTo({
+          view: "billing",
+          showSubscriptionPlan: false,
+          projectId: null,
+          projectName: "",
+          fileId: null,
+          fileName: "",
+          replace: true,
+        });
         return;
       }
       throw error;
@@ -1025,6 +1090,41 @@ const AppContent = () => {
           await updateSubscriptionPlan(planId);
         }
         setShowSubscriptionPlan(false);
+        resetWorkspaceHubNavigation();
+        if (subscriptionReturnRoute === "billing") {
+          setShowBillingPage(true);
+          navigateTo({
+            view: "billing",
+            showSubscriptionPlan: false,
+            projectId: null,
+            projectName: "",
+            fileId: null,
+            fileName: "",
+            replace: true,
+          });
+        } else if (user?.workspaceId) {
+          navigateTo({
+            view: "projectDashboard",
+            showSubscriptionPlan: false,
+            projectId: null,
+            projectName: "",
+            fileId: null,
+            fileName: "",
+            replace: true,
+          });
+        } else {
+          try { localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true"); } catch {}
+          navigateTo({
+            view: "workspace",
+            showSubscriptionPlan: false,
+            projectId: null,
+            projectName: "",
+            fileId: null,
+            fileName: "",
+            replace: true,
+          });
+        }
+        setSubscriptionReturnRoute(null);
         return;
       }
 
@@ -1036,13 +1136,22 @@ const AppContent = () => {
 
   const handleSkipPlan = () => {
     setShowSubscriptionPlan(false);
-    setSubscriptionReturnRoute(null);
+    resetWorkspaceHubNavigation();
     // Explicit route — never rely on history stack.
     // Came from billing → go back to billing.
     // Everything else → workspace selection (new user or existing user upgrading).
     if (subscriptionReturnRoute === "billing") {
       setShowBillingPage(true);
-      navigateTo({ view: "billing", showSubscriptionPlan: false });
+      navigateTo({
+        view: "billing",
+        showSubscriptionPlan: false,
+        projectId: null,
+        projectName: "",
+        fileId: null,
+        fileName: "",
+        replace: true,
+      });
+      setSubscriptionReturnRoute(null);
       return;
     }
     // Suppress WorkspaceSelection auto-trigger so it doesn't re-open the plan page.
@@ -1050,7 +1159,16 @@ const AppContent = () => {
     // Pass showSubscriptionPlan: false explicitly — navigateTo merges with the current
     // route which still has showSubscriptionPlan: true in the same render cycle, and
     // handleRouteChange would re-apply it, keeping the subscription page open.
-    navigateTo({ view: "workspace", showSubscriptionPlan: false });
+    navigateTo({
+      view: "workspace",
+      showSubscriptionPlan: false,
+      projectId: null,
+      projectName: "",
+      fileId: null,
+      fileName: "",
+      replace: true,
+    });
+    setSubscriptionReturnRoute(null);
   };
 
   useEffect(() => {
@@ -1410,8 +1528,8 @@ const AppContent = () => {
           // Account-level billing — the user is always the owner of their
           // own Stripe customer.
           isOwner={true}
-          onBack={() => navigateTo({ view: 'workspace' })}
-          onCancelled={() => navigateTo({ view: 'workspace' })}
+          onBack={goToWorkspaceHub}
+          onCancelled={goToWorkspaceHub}
           onUpgradePlan={openAccountSubscription}
         />
       </Suspense>

@@ -384,9 +384,7 @@ export const AxiomRow: React.FC<{
     } else if (e.key === 'Delete' && !isInferred) {
       e.preventDefault();
       if (isViewOnly) { onViewOnlyAction?.(); return; }
-      if (window.confirm('Delete this axiom?')) {
-        onDelete(axiom.id);
-      }
+      onDelete(axiom.id);
     } else if (e.key === 'Escape' && isEditing) {
       e.preventDefault();
       setIsEditing(false);
@@ -490,9 +488,7 @@ export const AxiomRow: React.FC<{
                 onClick={(e) => {
                   e.stopPropagation();
                   if (isViewOnly) { onViewOnlyAction?.(); return; }
-                  if (window.confirm('Delete this axiom?')) {
-                    onDelete(axiom.id);
-                  }
+                  onDelete(axiom.id);
                 }}
                 className={`p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                 title="Delete axiom (or press Delete)"

@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.ImportOptions;
@@ -30,10 +31,13 @@ public class ImportQueueManager {
     private final LinkedList<ImportQueueItem> queue = new LinkedList<>();
     private final Map<String, ImportQueueItem> activeImports = new ConcurrentHashMap<>();
 
-    // Configuration — keep at 1 on t3.large (2 vCPU / 8GB); increase on larger instances
-    private static final int MAX_CONCURRENT_IMPORTS = 1;
-    private static final int MAX_RETRIES = 3; // Maximum retry attempts for failed imports
-    private static final long RETRY_DELAY_MS = 10 * 1000; // 10 seconds delay before retry
+    // Tuned via ONTOCODE_IMPORT_MAX_CONCURRENT env var in docker-compose.
+    // t3.large (2 vCPU / 8GB): 1   t3.xlarge (4 vCPU / 16GB): 2   t3.2xlarge (8 vCPU / 32GB): 3
+    @Value("${ontocode.import.max-concurrent:1}")
+    private int maxConcurrentImports;
+
+    private static final int MAX_RETRIES = 3;
+    private static final long RETRY_DELAY_MS = 10 * 1000;
 
     public ImportQueueManager(SimpMessagingTemplate messagingTemplate,
                               ImportTimeEstimator estimator,
@@ -116,7 +120,7 @@ public class ImportQueueManager {
      */
     public synchronized ImportQueueItem dequeue() {
         long dequeueStart = System.nanoTime();
-        if (activeImports.size() >= MAX_CONCURRENT_IMPORTS || queue.isEmpty()) {
+        if (activeImports.size() >= maxConcurrentImports || queue.isEmpty()) {
             return null;
         }
 
@@ -337,7 +341,7 @@ public class ImportQueueManager {
      * Check if queue can accept more imports
      */
     public synchronized boolean canProcess() {
-        return activeImports.size() < MAX_CONCURRENT_IMPORTS;
+        return activeImports.size() < maxConcurrentImports;
     }
 
     /**

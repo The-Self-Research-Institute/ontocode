@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import EntityHierarchy from '../EntityHierarchy';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { notificationService } from '../../services/notificationService';
 import type { TreeNode, Property } from '../../types';
 
 // Structured data for object/data restrictions
@@ -112,6 +113,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const [cardinality, setCardinality] = useState(1);
   const [restrictionFiller, setRestrictionFiller] = useState<TreeNode | null>(null);
   const [fillerSearchQuery, setFillerSearchQuery] = useState('');
+  const [objectPropSearchQuery, setObjectPropSearchQuery] = useState('');
   const [propertyExpandedNodes, setPropertyExpandedNodes] = useState<string[]>([]);
   const [fillerExpandedNodes, setFillerExpandedNodes] = useState<string[]>([]);
 
@@ -121,6 +123,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const [dataCardinality, setDataCardinality] = useState(1);
   const [datatype, setDatatype] = useState('xsd:string');
   const [dataPropertyExpandedNodes, setDataPropertyExpandedNodes] = useState<string[]>([]);
+  const [dataPropSearchQuery, setDataPropSearchQuery] = useState('');
 
   // Class Expression (Manchester) state
   const [manchesterExpression, setManchesterExpression] = useState(initialValue);
@@ -386,6 +389,8 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         return `${propName} max ${dataCardinality} ${datatype}`;
       case 'exactly':
         return `${propName} exactly ${dataCardinality} ${datatype}`;
+      case 'value':
+        return `${propName} value ${datatype}`;
       default:
         return '';
     }
@@ -412,8 +417,8 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           console.log('[ClassExpressionDialog] Hierarchy tab - selected class IRI:', expression, 'label:', selectedClass.label);
         } else {
           console.warn('[ClassExpressionDialog] Hierarchy tab - no class selected!');
-          alert('Please select a class from the hierarchy');
-          return; // Don't proceed if no class selected
+          notificationService.warning('Selection Required', 'Please select a class from the hierarchy');
+          return;
         }
         break;
       case 'objectRestriction':
@@ -748,7 +753,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       setInlinePropertyName('');
     } catch (error) {
       console.error('Failed to create property:', error);
-      alert(`Failed to create property: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      notificationService.error('Create Failed', `Failed to create property: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsCreatingProperty(false);
     }
@@ -1042,8 +1047,8 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                     filteredData={objectPropertiesTree}
                     selectedItem={selectedProperty as any}
                     expandedNodes={propertyExpandedNodes}
-                    searchQuery=""
-                    onSearchQueryChange={() => {}}
+                    searchQuery={objectPropSearchQuery}
+                    onSearchQueryChange={setObjectPropSearchQuery}
                     onSelectItem={(item) => setSelectedProperty(item as any as Property)}
                     onToggleNode={handleObjectPropertyToggle}
                     onAddItem={projectId ? (type) => handleInlineAddProperty(type as 'subclass' | 'sibling') : () => {}}
@@ -1153,8 +1158,8 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                     filteredData={dataPropertiesTree}
                     selectedItem={selectedDataProperty as any}
                     expandedNodes={dataPropertyExpandedNodes}
-                    searchQuery=""
-                    onSearchQueryChange={() => {}}
+                    searchQuery={dataPropSearchQuery}
+                    onSearchQueryChange={setDataPropSearchQuery}
                     onSelectItem={(item) => setSelectedDataProperty(item as any as Property)}
                     onToggleNode={handleDataPropertyToggle}
                     onAddItem={projectId ? (type) => handleInlineAddProperty(type as 'subclass' | 'sibling') : () => {}}
