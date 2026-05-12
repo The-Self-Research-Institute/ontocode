@@ -145,7 +145,9 @@ public class OntologyMetadataService {
                 BindingSet sol = rs.next();
                 if (sol.hasBinding("property") && sol.hasBinding("value")) {
                     Map<String, String> ann = new LinkedHashMap<>();
-                    ann.put("property", sol.getValue("property").stringValue());
+                    String propertyValue = sol.getValue("property").stringValue();
+                    ann.put("property", propertyValue);
+                    ann.put("propertyIri", propertyValue);
                     Value valueNode = sol.getValue("value");
                     String value = valueNode.isLiteral() ? valueNode.stringValue() : valueNode.toString();
                     ann.put("value", value);
@@ -536,6 +538,16 @@ public class OntologyMetadataService {
         
         // Update cache
         ontologyIriCache.put(projectId, newOntologyIri);
+        projectMetadataService.readMeta(projectId).ifPresent(cached -> {
+            Map<String, Object> meta = new HashMap<>(cached);
+            meta.put("ontologyIRI", newOntologyIri);
+            if (newVersionIri != null && !newVersionIri.isEmpty()) {
+                meta.put("versionIRI", newVersionIri);
+            } else {
+                meta.remove("versionIRI");
+            }
+            projectMetadataService.writeMeta(projectId, meta);
+        });
     }
 
     /**
