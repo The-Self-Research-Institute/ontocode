@@ -73,6 +73,10 @@ function extractExtension(fileName: string): string {
 }
 
 function isSupportedOntologyExtension(fileName: string): boolean {
+    return /\.(owl|rdf|ttl|n3|nt|jsonld|zip)$/i.test(fileName);
+}
+
+function isSupportedNewOntologyExtension(fileName: string): boolean {
     return /\.(owl|rdf|ttl|n3|nt|jsonld)$/i.test(fileName);
 }
 
@@ -399,7 +403,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     canSelectMany: false,
                     openLabel: 'Open Ontology File',
                     filters: {
-                        'Ontology Files': ['owl', 'ttl', 'rdf'],
+                        'Ontology Files': ['owl', 'ttl', 'rdf', 'n3', 'nt', 'jsonld', 'zip'],
                         'All Files': ['*']
                     }
                 });
@@ -413,7 +417,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     console.log('[OntoCode] User cancelled file selection');
                     // Only show message in desktop mode - web users understand file picker cancellation
                     if (!isWeb) {
-                        vscode.window.showInformationMessage('Please select an ontology file (.owl, .ttl, or .rdf) to edit.');
+                        vscode.window.showInformationMessage('Please select an ontology file or package (.owl, .ttl, .rdf, .zip) to edit.');
                     }
                 }
             }
@@ -1114,7 +1118,7 @@ class OntoCodePanel {
             canSelectMany: false,
             openLabel: 'Open Ontology File',
             filters: {
-                'Ontology Files': ['owl', 'rdf', 'ttl', 'n3', 'nt', 'jsonld'],
+                'Ontology Files': ['owl', 'rdf', 'ttl', 'n3', 'nt', 'jsonld', 'zip'],
                 'All Files': ['*']
             }
         });
@@ -1329,7 +1333,7 @@ class OntoCodePanel {
         console.log(`[OntoCode] 📝 Creating new file with name: ${fileName} (Web mode: ${isWeb}, Project ID: ${projectId || 'none'})`);
 
         // Validate filename
-        if (!fileName || !isSupportedOntologyExtension(fileName)) {
+        if (!fileName || !isSupportedNewOntologyExtension(fileName)) {
             console.error('[OntoCode] ❌ Invalid filename provided:', fileName);
             vscode.window.showErrorMessage('Invalid ontology filename. Must have a valid extension (.owl, .rdf, .ttl, .n3, .nt, .jsonld)');
             return;
@@ -1458,7 +1462,7 @@ class OntoCodePanel {
             validateInput: (value) => {
                 const trimmed = value.trim();
                 if (!trimmed) return 'File name is required.';
-                if (!isSupportedOntologyExtension(trimmed)) {
+                if (!isSupportedNewOntologyExtension(trimmed)) {
                     return 'File must have a valid ontology extension (.owl, .rdf, .ttl, .n3, .nt, .jsonld)';
                 }
                 return null;
@@ -1965,7 +1969,7 @@ class OntoCodePanel {
         // Use filename (without extension) as projectId unless explicitly preserved
         // (e.g., admin flow passes a stable ID from the webview)
         if (!preserveProjectId) {
-            projectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
+            projectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld|zip)$/i, '');
         }
         console.log(`[OntoCode] Using projectId: ${projectId} (preserved: ${!!preserveProjectId})`);
 

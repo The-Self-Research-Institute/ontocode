@@ -405,10 +405,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     }
 
     // Validate file type
-    const validExtensions = [".owl", ".rdf", ".ttl", ".n3"];
+    const validExtensions = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld", ".zip"];
     const fileExtension = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
     if (!validExtensions.includes(fileExtension)) {
-      showToast("Invalid file type. Only .owl, .rdf, .ttl, .n3 files are allowed", "error");
+      showToast("Invalid file type. Only .owl, .rdf, .ttl, .n3, .nt, .jsonld, .zip files are allowed", "error");
       return;
     }
 
@@ -617,7 +617,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                     type="file"
                     onChange={handleFileUpload}
                     className="hidden"
-                    accept=".owl,.rdf,.ttl,.n3"
+                    accept=".owl,.rdf,.ttl,.n3,.nt,.jsonld,.zip"
                     disabled={uploading}
                   />
                 )}
@@ -719,7 +719,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                       type="file"
                       onChange={handleFileUpload}
                       className="hidden"
-                      accept=".owl,.rdf,.ttl,.n3"
+                      accept=".owl,.rdf,.ttl,.n3,.nt,.jsonld,.zip"
                       disabled={uploading}
                     />
                   )}

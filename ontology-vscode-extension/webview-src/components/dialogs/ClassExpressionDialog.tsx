@@ -24,6 +24,7 @@ interface ClassExpressionDialogProps {
   dataProperties: Property[];
   title?: string;
   initialValue?: string;
+  initialClassIri?: string;
   initialTab?: 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
   /** Restrict which tabs are shown. If not specified, all tabs are shown. */
   allowedTabs?: TabType[];
@@ -75,6 +76,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   dataProperties,
   title = "Class Expression Editor",
   initialValue = "",
+  initialClassIri,
   initialTab,
   initialRestrictionData,
   allowedTabs,
@@ -157,8 +159,12 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       if (initialTab) {
         setActiveTab(initialTab);
         
-        // If opening hierarchy tab and initialValue looks like an IRI, try to find and select that class
-        if (initialTab === 'hierarchy' && initialValue && (initialValue.startsWith('http://') || initialValue.startsWith('https://') || initialValue.startsWith('urn:'))) {
+        const classIriToSelect = initialClassIri || initialValue;
+
+        // If opening hierarchy tab and we have an IRI, try to find and select that class.
+        // Keep initialValue reserved for the expression text so the expression editor
+        // still shows the existing axiom when users switch tabs while editing.
+        if (initialTab === 'hierarchy' && classIriToSelect && (classIriToSelect.startsWith('http://') || classIriToSelect.startsWith('https://') || classIriToSelect.startsWith('urn:'))) {
           const findClassWithPath = (nodes: TreeNode[], targetId: string, path: string[] = []): { node: TreeNode | null, path: string[] } => {
             for (const node of nodes) {
               if (node.id === targetId) {
@@ -172,7 +178,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
             return { node: null, path: [] };
           };
           
-          const { node: foundClass, path: pathToClass } = findClassWithPath(classHierarchy, initialValue);
+          const { node: foundClass, path: pathToClass } = findClassWithPath(classHierarchy, classIriToSelect);
           if (foundClass) {
             setSelectedClass(foundClass);
             // Expand parent nodes so the selected class is visible
@@ -261,7 +267,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         }
       }
     }
-  }, [isOpen, hasInitialized, initialValue, initialTab, initialRestrictionData, objectProperties, dataProperties, classHierarchy]);
+  }, [isOpen, hasInitialized, initialValue, initialClassIri, initialTab, initialRestrictionData, objectProperties, dataProperties, classHierarchy]);
 
   // Reset hasInitialized when dialog closes
   useEffect(() => {
@@ -860,16 +866,16 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
               Class hierarchy
             </button>
           )}
-          {visibleTabs.includes('objectRestriction') && (
+          {visibleTabs.includes('dataRestriction') && (
             <button
-              onClick={() => setActiveTab('objectRestriction')}
+              onClick={() => setActiveTab('dataRestriction')}
               className={`px-4 py-2 text-sm font-medium transition-colors ${
-                activeTab === 'objectRestriction'
+                activeTab === 'dataRestriction'
                   ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
                   : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
               }`}
             >
-              Object restriction creator
+              Data restriction creator
             </button>
           )}
           {visibleTabs.includes('classExpression') && (
@@ -884,16 +890,16 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
               Class expression editor
             </button>
           )}
-          {visibleTabs.includes('dataRestriction') && (
+          {visibleTabs.includes('objectRestriction') && (
             <button
-              onClick={() => setActiveTab('dataRestriction')}
+              onClick={() => setActiveTab('objectRestriction')}
               className={`px-4 py-2 text-sm font-medium transition-colors ${
-                activeTab === 'dataRestriction'
+                activeTab === 'objectRestriction'
                   ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
                   : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
               }`}
             >
-              Data restriction creator
+              Object restriction creator
             </button>
           )}
         </div>

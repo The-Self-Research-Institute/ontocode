@@ -9,9 +9,17 @@ import com.stripe.net.Webhook;
 import com.stripe.param.*;
 import com.stripe.param.checkout.SessionCreateParams;
 import jakarta.annotation.PostConstruct;
+import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.index.Index;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
@@ -79,13 +87,15 @@ public class StripeService {
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceService workspaceService;
     private final EmailService emailService;
+    private final MongoTemplate mongoTemplate;
 
     public StripeService(UserRepository userRepository, WorkspaceRepository workspaceRepository,
-                         WorkspaceService workspaceService, EmailService emailService) {
+                         WorkspaceService workspaceService, EmailService emailService, MongoTemplate mongoTemplate) {
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
         this.workspaceService = workspaceService;
         this.emailService = emailService;
+        this.mongoTemplate = mongoTemplate;
     }
 
     @PostConstruct
@@ -107,6 +117,8 @@ public class StripeService {
         validatePriceId("STRIPE_PRICE_ENTERPRISE_MONTHLY", priceEnterpriseMonthly);
         validatePriceId("STRIPE_PRICE_ENTERPRISE_YEARLY", priceEnterpriseYearly);
         Stripe.apiKey = stripeSecretKey;
+        mongoTemplate.indexOps("email_logs")
+                .ensureIndex(new Index().on("key", Sort.Direction.ASC).unique());
         log.info("StripeService initialised — base URL: {}", baseUrl);
     }
 
@@ -487,11 +499,12 @@ public class StripeService {
                 .setIdempotencyKey(idempotencyKey)
                 .build();
 
-        Subscription.retrieve(user.getStripeSubscriptionId()).update(params, options);
+        Subscription subscription = Subscription.retrieve(user.getStripeSubscriptionId()).update(params, options);
 
         user.setAutoRenewEnabled(false);
         userRepository.save(user);
         log.info("Auto-renew disabled for user {} subscription {}", user.getUsername(), user.getStripeSubscriptionId());
+        sendAutoRenewDisabledEmailOnce(user, subscription);
     }
 
     /**
@@ -510,12 +523,13 @@ public class StripeService {
                 .setIdempotencyKey(idempotencyKey)
                 .build();
 
-        Subscription.retrieve(user.getStripeSubscriptionId()).update(params, options);
+        Subscription subscription = Subscription.retrieve(user.getStripeSubscriptionId()).update(params, options);
 
         user.setAutoRenewEnabled(true);
         user.setSubscriptionCanceledAt(null);
         userRepository.save(user);
         log.info("Auto-renew re-enabled for user {} subscription {}", user.getUsername(), user.getStripeSubscriptionId());
+        sendAutoRenewEnabledEmailOnce(user, subscription);
     }
 
     /**
@@ -638,9 +652,7 @@ public class StripeService {
         String userId = subscription.getMetadata().get("userId");
         Optional<User> optUser = userId != null
                 ? userRepository.findById(userId)
-                : userRepository.findAll().stream()
-                        .filter(u -> subscription.getCustomer().equals(u.getStripeCustomerId()))
-                        .findFirst();
+                : findUserByStripeCustomerId(subscription.getCustomer());
 
         optUser.ifPresent(user -> {
             String trialEndDate = LocalDateTime
@@ -660,9 +672,7 @@ public class StripeService {
         String userId = subscription.getMetadata().get("userId");
         Optional<User> optUser = userId != null
                 ? userRepository.findById(userId)
-                : userRepository.findAll().stream()
-                        .filter(u -> subscription.getCustomer().equals(u.getStripeCustomerId()))
-                        .findFirst();
+                : findUserByStripeCustomerId(subscription.getCustomer());
 
         optUser.ifPresent(user -> {
             if (subscription.getTrialEnd() == null) return;
@@ -682,7 +692,19 @@ public class StripeService {
     }
 
     public void handleSubscriptionUpdated(Subscription subscription) {
+        Optional<User> previousUser = resolveUserForSubscription(subscription);
+        boolean wasAutoRenewEnabled = previousUser
+                .map(User::isAutoRenewEnabled)
+                .orElse(true);
+
         updateUserFromSubscription(subscription, "updated");
+
+        boolean cancelAtPeriodEnd = Boolean.TRUE.equals(subscription.getCancelAtPeriodEnd());
+        if (cancelAtPeriodEnd && wasAutoRenewEnabled) {
+            resolveUserForSubscription(subscription).ifPresent(user -> sendAutoRenewDisabledEmailOnce(user, subscription));
+        } else if (!cancelAtPeriodEnd && !wasAutoRenewEnabled) {
+            resolveUserForSubscription(subscription).ifPresent(user -> sendAutoRenewEnabledEmailOnce(user, subscription));
+        }
     }
 
     public void handleSubscriptionDeleted(Subscription subscription) {
@@ -703,34 +725,31 @@ public class StripeService {
             workspaceService.syncWorkspacesToOwnerPlan(user);
             log.info("Subscription deleted for user {}", user.getUsername());
 
-            try {
-                emailService.sendSubscriptionCancelledEmail(
-                        user.getEmail(), user.getUsername(), planName, accessEndDate);
-            } catch (Exception e) {
-                log.error("Failed to send cancellation email to {}: {}", user.getEmail(), e.getMessage());
-            }
+            sendCancellationEmailOnce(user, subscription);
         });
     }
 
     public void handleInvoicePaymentFailed(Invoice invoice) {
-        String customerId = invoice.getCustomer();
-        userRepository.findAll().stream()
-                .filter(u -> customerId.equals(u.getStripeCustomerId()))
-                .findFirst()
+        findUserForInvoice(invoice)
                 .ifPresent(user -> {
                     user.setSubscriptionStatus("past_due");
                     userRepository.save(user);
-                    log.warn("Invoice payment failed for user {} — status set to past_due", user.getUsername());
+                    log.warn("Invoice payment failed for user {} — status set to past_due (invoice={})",
+                            user.getUsername(), invoice.getId());
 
                     // Sync status to ALL workspaces
                     workspaceService.syncWorkspacesToOwnerPlan(user);
 
                     String amount = invoice.getAmountDue() != null
-                            ? String.format("$%.2f", invoice.getAmountDue() / 100.0) : "your subscription amount";
+                            ? String.format("$%.2f %s",
+                                    invoice.getAmountDue() / 100.0,
+                                    invoice.getCurrency() != null ? invoice.getCurrency().toUpperCase() : "USD")
+                            : "your subscription amount";
                     String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
                     try {
                         emailService.sendPaymentFailedEmail(
                                 user.getEmail(), user.getUsername(), planName, amount, baseUrl + "/billing");
+                        log.info("Payment failed email sent to {} for invoice {}", user.getEmail(), invoice.getId());
                     } catch (Exception e) {
                         log.error("Failed to send payment-failed email to {}: {}", user.getEmail(), e.getMessage());
                     }
@@ -738,36 +757,53 @@ public class StripeService {
     }
 
     public void handleInvoicePaymentSucceeded(Invoice invoice) {
-        String customerId = invoice.getCustomer();
-        userRepository.findAll().stream()
-                .filter(u -> customerId.equals(u.getStripeCustomerId()))
-                .findFirst()
+        findUserForInvoice(invoice)
                 .ifPresent(user -> {
-                    if ("past_due".equals(user.getSubscriptionStatus())) {
+                    Long paidAmount = resolvePaidAmount(invoice);
+
+                    // invoice.payment_succeeded is a reliable fallback if
+                    // customer.subscription.updated is delayed/missed.
+                    if (paidAmount > 0) {
                         user.setSubscriptionStatus("active");
+                        if (invoice.getPeriodEnd() != null) {
+                            user.setSubscriptionCurrentPeriodEnd(
+                                    LocalDateTime.ofInstant(Instant.ofEpochSecond(invoice.getPeriodEnd()), ZoneOffset.UTC));
+                        }
                         userRepository.save(user);
-                        log.info("Invoice payment recovered for user {} — status set back to active", user.getUsername());
+                        log.info("Invoice payment succeeded for user {} — status set to active", user.getUsername());
                     }
 
                     // Skip $0 invoices (e.g. trial-start invoice with no charge)
-                    if (invoice.getAmountPaid() == null || invoice.getAmountPaid() == 0) return;
+                    if (paidAmount == 0) {
+                        log.info("Skipping payment success email for zero-amount invoice {} / user {}",
+                                invoice.getId(), user.getUsername());
+                        return;
+                    }
 
                     // Sync status to ALL workspaces (restores collaboration if paid)
                     workspaceService.syncWorkspacesToOwnerPlan(user);
 
                     String amount = String.format("$%.2f %s",
-                            invoice.getAmountPaid() / 100.0,
+                            paidAmount / 100.0,
                             invoice.getCurrency() != null ? invoice.getCurrency().toUpperCase() : "USD");
                     String nextBillingDate = invoice.getPeriodEnd() != null
                             ? LocalDateTime.ofInstant(Instant.ofEpochSecond(invoice.getPeriodEnd()), ZoneOffset.UTC)
                                     .format(DATE_FMT)
                             : "N/A";
                     String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
+                    String emailLogKey = "payment-succeeded:" + invoice.getId();
+                    if (!reserveEmailLog(emailLogKey, user, invoice, "payment_succeeded")) {
+                        log.info("Skipping duplicate payment success email for invoice {} / user {}",
+                                invoice.getId(), user.getUsername());
+                        return;
+                    }
                     try {
                         emailService.sendPaymentSucceededEmail(
                                 user.getEmail(), user.getUsername(), planName,
                                 amount, nextBillingDate, invoice.getHostedInvoiceUrl());
+                        markEmailLogSent(emailLogKey);
                     } catch (Exception e) {
+                        markEmailLogFailed(emailLogKey, e.getMessage());
                         log.error("Failed to send payment-receipt email to {}: {}", user.getEmail(), e.getMessage());
                     }
                 });
@@ -782,9 +818,230 @@ public class StripeService {
         if (userId != null) {
             return userRepository.findById(userId);
         }
-        return userRepository.findAll().stream()
-                .filter(u -> subscription.getCustomer().equals(u.getStripeCustomerId()))
-                .findFirst();
+        return findUserByStripeCustomerId(subscription.getCustomer());
+    }
+
+    private Optional<User> findUserForInvoice(Invoice invoice) {
+        String customerId = invoice.getCustomer();
+        if (customerId != null && !customerId.isBlank()) {
+            Optional<User> user = findUserByStripeCustomerId(customerId);
+            if (user.isPresent()) {
+                return user;
+            }
+        }
+
+        String subscriptionId = invoice.getSubscription();
+        if (subscriptionId != null && !subscriptionId.isBlank()) {
+            Optional<User> user = userRepository.findByStripeSubscriptionId(subscriptionId);
+            if (user.isPresent()) {
+                return user;
+            }
+
+            user = findUserFromStripeSubscriptionMetadata(subscriptionId);
+            if (user.isPresent()) {
+                return user;
+            }
+        }
+
+        if (customerId != null && !customerId.isBlank()) {
+            Optional<User> user = findUserFromStripeCustomerMetadata(customerId);
+            if (user.isPresent()) {
+                return user;
+            }
+        }
+
+        String customerEmail = invoice.getCustomerEmail();
+        if (customerEmail != null && !customerEmail.isBlank()) {
+            Optional<User> user = userRepository.findByEmailIgnoreCase(customerEmail);
+            if (user.isPresent()) {
+                log.info("Resolved invoice {} user by customer email fallback: {}", invoice.getId(), customerEmail);
+                return user;
+            }
+        }
+
+        log.warn("No user found for invoice {} (customer={}, subscription={})",
+                invoice.getId(), customerId, subscriptionId);
+        return Optional.empty();
+    }
+
+    private long resolvePaidAmount(Invoice invoice) {
+        if (invoice.getAmountPaid() != null) {
+            return invoice.getAmountPaid();
+        }
+        // Some test/API-version payloads may omit amount_paid. For a success
+        // event, amount_due is the best fallback for formatting the receipt.
+        if (invoice.getAmountDue() != null) {
+            return invoice.getAmountDue();
+        }
+        return 0L;
+    }
+
+    private Optional<User> findUserByStripeCustomerId(String customerId) {
+        return customerId == null || customerId.isBlank()
+                ? Optional.empty()
+                : userRepository.findByStripeCustomerId(customerId);
+    }
+
+    private Optional<User> findUserFromStripeSubscriptionMetadata(String subscriptionId) {
+        try {
+            Subscription subscription = Subscription.retrieve(subscriptionId);
+            Map<String, String> metadata = subscription.getMetadata();
+            String userId = metadata != null ? metadata.get("userId") : null;
+            Optional<User> user = userId != null ? userRepository.findById(userId) : Optional.empty();
+            user.ifPresent(u -> {
+                if (u.getStripeSubscriptionId() == null || u.getStripeSubscriptionId().isBlank()) {
+                    u.setStripeSubscriptionId(subscription.getId());
+                }
+                if (u.getStripeCustomerId() == null || u.getStripeCustomerId().isBlank()) {
+                    u.setStripeCustomerId(subscription.getCustomer());
+                }
+                userRepository.save(u);
+            });
+            return user;
+        } catch (Exception e) {
+            log.warn("Could not resolve user from subscription metadata {}: {}", subscriptionId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private Optional<User> findUserFromStripeCustomerMetadata(String customerId) {
+        try {
+            Customer customer = Customer.retrieve(customerId);
+            Map<String, String> metadata = customer.getMetadata();
+            String userId = metadata != null ? metadata.get("userId") : null;
+            Optional<User> user = userId != null ? userRepository.findById(userId) : Optional.empty();
+            user.ifPresent(u -> {
+                if (u.getStripeCustomerId() == null || u.getStripeCustomerId().isBlank()) {
+                    u.setStripeCustomerId(customer.getId());
+                    userRepository.save(u);
+                }
+            });
+            return user;
+        } catch (Exception e) {
+            log.warn("Could not resolve user from customer metadata {}: {}", customerId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private boolean reserveEmailLog(String key, User user, Invoice invoice, String type) {
+        Document doc = new Document("key", key)
+                .append("type", type)
+                .append("status", "sending")
+                .append("email", user.getEmail())
+                .append("userId", user.getId())
+                .append("username", user.getUsername())
+                .append("stripeInvoiceId", invoice.getId())
+                .append("stripeCustomerId", invoice.getCustomer())
+                .append("stripeSubscriptionId", invoice.getSubscription())
+                .append("amountPaid", invoice.getAmountPaid())
+                .append("currency", invoice.getCurrency())
+                .append("createdAt", LocalDateTime.now());
+        try {
+            mongoTemplate.insert(doc, "email_logs");
+            return true;
+        } catch (DuplicateKeyException e) {
+            return false;
+        }
+    }
+
+    private boolean reserveEmailLog(String key, User user, Subscription subscription, String type) {
+        Document doc = new Document("key", key)
+                .append("type", type)
+                .append("status", "sending")
+                .append("email", user.getEmail())
+                .append("userId", user.getId())
+                .append("username", user.getUsername())
+                .append("stripeCustomerId", subscription.getCustomer())
+                .append("stripeSubscriptionId", subscription.getId())
+                .append("createdAt", LocalDateTime.now());
+        try {
+            mongoTemplate.insert(doc, "email_logs");
+            return true;
+        } catch (DuplicateKeyException e) {
+            return false;
+        }
+    }
+
+    private void sendCancellationEmailOnce(User user, Subscription subscription) {
+        String key = "subscription-cancelled:" + subscription.getId();
+        if (!reserveEmailLog(key, user, subscription, "subscription_cancelled")) {
+            log.info("Skipping duplicate cancellation email for subscription {} / user {}",
+                    subscription.getId(), user.getUsername());
+            return;
+        }
+
+        String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
+        String accessEndDate = formatSubscriptionAccessEnd(subscription);
+        try {
+            emailService.sendSubscriptionCancelledEmail(
+                    user.getEmail(), user.getUsername(), planName, accessEndDate);
+            markEmailLogSent(key);
+            log.info("Cancellation email sent to {} for subscription {}", user.getEmail(), subscription.getId());
+        } catch (Exception e) {
+            markEmailLogFailed(key, e.getMessage());
+            log.error("Failed to send cancellation email to {}: {}", user.getEmail(), e.getMessage());
+        }
+    }
+
+    private void sendAutoRenewDisabledEmailOnce(User user, Subscription subscription) {
+        String key = "auto-renew-disabled:" + subscription.getId() + ":" + subscription.getCurrentPeriodEnd();
+        if (!reserveEmailLog(key, user, subscription, "auto_renew_disabled")) {
+            log.info("Skipping duplicate auto-renew disabled email for subscription {} / user {}",
+                    subscription.getId(), user.getUsername());
+            return;
+        }
+
+        String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
+        String accessEndDate = formatSubscriptionAccessEnd(subscription);
+        try {
+            emailService.sendAutoRenewDisabledEmail(
+                    user.getEmail(), user.getUsername(), planName, accessEndDate, baseUrl + "/billing");
+            markEmailLogSent(key);
+            log.info("Auto-renew disabled email sent to {} for subscription {}",
+                    user.getEmail(), subscription.getId());
+        } catch (Exception e) {
+            markEmailLogFailed(key, e.getMessage());
+            log.error("Failed to send auto-renew disabled email to {}: {}", user.getEmail(), e.getMessage());
+        }
+    }
+
+    private void sendAutoRenewEnabledEmailOnce(User user, Subscription subscription) {
+        String key = "auto-renew-enabled:" + subscription.getId() + ":" + subscription.getCurrentPeriodEnd();
+        if (!reserveEmailLog(key, user, subscription, "auto_renew_enabled")) {
+            log.info("Skipping duplicate auto-renew enabled email for subscription {} / user {}",
+                    subscription.getId(), user.getUsername());
+            return;
+        }
+
+        String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
+        String renewalDate = formatSubscriptionAccessEnd(subscription);
+        try {
+            emailService.sendAutoRenewEnabledEmail(
+                    user.getEmail(), user.getUsername(), planName, renewalDate, baseUrl + "/billing");
+            markEmailLogSent(key);
+            log.info("Auto-renew enabled email sent to {} for subscription {}",
+                    user.getEmail(), subscription.getId());
+        } catch (Exception e) {
+            markEmailLogFailed(key, e.getMessage());
+            log.error("Failed to send auto-renew enabled email to {}: {}", user.getEmail(), e.getMessage());
+        }
+    }
+
+    private void markEmailLogSent(String key) {
+        mongoTemplate.updateFirst(
+                new Query(Criteria.where("key").is(key)),
+                new Update().set("status", "sent").set("sentAt", LocalDateTime.now()),
+                "email_logs");
+    }
+
+    private void markEmailLogFailed(String key, String errorMessage) {
+        mongoTemplate.updateFirst(
+                new Query(Criteria.where("key").is(key)),
+                new Update()
+                        .set("status", "failed")
+                        .set("failedAt", LocalDateTime.now())
+                        .set("errorMessage", errorMessage),
+                "email_logs");
     }
 
     private String formatSubscriptionAccessEnd(Subscription subscription) {
@@ -802,9 +1059,7 @@ public class StripeService {
 
         Optional<User> optUser = userId != null
                 ? userRepository.findById(userId)
-                : userRepository.findAll().stream()
-                        .filter(u -> subscription.getCustomer().equals(u.getStripeCustomerId()))
-                        .findFirst();
+                : findUserByStripeCustomerId(subscription.getCustomer());
 
         optUser.ifPresent(user -> {
             user.setStripeSubscriptionId(subscription.getId());

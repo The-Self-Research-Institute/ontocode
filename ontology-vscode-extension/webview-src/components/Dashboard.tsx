@@ -101,6 +101,7 @@ import {
   AddObjectPropertyDialog,
   ClassExpressionDialog,
   PropertyExpressionDialog,
+  IndividualSelectorDialog,
   ObjectPropertyExpressionDialog,
   AddDatatypeDialog,
   PropertyAssertionDialog,
@@ -2631,6 +2632,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedClassIndividual, setSelectedClassIndividual] = useState<Individual | null>(null);
   const [selectedClassIndividualDetails, setSelectedClassIndividualDetails] = useState<Individual | null>(null);
   const [selectedClassIndividualLoading, setSelectedClassIndividualLoading] = useState(false);
+  const [classIndividualInfoTab, setClassIndividualInfoTab] = useState<"annotations" | "usage">("annotations");
+  const [classIndividualUsages, setClassIndividualUsages] = useState<any[]>([]);
+  const [classIndividualUsageLoading, setClassIndividualUsageLoading] = useState(false);
   const [classInstanceCounts, setClassInstanceCounts] = useState<
     Record<string, { direct?: number; inferred?: number; total?: number }>
   >({});
@@ -2646,6 +2650,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isClassIndividualTypeDialogOpen, setClassIndividualTypeDialogOpen] = useState(false);
   const [isClassIndividualPropertyDialogOpen, setClassIndividualPropertyDialogOpen] = useState(false);
   const [classIndividualPropertyIsObject, setClassIndividualPropertyIsObject] = useState(true);
+  const [classIndividualSameDiffDialog, setClassIndividualSameDiffDialog] = useState<null | { mode: "same" | "different" }>(null);
+  const [classIndividualCandidateIndividuals, setClassIndividualCandidateIndividuals] = useState<Individual[]>([]);
   const [dlQuery, setDlQuery] = useState("Pizza and hasTopping some MozzarellaTopping");
   const [dlQueryResults, setDlQueryResults] = useState<string[] | null>(null);
   const [isDlQueryLoading, setIsDlQueryLoading] = useState(false);
@@ -5057,6 +5063,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           types: details.types || selectedClassIndividual.types,
           annotations: details.annotations || selectedClassIndividual.annotations,
           propertyAssertions: details.propertyAssertions || [],
+          sameIndividualAs: details.sameIndividualAs || selectedClassIndividual.sameIndividualAs,
+          differentIndividualFrom: details.differentIndividualFrom || selectedClassIndividual.differentIndividualFrom,
         });
       }
     } catch (error) {
@@ -5070,6 +5078,71 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     refreshSelectedClassIndividualDetails();
   }, [refreshSelectedClassIndividualDetails]);
+
+  const openClassIndividualSameDiffDialog = useCallback(
+    async (mode: "same" | "different") => {
+      setClassIndividualSameDiffDialog({ mode });
+      try {
+        if (!projectId) return;
+        const response = await apiClient.get<any>(`/api/ontology/individuals/${projectId}`);
+        const loadedIndividuals = Array.isArray(response?.data)
+          ? response.data
+          : response?.data?.individuals || response?.individuals || [];
+        setClassIndividualCandidateIndividuals(loadedIndividuals);
+      } catch (error) {
+        console.error("[Dashboard] Failed to load individuals for same/different dialog:", error);
+        setClassIndividualCandidateIndividuals([]);
+      }
+    },
+    [projectId],
+  );
+
+  const deleteClassIndividualSameDifferent = useCallback(
+    async (mode: "same" | "different", targetIri: string) => {
+      if (!projectId || !selectedClassIndividualDetails) return;
+      try {
+        if (mode === "same") {
+          await ontologyMutationService.deleteSameIndividual(projectId, selectedClassIndividualDetails.id, targetIri);
+        } else {
+          await ontologyMutationService.deleteDifferentIndividual(projectId, selectedClassIndividualDetails.id, targetIri);
+        }
+        await refreshSelectedClassIndividualDetails();
+      } catch (error) {
+        console.error("[Dashboard] Failed to remove same/different individual assertion:", error);
+        notificationService.error("Remove Failed", "Could not remove same/different individual assertion.");
+      }
+    },
+    [projectId, selectedClassIndividualDetails, refreshSelectedClassIndividualDetails],
+  );
+
+  useEffect(() => {
+    if (!projectId || !selectedClassIndividual?.id) {
+      setClassIndividualUsages([]);
+      return;
+    }
+
+    let alive = true;
+    setClassIndividualUsageLoading(true);
+
+    (async () => {
+      try {
+        const response = await apiClient.get<any>(
+          `/api/ontology/individuals/usage/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`,
+        );
+        const usageData = response?.data?.data || response?.data || response || [];
+        if (alive) setClassIndividualUsages(Array.isArray(usageData) ? usageData : []);
+      } catch (error) {
+        console.error("[Dashboard] Failed to load individual usage:", error);
+        if (alive) setClassIndividualUsages([]);
+      } finally {
+        if (alive) setClassIndividualUsageLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [projectId, selectedClassIndividual?.id]);
 
   const decodeTokenEmail = (token?: string | null) => {
     if (!token) return null;
@@ -5476,6 +5549,24 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
     const parts = iri.split("/");
     return parts[parts.length - 1] || iri;
+  };
+
+  const getImportResolutionStatus = (iri: string): { label: string; tone: "success" | "warning" | "error" | "neutral"; detail: string } => {
+    const resolution = (metadata as any)?.importResolution || {};
+    const loaded = Array.isArray(resolution.loaded) ? resolution.loaded : [];
+    const declaredOnly = Array.isArray(resolution.declaredOnly) ? resolution.declaredOnly : [];
+    const failed = resolution.failed && typeof resolution.failed === "object" ? resolution.failed : {};
+
+    if (loaded.includes(iri)) {
+      return { label: "Loaded", tone: "success", detail: "Imported ontology content was resolved and loaded into this project graph." };
+    }
+    if (Object.prototype.hasOwnProperty.call(failed, iri)) {
+      return { label: "Failed", tone: "error", detail: String(failed[iri] || "Import could not be loaded.") };
+    }
+    if (declaredOnly.includes(iri)) {
+      return { label: "Declared only", tone: "warning", detail: "The owl:imports declaration exists, but content was not resolved on the server." };
+    }
+    return { label: "Declared", tone: "neutral", detail: "Declared by owl:imports. Load status is unknown until import resolution runs." };
   };
 
   const resolvePropertyIriByLabel = (labelOrIri: string, properties: Property[]) => {
@@ -7234,7 +7325,11 @@ const Dashboard: React.FC<DashboardProps> = ({
           return null;
         };
         const currentHierarchy =
-          entitiesTab === "Classes"
+          mainTab === "IndividualsByClass"
+            ? hierarchyViewModes.Classes === "inferred"
+              ? inferredClassHierarchy
+              : classHierarchy
+            : entitiesTab === "Classes"
             ? currentHierarchyViewMode === "inferred"
               ? inferredClassHierarchy
               : classHierarchy
@@ -7254,13 +7349,17 @@ const Dashboard: React.FC<DashboardProps> = ({
         });
 
         if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
-          if (entitiesTab === "Classes") {
+          if (entitiesTab === "Classes" || mainTab === "IndividualsByClass") {
             setLoadingNodes((prev) => new Set([...prev, nodeId]));
             const timeout = new Promise<void>((_, reject) =>
               setTimeout(() => reject(new Error("NODE_TIMEOUT")), 5000)
             );
             try {
-              if (currentHierarchyViewMode === "inferred") {
+              const shouldLoadInferredClassChildren =
+                mainTab === "IndividualsByClass"
+                  ? hierarchyViewModes.Classes === "inferred"
+                  : currentHierarchyViewMode === "inferred";
+              if (shouldLoadInferredClassChildren) {
                 await Promise.race([loadInferredChildren(nodeId), timeout]);
               } else {
                 await Promise.race([loadChildren(nodeId), timeout]);
@@ -7290,6 +7389,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       loadInferredChildren,
       entitiesTab,
       currentHierarchyViewMode,
+      mainTab,
     ],
   );
 
@@ -12744,6 +12844,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                                 iri.startsWith("file://") ||
                                 (!iri.startsWith("http://") && !iri.startsWith("https://"));
                               const isExpanded = expandedImports.has(iri);
+                              const resolutionStatus = getImportResolutionStatus(iri);
+                              const statusStyle =
+                                resolutionStatus.tone === "success"
+                                  ? { backgroundColor: "rgba(34,197,94,0.14)", color: "rgb(34,197,94)" }
+                                  : resolutionStatus.tone === "warning"
+                                    ? { backgroundColor: "rgba(245,158,11,0.14)", color: "rgb(245,158,11)" }
+                                    : resolutionStatus.tone === "error"
+                                      ? { backgroundColor: "var(--error-tint)", color: "var(--error)" }
+                                      : { backgroundColor: "var(--surface-3)", color: "var(--text-secondary)" };
 
                               return (
                                 <div
@@ -12804,6 +12913,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                                           </span>
                                         </div>
                                       )}
+                                      <div className="flex items-center gap-1 mt-1">
+                                        <span
+                                          className="px-1.5 py-0.5 text-[9px] rounded"
+                                          style={statusStyle}
+                                          title={resolutionStatus.detail}
+                                        >
+                                          {resolutionStatus.label}
+                                        </span>
+                                      </div>
                                       {showImportClosure && isExpanded && (
                                         <div
                                           className="mt-2 ml-4 pl-3 border-l-2 text-[10px]"
@@ -12852,7 +12970,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                         >
                           <div className="flex items-center gap-2">
                             <Info size={12} />
-                            <span>Direct imports only. Enable "Show import closure" to see transitive imports.</span>
+                            <span>
+                              Imports are owl:imports declarations. Loaded imports are included in the project graph;
+                              declared-only imports match Protégé declarations but were not resolved on this server.
+                            </span>
                           </div>
                         </div>
                       )}
@@ -13185,6 +13306,68 @@ const Dashboard: React.FC<DashboardProps> = ({
                               {selectedClassIndividualDetails.id}
                             </div>
                           </div>
+                          <div className="bg-white border border-gray-200 rounded overflow-hidden">
+                            <div className="flex bg-purple-50 border-b border-purple-200">
+                              <button
+                                onClick={() => setClassIndividualInfoTab("annotations")}
+                                className={`px-3 py-1.5 text-[11px] font-semibold border-r border-purple-200 ${
+                                  classIndividualInfoTab === "annotations"
+                                    ? "bg-white text-purple-800"
+                                    : "text-purple-600 hover:bg-purple-100"
+                                }`}
+                              >
+                                Annotations
+                              </button>
+                              <button
+                                onClick={() => setClassIndividualInfoTab("usage")}
+                                className={`px-3 py-1.5 text-[11px] font-semibold ${
+                                  classIndividualInfoTab === "usage"
+                                    ? "bg-white text-purple-800"
+                                    : "text-purple-600 hover:bg-purple-100"
+                                }`}
+                              >
+                                Usage
+                              </button>
+                            </div>
+                            <div className="min-h-[110px] max-h-[180px] overflow-y-auto p-2">
+                              {classIndividualInfoTab === "annotations" ? (
+                                selectedClassIndividualDetails.annotations &&
+                                Object.keys(selectedClassIndividualDetails.annotations).length > 0 ? (
+                                  <div className="space-y-1">
+                                    {Object.entries(selectedClassIndividualDetails.annotations).map(([key, value]) => (
+                                      <div
+                                        key={key}
+                                        className="group flex items-center justify-between text-[11px] text-gray-600"
+                                      >
+                                        <span className="truncate">
+                                          <span className="font-mono">{getLocalName(key) || key}</span>: {String(value)}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px] text-gray-400">No annotations</div>
+                                )
+                              ) : classIndividualUsageLoading ? (
+                                <div className="text-[11px] text-gray-400">Loading usage...</div>
+                              ) : classIndividualUsages.length > 0 ? (
+                                <div className="space-y-1">
+                                  {classIndividualUsages.map((usage, index) => (
+                                    <div key={index} className="text-[11px] text-gray-600 bg-gray-50 rounded px-2 py-1">
+                                      <span className="font-semibold text-purple-700 uppercase mr-2">
+                                        {usage.type || "usage"}
+                                      </span>
+                                      <span className="font-mono">
+                                        {usage.subjectLabel || usage.subject || usage.context || JSON.stringify(usage)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-[11px] text-gray-400">No usage found</div>
+                              )}
+                            </div>
+                          </div>
                           <div className="bg-white border border-gray-200 rounded p-2">
                             <div className="flex items-center justify-between mb-1">
                               <div className="font-semibold text-gray-700">Types</div>
@@ -13234,6 +13417,67 @@ const Dashboard: React.FC<DashboardProps> = ({
                             ) : (
                               <div className="text-[11px] text-gray-400">No types</div>
                             )}
+                          </div>
+                          <div className="bg-white border border-gray-200 rounded p-2">
+                            <div className="font-semibold text-gray-700 mb-1">Same / Different individuals</div>
+                            <div className="space-y-2">
+                              <div>
+                                <div className="flex items-center justify-between">
+                                  <div className="text-[10px] uppercase text-gray-500 font-semibold">Same Individual As</div>
+                                  <button
+                                    onClick={() => openClassIndividualSameDiffDialog("same")}
+                                    className="px-2 py-0.5 text-[10px] bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+                                  >
+                                    Add
+                                  </button>
+                                </div>
+                                {selectedClassIndividualDetails.sameIndividualAs?.length ? (
+                                  <div className="space-y-1">
+                                    {selectedClassIndividualDetails.sameIndividualAs.map((iri) => (
+                                      <div key={iri} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                        <span className="truncate">{getLocalName(iri) || iri}</span>
+                                        <button
+                                          onClick={() => deleteClassIndividualSameDifferent("same", iri)}
+                                          className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                        >
+                                          Remove
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px] text-gray-400">No same individual assertions</div>
+                                )}
+                              </div>
+                              <div>
+                                <div className="flex items-center justify-between">
+                                  <div className="text-[10px] uppercase text-gray-500 font-semibold">Different Individuals</div>
+                                  <button
+                                    onClick={() => openClassIndividualSameDiffDialog("different")}
+                                    className="px-2 py-0.5 text-[10px] bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+                                  >
+                                    Add
+                                  </button>
+                                </div>
+                                {selectedClassIndividualDetails.differentIndividualFrom?.length ? (
+                                  <div className="space-y-1">
+                                    {selectedClassIndividualDetails.differentIndividualFrom.map((iri) => (
+                                      <div key={iri} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                        <span className="truncate">{getLocalName(iri) || iri}</span>
+                                        <button
+                                          onClick={() => deleteClassIndividualSameDifferent("different", iri)}
+                                          className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                        >
+                                          Remove
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px] text-gray-400">No different individual assertions</div>
+                                )}
+                              </div>
+                            </div>
                           </div>
                           <div className="bg-white border border-gray-200 rounded p-2">
                             <div className="flex items-center justify-between mb-1">
@@ -13443,6 +13687,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         return (
           <DLQueryPanel
             projectId={projectId || ""}
+              classHierarchy={classHierarchy}
+              expandedClassNodeIds={expandedNodes}
+              onToggleClassNode={toggleNode}
             classes={flattenClassHierarchy(classHierarchy)}
             objectProperties={flattenPropertyHierarchy(objectPropertyHierarchy)}
             dataProperties={flattenPropertyHierarchy(dataPropertyHierarchy)}
@@ -14200,6 +14447,52 @@ const Dashboard: React.FC<DashboardProps> = ({
         onDeleteClass={() => handleDeleteItem()}
         metadata={metadata}
       />
+      {classIndividualSameDiffDialog && (
+        <IndividualSelectorDialog
+          isOpen={true}
+          onClose={() => setClassIndividualSameDiffDialog(null)}
+          title={
+            classIndividualSameDiffDialog.mode === "same"
+              ? `Same Individual As: ${selectedClassIndividualDetails?.label || ""}`
+              : `Different Individuals: ${selectedClassIndividualDetails?.label || ""}`
+          }
+          individuals={classIndividualCandidateIndividuals}
+          projectId={projectId || undefined}
+          excludeIndividualIds={[
+            selectedClassIndividualDetails?.id || "",
+            ...(classIndividualSameDiffDialog.mode === "same"
+              ? selectedClassIndividualDetails?.sameIndividualAs || []
+              : selectedClassIndividualDetails?.differentIndividualFrom || []),
+          ].filter(Boolean)}
+          minSelection={1}
+          onConfirm={async (selectedIndividuals) => {
+            if (!projectId || !selectedClassIndividualDetails) return;
+            try {
+              for (const individual of selectedIndividuals) {
+                if (classIndividualSameDiffDialog.mode === "same") {
+                  await ontologyMutationService.addSameIndividual(
+                    projectId,
+                    selectedClassIndividualDetails.id,
+                    individual.id,
+                  );
+                } else {
+                  await ontologyMutationService.addDifferentIndividual(
+                    projectId,
+                    selectedClassIndividualDetails.id,
+                    individual.id,
+                  );
+                }
+              }
+              await refreshSelectedClassIndividualDetails();
+            } catch (error) {
+              console.error("[Dashboard] Failed to add same/different individual assertion:", error);
+              notificationService.error("Add Failed", "Could not add same/different individual assertion.");
+            } finally {
+              setClassIndividualSameDiffDialog(null);
+            }
+          }}
+        />
+      )}
       <PropertyAssertionDialog
         isOpen={isClassIndividualPropertyDialogOpen}
         title={classIndividualPropertyIsObject ? "Add object property assertion" : "Add data property assertion"}
@@ -15540,12 +15833,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                         Browse for local ontology file
                       </div>
                       <div className="text-[10px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>
-                        Supports .owl, .rdf, .ttl, .n3, .nt files
+                        Supports .owl, .rdf, .ttl, .n3, .nt files and .zip ontology packages
                       </div>
                     </div>
                     <input
                       type="file"
-                      accept=".owl,.rdf,.xml,.ttl,.n3,.nt"
+                      accept=".owl,.rdf,.xml,.ttl,.n3,.nt,.jsonld,.zip"
                       className="hidden"
                       onChange={(e) => {
                         const file = e.target.files?.[0];

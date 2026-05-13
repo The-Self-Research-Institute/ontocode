@@ -4,6 +4,7 @@ import com.mongodb.client.gridfs.model.GridFSFile;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.expression.OWLEntityChecker;
 import org.semanticweb.owlapi.expression.ShortFormEntityChecker;
+import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
@@ -22,7 +23,10 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.owlEditor.service.OntologyMutationService;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -49,6 +53,9 @@ public class DLQueryController {
 
     @Autowired
     private GridFsTemplate gridfs;
+
+    @Autowired
+    private OntologyMutationService mutationService;
 
     // Reasoner factory - using Openllet (OWLAPI 5.x compatible)
     private OWLReasonerFactory reasonerFactory;
@@ -149,6 +156,76 @@ public class DLQueryController {
                 "success", false,
                 "error", e.getMessage(),
                 "query", request.getExpression()
+            ));
+        }
+    }
+
+    /**
+     * Add the current DL Query expression as a named defined class, matching
+     * Protégé's DL Query "Add to ontology" behavior:
+     * NewClass EquivalentTo <Manchester expression>.
+     */
+    @PostMapping("/{projectId}/dl/add")
+    public ResponseEntity<Map<String, Object>> addDLQueryToOntology(
+            @PathVariable String projectId,
+            @RequestBody DLAddRequest request
+    ) {
+        try {
+            if (request.getExpression() == null || request.getExpression().isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "error", "DL query expression is required"
+                ));
+            }
+            if (request.getClassName() == null || request.getClassName().isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "error", "Class name is required"
+                ));
+            }
+
+            OWLOntology ontology = loadOntology(projectId);
+            OWLClassExpression classExpression = parseClassExpression(ontology, request.getExpression());
+            if (classExpression == null) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "error", "Failed to parse class expression: " + request.getExpression()
+                ));
+            }
+
+            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            OWLDataFactory df = manager.getOWLDataFactory();
+            String classIri = resolveNewClassIri(ontology, request.getClassName());
+            OWLClass newClass = df.getOWLClass(IRI.create(classIri));
+
+            Set<OWLAxiom> axioms = new LinkedHashSet<>();
+            axioms.add(df.getOWLDeclarationAxiom(newClass));
+            // Keep the newly defined class visible in the asserted hierarchy
+            // immediately, while the real definition remains the EquivalentTo axiom.
+            axioms.add(df.getOWLSubClassOfAxiom(newClass, df.getOWLThing()));
+            axioms.add(df.getOWLAnnotationAssertionAxiom(
+                    df.getRDFSLabel(),
+                    newClass.getIRI(),
+                    df.getOWLLiteral(request.getClassName().trim())
+            ));
+            axioms.add(df.getOWLEquivalentClassesAxiom(newClass, classExpression));
+
+            String sparql = buildInsertDataFromAxioms(axioms);
+            mutationService.applyRawUpdate(projectId, sparql);
+            clearCache(projectId);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "classIri", classIri,
+                    "className", request.getClassName().trim(),
+                    "expression", request.getExpression().trim(),
+                    "message", "Created defined class with EquivalentTo axiom"
+            ));
+        } catch (Exception e) {
+            log.error("Failed to add DL query expression to ontology for project {}: {}", projectId, e.getMessage(), e);
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage() != null ? e.getMessage() : "Failed to add DL query expression"
             ));
         }
     }
@@ -359,6 +436,123 @@ public class DLQueryController {
         }
     }
 
+    private String resolveNewClassIri(OWLOntology ontology, String className) {
+        String trimmed = className.trim();
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("urn:")) {
+            return trimmed;
+        }
+
+        String base = ontology.getOntologyID().getOntologyIRI()
+                .map(IRI::toString)
+                .map(this::asNamespace)
+                .orElseGet(() -> inferNamespaceFromClasses(ontology).orElse("http://example.org/ontocode#"));
+
+        return base + sanitizeLocalName(trimmed);
+    }
+
+    private String asNamespace(String iri) {
+        if (iri.endsWith("#") || iri.endsWith("/")) {
+            return iri;
+        }
+        return iri + "#";
+    }
+
+    private Optional<String> inferNamespaceFromClasses(OWLOntology ontology) {
+        return ontology.getClassesInSignature(true).stream()
+                .map(cls -> cls.getIRI().toString())
+                .filter(iri -> !iri.startsWith("http://www.w3.org/2002/07/owl#"))
+                .map(iri -> {
+                    int hash = iri.lastIndexOf('#');
+                    if (hash >= 0) {
+                        return iri.substring(0, hash + 1);
+                    }
+                    int slash = iri.lastIndexOf('/');
+                    return slash >= 0 ? iri.substring(0, slash + 1) : iri + "#";
+                })
+                .findFirst();
+    }
+
+    private String sanitizeLocalName(String label) {
+        String sanitized = label.trim()
+                .replaceAll("\\s+", "_")
+                .replaceAll("[^A-Za-z0-9_\\-.]", "_");
+        if (sanitized.isBlank()) {
+            sanitized = "DLQueryClass";
+        }
+        if (!Character.isLetter(sanitized.charAt(0)) && sanitized.charAt(0) != '_') {
+            sanitized = "Class_" + sanitized;
+        }
+        return sanitized;
+    }
+
+    private String buildInsertDataFromAxioms(Set<OWLAxiom> axioms) throws Exception {
+        OWLOntologyManager tempManager = OWLManager.createOWLOntologyManager();
+        OWLOntology tempOntology = tempManager.createOntology(
+                IRI.create("urn:ontocode:dl-query-add:" + UUID.randomUUID())
+        );
+        tempManager.addAxioms(tempOntology, axioms);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        tempManager.saveOntology(tempOntology, new RDFXMLDocumentFormat(), out);
+
+        org.eclipse.rdf4j.model.Model model = org.eclipse.rdf4j.rio.Rio.parse(
+                new ByteArrayInputStream(out.toByteArray()),
+                "",
+                org.eclipse.rdf4j.rio.RDFFormat.RDFXML
+        );
+
+        StringBuilder sparql = new StringBuilder("""
+                PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+                INSERT DATA {
+                """);
+
+        for (org.eclipse.rdf4j.model.Statement st : model) {
+            if (isTemporaryOntologyHeader(st)) {
+                continue;
+            }
+            sparql.append("  ")
+                    .append(toSparqlTerm(st.getSubject()))
+                    .append(" ")
+                    .append(toSparqlTerm(st.getPredicate()))
+                    .append(" ")
+                    .append(toSparqlTerm(st.getObject()))
+                    .append(" .\n");
+        }
+        sparql.append("}");
+        return sparql.toString();
+    }
+
+    private boolean isTemporaryOntologyHeader(org.eclipse.rdf4j.model.Statement st) {
+        return st.getPredicate().stringValue().equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
+                && st.getObject().stringValue().equals("http://www.w3.org/2002/07/owl#Ontology");
+    }
+
+    private String toSparqlTerm(org.eclipse.rdf4j.model.Value value) {
+        if (value instanceof org.eclipse.rdf4j.model.IRI iri) {
+            return "<" + iri.stringValue() + ">";
+        }
+        if (value instanceof org.eclipse.rdf4j.model.BNode bNode) {
+            return "_:dl_" + bNode.getID().replaceAll("[^A-Za-z0-9_]", "_");
+        }
+        if (value instanceof org.eclipse.rdf4j.model.Literal literal) {
+            String escaped = literal.getLabel()
+                    .replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r");
+            StringBuilder term = new StringBuilder("\"").append(escaped).append("\"");
+            literal.getLanguage().ifPresent(lang -> term.append("@").append(lang));
+            if (literal.getLanguage().isEmpty() && literal.getDatatype() != null) {
+                term.append("^^<").append(literal.getDatatype().stringValue()).append(">");
+            }
+            return term.toString();
+        }
+        return "\"" + value.stringValue().replace("\"", "\\\"") + "\"";
+    }
+
     /**
      * DL Query Request DTO
      */
@@ -380,6 +574,36 @@ public class DLQueryController {
 
         public void setQueryTypes(List<String> queryTypes) {
             this.queryTypes = queryTypes;
+        }
+    }
+
+    public static class DLAddRequest {
+        private String expression;
+        private String className;
+        private String userEmail;
+
+        public String getExpression() {
+            return expression;
+        }
+
+        public void setExpression(String expression) {
+            this.expression = expression;
+        }
+
+        public String getClassName() {
+            return className;
+        }
+
+        public void setClassName(String className) {
+            this.className = className;
+        }
+
+        public String getUserEmail() {
+            return userEmail;
+        }
+
+        public void setUserEmail(String userEmail) {
+            this.userEmail = userEmail;
         }
     }
 }

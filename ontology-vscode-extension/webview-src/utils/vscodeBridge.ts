@@ -300,7 +300,7 @@ function handleBrowserMessage(message: any) {
                     // Workspace flow: save to project library (GridFS) first, then let
                     // handleLoadProjectFile handle the GraphDB import via fileReady.
                     try {
-                        const fileContent = fileContentToBase64(fileData.fileContent);
+                        const fileContent = fileData.isBase64 ? fileData.fileContent : fileContentToBase64(fileData.fileContent);
                         let contentStr = fileContent;
                         if (/^[A-Za-z0-9+/=]+$/.test(contentStr)) {
                             const binaryStr = atob(contentStr);
@@ -337,7 +337,7 @@ function handleBrowserMessage(message: any) {
                     postToSelf({
                         type: 'pendingFileUpload',
                         fileName: fileData.fileName,
-                        fileContent: fileContentToBase64(fileData.fileContent),
+                        fileContent: fileData.isBase64 ? fileData.fileContent : fileContentToBase64(fileData.fileContent),
                         fileSize: fileData.fileSize,
                         importMode: message.importMode,
                         partition: message.partition,
@@ -356,7 +356,7 @@ function handleBrowserMessage(message: any) {
                     postToSelf({
                         type: 'pendingFileUpload',
                         fileName: fileData.fileName,
-                        fileContent: fileContentToBase64(fileData.fileContent),
+                        fileContent: fileData.isBase64 ? fileData.fileContent : fileContentToBase64(fileData.fileContent),
                         fileSize: fileData.fileSize,
                     });
                 }
@@ -663,8 +663,8 @@ function handleBrowserMessage(message: any) {
                 console.log(`[BrowserBridge] [PERF] ⏱️ Upload pipeline started at ${new Date().toISOString()}`);
 
                 // Hoist so the catch block can reference it for error reporting
-                const uploadProjectId = message.projectId
-                    || (message.fileName || '').replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
+                    const uploadProjectId = message.projectId
+                    || (message.fileName || '').replace(/\.(owl|rdf|ttl|n3|nt|jsonld|zip)$/i, '');
 
                 // ── Notify Dashboard to open progress dialog immediately (but allow cancellation if duplicate) ──
                 // (mirrors what the VS Code extension sends right after file selection)
@@ -766,9 +766,10 @@ function handleBrowserMessage(message: any) {
 
                     let blob: Blob;
                     const decodeStart = Date.now();
-                    if (base64Length > LARGE_FILE_THRESHOLD) {
+                    const isOntologyPackage = (message.fileName || '').toLowerCase().endsWith('.zip');
+                    if (isOntologyPackage || base64Length > LARGE_FILE_THRESHOLD) {
                         // FAST PATH: chunked base64→binary without text decode or namespace injection
-                        console.log(`[BrowserBridge] Large file (${(base64Length / (1024 * 1024)).toFixed(0)} MB base64), using fast binary upload`);
+                        console.log(`[BrowserBridge] ${isOntologyPackage ? 'Ontology package' : 'Large file'} (${(base64Length / (1024 * 1024)).toFixed(0)} MB base64), using fast binary upload`);
                         const CHUNK = 1024 * 1024; // decode 1 MB at a time
                         const chunks: Uint8Array[] = [];
                         for (let offset = 0; offset < base64Length; offset += CHUNK) {
@@ -778,7 +779,7 @@ function handleBrowserMessage(message: any) {
                             for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
                             chunks.push(buf);
                         }
-                        blob = new Blob(chunks as BlobPart[], { type: 'application/octet-stream' });
+                        blob = new Blob(chunks as BlobPart[], { type: isOntologyPackage ? 'application/zip' : 'application/octet-stream' });
                         console.log(`[BrowserBridge] [PERF] Large file base64→binary decode: ${Date.now() - decodeStart}ms`);
                     } else {
                         // SMALL FILE PATH: full text decode + namespace injection

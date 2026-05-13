@@ -125,6 +125,10 @@ public class StripeWebhookController {
                 Invoice invoice = (Invoice) stripeObject;
                 stripeService.handleInvoicePaymentSucceeded(invoice);
             }
+            case "invoice.paid" -> {
+                Invoice invoice = (Invoice) stripeObject;
+                stripeService.handleInvoicePaymentSucceeded(invoice);
+            }
             case "invoice.payment_failed" -> {
                 Invoice invoice = (Invoice) stripeObject;
                 stripeService.handleInvoicePaymentFailed(invoice);

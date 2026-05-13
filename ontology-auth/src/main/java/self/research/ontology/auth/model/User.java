@@ -73,7 +73,6 @@ public class User {
      */
     private boolean hasUsedFreeTrial = false;
     private LocalDateTime firstSubscriptionAt;
-
     // Pending checkout lock — cleared once checkout.session.completed fires
     private String pendingCheckoutSessionId;
     private LocalDateTime pendingCheckoutCreatedAt;

@@ -106,6 +106,24 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
   } = handlers;
   // #region Render Methods
 
+  const getImportResolutionStatus = (iri: string): { label: string; tone: "success" | "warning" | "error" | "neutral"; detail: string } => {
+    const resolution = (metadata as any)?.importResolution || {};
+    const loaded = Array.isArray(resolution.loaded) ? resolution.loaded : [];
+    const declaredOnly = Array.isArray(resolution.declaredOnly) ? resolution.declaredOnly : [];
+    const failed = resolution.failed && typeof resolution.failed === "object" ? resolution.failed : {};
+
+    if (loaded.includes(iri)) {
+      return { label: "Loaded", tone: "success", detail: "Imported ontology content was resolved and loaded into this project graph." };
+    }
+    if (Object.prototype.hasOwnProperty.call(failed, iri)) {
+      return { label: "Failed", tone: "error", detail: String(failed[iri] || "Import could not be loaded.") };
+    }
+    if (declaredOnly.includes(iri)) {
+      return { label: "Declared only", tone: "warning", detail: "The owl:imports declaration exists, but content was not resolved on the server." };
+    }
+    return { label: "Declared", tone: "neutral", detail: "Declared by owl:imports. Load status is unknown until import resolution runs." };
+  };
+
   // Cleanup sync service when switching projects
   useEffect(() => {
     return () => {
@@ -832,6 +850,15 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                 iri.startsWith("file://") ||
                                 (!iri.startsWith("http://") && !iri.startsWith("https://"));
                               const isExpanded = expandedImports.has(iri);
+                              const resolutionStatus = getImportResolutionStatus(iri);
+                              const statusStyle =
+                                resolutionStatus.tone === "success"
+                                  ? { backgroundColor: "rgba(34,197,94,0.14)", color: "rgb(34,197,94)" }
+                                  : resolutionStatus.tone === "warning"
+                                    ? { backgroundColor: "rgba(245,158,11,0.14)", color: "rgb(245,158,11)" }
+                                    : resolutionStatus.tone === "error"
+                                      ? { backgroundColor: "var(--error-tint)", color: "var(--error)" }
+                                      : { backgroundColor: "var(--surface-3)", color: "var(--text-secondary)" };
 
                               return (
                                 <div
@@ -892,6 +919,15 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                           </span>
                                         </div>
                                       )}
+                                      <div className="flex items-center gap-1 mt-1">
+                                        <span
+                                          className="px-1.5 py-0.5 text-[9px] rounded"
+                                          style={statusStyle}
+                                          title={resolutionStatus.detail}
+                                        >
+                                          {resolutionStatus.label}
+                                        </span>
+                                      </div>
                                       {showImportClosure && isExpanded && (
                                         <div
                                           className="mt-2 ml-4 pl-3 border-l-2 text-[10px]"
@@ -940,7 +976,10 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                         >
                           <div className="flex items-center gap-2">
                             <Info size={12} />
-                            <span>Direct imports only. Enable "Show import closure" to see transitive imports.</span>
+                            <span>
+                              Imports are owl:imports declarations. Loaded imports are included in the project graph;
+                              declared-only imports match Protégé declarations but were not resolved on this server.
+                            </span>
                           </div>
                         </div>
                       )}
@@ -1532,6 +1571,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
         return (
           <DLQueryPanel
             projectId={projectId || ""}
+            classHierarchy={classHierarchy}
             classes={flattenClassHierarchy(classHierarchy)}
             objectProperties={flattenPropertyHierarchy(objectPropertyHierarchy)}
             dataProperties={flattenPropertyHierarchy(dataPropertyHierarchy)}
