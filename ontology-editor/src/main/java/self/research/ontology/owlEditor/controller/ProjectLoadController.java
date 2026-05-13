@@ -53,7 +53,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -125,9 +129,9 @@ public class ProjectLoadController {
         log.info("[ProjectLoadController] ═══ Upload STARTED - projectId: {}, filename: {}, size: {} bytes, ownerEmail: {}, workspaceId: {}, parentProjectId: {}, action: {}, compressed: {}",
             projectId, file.getOriginalFilename(), file.getSize(), ownerEmail, workspaceId, parentProjectId, action, compressed);
         try {
-            // VALIDATION: Check file size (max 300MB)
+            // VALIDATION: Check file size (max 1GB)
             long stepStart = System.nanoTime();
-            long maxSize = 300 * 1024 * 1024; // 300MB
+            long maxSize = 1024L * 1024 * 1024; // 1GB
             if (file.getSize() > maxSize) {
                 log.warn("File too large: {} bytes (max: {} bytes)", file.getSize(), maxSize);
                 return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
@@ -223,50 +227,80 @@ public class ProjectLoadController {
             Path projectDir = storageManager.prepareProjectDir(actualProjectId);
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
+            Path importRoot = original;
+            boolean ontologyPackage = isOntologyPackage(filename, file.getContentType());
 
             String gridfsFileId;
-            
-            // Auto-detect GZIP compression
-            InputStream fileStream = file.getInputStream();
-            InputStream effectiveStream = fileStream;
-            boolean wasCompressed = compressed;
-            
-            if (!compressed) {
-                PushbackInputStream pb = new PushbackInputStream(fileStream, 2);
-                byte[] signature = new byte[2];
-                int len = pb.read(signature);
-                if (len > 0) {
-                    pb.unread(signature, 0, len);
+
+            if (ontologyPackage) {
+                Path packageZip = projectDir.resolve("ontology-package.zip");
+                Path libraryDir = projectDir.resolve("ontology-library");
+                deleteRecursively(libraryDir);
+                Files.createDirectories(libraryDir);
+
+                try (InputStream in = file.getInputStream();
+                     OutputStream out = Files.newOutputStream(packageZip,
+                             StandardOpenOption.CREATE,
+                             StandardOpenOption.TRUNCATE_EXISTING,
+                             StandardOpenOption.WRITE);
+                     TeeInputStream tee = new TeeInputStream(in, out, true)) {
+                    gridfsFileId = gridFSFileService.storeFile(
+                        actualProjectId,
+                        filename,
+                        file.getContentType(),
+                        tee
+                    );
                 }
-                
-                if (len == 2 && signature[0] == (byte) 0x1f && signature[1] == (byte) 0x8b) {
-                    log.info("[ProjectLoadController] Auto-detected GZIP content. Enabling decompression.");
-                    effectiveStream = new GZIPInputStream(pb);
-                    wasCompressed = true;
-                } else {
-                    effectiveStream = pb;
-                }
+
+                extractOntologyPackage(packageZip, libraryDir);
+                importRoot = selectPackageRootOntology(libraryDir, filename)
+                        .orElseThrow(() -> new IOException("Ontology package must contain at least one ontology file (.owl, .rdf, .ttl, .n3, .nt, .xml, .jsonld)"));
+                Files.copy(importRoot, original, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                filename = importRoot.getFileName().toString();
+                log.info("[ProjectLoadController] Ontology package root selected: {}", importRoot);
             } else {
-                effectiveStream = new GZIPInputStream(fileStream);
-            }
-
-            try (InputStream in = effectiveStream;
-                 OutputStream out = Files.newOutputStream(original,
-                         StandardOpenOption.CREATE,
-                         StandardOpenOption.TRUNCATE_EXISTING,
-                         StandardOpenOption.WRITE);
-                 TeeInputStream tee = new TeeInputStream(in, out, true)) {
-
-                if (wasCompressed) {
-                    log.info("[ProjectLoadController] Decompressing gzipped file before processing");
+                // Auto-detect GZIP compression
+                InputStream fileStream = file.getInputStream();
+                InputStream effectiveStream = fileStream;
+                boolean wasCompressed = compressed;
+                
+                if (!compressed) {
+                    PushbackInputStream pb = new PushbackInputStream(fileStream, 2);
+                    byte[] signature = new byte[2];
+                    int len = pb.read(signature);
+                    if (len > 0) {
+                        pb.unread(signature, 0, len);
+                    }
+                    
+                    if (len == 2 && signature[0] == (byte) 0x1f && signature[1] == (byte) 0x8b) {
+                        log.info("[ProjectLoadController] Auto-detected GZIP content. Enabling decompression.");
+                        effectiveStream = new GZIPInputStream(pb);
+                        wasCompressed = true;
+                    } else {
+                        effectiveStream = pb;
+                    }
+                } else {
+                    effectiveStream = new GZIPInputStream(fileStream);
                 }
 
-                gridfsFileId = gridFSFileService.storeFile(
-                    actualProjectId,
-                    filename,  // Use potentially modified filename
-                    file.getContentType(),
-                    tee
-                );
+                try (InputStream in = effectiveStream;
+                     OutputStream out = Files.newOutputStream(original,
+                             StandardOpenOption.CREATE,
+                             StandardOpenOption.TRUNCATE_EXISTING,
+                             StandardOpenOption.WRITE);
+                     TeeInputStream tee = new TeeInputStream(in, out, true)) {
+
+                    if (wasCompressed) {
+                        log.info("[ProjectLoadController] Decompressing gzipped file before processing");
+                    }
+
+                    gridfsFileId = gridFSFileService.storeFile(
+                        actualProjectId,
+                        filename,  // Use potentially modified filename
+                        file.getContentType(),
+                        tee
+                    );
+                }
             }
 
             log.info("[ProjectLoadController] [TIMING] File save (disk + GridFS): {} ms", (System.nanoTime() - stepStart) / 1_000_000);
@@ -285,7 +319,7 @@ public class ProjectLoadController {
             // This must be done BEFORE GraphDB import, as GraphDB will reorganize the content
             stepStart = System.nanoTime();
             log.info("Extracting citation-entity mappings from uploaded file: {}", filename);
-            storageManager.extractCitationMappingsFromFile(original, actualProjectId);
+            storageManager.extractCitationMappingsFromFile(importRoot, actualProjectId);
             log.info("[ProjectLoadController] [TIMING] Citation extraction: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             // FIX: Batch metadata updates into single operation for better performance
@@ -297,18 +331,18 @@ public class ProjectLoadController {
 
             stepStart = System.nanoTime();
             ImportOptions options = resolveImportOptions(importMode, partition);
-            importWorkerDispatcher.dispatch(actualProjectId, original, ownerEmail, filename, gridfsFileId, options);
+            importWorkerDispatcher.dispatch(actualProjectId, importRoot, ownerEmail, filename, gridfsFileId, options);
             log.info("[ProjectLoadController] [TIMING] Import dispatch: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             stepStart = System.nanoTime();
-            RDFFormat format = detectFormat(original);
+            RDFFormat format = detectFormat(importRoot);
             log.info("[ProjectLoadController] [TIMING] Format detection: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             // Skip duplicate full-file streaming parse for large uploads; import already scans the file.
-            if (Files.size(original) <= 50L * 1024 * 1024) {
-                preparseService.preparse(original, actualProjectId, format);
+            if (Files.size(importRoot) <= 50L * 1024 * 1024) {
+                preparseService.preparse(importRoot, actualProjectId, format);
             } else {
-                log.info("[ProjectLoadController] Skipping preparse for large upload ({} bytes)", Files.size(original));
+                log.info("[ProjectLoadController] Skipping preparse for large upload ({} bytes)", Files.size(importRoot));
             }
             
             long totalUploadMs = (System.nanoTime() - uploadStartTime) / 1_000_000;
@@ -366,6 +400,110 @@ public class ProjectLoadController {
         
         log.info("Generated copy filename: {} from original: {}", candidateFilename, originalFilename);
         return candidateFilename;
+    }
+
+    private boolean isOntologyPackage(String filename, String contentType) {
+        String lowerName = filename != null ? filename.toLowerCase(Locale.ROOT) : "";
+        String lowerContentType = contentType != null ? contentType.toLowerCase(Locale.ROOT) : "";
+        return lowerName.endsWith(".zip")
+                || lowerContentType.contains("zip")
+                || lowerContentType.contains("x-zip-compressed");
+    }
+
+    private void extractOntologyPackage(Path packageZip, Path targetDir) throws IOException {
+        Path normalizedTarget = targetDir.toAbsolutePath().normalize();
+        try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(packageZip))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                Path destination = normalizedTarget.resolve(entry.getName()).normalize();
+                if (!destination.startsWith(normalizedTarget)) {
+                    throw new IOException("Unsafe ZIP entry outside target directory: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    Files.createDirectories(destination);
+                } else {
+                    Files.createDirectories(destination.getParent());
+                    Files.copy(zip, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                zip.closeEntry();
+            }
+        }
+    }
+
+    private Optional<Path> selectPackageRootOntology(Path libraryDir, String packageFilename) throws IOException {
+        String packageBaseName = packageFilename != null ? packageFilename : "";
+        int dot = packageBaseName.lastIndexOf('.');
+        if (dot > 0) {
+            packageBaseName = packageBaseName.substring(0, dot);
+        }
+        final String normalizedPackageBase = packageBaseName.toLowerCase(Locale.ROOT);
+
+        List<Path> candidates = new ArrayList<>();
+        try (java.util.stream.Stream<Path> stream = Files.walk(libraryDir, 8)) {
+            stream
+                    .filter(Files::isRegularFile)
+                    .filter(this::isOntologyDocumentFile)
+                    .forEach(candidates::add);
+        }
+        if (candidates.isEmpty()) {
+            return Optional.empty();
+        }
+
+        candidates.sort(Comparator
+                .comparingInt((Path path) -> scoreRootCandidate(libraryDir, path, normalizedPackageBase))
+                .thenComparing(path -> libraryDir.relativize(path).toString()));
+        return Optional.of(candidates.get(0));
+    }
+
+    private int scoreRootCandidate(Path libraryDir, Path path, String normalizedPackageBase) {
+        Path relative = libraryDir.relativize(path);
+        String fileName = path.getFileName() != null ? path.getFileName().toString().toLowerCase(Locale.ROOT) : "";
+        String base = fileName;
+        int dot = base.lastIndexOf('.');
+        if (dot > 0) {
+            base = base.substring(0, dot);
+        }
+
+        if (!normalizedPackageBase.isBlank() && base.equals(normalizedPackageBase)) {
+            return 0;
+        }
+        if (relative.getNameCount() == 1 && (fileName.equals("root.owl") || fileName.equals("ontology.owl"))) {
+            return 1;
+        }
+        if (relative.getNameCount() == 1) {
+            return 2;
+        }
+        if (fileName.equals("root.owl") || fileName.equals("ontology.owl")) {
+            return 3;
+        }
+        return 4;
+    }
+
+    private boolean isOntologyDocumentFile(Path path) {
+        String name = path.getFileName() != null ? path.getFileName().toString().toLowerCase(Locale.ROOT) : "";
+        if (name.equals("catalog-v001.xml")) {
+            return false;
+        }
+        return name.endsWith(".owl")
+                || name.endsWith(".rdf")
+                || name.endsWith(".xml")
+                || name.endsWith(".ttl")
+                || name.endsWith(".n3")
+                || name.endsWith(".nt")
+                || name.endsWith(".jsonld")
+                || name.endsWith(".owlxml");
+    }
+
+    private void deleteRecursively(Path path) throws IOException {
+        if (path == null || !Files.exists(path)) {
+            return;
+        }
+        try (java.util.stream.Stream<Path> stream = Files.walk(path)) {
+            List<Path> paths = stream.sorted(Comparator.reverseOrder()).toList();
+            for (Path p : paths) {
+                Files.deleteIfExists(p);
+            }
+        }
     }
 
     private ImportOptions resolveImportOptions(String importMode, String partition) {

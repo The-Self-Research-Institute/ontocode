@@ -893,8 +893,29 @@ public class OntologyQueryService {
               } UNION {
                 ?equiv owl:equivalentClass ?cls .
               }
-              FILTER(isIRI(?equiv) && ?equiv != ?cls)
-              OPTIONAL { ?equiv rdfs:label ?equivLabel }
+              FILTER(?equiv != ?cls)
+              OPTIONAL { ?equiv rdfs:label ?iriLabel }
+              OPTIONAL {
+                ?equiv owl:intersectionOf ?intersectionList .
+                BIND("defined intersection" AS ?intersectionLabel)
+              }
+              OPTIONAL {
+                ?equiv owl:unionOf ?unionList .
+                BIND("defined union" AS ?unionLabel)
+              }
+              OPTIONAL {
+                ?equiv a owl:Restriction .
+                BIND("defined restriction" AS ?restrictionLabel)
+              }
+              OPTIONAL {
+                ?equiv owl:complementOf ?complement .
+                BIND("defined complement" AS ?complementLabel)
+              }
+              OPTIONAL {
+                ?equiv owl:oneOf ?oneOfList .
+                BIND("defined enumeration" AS ?oneOfLabel)
+              }
+              BIND(COALESCE(?iriLabel, ?intersectionLabel, ?unionLabel, ?restrictionLabel, ?complementLabel, ?oneOfLabel, "defined expression") AS ?equivLabel)
             }
             """.formatted(values);
 
@@ -904,10 +925,12 @@ public class OntologyQueryService {
         while (rs.hasNext()) {
             BindingSet sol = rs.next();
             String cls = resource(sol, "cls");
-            String equiv = resource(sol, "equiv");
+            String equiv = resourceOrBlank(sol, "equiv");
             if (cls == null || equiv == null) continue;
             String equivLabel = literal(sol, "equivLabel");
-            if (equivLabel.isBlank()) equivLabel = localName(equiv);
+            if (equivLabel.isBlank()) {
+                equivLabel = equiv.startsWith("_:") ? "defined expression" : localName(equiv);
+            }
             Map<String, String> entry = new java.util.LinkedHashMap<>();
             entry.put("iri", equiv);
             entry.put("label", equivLabel);
@@ -921,6 +944,19 @@ public class OntologyQueryService {
             OntologyDto.TreeNode node = nodeMap.get(cls);
             if (node != null) node.setEquivalentClasses(equivList);
         });
+    }
+
+    private String resourceOrBlank(BindingSet sol, String var) {
+        if (sol.hasBinding(var)) {
+            Value node = sol.getValue(var);
+            if (node != null && node.isIRI()) {
+                return node.stringValue();
+            }
+            if (node != null && node.isBNode()) {
+                return "_:" + node.stringValue();
+            }
+        }
+        return null;
     }
 
     private String resource(BindingSet sol, String var) {

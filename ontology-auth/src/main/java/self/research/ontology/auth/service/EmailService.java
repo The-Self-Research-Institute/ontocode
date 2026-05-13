@@ -673,6 +673,55 @@ public class EmailService {
         sendHtml(to, "Your OntoCode " + plan + " subscription has been cancelled", html);
     }
 
+    public void sendAutoRenewDisabledEmail(String to, String username, String planName,
+                                           String accessEndDate, String billingPortalUrl) {
+        String plan = toDisplayName(planName);
+        String html = billingHtml(
+            "Auto-renewal has been turned off",
+            String.format("""
+                <p>Hi <strong>%s</strong>,</p>
+                <p>Auto-renewal for your OntoCode <span class="badge">%s</span> subscription is now turned off.</p>
+                <div class="warning-box">
+                  <strong>What this means:</strong>
+                  <ul style="margin:8px 0 0 0;padding-left:20px;">
+                    <li>You will keep paid access until <strong>%s</strong>.</li>
+                    <li>Your payment method will not be charged again unless you turn auto-renewal back on.</li>
+                    <li>After the current period ends, paid workspace access will be blocked until renewal.</li>
+                  </ul>
+                </div>
+                <p>If this was a mistake, you can turn auto-renewal back on from billing settings.</p>
+                <a href="%s" class="button">Manage billing</a>
+                """,
+                username, plan, accessEndDate, billingPortalUrl),
+            "You're receiving this confirmation because auto-renewal was disabled for your OntoCode subscription."
+        );
+        sendHtml(to, "OntoCode " + plan + " auto-renewal is off", html);
+    }
+
+    public void sendAutoRenewEnabledEmail(String to, String username, String planName,
+                                          String renewalDate, String billingPortalUrl) {
+        String plan = toDisplayName(planName);
+        String html = billingHtml(
+            "Auto-renewal is back on",
+            String.format("""
+                <p>Hi <strong>%s</strong>,</p>
+                <p>Auto-renewal for your OntoCode <span class="badge">%s</span> subscription is now enabled.</p>
+                <div class="info-box">
+                  <strong>Renewal details</strong>
+                  <table style="margin-top:10px;width:100%%;border-collapse:collapse;">
+                    <tr><td style="padding:4px 0;color:#6b7280;">Plan</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                    <tr><td style="padding:4px 0;color:#6b7280;">Next renewal</td><td style="padding:4px 0;font-weight:600;">%s</td></tr>
+                  </table>
+                </div>
+                <p>No further action is needed. You can manage billing any time from settings.</p>
+                <a href="%s" class="button">Manage billing</a>
+                """,
+                username, plan, plan, renewalDate, billingPortalUrl),
+            "You're receiving this confirmation because auto-renewal was re-enabled for your OntoCode subscription."
+        );
+        sendHtml(to, "OntoCode " + plan + " auto-renewal is on", html);
+    }
+
     private void sendSubscriptionCancelledEmailLegacy(String to, String username, String planName, String accessEndDate) {
         String plan = toDisplayName(planName);
         String html = billingHtml(

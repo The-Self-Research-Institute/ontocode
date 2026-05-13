@@ -14,6 +14,10 @@ import self.research.ontology.owlEditor.util.OWLFormatConverter;
 
 import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQueryResult;
+import org.eclipse.rdf4j.rio.RDFHandlerException;
+import org.eclipse.rdf4j.rio.RDFParser;
+import org.eclipse.rdf4j.rio.Rio;
+import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
 
 import java.io.BufferedInputStream;
 import java.io.InputStream;
@@ -35,6 +39,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Background job runner that streams uploaded OWL files into TDB2 and refreshes metadata.
@@ -536,8 +541,9 @@ public class ProjectImportService {
                     
                     // Resolve owl:imports BEFORE computing metadata so counts include imported triples.
                     // Wrapped in its own try-catch so a network failure doesn't abort metadata indexing.
+                    Map<String, Object> importResolution = Map.of();
                     try {
-                        resolveOwlImports(projectId, filename);
+                        importResolution = resolveOwlImports(projectId, filename, owlFile.getParent());
                     } catch (Exception importResolutionEx) {
                         log.warn("[Import {}] owl:imports resolution failed (continuing): {}",
                                 projectId, importResolutionEx.getMessage());
@@ -557,6 +563,7 @@ public class ProjectImportService {
                     importMetrics.put("durationMs", totalDurationMs);
                     importMetrics.put("importedAt", java.time.Instant.now().toString());
                     meta.put("importMetrics", importMetrics);
+                    meta.put("importResolution", importResolution);
                     
                     long metadataComputeMs = elapsedMillis(metadataStart);
                     log.info("[Import {}] ✅ Metadata computed in {} ms", projectId, metadataComputeMs);
@@ -832,10 +839,13 @@ public class ProjectImportService {
      * {@code MAX_IMPORT_DEPTH} levels.  Uses INCREMENTAL mode so the existing graph triples
      * are preserved.  Import failures are logged as warnings and do not abort the import.
      */
-    private void resolveOwlImports(String projectId, String filename) {
+    private Map<String, Object> resolveOwlImports(String projectId, String filename, Path baseDirectory) {
         final int MAX_IMPORT_DEPTH = 3;
         final int MAX_IMPORTS_TOTAL = 20;
         Set<String> loaded = new LinkedHashSet<>();
+        Set<String> attempted = new LinkedHashSet<>();
+        Set<String> declaredOnly = new LinkedHashSet<>();
+        Map<String, String> failed = new HashMap<>();
         Set<String> toProcess = new LinkedHashSet<>();
 
         ImportOptions appendOptions = ImportOptions.builder()
@@ -848,7 +858,10 @@ public class ProjectImportService {
 
         if (toProcess.isEmpty()) {
             log.info("[Import {}] No owl:imports statements found.", projectId);
-            return;
+            return Map.of(
+                    "loaded", List.of(),
+                    "declaredOnly", List.of(),
+                    "failed", Map.of());
         }
 
         log.info("[Import {}] Resolving {} owl:imports: {}", projectId, toProcess.size(), toProcess);
@@ -856,28 +869,24 @@ public class ProjectImportService {
         for (int depth = 0; depth < MAX_IMPORT_DEPTH && !toProcess.isEmpty(); depth++) {
             Set<String> nextRound = new LinkedHashSet<>();
             for (String importUri : toProcess) {
-                if (loaded.size() >= MAX_IMPORTS_TOTAL) {
+                if (attempted.size() >= MAX_IMPORTS_TOTAL) {
                     log.warn("[Import {}] Reached max import limit ({}), stopping", projectId, MAX_IMPORTS_TOTAL);
                     break;
                 }
-                if (loaded.contains(importUri)) {
+                if (attempted.contains(importUri)) {
                     continue;
                 }
-                loaded.add(importUri);
-
-                if (!importUri.startsWith("http://") && !importUri.startsWith("https://")) {
-                    log.info("[Import {}] Skipping non-HTTP import: {}", projectId, importUri);
-                    continue;
-                }
+                attempted.add(importUri);
 
                 try {
                     sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
                             "PROCESSING", "Resolving import: " + importUri, filename,
                             Map.of("progress", 96, "stage", "resolving-imports"));
 
-                    log.info("[Import {}] Downloading import (depth {}): {}", projectId, depth, importUri);
-                    Path importTempFile = downloadToTemp(importUri);
+                    log.info("[Import {}] Resolving import (depth {}): {}", projectId, depth, importUri);
+                    Path importTempFile = resolveImportToTemp(projectId, importUri, baseDirectory);
                     if (importTempFile == null) {
+                        declaredOnly.add(importUri);
                         continue; // failed – warning already logged
                     }
                     try {
@@ -895,6 +904,7 @@ public class ProjectImportService {
                                     importSize, appendOptions, null);
                         }
                         log.info("[Import {}] Loaded import: {}", projectId, importUri);
+                        loaded.add(importUri);
                         // Collect transitive imports from the newly loaded content
                         nextRound.addAll(queryOwlImports(projectId));
                     } finally {
@@ -903,16 +913,21 @@ public class ProjectImportService {
                 } catch (Exception importEx) {
                     log.warn("[Import {}] Could not load import {}: {}",
                             projectId, importUri, importEx.getMessage());
+                    failed.put(importUri, importEx.getMessage());
                 }
             }
             // Only process imports that weren't already loaded
-            nextRound.removeAll(loaded);
+            nextRound.removeAll(attempted);
             toProcess = nextRound;
         }
 
         if (!loaded.isEmpty()) {
             log.info("[Import {}] Resolved {} owl:imports", projectId, loaded.size());
         }
+        return Map.of(
+                "loaded", new ArrayList<>(loaded),
+                "declaredOnly", new ArrayList<>(declaredOnly),
+                "failed", failed);
     }
 
     /** Query the project graph for all {@code owl:imports} object values. */
@@ -932,6 +947,209 @@ public class ProjectImportService {
             log.warn("[Import] Failed to query owl:imports: {}", e.getMessage());
         }
         return uris;
+    }
+
+    /**
+     * Resolve an import declaration to a temporary file. This supports the
+     * Protégé-style cases that are safe on the server: HTTP(S), file:// paths
+     * inside the project directory, and relative/bare filenames found under the
+     * project directory. Imports outside the project directory remain declared
+     * only; we do not read arbitrary server files.
+     */
+    private Path resolveImportToTemp(String projectId, String importUri, Path baseDirectory) {
+        if (importUri.startsWith("http://") || importUri.startsWith("https://")) {
+            return downloadToTemp(importUri);
+        }
+
+        Path local = resolveLocalImportPath(projectId, importUri, baseDirectory);
+        if (local == null) {
+            log.warn("[Import {}] Declared import is not resolvable on server: {}", projectId, importUri);
+            return null;
+        }
+
+        try {
+            String fileName = local.getFileName() != null ? local.getFileName().toString() : "import.owl";
+            String suffix = fileName.contains(".") ? fileName.substring(fileName.lastIndexOf('.')) : ".owl";
+            Path tmp = Files.createTempFile("owl-import-local-", suffix);
+            Files.copy(local, tmp, StandardCopyOption.REPLACE_EXISTING);
+            log.info("[Import {}] Resolved local import {} -> {} ({} bytes)",
+                    projectId, importUri, local, Files.size(local));
+            return tmp;
+        } catch (Exception e) {
+            log.warn("[Import {}] Failed to copy local import {}: {}", projectId, importUri, e.getMessage());
+            return null;
+        }
+    }
+
+    private Path resolveLocalImportPath(String projectId, String importUri, Path baseDirectory) {
+        Path projectDir = storageManager.projectDir(projectId).toAbsolutePath().normalize();
+        Path base = baseDirectory != null ? baseDirectory.toAbsolutePath().normalize() : projectDir;
+
+        try {
+            if (importUri.startsWith("file://")) {
+                Path filePath = Path.of(URI.create(importUri)).toAbsolutePath().normalize();
+                if (Files.isRegularFile(filePath) && filePath.startsWith(projectDir)) {
+                    return filePath;
+                }
+                log.warn("[Import {}] file:// import is outside project directory or missing: {}", projectId, importUri);
+                return null;
+            }
+
+            Path catalogMatch = resolveFromCatalog(projectId, importUri, projectDir, base);
+            if (catalogMatch != null) {
+                return catalogMatch;
+            }
+
+            Path candidate = base.resolve(importUri).normalize();
+            if (Files.isRegularFile(candidate) && candidate.startsWith(projectDir)) {
+                return candidate;
+            }
+
+            // If the exact relative path is not present, look for the same leaf
+            // filename inside the project directory. This covers uploads where
+            // supporting import files were placed beside/under the project.
+            String leaf = Path.of(importUri).getFileName() != null
+                    ? Path.of(importUri).getFileName().toString()
+                    : importUri;
+            if (leaf == null || leaf.isBlank()) {
+                return null;
+            }
+            try (java.util.stream.Stream<Path> stream = Files.walk(projectDir, 4)) {
+                Path leafMatch = stream
+                        .filter(Files::isRegularFile)
+                        .filter(path -> path.getFileName() != null && leaf.equals(path.getFileName().toString()))
+                        .findFirst()
+                        .orElse(null);
+                if (leafMatch != null) {
+                    return leafMatch;
+                }
+            }
+
+            return findOntologyDocumentByDeclaredIri(projectId, importUri, projectDir);
+        } catch (Exception e) {
+            log.warn("[Import {}] Could not resolve local import {}: {}", projectId, importUri, e.getMessage());
+            return null;
+        }
+    }
+
+    private Path resolveFromCatalog(String projectId, String importUri, Path projectDir, Path baseDirectory) {
+        List<Path> catalogs = new ArrayList<>();
+        catalogs.add(projectDir.resolve("catalog-v001.xml"));
+        if (baseDirectory != null && !baseDirectory.equals(projectDir)) {
+            catalogs.add(baseDirectory.resolve("catalog-v001.xml"));
+        }
+        catalogs.add(projectDir.resolve("ontology-library").resolve("catalog-v001.xml"));
+
+        for (Path catalog : catalogs) {
+            if (!Files.isRegularFile(catalog)) {
+                continue;
+            }
+            try {
+            javax.xml.parsers.DocumentBuilderFactory factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setNamespaceAware(true);
+            org.w3c.dom.Document doc = factory.newDocumentBuilder().parse(catalog.toFile());
+            Path catalogBase = catalog.getParent() != null ? catalog.getParent().toAbsolutePath().normalize() : projectDir;
+            org.w3c.dom.NodeList uriNodes = doc.getElementsByTagNameNS("*", "uri");
+            for (int i = 0; i < uriNodes.getLength(); i++) {
+                org.w3c.dom.Element entry = (org.w3c.dom.Element) uriNodes.item(i);
+                String name = entry.getAttribute("name");
+                String uri = entry.getAttribute("uri");
+                if (!importUri.equals(name) || uri == null || uri.isBlank()) {
+                    continue;
+                }
+
+                Path resolved = uri.startsWith("file:")
+                        ? Path.of(URI.create(uri)).toAbsolutePath().normalize()
+                        : catalogBase.resolve(uri).normalize();
+                if (Files.isRegularFile(resolved) && resolved.startsWith(projectDir)) {
+                    log.info("[Import {}] Catalog resolved {} -> {}", projectId, importUri, resolved);
+                    return resolved;
+                }
+                log.warn("[Import {}] Catalog entry for {} points outside project directory or is missing: {}",
+                        projectId, importUri, uri);
+            }
+            } catch (Exception e) {
+                log.warn("[Import {}] Failed to read catalog-v001.xml at {}: {}", projectId, catalog, e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    private Path findOntologyDocumentByDeclaredIri(String projectId, String importUri, Path projectDir) {
+        try (java.util.stream.Stream<Path> stream = Files.walk(projectDir, 4)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(this::looksLikeOntologyDocument)
+                    .filter(path -> ontologyDocumentDeclaresIri(projectId, path, importUri))
+                    .findFirst()
+                    .orElse(null);
+        } catch (Exception e) {
+            log.warn("[Import {}] Failed while scanning project directory for import {}: {}",
+                    projectId, importUri, e.getMessage());
+            return null;
+        }
+    }
+
+    private boolean looksLikeOntologyDocument(Path path) {
+        String name = path.getFileName() != null ? path.getFileName().toString().toLowerCase(Locale.ROOT) : "";
+        return name.endsWith(".owl")
+                || name.endsWith(".rdf")
+                || name.endsWith(".xml")
+                || name.endsWith(".ttl")
+                || name.endsWith(".nt")
+                || name.endsWith(".jsonld");
+    }
+
+    private boolean ontologyDocumentDeclaresIri(String projectId, Path path, String importUri) {
+        try {
+            if (Files.size(path) > 100L * 1024 * 1024) {
+                log.debug("[Import {}] Skipping ontology IRI scan for large candidate {}", projectId, path);
+                return false;
+            }
+
+            RDFFormat format = detectFormat(path);
+            AtomicReference<String> ontologyIri = new AtomicReference<>();
+            AtomicReference<String> versionIri = new AtomicReference<>();
+            RDFParser parser = Rio.createParser(format);
+            parser.setRDFHandler(new AbstractRDFHandler() {
+                @Override
+                public void handleStatement(org.eclipse.rdf4j.model.Statement st) throws RDFHandlerException {
+                    if (st.getPredicate().equals(org.eclipse.rdf4j.model.vocabulary.RDF.TYPE)
+                            && st.getObject().equals(org.eclipse.rdf4j.model.vocabulary.OWL.ONTOLOGY)
+                            && st.getSubject().isIRI()) {
+                        ontologyIri.set(st.getSubject().stringValue());
+                    } else if (st.getPredicate().equals(org.eclipse.rdf4j.model.vocabulary.OWL.VERSIONIRI)
+                            && st.getObject().isIRI()) {
+                        versionIri.set(st.getObject().stringValue());
+                    }
+
+                    if (importUri.equals(ontologyIri.get()) || importUri.equals(versionIri.get())) {
+                        throw new RDFHandlerException("MATCH");
+                    }
+                }
+            });
+
+            try (InputStream in = Files.newInputStream(path)) {
+                parser.parse(in, path.toUri().toString());
+            } catch (RDFHandlerException match) {
+                if ("MATCH".equals(match.getMessage())) {
+                    log.info("[Import {}] Folder scan resolved {} -> {}", projectId, importUri, path);
+                    return true;
+                }
+                throw match;
+            }
+
+            boolean matched = importUri.equals(ontologyIri.get()) || importUri.equals(versionIri.get());
+            if (matched) {
+                log.info("[Import {}] Folder scan resolved {} -> {}", projectId, importUri, path);
+            }
+            return matched;
+        } catch (Exception e) {
+            log.debug("[Import {}] Candidate {} did not resolve import {}: {}",
+                    projectId, path, importUri, e.getMessage());
+            return false;
+        }
     }
 
     /**

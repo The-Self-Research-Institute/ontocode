@@ -19,6 +19,7 @@ import {
   Copy, Check, Info, Layers, Users, ArrowUp, ArrowDown,
   Equal, Sparkles, Search
 } from 'lucide-react';
+import type { TreeNode } from '../types';
 
 // Types
 interface DLQueryResult {
@@ -54,6 +55,9 @@ interface OntologyMetrics {
 
 interface DLQueryPanelProps {
   projectId: string;
+  classHierarchy?: TreeNode[];
+  expandedClassNodeIds?: string[];
+  onToggleClassNode?: (nodeId: string) => void;
   classes: { id: string; label: string }[];
   objectProperties: { id: string; label: string }[];
   dataProperties: { id: string; label: string }[];
@@ -171,6 +175,9 @@ const QUERY_TYPES = [
 
 export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
   projectId,
+  classHierarchy = [],
+  expandedClassNodeIds,
+  onToggleClassNode,
   classes,
   objectProperties,
   dataProperties,
@@ -204,6 +211,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
   const [copied, setCopied] = useState(false);
   const [newClassName, setNewClassName] = useState('');
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [classTreeSearch, setClassTreeSearch] = useState('');
+  const [expandedClassNodes, setExpandedClassNodes] = useState<string[]>(['http://www.w3.org/2002/07/owl#Thing']);
 
   // Autocomplete suggestions based on current input
   const suggestions = useMemo(() => {
@@ -348,6 +357,103 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     setError(null);
   };
 
+  const toggleClassNode = (nodeId: string) => {
+    if (onToggleClassNode) {
+      onToggleClassNode(nodeId);
+      return;
+    }
+    setExpandedClassNodes(prev =>
+      prev.includes(nodeId) ? prev.filter(id => id !== nodeId) : [...prev, nodeId]
+    );
+  };
+
+  const useClassInQuery = (node: TreeNode) => {
+    setQuery(node.label || node.id);
+    setResults(null);
+    setError(null);
+  };
+
+  const filteredClassHierarchy = useMemo(() => {
+    const search = classTreeSearch.trim().toLowerCase();
+    if (!search) return classHierarchy;
+
+    const filterNode = (node: TreeNode): TreeNode | null => {
+      const children = (node.children || [])
+        .map(filterNode)
+        .filter((child): child is TreeNode => Boolean(child));
+      const matches =
+        (node.label || '').toLowerCase().includes(search) ||
+        (node.id || '').toLowerCase().includes(search);
+
+      if (matches || children.length > 0) {
+        return { ...node, children, hasChildren: node.hasChildren || children.length > 0 };
+      }
+      return null;
+    };
+
+    return classHierarchy
+      .map(filterNode)
+      .filter((node): node is TreeNode => Boolean(node));
+  }, [classHierarchy, classTreeSearch]);
+
+  const renderClassNode = (node: TreeNode, level = 0): React.ReactNode => {
+    const hasChildren = Boolean(node.hasChildren || node.children?.length);
+    const activeExpandedNodes = expandedClassNodeIds || expandedClassNodes;
+    const isExpanded = activeExpandedNodes.includes(node.id) || Boolean(classTreeSearch.trim());
+    const isBuiltinThing = node.id === 'http://www.w3.org/2002/07/owl#Thing';
+    const isDefined = Boolean(node.equivalentClassesAxioms?.length || node.equivalentClasses?.length);
+    const equivalentLabels = (node.equivalentClasses || [])
+      .map(eq => eq.label || eq.iri)
+      .filter(Boolean);
+
+    return (
+      <div key={node.id}>
+        <div
+          className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-purple-50 cursor-pointer text-xs group"
+          style={{ paddingLeft: `${level * 14 + 6}px` }}
+          title={node.id}
+          onClick={() => !isBuiltinThing && useClassInQuery(node)}
+        >
+          <button
+            className="w-4 h-4 flex items-center justify-center text-gray-500"
+            disabled={!hasChildren}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (hasChildren) toggleClassNode(node.id);
+            }}
+          >
+            {hasChildren ? (isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : null}
+          </button>
+          <span className={`w-3 h-3 rounded-sm border flex items-center justify-center flex-shrink-0 ${
+            isDefined ? 'bg-amber-300 border-amber-600' : 'bg-amber-400 border-amber-600'
+          }`}>
+            {isDefined ? <span className="text-white text-[8px] leading-none font-bold">≡</span> : null}
+          </span>
+          <span className={`truncate ${isBuiltinThing ? 'text-gray-500' : 'text-gray-800 group-hover:text-purple-700'}`}>
+            {node.label || node.id}
+          </span>
+          {typeof node.totalInstanceCount === 'number' && node.totalInstanceCount > 0 && (
+            <span className="ml-auto text-[10px] text-gray-500">{node.totalInstanceCount}</span>
+          )}
+        </div>
+        {equivalentLabels.length > 0 && (
+          <div
+            className="ml-8 pr-2 pb-1 text-[10px] text-amber-700 truncate"
+            style={{ paddingLeft: `${level * 14 + 6}px` }}
+            title={`Equivalent To: ${equivalentLabels.join(', ')}`}
+          >
+            ≡ {equivalentLabels.join(', ')}
+          </div>
+        )}
+        {Boolean(node.children?.length) && isExpanded && (
+          <div>
+            {node.children!.map(child => renderClassNode(child, level + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Copy results to clipboard
   const copyResults = () => {
     if (!results) return;
@@ -394,6 +500,30 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
 
   return (
     <div className="flex h-full bg-gray-50">
+      {/* Left Sidebar - Class Hierarchy */}
+      <aside className="w-72 bg-white border-r border-gray-200 flex flex-col overflow-hidden">
+        <div className="p-3 border-b border-gray-100">
+          <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Class Hierarchy</h3>
+          <div className="relative">
+            <Search size={13} className="absolute left-2 top-2 text-gray-400" />
+            <input
+              value={classTreeSearch}
+              onChange={e => setClassTreeSearch(e.target.value)}
+              placeholder="Find class..."
+              className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded bg-white text-gray-800 focus:ring-1 focus:ring-purple-500"
+            />
+          </div>
+          <p className="text-[10px] text-gray-500 mt-1">Click a class to use it as the query expression.</p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-1">
+          {filteredClassHierarchy.length > 0 ? (
+            filteredClassHierarchy.map(node => renderClassNode(node))
+          ) : (
+            <div className="p-3 text-xs text-gray-500 text-center">No classes found.</div>
+          )}
+        </div>
+      </aside>
+
       {/* Main Query Area */}
       <main className="flex-1 flex flex-col p-3 overflow-hidden">
         {/* Query Input Section */}

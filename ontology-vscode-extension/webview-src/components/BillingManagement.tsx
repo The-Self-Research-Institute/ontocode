@@ -201,6 +201,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     const [setupClientSecret, setSetupClientSecret] = useState<string | null>(null);
     const [setupPublishableKey, setSetupPublishableKey] = useState<string>('');
     const [cardUpdated, setCardUpdated] = useState(false);
+    const [enablingAutoRenew, setEnablingAutoRenew] = useState(false);
     const { getDisplayPrice } = usePlanPricing();
 
     const stripePromise = useMemo(
@@ -341,6 +342,30 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         }
     };
 
+    const enableAutoRenew = async () => {
+        setError(null);
+        setEnablingAutoRenew(true);
+        try {
+            let res: Response;
+            try {
+                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/auto-renew/enable`, { method: 'POST', headers: authHeaders });
+                if (!res.ok && res.status === 404) {
+                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/auto-renew/enable`, { method: 'POST', headers: authHeaders });
+                }
+            } catch (err: any) {
+                throw new Error(err.message || 'Network error. Please check your connection and try again.');
+            }
+            if (res.status === 401 || res.status === 403) throw new Error('Your session has expired. Please sign in again.');
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error ?? 'Failed to turn on auto-renewal');
+            setBillingSummary((prev) => prev ? { ...prev, autoRenewEnabled: true, cancelAtPeriodEnd: false, canceledAt: '' } : prev);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setEnablingAutoRenew(false);
+        }
+    };
+
 
     const plan = (billingSummary?.planName || workspace.subscriptionPlan || '').toUpperCase();
     const isTopPlan = plan === 'ENTERPRISE';
@@ -355,6 +380,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     const renewalDateLabel = formatBillingDate(billingSummary?.currentPeriodEnd);
     const paymentHistory = billingSummary?.paymentHistory || [];
     const planDisplayName = plan ? `OntoCode ${plan.charAt(0)}${plan.slice(1).toLowerCase()}` : 'Subscription';
+    const autoRenewEnabled = billingSummary?.autoRenewEnabled !== false && billingSummary?.cancelAtPeriodEnd !== true;
 
     return (
         // Fill the viewport exactly, then split into a fixed header and a
@@ -435,12 +461,12 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                         Auto-Renewal Status
                                     </div>
                                     <p className="text-sm text-slate-400 leading-relaxed">
-                                        {billingSummary?.autoRenewEnabled 
+                                        {autoRenewEnabled 
                                             ? 'Your subscription will automatically renew. A reminder will be sent before the charge.' 
                                             : 'Auto-renewal is turned off. Your access will expire at the end of the current period.'}
                                     </p>
-                                    <div className={`text-sm font-bold ${billingSummary?.autoRenewEnabled ? 'text-green-400' : 'text-amber-400'}`}>
-                                        {billingSummary?.autoRenewEnabled ? 'Renewal Enabled' : 'Renewal Disabled'}
+                                    <div className={`text-sm font-bold ${autoRenewEnabled ? 'text-green-400' : 'text-amber-400'}`}>
+                                        {autoRenewEnabled ? 'Renewal Enabled' : 'Renewal Disabled'}
                                     </div>
                                 </div>
                                 <div className="space-y-2">
@@ -500,16 +526,31 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 </button>
                             )}
 
-                            {/* Cancel — owner only; backend re-checks. Bug #42. */}
+                            {/* Cancel/restore auto-renewal — owner only; backend re-checks. Bug #42. */}
                             {isOwner && (
-                                <button onClick={() => setView('cancel-confirm')}
-                                    className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-red-500/50 hover:bg-red-500/5 text-white transition-all group">
-                                    <div className="w-12 h-12 rounded-xl bg-red-500/20 flex items-center justify-center text-red-400 group-hover:scale-110 transition-transform">
-                                        <XCircle size={24} />
+                                <button
+                                    onClick={autoRenewEnabled ? () => setView('cancel-confirm') : enableAutoRenew}
+                                    disabled={enablingAutoRenew}
+                                    className={`h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed ${
+                                        autoRenewEnabled
+                                            ? 'hover:border-red-500/50 hover:bg-red-500/5'
+                                            : 'hover:border-green-500/50 hover:bg-green-500/5'
+                                    }`}
+                                >
+                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform ${
+                                        autoRenewEnabled ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'
+                                    }`}>
+                                        {enablingAutoRenew ? <Loader2 size={24} className="animate-spin" /> : autoRenewEnabled ? <XCircle size={24} /> : <RefreshCw size={24} />}
                                     </div>
                                     <div className="text-left">
-                                        <p className="font-bold text-lg text-red-300">Cancel Plan</p>
-                                        <p className="text-sm text-slate-400 mt-1 text-balance">Stop your subscription at the end of the cycle.</p>
+                                        <p className={`font-bold text-lg ${autoRenewEnabled ? 'text-red-300' : 'text-green-300'}`}>
+                                            {autoRenewEnabled ? 'Cancel Plan' : 'Turn On Auto-Renewal'}
+                                        </p>
+                                        <p className="text-sm text-slate-400 mt-1 text-balance">
+                                            {autoRenewEnabled
+                                                ? 'Stop your subscription at the end of the cycle.'
+                                                : 'Keep your plan active and renew automatically.'}
+                                        </p>
                                     </div>
                                 </button>
                             )}
