@@ -253,6 +253,7 @@ const ClassEditor: React.FC<{
   const [editorTitle, setEditorTitle] = useState("");
   const [editorExistingValue, setEditorExistingValue] = useState<string | undefined>();
   const [editorExistingId, setEditorExistingId] = useState<string | undefined>();
+  const [editorInitialClassIri, setEditorInitialClassIri] = useState<string | undefined>();
   const [editorInitialTab, setEditorInitialTab] = useState<
     "hierarchy" | "objectRestriction" | "dataRestriction" | "classExpression" | undefined
   >();
@@ -832,37 +833,52 @@ const ClassEditor: React.FC<{
     // Update title to indicate edit mode
     if (existingValue && existingId) {
       setEditorTitle(`Edit ${title}`);
-      // For hierarchy tab (simple class axioms), pass the IRI as initialValue so it can be pre-selected
-      // For other tabs (restrictions, expressions), pass the definition/label
-      setEditorExistingValue(initialTab === "hierarchy" ? existingId : existingValue);
+      // Keep the expression text visible in the class expression editor, while
+      // passing the IRI separately so the hierarchy tab can pre-select it.
+      setEditorExistingValue(existingValue);
       setEditorExistingId(existingId);
+      setEditorInitialClassIri(initialTab === "hierarchy" ? existingId : undefined);
     } else {
       setEditorTitle(`Add ${title}`);
       setEditorExistingValue(undefined);
       setEditorExistingId(undefined);
+      setEditorInitialClassIri(undefined);
     }
     setEditorInitialTab(initialTab);
     setEditorInitialRestrictionData(restrictionData);
 
-    // Restrict visible tabs for EquivalentTo: show only relevant tabs
-    if (type === "EquivalentTo") {
-      if (initialTab === "objectRestriction" || (restrictionData && !restrictionData.isDataProperty)) {
-        setEditorAllowedTabs(["classExpression", "objectRestriction"]);
-      } else if (initialTab === "dataRestriction" || (restrictionData && restrictionData.isDataProperty)) {
-        setEditorAllowedTabs(["classExpression", "dataRestriction"]);
-      } else {
+    // Add mode shows the full Protégé-style builder set. Edit mode shows the
+    // expression editor plus only the builder that matches the existing axiom.
+    if (existingValue && existingId) {
+      if (initialTab === "dataRestriction" || restrictionData?.isDataProperty) {
+        setEditorAllowedTabs(["dataRestriction", "classExpression"]);
+      } else if (initialTab === "objectRestriction" || (restrictionData && !restrictionData.isDataProperty)) {
+        setEditorAllowedTabs(["objectRestriction", "classExpression"]);
+      } else if (initialTab === "hierarchy") {
         setEditorAllowedTabs(["hierarchy", "classExpression"]);
+      } else {
+        setEditorAllowedTabs(["classExpression"]);
       }
     } else {
-      setEditorAllowedTabs(undefined); // no restriction for SubClassOf etc.
+      setEditorAllowedTabs(undefined);
     }
 
     setIsEditorOpen(true);
   };
 
+  const normalizeSingleClassExpressionForSave = (expression: string, restrictionData?: RestrictionData): string => {
+    const trimmed = expression.trim();
+    if (!trimmed || restrictionData) return expression;
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("urn:")) return trimmed;
+    if (/\s+(and|or)\s+/i.test(trimmed)) return expression;
+    return findClassIriByLabelOrIri(trimmed, classHierarchy) || expression;
+  };
+
   const handleEditorConfirm = async (expression: string, restrictionData?: RestrictionData) => {
+    const expressionToSave = normalizeSingleClassExpressionForSave(expression, restrictionData);
     console.log("[ClassEditor] handleEditorConfirm called:", {
       expression,
+      expressionToSave,
       restrictionData,
       editorType,
       editorExistingId,
@@ -881,7 +897,7 @@ const ClassEditor: React.FC<{
         console.log("[ClassEditor] Edit operation - deleting old axiom:", {
           editorExistingId,
           editorType,
-          newExpression: expression,
+          newExpression: expressionToSave,
           classIri: item.id,
           editorInitialRestrictionData,
           restrictionData,
@@ -924,13 +940,13 @@ const ClassEditor: React.FC<{
             editorType,
             classIri: item.id,
             oldTarget: editorExistingId,
-            newTarget: expression,
+            newTarget: expressionToSave,
           });
 
           // Use UPDATE operations to replace in a single transaction
           // This prevents creating duplicates
           const isNewSimpleIRI =
-            expression.startsWith("http://") || expression.startsWith("https://") || expression.startsWith("urn:");
+            expressionToSave.startsWith("http://") || expressionToSave.startsWith("https://") || expressionToSave.startsWith("urn:");
 
           if (isNewSimpleIRI) {
             switch (editorType) {
@@ -939,13 +955,13 @@ const ClassEditor: React.FC<{
                   projectId,
                   classIri: item.id,
                   oldTarget: editorExistingId,
-                  newTarget: expression,
+                  newTarget: expressionToSave,
                 });
                 await ontologyMutationService.updateEquivalentClass(
                   projectId,
                   item.id,
                   editorExistingId,
-                  expression,
+                  expressionToSave,
                   user?.email,
                   user?.displayName || user?.email,
                 );
@@ -956,13 +972,13 @@ const ClassEditor: React.FC<{
                   projectId,
                   classIri: item.id,
                   oldTarget: editorExistingId,
-                  newTarget: expression,
+                  newTarget: expressionToSave,
                 });
                 await ontologyMutationService.updateSubClassOf(
                   projectId,
                   item.id,
                   editorExistingId,
-                  expression,
+                  expressionToSave,
                   user?.email,
                   user?.displayName || user?.email,
                 );
@@ -973,13 +989,13 @@ const ClassEditor: React.FC<{
                   projectId,
                   classIri: item.id,
                   oldTarget: editorExistingId,
-                  newTarget: expression,
+                  newTarget: expressionToSave,
                 });
                 await ontologyMutationService.updateDisjointWith(
                   projectId,
                   item.id,
                   editorExistingId,
-                  expression,
+                  expressionToSave,
                   user?.email,
                   user?.displayName || user?.email,
                 );
@@ -1037,11 +1053,11 @@ const ClassEditor: React.FC<{
 
             // Re-add the complex expression using the same structured path as handleAddAxiom
             const axiomTypeForEdit = editorType as "EquivalentTo" | "SubClassOf" | "DisjointWith";
-            const isIRI = expression.startsWith("http://") || expression.startsWith("https://") || expression.startsWith("urn:");
+            const isIRI = expressionToSave.startsWith("http://") || expressionToSave.startsWith("https://") || expressionToSave.startsWith("urn:");
             if (isIRI) {
-              await ontologyMutationService.addAxiom(projectId, item.id, axiomTypeForEdit, expression);
+              await ontologyMutationService.addAxiom(projectId, item.id, axiomTypeForEdit, expressionToSave);
             } else {
-              const parsed = parseManchesterExpression(expression);
+              const parsed = parseManchesterExpression(expressionToSave);
               if (parsed && axiomTypeForEdit !== "DisjointWith") {
                 if (parsed.expressionType === "intersection") {
                   await ontologyMutationService.addIntersection(projectId, item.id, parsed.iris, axiomTypeForEdit as "EquivalentTo" | "SubClassOf");
@@ -1049,7 +1065,7 @@ const ClassEditor: React.FC<{
                   await ontologyMutationService.addUnion(projectId, item.id, parsed.iris, axiomTypeForEdit as "EquivalentTo" | "SubClassOf");
                 }
               } else {
-                throw new Error(`Cannot re-add expression: "${expression}". Use a class IRI, intersection, or union.`);
+                throw new Error(`Cannot re-add expression: "${expressionToSave}". Use a class IRI, intersection, or union.`);
               }
             }
 
@@ -1067,18 +1083,18 @@ const ClassEditor: React.FC<{
 
         // For restriction edits, continue with the delete+add flow
         console.log("[ClassEditor] Adding new restriction axiom after deletion:", {
-          expression,
+          expression: expressionToSave,
           restrictionData,
           editorType,
         });
 
         // Add the new restriction axiom (duplicate check removed — stale classDetails after
         // deletion would always falsely flag the just-deleted restriction as a duplicate)
-        await handleAddAxiom(editorType, expression, restrictionData);
+        await handleAddAxiom(editorType, expressionToSave, restrictionData);
       } else {
         // Otherwise it's an add operation
-        console.log("[ClassEditor] Add operation:", { expression, restrictionData });
-        await handleAddAxiom(editorType, expression, restrictionData);
+        console.log("[ClassEditor] Add operation:", { expression: expressionToSave, restrictionData });
+        await handleAddAxiom(editorType, expressionToSave, restrictionData);
       }
     } catch (error) {
       console.error("[ClassEditor] handleEditorConfirm failed:", error);
@@ -1088,6 +1104,7 @@ const ClassEditor: React.FC<{
       setEditorType(null);
       setEditorExistingValue(undefined);
       setEditorExistingId(undefined);
+      setEditorInitialClassIri(undefined);
       setEditorInitialTab(undefined);
       setEditorInitialRestrictionData(undefined);
     }
@@ -2203,6 +2220,7 @@ const ClassEditor: React.FC<{
           setIsEditorOpen(false);
           setEditorExistingValue(undefined);
           setEditorExistingId(undefined);
+          setEditorInitialClassIri(undefined);
           setEditorInitialTab(undefined);
           setEditorInitialRestrictionData(undefined);
           setEditorAllowedTabs(undefined);
@@ -2210,6 +2228,7 @@ const ClassEditor: React.FC<{
         onConfirm={handleEditorConfirm}
         title={editorTitle}
         initialValue={editorExistingValue}
+        initialClassIri={editorInitialClassIri}
         initialTab={editorInitialTab}
         initialRestrictionData={editorInitialRestrictionData}
         allowedTabs={editorAllowedTabs}
