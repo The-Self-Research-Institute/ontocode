@@ -91,9 +91,12 @@ public class SubscriptionController {
     @GetMapping("/subscription")
     public ResponseEntity<?> getSubscription(@AuthenticationPrincipal UserDetails principal) {
         User user = resolveUser(principal);
+        // Sync live status + period end from Stripe to repair any stale snapshot in MongoDB
+        // (e.g. period end stuck at trial-end timestamp after immediate trial→paid upgrade).
+        String liveStatus = stripeService.syncStatusFromStripe(user);
         return ResponseEntity.ok(Map.of(
                 "planName",              orEmpty(user.getSubscriptionPlanName()),
-                "status",                orEmpty(user.getSubscriptionStatus()),
+                "status",                liveStatus,
                 "billingInterval",       orEmpty(user.getBillingInterval()),
                 "autoRenewEnabled",      user.isAutoRenewEnabled(),
                 "currentPeriodEnd",      user.getSubscriptionCurrentPeriodEnd() != null
@@ -198,6 +201,13 @@ public class SubscriptionController {
         String interval = body.get("interval");
         String workspaceId = body.get("workspaceId");
 
+        if (planName != null) {
+            planName = planName.trim().toUpperCase();
+        }
+        if (interval != null) {
+            interval = interval.trim();
+        }
+
         if (setupIntentId == null || planName == null || interval == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "setupIntentId, planName, and interval are required"));
         }
@@ -212,6 +222,14 @@ public class SubscriptionController {
 
         try {
             User user = resolveUser(principal);
+            if (workspaceId != null && !workspaceId.isBlank()) {
+                if (workspaceService.getWorkspace(workspaceId).isEmpty()) {
+                    return ResponseEntity.status(404).body(Map.of("error", "Workspace not found"));
+                }
+                if (!workspaceService.hasAccess(workspaceId, user.getId())) {
+                    return ResponseEntity.status(403).body(Map.of("error", "You don't have access to this workspace"));
+                }
+            }
             String subscriptionId = stripeService.createSubscriptionAfterSetup(user, setupIntentId, planName, normalizedInterval, workspaceId);
             return ResponseEntity.ok(Map.of("subscriptionId", subscriptionId));
         } catch (RuntimeException e) {
@@ -388,10 +406,12 @@ public class SubscriptionController {
 
             String planName = owner.getSubscriptionPlanName() != null ? owner.getSubscriptionPlanName() : "FREE";
             String status   = owner.getSubscriptionStatus()   != null ? owner.getSubscriptionStatus()   : "";
+            boolean subscriptionAccessOk = status.equalsIgnoreCase("active")
+                    || status.equalsIgnoreCase("trialing")
+                    || status.equalsIgnoreCase("past_due");
             boolean isExpired = !planName.equalsIgnoreCase("FREE")
                     && !status.isEmpty()
-                    && !status.equalsIgnoreCase("active")
-                    && !status.equalsIgnoreCase("trialing");
+                    && !subscriptionAccessOk;
 
             return ResponseEntity.ok(Map.of(
                     "planName",  planName,

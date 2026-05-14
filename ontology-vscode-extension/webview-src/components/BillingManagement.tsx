@@ -157,6 +157,7 @@ const UpdateCardForm: React.FC<{
             return;
         }
 
+        setSubmitting(false);
         onSuccess();
     };
 

@@ -64,6 +64,8 @@ interface ProjectMember {
   email: string;
   role: string;
   joinedAt: string;
+  /** WORKSPACE_OWNER | WORKSPACE_ADMIN when auto-linked on shared projects */
+  workspaceEditorLink?: string | null;
 }
 
 interface Project {
@@ -119,6 +121,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   console.log("[ProjectDashboard] switchWorkspace function:", typeof switchWorkspace);
 
   const subscription = useSubscription();
+  const isOwner = user?.workspaceRole === "OWNER";
   const [projects, setProjects] = useState<Project[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
@@ -166,7 +169,20 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   } | null>(null);
 
   const currentUserInTeam = useMemo(() => teamMembers.find(m => m.id === user?.userId || m.email === user?.email || m.username === user?.username), [teamMembers, user]);
-  const isWorkspaceOwner = user?.userId === workspaceOwnerId || user?.workspaceRole?.toUpperCase() === "OWNER" || currentUserInTeam?.roles?.some(r => r.toUpperCase() === "OWNER");
+  const isWorkspaceOwner =
+    user?.userId === workspaceOwnerId ||
+    user?.workspaceRole?.toUpperCase() === "OWNER" ||
+    currentUserInTeam?.roles?.some((r) => r.toUpperCase() === "OWNER");
+
+  const projectMemberRoleLocked = (member: ProjectMember) =>
+    member.workspaceEditorLink === "WORKSPACE_OWNER" ||
+    (member.workspaceEditorLink === "WORKSPACE_ADMIN" && !isWorkspaceOwner);
+
+  const canRemoveThisProjectMember = (member: ProjectMember) =>
+    member.role !== "OWNER" &&
+    member.workspaceEditorLink !== "WORKSPACE_OWNER" &&
+    (member.workspaceEditorLink !== "WORKSPACE_ADMIN" || isWorkspaceOwner);
+
   /** Resolved workspace role: JWT, team membership, or workspace owner id. */
   const workspaceRoleResolved = useMemo((): WorkspaceRole | null => {
     const jwt = normalizeRole(user?.workspaceRole);
@@ -790,7 +806,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   }
 
   if (loadError) {
-    const isOwner = user?.workspaceRole === "OWNER";
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="text-center max-w-md">
@@ -1023,7 +1038,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               >
                 <Bug size={20} />
               </button>
-              {onManageSubscription && (
+              {isOwner && onManageSubscription && (
                 <button
                   onClick={onManageSubscription}
                   className="h-9 w-9 inline-flex items-center justify-center text-purple-600 hover:bg-purple-50 rounded-lg"
@@ -1681,6 +1696,13 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                             <div>
                               <p className="font-medium text-gray-900">{member.username}</p>
                               <p className="text-sm text-gray-500">{member.email}</p>
+                              {member.workspaceEditorLink && (
+                                <p className="text-xs text-amber-700 mt-0.5">
+                                  {member.workspaceEditorLink === "WORKSPACE_OWNER"
+                                    ? "Workspace owner — always on shared projects"
+                                    : "Workspace admin — removable only by workspace owner"}
+                                </p>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -1696,14 +1718,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                                     handleUpdateProjectMemberRole(projectSettingsModal, member, e.target.value)
                                   }
                                   className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-purple-500"
-                                  disabled={member.role === "OWNER"}
+                                  disabled={member.role === "OWNER" || projectMemberRoleLocked(member)}
                                 >
                                   {member.role === "OWNER" && <option value="OWNER">Owner</option>}
                                   {member.role === "ADMIN" && <option value="ADMIN">Admin</option>}
                                   <option value="EDITOR">Editor</option>
                                   <option value="VIEWER">Viewer</option>
                                 </select>
-                                {member.role !== "OWNER" && canManageOpenProject && (
+                                {member.role !== "OWNER" && canManageOpenProject && canRemoveThisProjectMember(member) && (
                                   <button
                                     onClick={() => handleRemoveProjectMember(projectSettingsModal, member)}
                                     className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"

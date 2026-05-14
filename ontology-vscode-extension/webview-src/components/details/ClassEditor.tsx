@@ -1171,6 +1171,18 @@ const ClassEditor: React.FC<{
         restrictionData.axiomType = type;
 
         if (restrictionData.type === "objectRestriction") {
+          if (!restrictionData.propertyIri || !restrictionData.fillerIri) {
+            console.error("[ClassEditor] Object restriction missing propertyIri or fillerIri:", restrictionData);
+            notificationService.error("Save Failed", "Restriction is missing required property or filler class.");
+            return;
+          }
+          console.log("[ClassEditor] Adding object restriction:", {
+            axiomType: restrictionData.axiomType,
+            propertyIri: restrictionData.propertyIri,
+            restrictionType: restrictionData.restrictionType,
+            fillerIri: restrictionData.fillerIri,
+            cardinality: restrictionData.cardinality,
+          });
           await ontologyMutationService.addObjectRestriction(
             projectId,
             item.id,
@@ -1181,24 +1193,38 @@ const ClassEditor: React.FC<{
             restrictionData.cardinality,
           );
         } else if (restrictionData.type === "dataRestriction") {
+          if (!restrictionData.propertyIri || !restrictionData.fillerIri) {
+            console.error("[ClassEditor] Data restriction missing propertyIri or fillerIri:", restrictionData);
+            notificationService.error("Save Failed", "Restriction is missing required property or datatype.");
+            return;
+          }
           // Only allow valid restrictionType values for data restrictions
           const validDataRestrictionTypes = ["some", "only", "min", "max", "exactly"];
-          if (validDataRestrictionTypes.includes(restrictionData.restrictionType)) {
-            await ontologyMutationService.addDataRestriction(
-              projectId,
-              item.id,
-              restrictionData.axiomType,
-              restrictionData.propertyIri,
-              restrictionData.restrictionType as "some" | "only" | "min" | "max" | "exactly",
-              restrictionData.fillerIri,
-              restrictionData.cardinality,
-            );
-          } else {
-            console.warn("Invalid restrictionType for data restriction:", restrictionData.restrictionType);
+          if (!validDataRestrictionTypes.includes(restrictionData.restrictionType)) {
+            console.warn("[ClassEditor] Invalid restrictionType for data restriction:", restrictionData.restrictionType);
+            return;
           }
+          console.log("[ClassEditor] Adding data restriction:", {
+            axiomType: restrictionData.axiomType,
+            propertyIri: restrictionData.propertyIri,
+            restrictionType: restrictionData.restrictionType,
+            fillerIri: restrictionData.fillerIri,
+            cardinality: restrictionData.cardinality,
+          });
+          await ontologyMutationService.addDataRestriction(
+            projectId,
+            item.id,
+            restrictionData.axiomType,
+            restrictionData.propertyIri,
+            restrictionData.restrictionType as "some" | "only" | "min" | "max" | "exactly",
+            restrictionData.fillerIri,
+            restrictionData.cardinality,
+          );
         }
         // Allow GraphDB to index the new restriction before reloading
-        await new Promise((resolve) => setTimeout(resolve, 600));
+        // Qualified cardinality restrictions (min/max/exactly) require more time
+        const isCardinalityRestriction = ["min", "max", "exactly"].includes(restrictionData.restrictionType);
+        await new Promise((resolve) => setTimeout(resolve, isCardinalityRestriction ? 1500 : 800));
         await loadClassDetails();
         return;
       }

@@ -1,6 +1,13 @@
-# OntoCode Development Docker Compose
-# Use docker-compose.production.yml for production deployments
-# This file is for quick local development and testing
+# OntoCode Production Docker Compose — t3.xlarge baseline (16 GB RAM)
+# Total container limits ≈ 13.5 GB | leaves ~2.5 GB for OS + Docker overhead
+#
+# For other instance sizes, layer on a sizing override:
+#   t3.large  (8 GB):  docker compose -f docker-compose.production.yml -f docker-compose.t3-large.yml up -d
+#   t3.xlarge (16 GB): docker compose -f docker-compose.production.yml up -d
+#   t3.2xlarge(32 GB): docker compose -f docker-compose.production.yml -f docker-compose.t3-2xlarge.yml up -d
+#   r5.2xlarge(64 GB): docker compose -f docker-compose.production.yml -f docker-compose.r5-2xlarge.yml up -d
+#
+# Set DOCKER_REGISTRY, VERSION, and a locked-down .env (secrets, public BASE_URL, Stripe keys).
 
 services:
   # MongoDB Database
@@ -16,8 +23,13 @@ services:
       MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-ontocode}
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.3", "--auth"]
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 768m
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh "mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@localhost:27017/admin" --quiet
       interval: 10s
@@ -27,32 +39,30 @@ services:
 
   # GraphDB (RDF Triple Store) - with embedded license
   graphdb:
-    build:
-      context: .
-      dockerfile: Dockerfile.graphdb
-    image: ontocode-graphdb:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-graphdb:${VERSION:-latest}
     container_name: ontocode-graphdb
     restart: unless-stopped
     ports:
       - "7200:7200"
     environment:
-      GDB_HEAP_SIZE: 6g
+      GDB_HEAP_SIZE: 4g
       GDB_LICENSE_PATH: /opt/graphdb
-      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=16m"
+      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=8m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
     volumes:
-      - graphdb-data:/opt/graphdb/data
+      - graphdb-data:/opt/graphdb/home/data
+      - graphdb-import:/opt/graphdb/home/graphdb-import
     networks:
       - ontology-net
     deploy:
       resources:
         limits:
-          memory: 8g
+          memory: 5g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7200/rest/repositories"]
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 180s
 
   # GraphDB Repository Initializer - Creates 'ontocode' repository with inference DISABLED
   graphdb-init:
@@ -74,7 +84,7 @@ services:
           echo "Waiting for GraphDB... attempt $$i/30"
           sleep 5
         done
-        
+
         if curl -s http://graphdb:7200/rest/repositories | grep -q "ontocode"; then
           echo "[OK] Repository ontocode already exists"
         else
@@ -104,10 +114,10 @@ services:
                 ]
             ] .
         EOFCONFIG
-          curl -sS -X POST -H "Content-Type: multipart/form-data" -F "config=@/tmp/repo.ttl" http://graphdb:7200/rest/repositories >/dev/null
+          curl -v -X POST -H "Content-Type: multipart/form-data" -F "config=@/tmp/repo.ttl" http://graphdb:7200/rest/repositories
           echo "[OK] Repository created successfully"
         fi
-        
+
         echo "Setting ontocode as active repository..."
         if curl -sf http://graphdb:7200/rest/repositories/ontocode/size >/dev/null 2>&1; then
           echo "[OK] Repository ontocode is ACTIVE and accessible"
@@ -120,39 +130,70 @@ services:
 
   # Authentication Service
   auth:
-    build:
-      context: .
-      dockerfile: Dockerfile.auth
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-auth:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-auth:${VERSION:-latest}
     container_name: ontocode-auth
     restart: unless-stopped
+    user: root
     ports:
       - "8086:8086"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      BASE_URL: ${BASE_URL:-http://localhost:3000}
+      BILLING_REMINDER_ENABLED: ${BILLING_REMINDER_ENABLED:-true}
+      BILLING_REMINDER_DAYS_BEFORE_LIST: ${BILLING_REMINDER_DAYS_BEFORE_LIST:-15,7,1}
+      BILLING_REMINDER_CRON: ${BILLING_REMINDER_CRON:-0 0 9 * * *}
+      BILLING_EXPIRY_CHECK_ENABLED: ${BILLING_EXPIRY_CHECK_ENABLED:-true}
+      BILLING_EXPIRY_CHECK_INTERVAL_MS: ${BILLING_EXPIRY_CHECK_INTERVAL_MS:-21600000}
+      BILLING_AUTORENEWAL_ENABLED: ${BILLING_AUTORENEWAL_ENABLED:-true}
+      BILLING_AUTORENEWAL_CRON: ${BILLING_AUTORENEWAL_CRON:-0 0 2 * * ?}
+      INVITATION_CLEANUP_CRON: ${INVITATION_CLEANUP_CRON:-0 0 2 * * *}
+      STORAGE_LIMIT_FREE_GB: ${STORAGE_LIMIT_FREE_GB:-10}
+      STORAGE_LIMIT_PRO_GB: ${STORAGE_LIMIT_PRO_GB:-100}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO_MONTHLY: ${STRIPE_PRICE_PRO_MONTHLY:-}
+      STRIPE_PRICE_PRO_YEARLY: ${STRIPE_PRICE_PRO_YEARLY:-}
+      STRIPE_PRICE_ENTERPRISE_MONTHLY: ${STRIPE_PRICE_ENTERPRISE_MONTHLY:-}
+      STRIPE_PRICE_ENTERPRISE_YEARLY: ${STRIPE_PRICE_ENTERPRISE_YEARLY:-}
+      STRIPE_TRIAL_PERIOD_DAYS: ${STRIPE_TRIAL_PERIOD_DAYS:-14}
+      PLAN_PRO_MONTHLY_PRICE: ${PLAN_PRO_MONTHLY_PRICE:-29}
+      PLAN_PRO_ANNUAL_DISCOUNT_PERCENT: ${PLAN_PRO_ANNUAL_DISCOUNT_PERCENT:-17}
+      PLAN_ENTERPRISE_MONTHLY_PRICE: ${PLAN_ENTERPRISE_MONTHLY_PRICE:-99}
+      PLAN_ENTERPRISE_ANNUAL_DISCOUNT_PERCENT: ${PLAN_ENTERPRISE_ANNUAL_DISCOUNT_PERCENT:-20}
+      PLAN_FREE_MAX_MEMBERS: ${PLAN_FREE_MAX_MEMBERS:-3}
+      PLAN_PRO_MAX_MEMBERS: ${PLAN_PRO_MAX_MEMBERS:-10}
+      PLAN_ENTERPRISE_MAX_MEMBERS: ${PLAN_ENTERPRISE_MAX_MEMBERS:-2147483647}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
+    volumes:
+      - /var/log/ontocode/auth:/app/logs
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 640m
 
   # API Gateway
   gateway:
-    build:
-      context: .
-      dockerfile: Dockerfile.gateway
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-gateway:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-gateway:${VERSION:-latest}
     container_name: ontocode-gateway
     restart: unless-stopped
+    user: root
     ports:
       - "80:80"
     environment:
@@ -160,70 +201,85 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      GATEWAY_HTTP_RESPONSE_TIMEOUT: ${GATEWAY_HTTP_RESPONSE_TIMEOUT:-7200s}
+      # Gateway streams file uploads via Netty — does not buffer bodies in heap.
+      # codec buffer reduced to 64MB (application.properties). 768m heap is sufficient.
+      JAVA_OPTS: -Xms128m -Xmx768m -XX:+UseG1GC
     depends_on:
       auth:
         condition: service_started
+    volumes:
+      - /var/log/ontocode/gateway:/app/logs
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 1500m
 
   # Ontology Editor Service
   owl-editor:
-    build:
-      context: .
-      dockerfile: Dockerfile.editor
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-editor:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-editor:${VERSION:-latest}
     container_name: ontocode-editor
     restart: unless-stopped
+    user: root
     ports:
       - "8083:8083"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       GRAPHDB_URL: http://graphdb:7200
       GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
+      GRAPHDB_IMPORT_DIR: /opt/graphdb-import
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      # Phase C: heap sized for per-project in-memory SPARQL cache
-      # (3 cached projects × ~400 MB + editor baseline ~1 GB = ~2.5 GB working set).
-      JAVA_OPTS: ${OWL_EDITOR_JAVA_OPTS:--Xms1g -Xmx3g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled}
-      ONTOCODE_MEMCACHE_ENABLED: ${ONTOCODE_MEMCACHE_ENABLED:-true}
-      ONTOCODE_MEMCACHE_MAX_PROJECTS: ${ONTOCODE_MEMCACHE_MAX_PROJECTS:-3}
-      ONTOCODE_MEMCACHE_MAX_TRIPLES: ${ONTOCODE_MEMCACHE_MAX_TRIPLES:-5000000}
+      LOG_DIR: /app/logs
+      ONTOLOGY_HTTP_TIMEOUT_MS: ${ONTOLOGY_HTTP_TIMEOUT_MS:-7200000}
+      ONTOLOGY_HTTP_TIMEOUT_SECONDS: ${ONTOLOGY_HTTP_TIMEOUT_SECONDS:-7200s}
+      JAVA_OPTS: >-
+        -Xms1g -Xmx3g
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m
+        -DentityExpansionLimit=100000000
+        -Djdk.xml.entityExpansionLimit=100000000
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
       JIRA_ENABLED: ${JIRA_ENABLED:-true}
       JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
-      JIRA_USER_EMAIL: ${JIRA_USER_EMAIL:-sindhuja@coretopia.com}
+      JIRA_USER_EMAIL: ${JIRA_USER_EMAIL:-uma@coretopia.com}
       JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
       JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
       JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+      # Import concurrency: 1 on t3.large, 2 on t3.xlarge, 3 on t3.2xlarge+
+      ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-2}
     depends_on:
       mongo:
         condition: service_healthy
       graphdb:
         condition: service_healthy
+    volumes:
+      - graphdb-import:/opt/graphdb-import
+      - /var/log/ontocode/editor:/app/logs
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 4g
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
-      interval: 30s
+      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health/liveness"]
+      interval: 20s
       timeout: 10s
-      retries: 5
+      retries: 8
       start_period: 120s
 
   # SWRL Rules Service
   swrl-service:
-    build:
-      context: .
-      dockerfile: Dockerfile.swrl
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-swrl:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-swrl:${VERSION:-latest}
     container_name: ontocode-swrl
     restart: unless-stopped
+    user: root
     ports:
       - "8084:8084"
     environment:
@@ -233,6 +289,14 @@ services:
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      JAVA_OPTS: >-
+        -Xms256m -Xmx768m
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m
+    volumes:
+      - /var/log/ontocode/swrl:/app/logs
     depends_on:
       mongo:
         condition: service_healthy
@@ -240,16 +304,14 @@ services:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 1024m
 
   # Plugin Service
   plugin-service:
-    build:
-      context: .
-      dockerfile: Dockerfile.plugin
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-plugin:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin:${VERSION:-latest}
     container_name: ontocode-plugin
     restart: unless-stopped
     ports:
@@ -261,6 +323,7 @@ services:
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
@@ -268,12 +331,14 @@ services:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 320m
 
   # Plugin Initialization Service
   plugin-init:
-    build:
-      context: .
-      dockerfile: Dockerfile.plugin-init
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin-init:${VERSION:-latest}
     container_name: ontocode-plugin-init
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
@@ -286,64 +351,66 @@ services:
     networks:
       - ontology-net
 
-  # VS Code Web Extension (Self-Contained)
-  vscode-web:
+  # VS Code Web Extension (Self-Contained) - DISABLED
+  # vscode-web:
+  #   image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-vscode-web:${VERSION:-latest}
+  #   container_name: ontocode-vscode-web
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     # Mount local workspace for file editing
+  #     - ${WORKSPACE_PATH:-./data/projects}:/workspace/projects
+  #   environment:
+  #     VSCODE_WEB_HOST: 0.0.0.0
+  #     VSCODE_WEB_PORT: 3000
+  #     # OntoCode API endpoints
+  #     ONTOCODE_API_URL: http://gateway:80
+  #     AUTH_SERVICE_URL: http://auth:8086
+  #   depends_on:
+  #     - gateway
+  #     - auth
+  #   networks:
+  #     - ontology-net
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 40s
+
+  # Web Application (React Frontend)
+  webapp:
     build:
       context: .
-      dockerfile: Dockerfile.vscode-extension
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-vscode-web:latest
-    container_name: ontocode-vscode-web
+      dockerfile: Dockerfile.webapp
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-web:${VERSION:-latest}
+    container_name: ontocode-web
     restart: unless-stopped
     ports:
       - "3000:3000"
-    volumes:
-      # Mount local workspace for file editing
-      - ${WORKSPACE_PATH:-./data/projects}:/workspace/projects
     environment:
-      VSCODE_WEB_HOST: 0.0.0.0
-      VSCODE_WEB_PORT: 3000
-      # OntoCode API endpoints
       ONTOCODE_API_URL: http://gateway:80
-      AUTH_SERVICE_URL: http://auth:8086
     depends_on:
       - gateway
       - auth
     networks:
       - ontology-net
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 40s
-
-  # Standalone React Web App (browser-mode OntoCode)
-  webapp:
-    build:
-      context: .
-      dockerfile: Dockerfile.webapp
-    image: ontocode-webapp:latest
-    container_name: ontocode-webapp
-    restart: unless-stopped
-    ports:
-      - "3001:3001"
-    depends_on:
-      - gateway
-    networks:
-      - ontology-net
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 10s
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://0.0.0.0:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
 
 volumes:
   mongo-data:
   graphdb-data:
+  graphdb-import:
 
 networks:
   ontology-net:

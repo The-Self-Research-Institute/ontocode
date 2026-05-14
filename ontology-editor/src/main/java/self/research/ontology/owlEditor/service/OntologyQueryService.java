@@ -1703,62 +1703,47 @@ public class OntologyQueryService {
                   OPTIONAL { ?prop rdfs:label ?propLabel }
                   OPTIONAL { ?prop a ?propType . FILTER(?propType IN (owl:ObjectProperty, owl:DatatypeProperty)) }
                   OPTIONAL {
-                    ?restriction owl:someValuesFrom ?filler .
-                    BIND("some" AS ?restrictionType)
+                    { ?restriction owl:someValuesFrom ?filler . BIND("some" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:allValuesFrom ?filler . BIND("only" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:hasValue ?filler . BIND("value" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:hasSelf true . BIND("Self" AS ?filler) . BIND("some" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:minQualifiedCardinality ?card . BIND("min" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:maxQualifiedCardinality ?card . BIND("max" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:qualifiedCardinality ?card . BIND("exactly" AS ?restrictionType) }
+                    UNION
+                    {
+                      ?restriction owl:minCardinality ?card .
+                      FILTER NOT EXISTS { ?restriction owl:minQualifiedCardinality ?any }
+                      BIND("min" AS ?restrictionType)
+                      BIND(owl:Thing AS ?filler)
+                    }
+                    UNION
+                    {
+                      ?restriction owl:maxCardinality ?card .
+                      FILTER NOT EXISTS { ?restriction owl:maxQualifiedCardinality ?any }
+                      BIND("max" AS ?restrictionType)
+                      BIND(owl:Thing AS ?filler)
+                    }
+                    UNION
+                    {
+                      ?restriction owl:cardinality ?card .
+                      FILTER NOT EXISTS { ?restriction owl:qualifiedCardinality ?any }
+                      BIND("exactly" AS ?restrictionType)
+                      BIND(owl:Thing AS ?filler)
+                    }
                   }
-                  OPTIONAL {
-                    ?restriction owl:allValuesFrom ?filler .
-                    BIND("only" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:hasValue ?filler .
-                    BIND("value" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:hasSelf true .
-                    BIND("Self" AS ?filler)
-                    BIND("some" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:minQualifiedCardinality ?card .
-                    OPTIONAL { ?restriction owl:onClass ?filler }
-                    OPTIONAL { ?restriction owl:onDataRange ?filler }
-                    BIND("min" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:maxQualifiedCardinality ?card .
-                    OPTIONAL { ?restriction owl:onClass ?filler }
-                    OPTIONAL { ?restriction owl:onDataRange ?filler }
-                    BIND("max" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:qualifiedCardinality ?card .
-                    OPTIONAL { ?restriction owl:onClass ?filler }
-                    OPTIONAL { ?restriction owl:onDataRange ?filler }
-                    BIND("exactly" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:minCardinality ?card .
-                    FILTER NOT EXISTS { ?restriction owl:minQualifiedCardinality ?any }
-                    BIND("min" AS ?restrictionType)
-                    BIND(owl:Thing AS ?filler)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:maxCardinality ?card .
-                    FILTER NOT EXISTS { ?restriction owl:maxQualifiedCardinality ?any }
-                    BIND("max" AS ?restrictionType)
-                    BIND(owl:Thing AS ?filler)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:cardinality ?card .
-                    FILTER NOT EXISTS { ?restriction owl:qualifiedCardinality ?any }
-                    BIND("exactly" AS ?restrictionType)
-                    BIND(owl:Thing AS ?filler)
-                  }
+                  OPTIONAL { ?restriction owl:onClass ?filler }
+                  OPTIONAL { ?restriction owl:onDataRange ?filler }
                   OPTIONAL { ?filler rdfs:label ?fillerLabel }
                   FILTER(BOUND(?restrictionType))
                 }
-                """.formatted(classIri, classIri);
+                """.formatted(classIri);
             return datasetService.execSelect(projectId, subClassRestrictionQuery);
         }, QUERY_POOL);
         
@@ -1831,59 +1816,47 @@ public class OntologyQueryService {
                               owl:onProperty ?prop .
                   OPTIONAL { ?prop rdfs:label ?propLabel }
                   OPTIONAL {
-                    ?restriction owl:someValuesFrom ?filler .
-                    BIND("some" AS ?restrictionType)
+                    { ?restriction owl:someValuesFrom ?filler . BIND("some" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:allValuesFrom ?filler . BIND("only" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:hasValue ?filler . BIND("value" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:hasSelf true . BIND("Self" AS ?filler) . BIND("some" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:minQualifiedCardinality ?card . BIND("min" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:maxQualifiedCardinality ?card . BIND("max" AS ?restrictionType) }
+                    UNION
+                    { ?restriction owl:qualifiedCardinality ?card . BIND("exactly" AS ?restrictionType) }
+                    UNION
+                    {
+                      ?restriction owl:minCardinality ?card .
+                      FILTER NOT EXISTS { ?restriction owl:minQualifiedCardinality ?any }
+                      BIND("min" AS ?restrictionType)
+                      BIND(owl:Thing AS ?filler)
+                    }
+                    UNION
+                    {
+                      ?restriction owl:maxCardinality ?card .
+                      FILTER NOT EXISTS { ?restriction owl:maxQualifiedCardinality ?any }
+                      BIND("max" AS ?restrictionType)
+                      BIND(owl:Thing AS ?filler)
+                    }
+                    UNION
+                    {
+                      ?restriction owl:cardinality ?card .
+                      FILTER NOT EXISTS { ?restriction owl:qualifiedCardinality ?any }
+                      BIND("exactly" AS ?restrictionType)
+                      BIND(owl:Thing AS ?filler)
+                    }
                   }
-                  OPTIONAL {
-                    ?restriction owl:allValuesFrom ?filler .
-                    BIND("only" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:hasValue ?filler .
-                    BIND("value" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:hasSelf true .
-                    BIND("Self" AS ?filler)
-                    BIND("some" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:minQualifiedCardinality ?card .
-                    OPTIONAL { ?restriction owl:onClass ?filler }
-                    OPTIONAL { ?restriction owl:onDataRange ?filler }
-                    BIND("min" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:maxQualifiedCardinality ?card .
-                    OPTIONAL { ?restriction owl:onClass ?filler }
-                    OPTIONAL { ?restriction owl:onDataRange ?filler }
-                    BIND("max" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:qualifiedCardinality ?card .
-                    OPTIONAL { ?restriction owl:onClass ?filler }
-                    OPTIONAL { ?restriction owl:onDataRange ?filler }
-                    BIND("exactly" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:minCardinality ?card .
-                    FILTER NOT EXISTS { ?restriction owl:minQualifiedCardinality ?any }
-                    BIND("min" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:maxCardinality ?card .
-                    FILTER NOT EXISTS { ?restriction owl:maxQualifiedCardinality ?any }
-                    BIND("max" AS ?restrictionType)
-                  }
-                  OPTIONAL {
-                    ?restriction owl:cardinality ?card .
-                    FILTER NOT EXISTS { ?restriction owl:qualifiedCardinality ?any }
-                    BIND("exactly" AS ?restrictionType)
-                  }
+                  OPTIONAL { ?restriction owl:onClass ?filler }
+                  OPTIONAL { ?restriction owl:onDataRange ?filler }
                   OPTIONAL { ?filler rdfs:label ?fillerLabel }
                   FILTER(BOUND(?restrictionType))
                 }
-                """.formatted(classIri, classIri);
+                """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
         }, QUERY_POOL);
         

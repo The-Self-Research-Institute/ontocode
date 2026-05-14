@@ -1,0 +1,69 @@
+# Memory sizing override — r5.2xlarge (64 GB RAM)
+# Total container limits ≈ 45 GB | leaves ~19 GB for OS + Docker overhead
+#
+# Usage:
+#   docker compose -f docker-compose.production.yml -f docker-compose.r5-2xlarge.yml up -d
+
+services:
+  mongo:
+    command: ["mongod", "--wiredTigerCacheSizeGB", "1.5", "--auth"]
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+
+  graphdb:
+    environment:
+      GDB_HEAP_SIZE: 16g
+      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=16m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+    deploy:
+      resources:
+        limits:
+          memory: 20g
+
+  auth:
+    environment:
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx768m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  gateway:
+    environment:
+      JAVA_OPTS: -Xms256m -Xmx2048m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+
+  owl-editor:
+    environment:
+      JAVA_OPTS: "-Xms4g -Xmx12g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+      ONTOCODE_IMPORT_MAX_CONCURRENT: 3
+    deploy:
+      resources:
+        limits:
+          memory: 14g
+
+  swrl-service:
+    environment:
+      JAVA_OPTS: "-Xms512m -Xmx2048m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m"
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+
+  plugin-service:
+    environment:
+      JAVA_OPTS: -Xms128m -Xmx512m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  webapp:
+    deploy:
+      resources:
+        limits:
+          memory: 256m

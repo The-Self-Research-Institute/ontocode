@@ -362,7 +362,12 @@ public class ProjectController {
                 }
             }
 
-            if (membersAdded) {
+            boolean implicitTouched = false;
+            if (!isPrivateProjectShare(request) && workspaceOpt.isPresent()) {
+                implicitTouched = projectService.applyImplicitWorkspaceLeadershipEditors(project, workspaceOpt.get());
+            }
+
+            if (membersAdded || implicitTouched) {
                 projectService.updateProject(project);
             }
 
@@ -770,6 +775,18 @@ public class ProjectController {
                 request.role
             );
 
+            // When the project transitions from private (1 member) to shared (>1 members),
+            // apply implicit workspace leadership editors so owner/admin are always present
+            // in non-private projects. Also idempotently re-applies for already-shared projects
+            // in case new workspace admins were promoted after project creation.
+            Optional<Workspace> wsOpt = workspaceService.getWorkspace(project.getWorkspaceId());
+            if (wsOpt.isPresent() && project.getMembers().size() > 1) {
+                boolean touched = projectService.applyImplicitWorkspaceLeadershipEditors(project, wsOpt.get());
+                if (touched) {
+                    project = projectService.updateProject(project);
+                }
+            }
+
             // Notify the new member via email (best-effort — never block the response)
             try {
                 emailService.sendProjectAccessEmail(
@@ -1028,6 +1045,17 @@ public class ProjectController {
             log.error("Error restoring project", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
+    }
+
+    /**
+     * "Only me" / legacy null shareWith — no implicit workspace owner/admin editors.
+     */
+    private static boolean isPrivateProjectShare(CreateProjectRequest request) {
+        if (request == null || request.shareWith == null) {
+            return true;
+        }
+        String sw = request.shareWith.trim();
+        return sw.isEmpty() || "none".equalsIgnoreCase(sw);
     }
 
     /**

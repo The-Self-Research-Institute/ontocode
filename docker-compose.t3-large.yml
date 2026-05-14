@@ -1,0 +1,72 @@
+# Memory sizing override — t3.large (8 GB RAM)
+# Total container limits ≈ 6.8 GB | leaves ~1.2 GB for OS + Docker overhead
+#
+# Usage:
+#   docker compose -f docker-compose.production.yml -f docker-compose.t3-large.yml up -d
+#
+# NOTE: Editor heap is capped at 1.5 GB on this tier. Large ontology imports
+# will be slower and may require increasing swap. Upgrade to t3.xlarge for comfort.
+
+services:
+  mongo:
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.15", "--auth"]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  graphdb:
+    environment:
+      GDB_HEAP_SIZE: 1500m
+      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=4m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  auth:
+    environment:
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  gateway:
+    environment:
+      JAVA_OPTS: -Xms128m -Xmx512m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  owl-editor:
+    environment:
+      JAVA_OPTS: "-Xms512m -Xmx1500m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+      ONTOCODE_IMPORT_MAX_CONCURRENT: 1
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  swrl-service:
+    environment:
+      JAVA_OPTS: "-Xms128m -Xmx480m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m"
+    deploy:
+      resources:
+        limits:
+          memory: 640m
+
+  plugin-service:
+    environment:
+      JAVA_OPTS: -Xms64m -Xmx192m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  webapp:
+    deploy:
+      resources:
+        limits:
+          memory: 192m
