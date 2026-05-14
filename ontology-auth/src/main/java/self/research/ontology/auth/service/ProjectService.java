@@ -90,6 +90,86 @@ public class ProjectService {
     }
 
     /**
+     * Non-private (shared) projects: ensure the workspace billing owner and every active workspace admin
+     * have at least editor access, tagged for removal/role rules.
+     */
+    public boolean applyImplicitWorkspaceLeadershipEditors(Project project, Workspace workspace) {
+        if (project == null || workspace == null) {
+            return false;
+        }
+        boolean dirty = false;
+        String wsOwnerId = workspace.getOwnerId();
+        if (wsOwnerId != null && !wsOwnerId.equals(project.getOwnerId())) {
+            dirty |= upsertLinkedWorkspaceEditor(project, workspace, wsOwnerId, Project.WS_EDITOR_LINK_OWNER);
+        }
+        for (Workspace.WorkspaceMember wm : workspace.getMembers()) {
+            if (wm.getUserId() == null || wm.getStatus() != Workspace.MemberStatus.ACTIVE) {
+                continue;
+            }
+            if (wm.getUserId().equals(project.getOwnerId())) {
+                continue;
+            }
+            if (wm.getRole() == Workspace.WorkspaceRole.ADMIN) {
+                dirty |= upsertLinkedWorkspaceEditor(project, workspace, wm.getUserId(), Project.WS_EDITOR_LINK_ADMIN);
+            }
+        }
+        return dirty;
+    }
+
+    private boolean upsertLinkedWorkspaceEditor(Project project, Workspace workspace, String userId, String link) {
+        Workspace.WorkspaceMember wm = workspace.getMember(userId);
+        String username = wm != null ? wm.getUsername() : null;
+        String email = wm != null ? wm.getEmail() : null;
+        if ((username == null || email == null) && userId.equals(workspace.getOwnerId())) {
+            Optional<User> u = userRepository.findById(userId);
+            if (u.isPresent()) {
+                if (username == null) {
+                    username = u.get().getUsername();
+                }
+                if (email == null) {
+                    email = u.get().getEmail();
+                }
+            }
+        }
+        if (username == null) {
+            username = "";
+        }
+        if (email == null) {
+            email = "";
+        }
+
+        Project.ProjectMember pm = project.getMember(userId);
+        if (pm == null) {
+            project.addMember(userId, username, email, "EDITOR", link);
+            return true;
+        }
+
+        boolean dirty = false;
+        if (Project.WS_EDITOR_LINK_OWNER.equals(link)) {
+            if (!Project.WS_EDITOR_LINK_OWNER.equals(pm.getWorkspaceEditorLink())) {
+                pm.setWorkspaceEditorLink(Project.WS_EDITOR_LINK_OWNER);
+                dirty = true;
+            }
+        } else if (Project.WS_EDITOR_LINK_ADMIN.equals(link)) {
+            if (pm.getWorkspaceEditorLink() == null || Project.WS_EDITOR_LINK_ADMIN.equals(pm.getWorkspaceEditorLink())) {
+                pm.setWorkspaceEditorLink(Project.WS_EDITOR_LINK_ADMIN);
+                dirty = true;
+            }
+        }
+
+        String r = pm.getRole() != null ? pm.getRole() : "VIEWER";
+        if ("VIEWER".equals(r)) {
+            pm.setRole("EDITOR");
+            dirty = true;
+        }
+
+        if (dirty) {
+            project.setUpdatedAt(LocalDateTime.now());
+        }
+        return dirty;
+    }
+
+    /**
      * Get all projects in a workspace
      */
     public List<Project> getWorkspaceProjects(String workspaceId) {
@@ -259,6 +339,17 @@ public class ProjectService {
             throw new IllegalArgumentException("User is not a member of this project");
         }
 
+        Workspace workspace = workspaceRepository.findByWorkspaceId(project.getWorkspaceId())
+                .orElseThrow(() -> new IllegalStateException("Workspace not found"));
+
+        if (Project.WS_EDITOR_LINK_OWNER.equals(member.getWorkspaceEditorLink())) {
+            throw new IllegalArgumentException("The workspace owner's access on this project cannot be changed.");
+        }
+        if (Project.WS_EDITOR_LINK_ADMIN.equals(member.getWorkspaceEditorLink())
+                && !workspace.getOwnerId().equals(userId)) {
+            throw new SecurityException("Only the workspace owner can change this workspace administrator's project role.");
+        }
+
         member.setRole(normalizedRole);
         return projectRepository.save(project);
     }
@@ -283,7 +374,22 @@ public class ProjectService {
         if (project.getOwnerId().equals(targetUserId)) {
             throw new IllegalArgumentException("Cannot remove project owner");
         }
-        
+
+        Workspace workspace = workspaceRepository.findByWorkspaceId(project.getWorkspaceId()).orElse(null);
+        if (workspace != null) {
+            Project.ProjectMember target = project.getMember(targetUserId);
+            if (target != null) {
+                if (Project.WS_EDITOR_LINK_OWNER.equals(target.getWorkspaceEditorLink())) {
+                    throw new SecurityException("The workspace owner cannot be removed from this project.");
+                }
+                if (Project.WS_EDITOR_LINK_ADMIN.equals(target.getWorkspaceEditorLink())
+                        && !workspace.getOwnerId().equals(userId)) {
+                    throw new SecurityException(
+                            "Only the workspace owner can remove a workspace administrator from this project.");
+                }
+            }
+        }
+
         project.removeMember(targetUserId);
         return projectRepository.save(project);
     }

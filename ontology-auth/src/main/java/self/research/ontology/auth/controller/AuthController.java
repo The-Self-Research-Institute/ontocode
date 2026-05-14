@@ -354,27 +354,35 @@ public class AuthController {
             return ResponseEntity.badRequest().body(Map.of("error", "Email or username is required"));
         }
 
-        // Always return success to prevent email enumeration
-        userRepository.findByEmailIgnoreCase(identifier.toLowerCase(Locale.ROOT))
-            .or(() -> userRepository.findByUsername(identifier))
-            .ifPresent(user -> {
-            if (!user.isEnabled()) {
-                String verificationToken = UUID.randomUUID().toString();
-                user.setVerificationToken(verificationToken);
-                user.setVerificationTokenExpiry(LocalDateTime.now().plusHours(24));
-                userRepository.save(user);
+        Optional<User> userOpt = userRepository.findByEmailIgnoreCase(identifier.toLowerCase(Locale.ROOT))
+                .or(() -> userRepository.findByUsername(identifier));
 
-                try {
-                    emailService.sendVerificationEmail(user.getEmail(), verificationToken);
-                } catch (Exception e) {
-                    log.error("Failed to resend verification email", e);
-                }
-            }
-        });
+        if (userOpt.isEmpty()) {
+            // Generic message to prevent email enumeration
+            return ResponseEntity.ok(Map.of("message", "If the email exists and is not yet verified, a new verification link has been sent."));
+        }
 
-        return ResponseEntity.ok(Map.of(
-            "message", "If the email exists and is not yet verified, a new verification link has been sent."
-        ));
+        User user = userOpt.get();
+
+        if (user.isEnabled()) {
+            return ResponseEntity.ok(Map.of(
+                "message", "This account is already verified. Please sign in."
+            ));
+        }
+
+        String verificationToken = UUID.randomUUID().toString();
+        user.setVerificationToken(verificationToken);
+        user.setVerificationTokenExpiry(LocalDateTime.now().plusHours(24));
+        userRepository.save(user);
+
+        try {
+            emailService.sendVerificationEmail(user.getEmail(), verificationToken);
+        } catch (Exception e) {
+            log.error("Failed to resend verification email", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to send email. Please try again."));
+        }
+
+        return ResponseEntity.ok(Map.of("message", "Verification email sent. Please check your inbox."));
     }
 
     /**

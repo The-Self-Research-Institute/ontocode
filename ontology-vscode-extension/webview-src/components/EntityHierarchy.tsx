@@ -336,7 +336,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           ) : (
             <div className="flex items-center gap-1 overflow-hidden">
               <span
-                className={`text-xs select-none truncate ${isSelected ? "font-semibold" : ""} ${
+                className={`text-xs select-none truncate min-w-0 shrink ${isSelected ? "font-semibold" : ""} ${
                   (item as any).isUnsatisfiable ? "text-red-600 font-bold" : ""
                 }`}
                 style={{ color: (item as any).isUnsatisfiable ? '#dc2626' : 'var(--text-primary)' }}
@@ -344,15 +344,15 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
               >
                 {item.label}
               </span>
-              
+
               {/* Equivalent classes/properties display — shown in both asserted and inferred modes */}
               {(item as any).equivalentClasses && (item as any).equivalentClasses.length > 0 && (
-                <span className="text-[10px] text-amber-700 italic whitespace-nowrap ml-1">
+                <span className="text-[10px] text-amber-700 italic whitespace-nowrap ml-1 shrink-0 max-w-[50%] overflow-hidden text-ellipsis">
                   ≡ {(item as any).equivalentClasses.map((c: any) => c.label).join(', ')}
                 </span>
               )}
               {viewMode === 'inferred' && (item as any).equivalentProperties && (item as any).equivalentProperties.length > 0 && (
-                <span className="text-[10px] text-gray-500 italic whitespace-nowrap">
+                <span className="text-[10px] text-gray-500 italic whitespace-nowrap shrink-0 max-w-[50%] overflow-hidden text-ellipsis">
                   ≡ {(item as any).equivalentProperties.map((p: any) => typeof p === 'string' ? p : p.label).join(', ')}
                 </span>
               )}

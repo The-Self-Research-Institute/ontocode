@@ -1680,12 +1680,6 @@ class OntoCodePanel {
                 case 'apiPatch':
                     response = await axios.patch(fullUrl, (message as any).body, axiosConfig);
                     break;
-                case 'apiPut':
-                    response = await axios.put(fullUrl, message.body, axiosConfig);
-                    break;
-                case 'apiPatch':
-                    response = await axios.patch(fullUrl, message.body, axiosConfig);
-                    break;
                 case 'apiDelete':
                     response = await axios.delete(fullUrl, { ...axiosConfig, params: (message as any).params });
                     break;

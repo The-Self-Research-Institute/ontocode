@@ -27,6 +27,7 @@ import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -203,6 +204,7 @@ public class StripeService {
         if (!"succeeded".equals(setupIntent.getStatus())) {
             throw new IllegalStateException("Card setup not completed. Status: " + setupIntent.getStatus());
         }
+        assertSetupIntentBelongsToUser(user, setupIntent);
         String paymentMethodId = setupIntent.getPaymentMethod();
 
         // Set as customer default for future invoices
@@ -288,11 +290,7 @@ public class StripeService {
             }
         }
 
-        // Update user-level subscription reference
-        user.setStripeSubscriptionId(subscription.getId());
-        user.setSubscriptionStatus(subscription.getStatus());
-        user.setSubscriptionPlanName(planName.toUpperCase());
-        user.setBillingInterval(interval);
+        applySubscriptionSnapshotToUser(user, subscription, planName, interval);
         userRepository.save(user);
 
         // Sync to ALL user-owned workspaces (Account-level billing)
@@ -312,6 +310,7 @@ public class StripeService {
         if (!"succeeded".equals(setupIntent.getStatus())) {
             throw new IllegalStateException("Card setup not completed. Status: " + setupIntent.getStatus());
         }
+        assertSetupIntentBelongsToUser(user, setupIntent);
         String paymentMethodId = setupIntent.getPaymentMethod();
 
         // Update customer-level default
@@ -538,12 +537,19 @@ public class StripeService {
 
     /**
      * Immediately cancels the subscription (prorated refund not issued).
+     * Idempotent: if the subscription is already cancelled (e.g. double-click), local state
+     * is still reconciled and no Stripe API error is surfaced.
      */
     public void cancelSubscriptionImmediately(User user) throws StripeException {
         requireActiveSubscription(user);
 
         Subscription subscription = Subscription.retrieve(user.getStripeSubscriptionId());
-        subscription.cancel();
+        if (!"canceled".equalsIgnoreCase(subscription.getStatus())) {
+            subscription.cancel();
+        } else {
+            log.info("Subscription {} already canceled in Stripe for user {} — reconciling local state",
+                    subscription.getId(), user.getUsername());
+        }
 
         user.setSubscriptionStatus("canceled");
         user.setAutoRenewEnabled(false);
@@ -636,14 +642,38 @@ public class StripeService {
                 user.setSubscriptionStatus("trialing");
             }
         }
+
+        // Mark trial consumed here (mirrors createSubscriptionAfterSetup) so that if the
+        // customer.subscription.created webhook is delayed or missed, a second checkout
+        // attempt cannot grant a second free trial.
+        if (!user.isHasUsedFreeTrial()) {
+            user.setHasUsedFreeTrial(true);
+        }
+        if (user.getFirstSubscriptionAt() == null) {
+            user.setFirstSubscriptionAt(LocalDateTime.now());
+        }
         userRepository.save(user);
 
-        // Clear pending lock and immediately activate the workspace
+        // Clear embedded-checkout lock (otherwise the workspace stays stuck in "pending checkout")
+        if (session.getId() != null) {
+            workspaceRepository.findByPendingCheckoutSessionId(session.getId()).ifPresent(ws -> {
+                ws.setPendingCheckoutSessionId(null);
+                ws.setPendingCheckoutCreatedAt(null);
+                workspaceRepository.save(ws);
+            });
+        }
         String workspaceId = session.getMetadata() != null ? session.getMetadata().get("workspaceId") : null;
         if (workspaceId != null && !workspaceId.isBlank()) {
-        // Sync status to ALL workspaces
-        workspaceService.syncWorkspacesToOwnerPlan(user);
+            workspaceRepository.findByWorkspaceId(workspaceId).ifPresent(ws -> {
+                if (session.getId() != null && session.getId().equals(ws.getPendingCheckoutSessionId())) {
+                    ws.setPendingCheckoutSessionId(null);
+                    ws.setPendingCheckoutCreatedAt(null);
+                    workspaceRepository.save(ws);
+                }
+            });
         }
+
+        workspaceService.syncWorkspacesToOwnerPlan(user);
 
         log.info("Checkout session completed for user {}, subscription: {}", userId, session.getSubscription());
     }
@@ -734,83 +764,220 @@ public class StripeService {
     }
 
     public void handleInvoicePaymentFailed(Invoice invoice) {
-        findUserForInvoice(invoice)
-                .ifPresent(user -> {
-                    user.setSubscriptionStatus("past_due");
-                    userRepository.save(user);
-                    log.warn("Invoice payment failed for user {} — status set to past_due (invoice={})",
-                            user.getUsername(), invoice.getId());
-
-                    // Sync status to ALL workspaces
-                    workspaceService.syncWorkspacesToOwnerPlan(user);
-
+        // Proration invoices from upgrade attempts (PRO→ENTERPRISE, monthly→annual, etc.) use
+        // ERROR_IF_INCOMPLETE — Stripe rolls back the subscription update when payment fails.
+        // The user's current plan is still active; do NOT mark it past_due.
+        // Send a targeted "upgrade payment failed" email instead.
+        String billingReason = invoice.getBillingReason();
+        if ("subscription_update".equals(billingReason)) {
+            log.warn("[InvoicePaymentFailed] Proration invoice {} failed (billingReason=subscription_update). " +
+                     "Stripe rolled back the subscription update — current plan unchanged. No status change applied.",
+                     invoice.getId());
+            findUserForInvoice(invoice).ifPresent(user -> {
+                String emailKey = "upgrade-payment-failed:" + invoice.getId();
+                if (reserveEmailLog(emailKey, user, invoice, "upgrade_payment_failed")) {
                     String amount = invoice.getAmountDue() != null
-                            ? String.format("$%.2f %s",
-                                    invoice.getAmountDue() / 100.0,
+                            ? String.format("$%.2f %s", invoice.getAmountDue() / 100.0,
                                     invoice.getCurrency() != null ? invoice.getCurrency().toUpperCase() : "USD")
-                            : "your subscription amount";
+                            : "the upgrade amount";
                     String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
                     try {
                         emailService.sendPaymentFailedEmail(
                                 user.getEmail(), user.getUsername(), planName, amount, baseUrl + "/billing");
-                        log.info("Payment failed email sent to {} for invoice {}", user.getEmail(), invoice.getId());
+                        markEmailLogSent(emailKey);
+                        log.info("[InvoicePaymentFailed] Upgrade-payment-failed email sent to {} for invoice {}",
+                                user.getEmail(), invoice.getId());
                     } catch (Exception e) {
-                        log.error("Failed to send payment-failed email to {}: {}", user.getEmail(), e.getMessage());
+                        markEmailLogFailed(emailKey, e.getMessage());
+                        log.error("[InvoicePaymentFailed] Failed to send upgrade-payment-failed email to {}: {}",
+                                user.getEmail(), e.getMessage());
                     }
-                });
+                }
+            });
+            return;
+        }
+
+        findUserForInvoice(invoice).ifPresent(user -> {
+            user.setSubscriptionStatus("past_due");
+            userRepository.save(user);
+            log.warn("[InvoicePaymentFailed] user={} invoice={} billingReason={} — status set to past_due",
+                    user.getUsername(), invoice.getId(), billingReason);
+
+            // Sync status to ALL workspaces (disables collaboration while past_due)
+            workspaceService.syncWorkspacesToOwnerPlan(user);
+
+            // Dedup: one payment-failed email per invoice regardless of how many times
+            // Stripe retries the same invoice (default: up to 4 attempts over ~3 weeks).
+            String emailKey = "payment-failed:" + invoice.getId();
+            if (!reserveEmailLog(emailKey, user, invoice, "payment_failed")) {
+                log.info("[InvoicePaymentFailed] Skipping duplicate payment-failed email for invoice {} / user {}",
+                        invoice.getId(), user.getUsername());
+                return;
+            }
+            String amount = invoice.getAmountDue() != null
+                    ? String.format("$%.2f %s",
+                            invoice.getAmountDue() / 100.0,
+                            invoice.getCurrency() != null ? invoice.getCurrency().toUpperCase() : "USD")
+                    : "your subscription amount";
+            String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
+            try {
+                emailService.sendPaymentFailedEmail(
+                        user.getEmail(), user.getUsername(), planName, amount, baseUrl + "/billing");
+                markEmailLogSent(emailKey);
+                log.info("[InvoicePaymentFailed] Payment-failed email sent to {} for invoice {}",
+                        user.getEmail(), invoice.getId());
+            } catch (Exception e) {
+                markEmailLogFailed(emailKey, e.getMessage());
+                log.error("[InvoicePaymentFailed] Failed to send payment-failed email to {}: {}",
+                        user.getEmail(), e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Customer must complete 3DS authentication or bank debit setup; funds are not captured yet.
+     * Sets a temporary status to disable collaboration until Stripe confirms payment via
+     * {@link #handleInvoicePaymentSucceeded} (restores "active") or
+     * {@link #handleInvoicePaymentFailed} (sets "past_due").
+     */
+    public void handleInvoicePaymentActionRequired(Invoice invoice) {
+        findUserForInvoice(invoice).ifPresentOrElse(user -> {
+            log.warn("[InvoicePaymentActionRequired] user={} invoice={} — awaiting 3DS/ACH. " +
+                    "Disabling collaboration until payment is confirmed.",
+                    user.getUsername(), invoice.getId());
+            user.setSubscriptionStatus("payment_action_required");
+            userRepository.save(user);
+            workspaceService.syncWorkspacesToOwnerPlan(user);
+        }, () -> log.warn("[InvoicePaymentActionRequired] invoice={} — no local user matched",
+                invoice.getId()));
     }
 
     public void handleInvoicePaymentSucceeded(Invoice invoice) {
-        findUserForInvoice(invoice)
-                .ifPresent(user -> {
-                    Long paidAmount = resolvePaidAmount(invoice);
+        // ── Step 0: Entry log — makes every invocation auditable from grep ───
+        log.info("[InvoicePaymentSucceeded] invoiceId={} customerId={} subscriptionId={} amountPaid={} amountDue={} customerEmail={}",
+                invoice.getId(),
+                invoice.getCustomer(),
+                invoice.getSubscription(),
+                invoice.getAmountPaid(),
+                invoice.getAmountDue(),
+                invoice.getCustomerEmail());
 
-                    // invoice.payment_succeeded is a reliable fallback if
-                    // customer.subscription.updated is delayed/missed.
-                    if (paidAmount > 0) {
-                        user.setSubscriptionStatus("active");
-                        if (invoice.getPeriodEnd() != null) {
-                            user.setSubscriptionCurrentPeriodEnd(
-                                    LocalDateTime.ofInstant(Instant.ofEpochSecond(invoice.getPeriodEnd()), ZoneOffset.UTC));
+        Optional<User> userOpt = findUserForInvoice(invoice);
+        if (userOpt.isEmpty()) {
+            // ── Step 0a: Last-resort fallback — pull the email from Stripe directly ───
+            // The local user lookup chain may miss if customer.subscription.created
+            // hasn't persisted yet, or if the user record was created with a different
+            // customer ID and never reconciled.
+            String fallbackEmail = invoice.getCustomerEmail();
+            if ((fallbackEmail == null || fallbackEmail.isBlank()) && invoice.getCustomer() != null) {
+                try {
+                    Customer customer = Customer.retrieve(invoice.getCustomer());
+                    fallbackEmail = customer.getEmail();
+                    if (fallbackEmail != null && !fallbackEmail.isBlank()) {
+                        userOpt = userRepository.findByEmailIgnoreCase(fallbackEmail);
+                        if (userOpt.isPresent()) {
+                            // Repair the link so future events resolve via the fast path.
+                            User repaired = userOpt.get();
+                            if (repaired.getStripeCustomerId() == null
+                                    || !invoice.getCustomer().equals(repaired.getStripeCustomerId())) {
+                                repaired.setStripeCustomerId(invoice.getCustomer());
+                                userRepository.save(repaired);
+                                log.warn("[InvoicePaymentSucceeded] Repaired missing stripeCustomerId for user {} (email={}, customerId={})",
+                                        repaired.getUsername(), fallbackEmail, invoice.getCustomer());
+                            }
                         }
-                        userRepository.save(user);
-                        log.info("Invoice payment succeeded for user {} — status set to active", user.getUsername());
                     }
+                } catch (Exception ex) {
+                    log.warn("[InvoicePaymentSucceeded] Stripe Customer.retrieve fallback failed for {}: {}",
+                            invoice.getCustomer(), ex.getMessage());
+                }
+            }
+            if (userOpt.isEmpty()) {
+                recordUnmatchedInvoice(invoice, fallbackEmail);
+                return;
+            }
+        }
 
-                    // Skip $0 invoices (e.g. trial-start invoice with no charge)
-                    if (paidAmount == 0) {
-                        log.info("Skipping payment success email for zero-amount invoice {} / user {}",
-                                invoice.getId(), user.getUsername());
-                        return;
-                    }
+        User user = userOpt.get();
+        Long paidAmount = resolvePaidAmount(invoice);
 
-                    // Sync status to ALL workspaces (restores collaboration if paid)
-                    workspaceService.syncWorkspacesToOwnerPlan(user);
+        // invoice.payment_succeeded is a reliable fallback if
+        // customer.subscription.updated is delayed/missed.
+        if (paidAmount > 0) {
+            user.setSubscriptionStatus("active");
+            if (invoice.getPeriodEnd() != null) {
+                user.setSubscriptionCurrentPeriodEnd(
+                        LocalDateTime.ofInstant(Instant.ofEpochSecond(invoice.getPeriodEnd()), ZoneOffset.UTC));
+            }
+            userRepository.save(user);
+            log.info("[InvoicePaymentSucceeded] User {} email={} — status set to active",
+                    user.getUsername(), user.getEmail());
+        }
 
-                    String amount = String.format("$%.2f %s",
-                            paidAmount / 100.0,
-                            invoice.getCurrency() != null ? invoice.getCurrency().toUpperCase() : "USD");
-                    String nextBillingDate = invoice.getPeriodEnd() != null
-                            ? LocalDateTime.ofInstant(Instant.ofEpochSecond(invoice.getPeriodEnd()), ZoneOffset.UTC)
-                                    .format(DATE_FMT)
-                            : "N/A";
-                    String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
-                    String emailLogKey = "payment-succeeded:" + invoice.getId();
-                    if (!reserveEmailLog(emailLogKey, user, invoice, "payment_succeeded")) {
-                        log.info("Skipping duplicate payment success email for invoice {} / user {}",
-                                invoice.getId(), user.getUsername());
-                        return;
-                    }
-                    try {
-                        emailService.sendPaymentSucceededEmail(
-                                user.getEmail(), user.getUsername(), planName,
-                                amount, nextBillingDate, invoice.getHostedInvoiceUrl());
-                        markEmailLogSent(emailLogKey);
-                    } catch (Exception e) {
-                        markEmailLogFailed(emailLogKey, e.getMessage());
-                        log.error("Failed to send payment-receipt email to {}: {}", user.getEmail(), e.getMessage());
-                    }
-                });
+        // Skip $0 invoices (e.g. trial-start invoice with no charge)
+        if (paidAmount == 0) {
+            log.info("[InvoicePaymentSucceeded] Skipping payment success email for zero-amount invoice {} / user {} (email={})",
+                    invoice.getId(), user.getUsername(), user.getEmail());
+            return;
+        }
+
+        // Sync status to ALL workspaces (restores collaboration if paid)
+        workspaceService.syncWorkspacesToOwnerPlan(user);
+
+        String amount = String.format("$%.2f %s",
+                paidAmount / 100.0,
+                invoice.getCurrency() != null ? invoice.getCurrency().toUpperCase() : "USD");
+        String nextBillingDate = invoice.getPeriodEnd() != null
+                ? LocalDateTime.ofInstant(Instant.ofEpochSecond(invoice.getPeriodEnd()), ZoneOffset.UTC)
+                        .format(DATE_FMT)
+                : "N/A";
+        String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
+        String emailLogKey = "payment-succeeded:" + invoice.getId();
+        if (!reserveEmailLog(emailLogKey, user, invoice, "payment_succeeded")) {
+            log.info("[InvoicePaymentSucceeded] Skipping duplicate payment success email for invoice {} / user {} (email={})",
+                    invoice.getId(), user.getUsername(), user.getEmail());
+            return;
+        }
+        try {
+            emailService.sendPaymentSucceededEmail(
+                    user.getEmail(), user.getUsername(), planName,
+                    amount, nextBillingDate, invoice.getHostedInvoiceUrl());
+            markEmailLogSent(emailLogKey);
+            log.info("[InvoicePaymentSucceeded] Payment-receipt email sent to {} for invoice {}",
+                    user.getEmail(), invoice.getId());
+        } catch (Exception e) {
+            markEmailLogFailed(emailLogKey, e.getMessage());
+            log.error("[InvoicePaymentSucceeded] Failed to send payment-receipt email to {} for invoice {}: {}",
+                    user.getEmail(), invoice.getId(), e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Records an invoice that couldn't be matched to a local user so support
+     * can manually reconcile. Writes to {@code stripe_unmatched_invoices}.
+     * The collection grows slowly (only failures land here) and provides the
+     * audit trail that {@code findUserForInvoice}'s warn-only log does not.
+     */
+    private void recordUnmatchedInvoice(Invoice invoice, String discoveredEmail) {
+        try {
+            Document doc = new Document("invoiceId", invoice.getId())
+                    .append("stripeCustomerId", invoice.getCustomer())
+                    .append("stripeSubscriptionId", invoice.getSubscription())
+                    .append("customerEmail", invoice.getCustomerEmail())
+                    .append("discoveredEmail", discoveredEmail)
+                    .append("amountPaid", invoice.getAmountPaid())
+                    .append("amountDue", invoice.getAmountDue())
+                    .append("currency", invoice.getCurrency())
+                    .append("hostedInvoiceUrl", invoice.getHostedInvoiceUrl())
+                    .append("recordedAt", LocalDateTime.now())
+                    .append("status", "unmatched");
+            mongoTemplate.insert(doc, "stripe_unmatched_invoices");
+            log.error("[InvoicePaymentSucceeded] UNMATCHED invoice {} customerId={} customerEmail={} discoveredEmail={} — recorded to stripe_unmatched_invoices for reconciliation",
+                    invoice.getId(), invoice.getCustomer(), invoice.getCustomerEmail(), discoveredEmail);
+        } catch (Exception persistEx) {
+            log.error("[InvoicePaymentSucceeded] UNMATCHED invoice {} could not even be recorded: {}",
+                    invoice.getId(), persistEx.getMessage(), persistEx);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -988,7 +1155,9 @@ public class StripeService {
     }
 
     private void sendAutoRenewDisabledEmailOnce(User user, Subscription subscription) {
-        String key = "auto-renew-disabled:" + subscription.getId() + ":" + subscription.getCurrentPeriodEnd();
+        // Key scoped to today (UTC) — one email per toggle action per day.
+        // Avoids duplicates from webhook retries while still notifying on genuine re-toggles.
+        String key = "auto-renew-disabled:" + subscription.getId() + ":" + LocalDate.now(ZoneOffset.UTC);
         if (!reserveEmailLog(key, user, subscription, "auto_renew_disabled")) {
             log.info("Skipping duplicate auto-renew disabled email for subscription {} / user {}",
                     subscription.getId(), user.getUsername());
@@ -1010,7 +1179,8 @@ public class StripeService {
     }
 
     private void sendAutoRenewEnabledEmailOnce(User user, Subscription subscription) {
-        String key = "auto-renew-enabled:" + subscription.getId() + ":" + subscription.getCurrentPeriodEnd();
+        // Key scoped to today (UTC) — one email per toggle action per day.
+        String key = "auto-renew-enabled:" + subscription.getId() + ":" + LocalDate.now(ZoneOffset.UTC);
         if (!reserveEmailLog(key, user, subscription, "auto_renew_enabled")) {
             log.info("Skipping duplicate auto-renew enabled email for subscription {} / user {}",
                     subscription.getId(), user.getUsername());
@@ -1067,7 +1237,13 @@ public class StripeService {
 
         optUser.ifPresent(user -> {
             user.setStripeSubscriptionId(subscription.getId());
-            user.setSubscriptionStatus(subscription.getStatus());
+            String newStatus = subscription.getStatus();
+            String previousStatus = user.getSubscriptionStatus();
+            if ("past_due".equals(previousStatus) && "active".equals(newStatus)) {
+                log.info("[SubscriptionUpdate] Subscription {} recovered from past_due → active for user {} — re-enabling collaboration",
+                        subscription.getId(), user.getUsername());
+            }
+            user.setSubscriptionStatus(newStatus);
             user.setAutoRenewEnabled(!Boolean.TRUE.equals(subscription.getCancelAtPeriodEnd()));
 
             if (subscription.getCancelAtPeriodEnd() != null && subscription.getCancelAtPeriodEnd()) {
@@ -1090,7 +1266,18 @@ public class StripeService {
                 user.setBillingInterval(normalizedBillingInterval);
                 String derivedPlanName = derivePlanName(priceId);
                 if (derivedPlanName != null) {
-                    user.setSubscriptionPlanName(derivedPlanName);
+                    String currentPlan = user.getSubscriptionPlanName();
+                    if (currentPlan != null && planRank(derivedPlanName) < planRank(currentPlan)) {
+                        // Stripe Billing Portal allows plan changes that our API blocks.
+                        // Preserve the existing plan and log for admin review — the subscription
+                        // in Stripe should be manually corrected in the Dashboard.
+                        log.error("[SubscriptionUpdate] Downgrade blocked via webhook: user={} {} → {}. " +
+                                  "Keeping {}. Review subscription {} in Stripe Dashboard.",
+                                  user.getUsername(), currentPlan, derivedPlanName,
+                                  currentPlan, subscription.getId());
+                    } else {
+                        user.setSubscriptionPlanName(derivedPlanName);
+                    }
                 }
             }
 
@@ -1100,13 +1287,79 @@ public class StripeService {
                         LocalDateTime.ofInstant(Instant.ofEpochSecond(subscription.getCurrentPeriodEnd()), ZoneOffset.UTC));
             }
 
-            // Sync to ALL user-owned workspaces (Account-level billing)
+            userRepository.save(user);
+
+            // Sync after persist so account-level fields are durable before workspace projection.
             workspaceService.syncWorkspacesToOwnerPlan(user);
 
-            userRepository.save(user);
             log.info("Subscription {} for user {} — status={}, autoRenew={}",
                     action, user.getUsername(), subscription.getStatus(), user.isAutoRenewEnabled());
         });
+    }
+
+    /**
+     * Copies Stripe subscription state onto the user after create/update API calls.
+     * Uses the subscription line item for plan and cadence when possible so Mongo matches Stripe.
+     * Billing interval is stored as {@code monthly} or {@code annual} (not {@code yearly}) for UI consistency.
+     */
+    private void applySubscriptionSnapshotToUser(User user, Subscription subscription,
+            String requestedPlan, String requestedInterval) {
+        user.setStripeSubscriptionId(subscription.getId());
+        user.setSubscriptionStatus(subscription.getStatus());
+
+        // When a trial is ended immediately (setTrialEnd = now), Stripe may return
+        // currentPeriodEnd == trial-end timestamp in the update response — before the
+        // invoice is processed and the new billing cycle is committed.  If the value
+        // is in the past, re-fetch the subscription to get the definitive period end.
+        Long rawPeriodEnd = subscription.getCurrentPeriodEnd();
+        if (rawPeriodEnd != null && rawPeriodEnd <= Instant.now().getEpochSecond()) {
+            try {
+                Subscription refreshed = Subscription.retrieve(subscription.getId());
+                Long refreshedPeriodEnd = refreshed.getCurrentPeriodEnd();
+                if (refreshedPeriodEnd != null && refreshedPeriodEnd > Instant.now().getEpochSecond()) {
+                    rawPeriodEnd = refreshedPeriodEnd;
+                    log.info("[applySnapshot] Re-fetched subscription {} — updated periodEnd from {} to {}",
+                            subscription.getId(), subscription.getCurrentPeriodEnd(), rawPeriodEnd);
+                }
+            } catch (StripeException e) {
+                log.warn("[applySnapshot] Re-fetch failed for {}: {}", subscription.getId(), e.getMessage());
+            }
+        }
+        if (rawPeriodEnd != null) {
+            user.setSubscriptionCurrentPeriodEnd(
+                    LocalDateTime.ofInstant(Instant.ofEpochSecond(rawPeriodEnd), ZoneOffset.UTC));
+        }
+
+        String plan = requestedPlan != null ? requestedPlan.trim().toUpperCase() : "PRO";
+        String intervalKey = requestedInterval != null ? requestedInterval.trim().toLowerCase() : "monthly";
+        if ("yearly".equals(intervalKey) || "annual".equals(intervalKey)) {
+            intervalKey = "annual";
+        } else {
+            intervalKey = "monthly";
+        }
+
+        if (subscription.getItems() != null && subscription.getItems().getData() != null
+                && !subscription.getItems().getData().isEmpty()) {
+            SubscriptionItem item = subscription.getItems().getData().get(0);
+            if (item.getPrice() != null) {
+                String priceId = item.getPrice().getId();
+                user.setSubscriptionPlanId(priceId);
+                String derivedPlan = derivePlanName(priceId);
+                if (derivedPlan != null) {
+                    plan = derivedPlan;
+                }
+                String stripeInterval = item.getPrice().getRecurring() != null
+                        ? item.getPrice().getRecurring().getInterval() : null;
+                if ("year".equalsIgnoreCase(stripeInterval)) {
+                    intervalKey = "annual";
+                } else if ("month".equalsIgnoreCase(stripeInterval)) {
+                    intervalKey = "monthly";
+                }
+            }
+        }
+
+        user.setSubscriptionPlanName(plan);
+        user.setBillingInterval(intervalKey);
     }
 
     private String resolvePriceId(String planName, String interval) {
@@ -1254,6 +1507,69 @@ public class StripeService {
     private void requireActiveSubscription(User user) {
         if (user.getStripeSubscriptionId() == null) {
             throw new IllegalStateException("No active subscription found.");
+        }
+    }
+
+    /**
+     * Ensures a confirmed SetupIntent was created for this user's Stripe customer (prevents re-use of another account's setup).
+     */
+    private void assertSetupIntentBelongsToUser(User user, SetupIntent setupIntent) {
+        if (user.getStripeCustomerId() == null || user.getStripeCustomerId().isBlank()) {
+            throw new IllegalStateException("Billing account not ready.");
+        }
+        String intentCustomer = setupIntent.getCustomer();
+        if (intentCustomer == null || intentCustomer.isBlank()) {
+            throw new IllegalArgumentException("Invalid payment setup.");
+        }
+        if (!user.getStripeCustomerId().equals(intentCustomer)) {
+            throw new IllegalArgumentException("This payment confirmation is not valid for your account.");
+        }
+    }
+
+    /**
+     * Reads the live subscription status from Stripe and updates MongoDB if it differs.
+     * Returns the up-to-date status string. Falls back to cached MongoDB value on Stripe errors.
+     */
+    public String syncStatusFromStripe(User user) {
+        String cached = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus() : "";
+        if (user.getStripeSubscriptionId() == null || user.getStripeSubscriptionId().isBlank()) {
+            return cached;
+        }
+        try {
+            Subscription sub = Subscription.retrieve(user.getStripeSubscriptionId());
+            String liveStatus = sub.getStatus() != null ? sub.getStatus() : "";
+
+            // Also check if the stored period end is stale (can happen when trial ends immediately
+            // and Stripe returns trial-end timestamp as currentPeriodEnd before invoice processing).
+            boolean periodEndStale = sub.getCurrentPeriodEnd() != null
+                    && (user.getSubscriptionCurrentPeriodEnd() == null
+                        || user.getSubscriptionCurrentPeriodEnd().isBefore(LocalDateTime.now()));
+
+            if (!liveStatus.equals(cached) || periodEndStale) {
+                if (!liveStatus.equals(cached)) {
+                    log.info("[syncStatusFromStripe] Stale status for user={}: cached={} live={}. Updating MongoDB.",
+                            user.getUsername(), cached, liveStatus);
+                }
+                if (periodEndStale) {
+                    log.info("[syncStatusFromStripe] Stale periodEnd for user={}: cached={} live={}. Updating MongoDB.",
+                            user.getUsername(), user.getSubscriptionCurrentPeriodEnd(),
+                            sub.getCurrentPeriodEnd());
+                }
+                user.setSubscriptionStatus(liveStatus);
+                if (sub.getCurrentPeriodEnd() != null) {
+                    user.setSubscriptionCurrentPeriodEnd(
+                            LocalDateTime.ofInstant(
+                                    Instant.ofEpochSecond(sub.getCurrentPeriodEnd()),
+                                    ZoneOffset.UTC));
+                }
+                userRepository.save(user);
+                workspaceService.syncWorkspacesToOwnerPlan(user);
+            }
+            return liveStatus;
+        } catch (StripeException e) {
+            log.warn("[syncStatusFromStripe] Stripe lookup failed for user={}: {}. Using cached status.",
+                    user.getUsername(), e.getMessage());
+            return cached;
         }
     }
 }

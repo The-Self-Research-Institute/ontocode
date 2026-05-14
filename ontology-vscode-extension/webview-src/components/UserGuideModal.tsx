@@ -200,7 +200,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   </h4>
                   <ul style={styles.list}>
                     <li>
-                      <strong>During Signup:</strong> First workspace is created automatically when you register
+                      <strong>After signup:</strong> Completing registration does not create a workspace by itself. After
+                      you verify your email and sign in, use <strong>Create New Workspace</strong> on the workspace
+                      selector to add your first workspace.
                     </li>
                     <li>
                       <strong>Additional Workspaces:</strong> Click "Create Workspace" from workspace selector dropdown
@@ -307,8 +309,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       compared to the equivalent monthly total
                     </li>
                     <li>
-                      <strong>Workspace-Level Subscription:</strong> The workspace owner's plan determines access for
-                      all members of that workspace — if the owner's plan expires, workspace access is suspended
+                      <strong>Account-level subscription:</strong> Billing is tied to the workspace owner&apos;s
+                      account. All workspaces that person owns inherit that plan; if the account subscription lapses,
+                      paid access to those workspaces is suspended until billing is current again.
                     </li>
                   </ul>
                 </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Trash, AlertTriangle, Bug, CreditCard } from "lucide-react";
+import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Trash, AlertTriangle, Bug, CreditCard, Mail, CheckCircle, XCircle } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { validateWorkspaceName, validateDescription } from "../utils/validation";
@@ -21,6 +21,8 @@ interface WorkspaceMember {
   email: string;
   role: string;
   joinedAt: string;
+  status?: string;
+  invitationToken?: string;
 }
 
 interface Workspace {
@@ -84,6 +86,15 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<{ id: string; name: string } | null>(null);
+
+  // Invitation accept/decline dialog state
+  const [invitationDialog, setInvitationDialog] = useState<{
+    workspaceId: string;
+    workspaceName: string;
+    invitationToken: string;
+    invitedEmail: string;
+  } | null>(null);
+  const [invitationAction, setInvitationAction] = useState<"accepting" | "declining" | null>(null);
 
   // In-app confirm dialog state (replaces window.confirm)
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel: string } | null>(
@@ -253,10 +264,51 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       }
     } catch (err: any) {
       console.error("[WorkspaceSelection] ❌ Error selecting workspace:", err);
-      console.error("[WorkspaceSelection] Error details:", err?.message, err?.status, err?.data);
-      setError(err.response?.data?.error || err.message || "Failed to select workspace");
+      const errData = err.response?.data || err.data || err;
+      if (errData?.requiresInvitationAcceptance) {
+        setInvitationDialog({
+          workspaceId: errData.workspaceId || workspaceId,
+          workspaceName: errData.workspaceName || "",
+          invitationToken: errData.invitationToken || "",
+          invitedEmail: errData.invitedEmail || "",
+        });
+        return;
+      }
+      setError(errData?.error || err.message || "Failed to select workspace");
     } finally {
       setSelecting(false);
+    }
+  };
+
+  const handleAcceptInvitation = async () => {
+    if (!invitationDialog) return;
+    try {
+      setInvitationAction("accepting");
+      await apiClient.post(`/api/invitations/accept/${invitationDialog.invitationToken}`);
+      setInvitationDialog(null);
+      await handleSelectWorkspace(invitationDialog.workspaceId);
+    } catch (err: any) {
+      const errData = err.response?.data || err.data || err;
+      setError(errData?.error || err.message || "Failed to accept invitation");
+      setInvitationDialog(null);
+    } finally {
+      setInvitationAction(null);
+    }
+  };
+
+  const handleDeclineInvitation = async () => {
+    if (!invitationDialog) return;
+    try {
+      setInvitationAction("declining");
+      await apiClient.delete(`/api/invitations/${invitationDialog.invitationToken}`);
+      setInvitationDialog(null);
+      await loadWorkspaces();
+    } catch (err: any) {
+      const errData = err.response?.data || err.data || err;
+      setError(errData?.error || err.message || "Failed to decline invitation");
+      setInvitationDialog(null);
+    } finally {
+      setInvitationAction(null);
     }
   };
 
@@ -421,6 +473,11 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     );
   };
 
+  const getCurrentUserMember = (workspace: Workspace): WorkspaceMember | undefined =>
+    workspace.members.find(
+      (m) => m.userId === user?.userId || m.email === user?.email || m.username === username
+    );
+
   const isPlanExpired = accountSubscription !== null &&
     accountSubscription.planName !== "FREE" &&
     accountSubscription.status !== "" &&
@@ -539,24 +596,38 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
               {workspaces.map((workspace) => {
                 const disabled = isWorkspaceDisabled(workspace);
                 const errMsg = getWorkspaceErrorMsg(workspace);
+                const selfMember = getCurrentUserMember(workspace);
+                const isPending = selfMember?.status?.toUpperCase() === "PENDING";
                 return (
                 <div
                   key={workspace.id}
                   onClick={() => !selecting && !disabled && handleSelectWorkspace(workspace.workspaceId)}
-                  className={`bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6 transition-all group ${disabled ? "opacity-60 cursor-not-allowed" : "hover:bg-white/10 hover:border-purple-400/50 cursor-pointer"}`}
+                  className={`bg-white/5 backdrop-blur-sm border rounded-xl p-6 transition-all group ${
+                    disabled
+                      ? "opacity-60 cursor-not-allowed border-white/10"
+                      : isPending
+                      ? "hover:bg-amber-500/5 hover:border-amber-400/50 cursor-pointer border-amber-500/30"
+                      : "hover:bg-white/10 hover:border-purple-400/50 cursor-pointer border-white/10"
+                  }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-start space-x-4 flex-1 min-w-0">
-                      <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
-                        <Building2 size={24} className="text-white" />
+                      <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 ${isPending ? "bg-gradient-to-br from-amber-500 to-orange-600" : "bg-gradient-to-br from-purple-500 to-indigo-600"}`}>
+                        {isPending ? <Mail size={24} className="text-white" /> : <Building2 size={24} className="text-white" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center space-x-2 mb-1 min-w-0">
                           <h3 className="text-xl font-semibold text-white truncate flex-shrink min-w-0" title={workspace.name}>
                             {workspace.name}
                           </h3>
-                          <div className="flex-shrink-0">
-                            {getRoleBadge(workspace)}
+                          <div className="flex-shrink-0 flex items-center gap-1">
+                            {isPending ? (
+                              <span className="px-2 py-1 rounded text-xs border bg-amber-500/20 text-amber-300 border-amber-500/30">
+                                Invitation Pending
+                              </span>
+                            ) : (
+                              getRoleBadge(workspace)
+                            )}
                           </div>
                         </div>
                         {workspace.description && (
@@ -575,10 +646,13 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                             {workspacePlanBadge(workspace.subscriptionPlan).label}
                           </span>
                         </div>
+                        {isPending && (
+                          <p className="text-amber-400/80 text-xs mt-1">Click to accept or decline this invitation</p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {(workspace.members.find(m => m.email === user?.email || (m.userId === user?.userId && m.email === user?.email))?.role?.toUpperCase() === "OWNER") && (
+                      {(!isPending && selfMember?.role?.toUpperCase() === "OWNER") && (
                         <button
                           onClick={(e) => confirmDelete(workspace, e)}
                           className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
@@ -590,7 +664,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                       {!disabled && (
                         <ChevronRight
                           size={24}
-                          className="text-gray-400 group-hover:text-purple-400 transition-colors flex-shrink-0"
+                          className={`transition-colors flex-shrink-0 ${isPending ? "text-amber-400/60 group-hover:text-amber-400" : "text-gray-400 group-hover:text-purple-400"}`}
                         />
                       )}
                     </div>
@@ -838,6 +912,53 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                     <Trash size={20} />
                     <span>Delete</span>
                   </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Invitation Accept / Decline Dialog */}
+      {invitationDialog && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-800 border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-md">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-amber-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Mail size={32} className="text-amber-400" />
+              </div>
+              <h3 className="text-2xl font-bold text-white mb-2">Workspace Invitation</h3>
+              <p className="text-gray-300">
+                You've been invited to join{" "}
+                <strong className="text-white">{invitationDialog.workspaceName}</strong>.
+              </p>
+              {invitationDialog.invitedEmail && (
+                <p className="text-gray-400 text-sm mt-1">Invited as: {invitationDialog.invitedEmail}</p>
+              )}
+            </div>
+            <div className="flex space-x-3">
+              <button
+                type="button"
+                onClick={handleDeclineInvitation}
+                disabled={invitationAction !== null}
+                className="flex-1 px-4 py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {invitationAction === "declining" ? (
+                  <><Loader2 size={18} className="animate-spin" /><span>Declining...</span></>
+                ) : (
+                  <><XCircle size={18} /><span>Decline</span></>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={handleAcceptInvitation}
+                disabled={invitationAction !== null}
+                className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {invitationAction === "accepting" ? (
+                  <><Loader2 size={18} className="animate-spin" /><span>Accepting...</span></>
+                ) : (
+                  <><CheckCircle size={18} /><span>Accept</span></>
                 )}
               </button>
             </div>

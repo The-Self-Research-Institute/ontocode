@@ -18,9 +18,12 @@ import self.research.ontology.auth.repository.UserRepository;
 import jakarta.annotation.PostConstruct;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import self.research.ontology.auth.model.PlanFeatureConfig;
 
 /**
  * Sends scheduled billing reminder emails for trial endings and subscription renewals.
@@ -37,6 +40,7 @@ public class BillingReminderService {
     private final UserRepository userRepository;
     private final EmailService emailService;
     private final MongoTemplate mongoTemplate;
+    private final PlanFeatureConfigService planFeatureConfigService;
 
     @Value("${app.base-url}")
     private String baseUrl;
@@ -47,16 +51,38 @@ public class BillingReminderService {
     @Value("${billing.reminder.days-before-list:${billing.reminder.days-before:15,7,1}}")
     private String reminderDaysBeforeList;
 
-    public BillingReminderService(UserRepository userRepository, EmailService emailService, MongoTemplate mongoTemplate) {
+    public BillingReminderService(UserRepository userRepository, EmailService emailService,
+                                   MongoTemplate mongoTemplate, PlanFeatureConfigService planFeatureConfigService) {
         this.userRepository = userRepository;
         this.emailService = emailService;
         this.mongoTemplate = mongoTemplate;
+        this.planFeatureConfigService = planFeatureConfigService;
     }
 
     @PostConstruct
     public void ensureEmailLogIndexes() {
-        mongoTemplate.indexOps("email_logs")
-                .ensureIndex(new Index().on("key", Sort.Direction.ASC).unique());
+        // ensureIndex() does NOT upgrade an existing non-unique index to unique.
+        // If the collection was created earlier with a non-unique key index,
+        // the dedup invariant silently fails and reminders fire every cron tick.
+        // Detect that case and rebuild.
+        boolean keyIndexIsUnique = mongoTemplate.indexOps("email_logs").getIndexInfo().stream()
+                .filter(info -> info.getIndexFields().stream().anyMatch(f -> "key".equals(f.getKey())))
+                .findFirst()
+                .map(info -> info.isUnique())
+                .orElse(false);
+
+        if (!keyIndexIsUnique) {
+            log.warn("[BillingReminder] email_logs.key index is missing or non-unique — rebuilding as unique. "
+                    + "This is the dedup invariant; without it duplicate reminders will fire.");
+            try {
+                mongoTemplate.indexOps("email_logs").dropIndex("key_1");
+            } catch (Exception ignored) {
+                // No prior index — fall through to create.
+            }
+            mongoTemplate.indexOps("email_logs")
+                    .ensureIndex(new Index().on("key", Sort.Direction.ASC).unique());
+            log.info("[BillingReminder] email_logs.key unique index created.");
+        }
     }
 
     @Scheduled(cron = "${billing.reminder.cron:0 0 9 * * *}")
@@ -74,8 +100,12 @@ public class BillingReminderService {
         int renewalReminders = 0;
 
         for (int daysBefore : reminderDays) {
-            LocalDateTime windowStart = now.plusDays(daysBefore - 1L).plusHours(12);
-            LocalDateTime windowEnd = now.plusDays(daysBefore).plusHours(12);
+            // Cover the entire target UTC calendar day so a trial/subscription ending
+            // at any hour is caught regardless of when the cron fires.
+            // The dedup key (dailyReminderKey) ensures at most one email per user per day.
+            LocalDate targetDate = LocalDate.now(ZoneOffset.UTC).plusDays(daysBefore);
+            LocalDateTime windowStart = targetDate.atStartOfDay();
+            LocalDateTime windowEnd   = targetDate.plusDays(1).atStartOfDay();
 
             for (User user : users) {
                 if (user.getSubscriptionCurrentPeriodEnd() == null) continue;
@@ -92,8 +122,20 @@ public class BillingReminderService {
                 if (reminderKind == null) continue;
                 String reminderKey = dailyReminderKey(user, now.toLocalDate());
 
+                // Defence in depth: even if the unique index is somehow bypassed,
+                // a prior "sent" record for this key means the reminder already went out.
+                Query priorQuery = new Query(Criteria.where("key").is(reminderKey)
+                        .and("status").in("sent", "sending"));
+                if (mongoTemplate.exists(priorQuery, "email_logs")) {
+                    log.info("[BillingReminder] Already sent or sending today: key={} email={} — skipping",
+                            reminderKey, user.getEmail());
+                    continue;
+                }
+
                 if (!reserveReminder(user, reminderKind, daysBefore, periodEnd, reminderKey)) {
-                    log.debug("[BillingReminder] Skipping duplicate reminder {} for {}", reminderKey, user.getEmail());
+                    // Promoted from debug → info so the skip is visible in production logs.
+                    log.info("[BillingReminder] Skipping duplicate reminder key={} email={}",
+                            reminderKey, user.getEmail());
                     continue;
                 }
 
@@ -128,10 +170,20 @@ public class BillingReminderService {
     private String resolveAmount(String planName, String interval) {
         if (planName == null || interval == null) return "your subscription amount";
         boolean yearly = "yearly".equalsIgnoreCase(interval) || "annual".equalsIgnoreCase(interval);
-        return switch (planName.toUpperCase()) {
-            case "ENTERPRISE" -> yearly ? "$3,588/year" : "$299/month";
-            default -> yearly ? "$708/year" : "$59/month";
-        };
+        try {
+            Map<String, PlanFeatureConfig> configs = planFeatureConfigService.getAllByPlanId();
+            PlanFeatureConfig config = configs.get(planName.toUpperCase());
+            if (config == null) return "your subscription amount";
+            int monthly = config.getMonthlyPrice();
+            if (yearly) {
+                int yearlyTotal = (int) Math.round(monthly * 12 * (1.0 - config.getAnnualDiscountPercent() / 100.0));
+                return "$" + yearlyTotal + "/year";
+            }
+            return "$" + monthly + "/month";
+        } catch (Exception e) {
+            log.warn("[BillingReminder] Could not resolve amount for {}/{}: {}", planName, interval, e.getMessage());
+            return "your subscription amount";
+        }
     }
 
     private List<Integer> parseReminderDays() {

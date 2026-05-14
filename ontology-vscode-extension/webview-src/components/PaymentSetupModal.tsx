@@ -15,7 +15,7 @@ interface PaymentSetupModalProps {
     workspaceId: string;
     trialEligible?: boolean;
     currentStatus?: string;
-    onConfirmed: (setupIntentId: string) => void;
+    onConfirmed: (setupIntentId: string) => void | Promise<void>;
     onClose: () => void;
 }
 
@@ -27,7 +27,7 @@ interface PaymentFormProps {
     workspaceId: string;
     trialEligible: boolean;
     currentStatus?: string;
-    onConfirmed: (setupIntentId: string) => void;
+    onConfirmed: (setupIntentId: string) => void | Promise<void>;
     onClose: () => void;
 }
 
@@ -49,6 +49,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
         setSubmitting(true);
         setError(null);
 
+        try {
         // Persist params so they survive a 3DS redirect
         safeSetStorage('pendingSubscription', JSON.stringify({ workspaceId, planName, interval }));
 
@@ -67,7 +68,6 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
             setError(isExpired
                 ? 'Payment session expired. Please close and try again.'
                 : (confirmError.message ?? 'Payment setup failed. Please try again.'));
-            setSubmitting(false);
             safeRemoveStorage('pendingSubscription');
             return;
         }
@@ -76,9 +76,14 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
             // Combine all recovery data into one key — survives a network cut before /subscribe completes
             safeSetStorage('pendingPaymentRecovery', JSON.stringify({ setupIntentId: setupIntent.id, workspaceId, planName, interval }));
             safeRemoveStorage('pendingSubscription');
-            onConfirmed(setupIntent.id);
+            await Promise.resolve(onConfirmed(setupIntent.id));
         } else {
             setError('Card setup did not complete. Please try again.');
+        }
+        } catch (subErr: unknown) {
+            const msg = subErr instanceof Error ? subErr.message : 'Subscription could not be completed. Please try again.';
+            setError(msg);
+        } finally {
             setSubmitting(false);
         }
     };

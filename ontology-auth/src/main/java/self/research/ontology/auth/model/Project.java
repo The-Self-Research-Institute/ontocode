@@ -14,6 +14,18 @@ import java.util.List;
 @Document(collection = "projects")
 public class Project {
 
+    /**
+     * Project member was auto-linked as the workspace billing owner (non-private projects).
+     * Removal and role changes are restricted (see ProjectService).
+     */
+    public static final String WS_EDITOR_LINK_OWNER = "WORKSPACE_OWNER";
+
+    /**
+     * Project member was auto-linked as a workspace administrator (non-private projects).
+     * Removal is allowed only for the workspace owner; role changes follow the same rule.
+     */
+    public static final String WS_EDITOR_LINK_ADMIN = "WORKSPACE_ADMIN";
+
     @Id
     private String id;
     
@@ -110,7 +122,9 @@ public class Project {
         private String email;
         private String role; // OWNER, ADMIN, EDITOR, VIEWER
         private LocalDateTime joinedAt;
-        
+        /** {@link Project#WS_EDITOR_LINK_OWNER} or {@link Project#WS_EDITOR_LINK_ADMIN} when set; otherwise normal membership */
+        private String workspaceEditorLink;
+
         // Constructors
         public ProjectMember() {}
         
@@ -120,6 +134,11 @@ public class Project {
             this.email = email;
             this.role = role;
             this.joinedAt = LocalDateTime.now();
+        }
+
+        public ProjectMember(String userId, String username, String email, String role, String workspaceEditorLink) {
+            this(userId, username, email, role);
+            this.workspaceEditorLink = workspaceEditorLink;
         }
         
         // Getters and Setters
@@ -137,6 +156,9 @@ public class Project {
         
         public LocalDateTime getJoinedAt() { return joinedAt; }
         public void setJoinedAt(LocalDateTime joinedAt) { this.joinedAt = joinedAt; }
+
+        public String getWorkspaceEditorLink() { return workspaceEditorLink; }
+        public void setWorkspaceEditorLink(String workspaceEditorLink) { this.workspaceEditorLink = workspaceEditorLink; }
     }
     
     // Constructors
@@ -148,7 +170,11 @@ public class Project {
     
     // Helper methods
     public void addMember(String userId, String username, String email, String role) {
-        ProjectMember member = new ProjectMember(userId, username, email, role);
+        addMember(userId, username, email, role, null);
+    }
+
+    public void addMember(String userId, String username, String email, String role, String workspaceEditorLink) {
+        ProjectMember member = new ProjectMember(userId, username, email, role, workspaceEditorLink);
         this.members.add(member);
         this.updatedAt = LocalDateTime.now();
     }

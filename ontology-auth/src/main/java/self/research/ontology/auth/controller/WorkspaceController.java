@@ -387,6 +387,37 @@ public class WorkspaceController {
             }
 
             Workspace workspace = workspaceOpt.get();
+
+            // Owner: refresh account from DB and push plan/period/billing to workspace (self-heal webhook lag
+            // or missing subscriptionCurrentPeriodEnd after subscribe/update API).
+            if (user.getId().equals(workspace.getOwnerId())) {
+                user = userRepository.findById(user.getId()).orElse(user);
+                workspaceService.syncWorkspacesToOwnerPlan(user);
+                workspaceOpt = workspaceService.getWorkspace(workspaceId);
+                if (workspaceOpt.isEmpty()) {
+                    return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+                }
+                workspace = workspaceOpt.get();
+            }
+
+            // If the user is still PENDING, they must explicitly accept or reject before entering.
+            Workspace.WorkspaceMember selfMember = workspace.getMember(user.getId());
+            if (selfMember == null) {
+                selfMember = workspace.getMemberByEmail(user.getEmail());
+            }
+            if (selfMember != null && selfMember.getStatus() == Workspace.MemberStatus.PENDING) {
+                log.info("[Workspace] User {} has a pending invitation for workspace {} — requiring accept/reject",
+                        user.getId(), workspaceId);
+                return ResponseEntity.status(403).body(Map.of(
+                    "error", "You have a pending invitation for this workspace. Please accept or decline it.",
+                    "requiresInvitationAcceptance", true,
+                    "workspaceId", workspaceId,
+                    "workspaceName", workspace.getName(),
+                    "invitationToken", selfMember.getInvitationToken() != null ? selfMember.getInvitationToken() : "",
+                    "invitedEmail", selfMember.getEmail() != null ? selfMember.getEmail() : ""
+                ));
+            }
+
             WorkspaceRole role = workspaceService.getMemberRole(workspaceId, user.getId());
             // Fallback: owner may not be in members set (legacy data) — resolve from ownerId
             if (role == null) {
@@ -405,9 +436,16 @@ public class WorkspaceController {
                     : "FREE";
             
             boolean isPaidPlan = !"FREE".equalsIgnoreCase(workspacePlan);
-            boolean hasValidBilling = "ACTIVE".equalsIgnoreCase(billingStatus) || "TRIALING".equalsIgnoreCase(billingStatus);
+            // PAYMENT_ACTION_REQUIRED: 3DS/ACH pending — subscription exists and is not expired,
+            // but collaboration is disabled until payment confirms. Issue a token with FREE
+            // effective plan rather than a hard block, so the user sees the app with a prompt
+            // to complete authentication rather than an error wall.
+            boolean hasValidBilling = "ACTIVE".equalsIgnoreCase(billingStatus)
+                    || "TRIALING".equalsIgnoreCase(billingStatus)
+                    || "PAST_DUE".equalsIgnoreCase(billingStatus)
+                    || "PAYMENT_ACTION_REQUIRED".equalsIgnoreCase(billingStatus);
 
-            // Block access if plan validity ends for paid workspaces
+            // Block access only when the plan has truly expired (canceled, unpaid, expired)
             if (isPaidPlan && !hasValidBilling) {
                 log.warn("[Workspace] Access blocked for workspace {} due to {} billing status", workspaceId, billingStatus);
                 return ResponseEntity.status(402).body(Map.of(
@@ -873,6 +911,8 @@ public class WorkspaceController {
             if (target == null) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Member not found in workspace"));
             }
+            Workspace.WorkspaceRole previousRole = target.getRole();
+
             // If promoting to OWNER, demote previous owner to ADMIN
             if (role == Workspace.WorkspaceRole.OWNER) {
                 workspace.getMembers().stream()
@@ -882,6 +922,9 @@ public class WorkspaceController {
             }
             target.setRole(role);
             workspaceService.updateWorkspace(workspace);
+
+            // Backfill or remove WS_EDITOR_LINK_ADMIN project entries when admin role changes
+            workspaceService.syncAdminRoleChangeToProjects(workspace, userId, previousRole, role);
 
             log.info("Member {} role changed to {} in workspace {} by {}", userId, role, workspaceId, username);
             return ResponseEntity.ok(Map.of("message", "Role updated successfully", "role", role.name()));
