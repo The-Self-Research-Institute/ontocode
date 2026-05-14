@@ -29,6 +29,16 @@ import java.time.LocalDateTime;
  * 4. Idempotency: each event ID is stored in MongoDB. Duplicate events are silently ignored.
  * 5. Response timing: we always respond quickly (200/400) regardless of processing outcome
  *    to prevent Stripe from retrying valid events due to slow handlers.
+ *
+ * Billing sync model (high level):
+ * - Subscription state is driven primarily by Stripe webhooks (subscription + invoice events).
+ * - Card payments typically settle immediately; US bank debits (ACH) can take several days.
+ *   While pending, Stripe may emit {@code invoice.payment_action_required} or leave the invoice open;
+ *   when funds settle you receive {@code invoice.paid} / {@code invoice.payment_succeeded}.
+ * - If a delayed debit ultimately fails, {@code invoice.payment_failed} runs the same path as cards:
+ *   we mark the account {@code past_due}, sync workspaces, and email the billing contact.
+ * - For full reconciliation beyond this (disputes, partial refunds, Connect), extend handlers and
+ *   consider periodic reconciliation jobs against the Stripe API.
  */
 @RestController
 @RequestMapping("/api/billing")
@@ -132,6 +142,10 @@ public class StripeWebhookController {
             case "invoice.payment_failed" -> {
                 Invoice invoice = (Invoice) stripeObject;
                 stripeService.handleInvoicePaymentFailed(invoice);
+            }
+            case "invoice.payment_action_required" -> {
+                Invoice invoice = (Invoice) stripeObject;
+                stripeService.handleInvoicePaymentActionRequired(invoice);
             }
             default -> log.debug("Unhandled Stripe event type: {}", event.getType());
         }

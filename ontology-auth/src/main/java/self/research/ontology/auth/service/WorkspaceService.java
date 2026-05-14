@@ -316,7 +316,9 @@ public class WorkspaceService {
     }
 
     /**
-     * Remove a member from workspace (by userId or email)
+     * Remove a member from workspace (by userId or email).
+     * Also removes any WS_EDITOR_LINK_ADMIN project entries for the removed user
+     * so they don't retain project access after being removed from the workspace.
      */
     @Transactional
     public void removeMember(String workspaceId, String memberIdentifier) {
@@ -328,13 +330,122 @@ public class WorkspaceService {
             throw new IllegalArgumentException("Cannot remove workspace owner");
         }
 
+        // Capture userId before removal so we can clean up project editor links.
+        String removedUserId = null;
+        WorkspaceMember memberToRemove = workspace.getMember(memberIdentifier);
+        if (memberToRemove != null) {
+            removedUserId = memberToRemove.getUserId();
+        } else {
+            WorkspaceMember memberByEmail = workspace.getMemberByEmail(memberIdentifier);
+            if (memberByEmail != null) {
+                removedUserId = memberByEmail.getUserId();
+            }
+        }
+
         // Try to remove by userId first, then by email
         boolean removed = workspace.removeMemberByIdOrEmail(memberIdentifier);
         if (!removed) {
             throw new IllegalArgumentException("Member not found in workspace");
         }
-        
+
         workspaceRepository.save(workspace);
+
+        // Remove WS_EDITOR_LINK_ADMIN entries from projects in this workspace.
+        // These entries are added automatically when the user is a workspace admin.
+        // Without this cleanup the removed user retains project access via hasMember().
+        if (removedUserId != null) {
+            final String finalUserId = removedUserId;
+            projectRepository.findByWorkspaceId(workspaceId).forEach(project -> {
+                Project.ProjectMember pm = project.getMember(finalUserId);
+                if (pm != null && Project.WS_EDITOR_LINK_ADMIN.equals(pm.getWorkspaceEditorLink())) {
+                    project.removeMember(finalUserId);
+                    projectRepository.save(project);
+                    log.info("Removed WS_EDITOR_LINK_ADMIN entry for user {} from project {} after workspace removal",
+                            finalUserId, project.getProjectId());
+                }
+            });
+        }
+    }
+
+    /**
+     * Syncs project memberships when a workspace member's role changes to or from ADMIN.
+     *
+     * - Promotion to ADMIN: backfills WS_EDITOR_LINK_ADMIN on all existing shared (non-private)
+     *   projects so the newly promoted admin immediately has editor access everywhere they should.
+     * - Demotion from ADMIN: removes WS_EDITOR_LINK_ADMIN entries from all projects so the
+     *   former admin no longer has implicit project access.
+     *
+     * Private projects (single-member) are left untouched in both directions.
+     */
+    @Transactional
+    public void syncAdminRoleChangeToProjects(Workspace workspace, String targetUserId,
+                                              WorkspaceRole previousRole, WorkspaceRole newRole) {
+        boolean promotedToAdmin  = newRole == WorkspaceRole.ADMIN && previousRole != WorkspaceRole.ADMIN;
+        boolean demotedFromAdmin = previousRole == WorkspaceRole.ADMIN && newRole != WorkspaceRole.ADMIN;
+        if (!promotedToAdmin && !demotedFromAdmin) return;
+
+        List<Project> projects = projectRepository.findByWorkspaceId(workspace.getWorkspaceId());
+
+        if (demotedFromAdmin) {
+            projects.forEach(project -> {
+                Project.ProjectMember pm = project.getMember(targetUserId);
+                if (pm != null && Project.WS_EDITOR_LINK_ADMIN.equals(pm.getWorkspaceEditorLink())) {
+                    project.removeMember(targetUserId);
+                    projectRepository.save(project);
+                    log.info("Removed WS_EDITOR_LINK_ADMIN for user {} from project {} after admin demotion",
+                            targetUserId, project.getProjectId());
+                }
+            });
+            return;
+        }
+
+        // Promoted to ADMIN — resolve display info for the new admin member record
+        WorkspaceMember wm = workspace.getMember(targetUserId);
+        String username = wm != null ? wm.getUsername() : null;
+        String email    = wm != null ? wm.getEmail()    : null;
+        if (username == null || email == null) {
+            Optional<User> u = userRepository.findById(targetUserId);
+            if (u.isPresent()) {
+                if (username == null) username = u.get().getUsername();
+                if (email    == null) email    = u.get().getEmail();
+            }
+        }
+        if (username == null) username = "";
+        if (email    == null) email    = "";
+
+        final String finalUsername = username;
+        final String finalEmail    = email;
+
+        projects.stream()
+                .filter(p -> p.getMembers().size() > 1 && !targetUserId.equals(p.getOwnerId()))
+                .forEach(project -> {
+                    Project.ProjectMember pm = project.getMember(targetUserId);
+                    boolean dirty = false;
+                    if (pm == null) {
+                        project.addMember(targetUserId, finalUsername, finalEmail,
+                                "EDITOR", Project.WS_EDITOR_LINK_ADMIN);
+                        dirty = true;
+                    } else {
+                        // Only set link if not already protected by a higher-level link (OWNER)
+                        if (pm.getWorkspaceEditorLink() == null
+                                || Project.WS_EDITOR_LINK_ADMIN.equals(pm.getWorkspaceEditorLink())) {
+                            if (!Project.WS_EDITOR_LINK_ADMIN.equals(pm.getWorkspaceEditorLink())) {
+                                pm.setWorkspaceEditorLink(Project.WS_EDITOR_LINK_ADMIN);
+                                dirty = true;
+                            }
+                        }
+                        if ("VIEWER".equals(pm.getRole())) {
+                            pm.setRole("EDITOR");
+                            dirty = true;
+                        }
+                    }
+                    if (dirty) {
+                        project.setUpdatedAt(LocalDateTime.now());
+                        projectRepository.save(project);
+                        log.info("Applied WS_EDITOR_LINK_ADMIN for user {} on project {} after admin promotion",
+                                targetUserId, project.getProjectId());
+                    }
+                });
     }
 
     /**

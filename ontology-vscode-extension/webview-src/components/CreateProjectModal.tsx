@@ -28,6 +28,9 @@ const isActiveWorkspaceMember = (member: WorkspaceMember) =>
   !!member.userId &&
   !!member.email;
 
+const isPrivilegedMember = (member: WorkspaceMember) =>
+  member.role?.toUpperCase() === "OWNER" || member.role?.toUpperCase() === "ADMIN";
+
 const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const { user } = useAuth();
   const [projectName, setProjectName] = useState("");
@@ -68,8 +71,25 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
       setSelectedMembers([]);
       setSelectedMemberRoles({});
       setMemberSearch("");
+      return;
     }
-  }, [shareWith]);
+    // Pre-select owner/admin members with locked Editor role
+    const privileged = workspaceMembers.filter(isPrivilegedMember);
+    if (privileged.length > 0) {
+      setSelectedMembers((prev) => {
+        const privilegedEmails = privileged.map((m) => m.email.trim());
+        const nonPrivilegedPrev = prev.filter(
+          (e) => !privileged.some((p) => normalizeEmail(p.email) === normalizeEmail(e))
+        );
+        return [...privilegedEmails, ...nonPrivilegedPrev];
+      });
+      setSelectedMemberRoles((prev) => {
+        const next = { ...prev };
+        privileged.forEach((m) => { next[normalizeEmail(m.email)] = "EDITOR"; });
+        return next;
+      });
+    }
+  }, [shareWith, workspaceMembers]);
 
   const loadWorkspaceMembers = async () => {
     if (!user?.workspaceId) {
@@ -196,7 +216,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
     }
   };
 
-  const toggleMember = (email: string) => {
+  const toggleMember = (email: string, privileged = false) => {
+    if (privileged) return; // owner/admin cannot be deselected
     const normalizedEmail = normalizeEmail(email);
     const trimmedEmail = email.trim();
     const isSelected = selectedMembers.some((value) => normalizeEmail(value) === normalizedEmail);
@@ -233,12 +254,17 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
   const shareableMemberCount = workspaceMembers.length;
   const visibleMembers = useMemo(() => {
     const query = memberSearch.trim().toLowerCase();
-    if (!query) return workspaceMembers;
-    return workspaceMembers.filter(
-      (member) =>
-        member.username.toLowerCase().includes(query) ||
-        member.email.toLowerCase().includes(query),
-    );
+    const filtered = query
+      ? workspaceMembers.filter(
+          (member) =>
+            member.username.toLowerCase().includes(query) ||
+            member.email.toLowerCase().includes(query),
+        )
+      : workspaceMembers;
+    // Privileged (owner/admin) always float to top
+    const privileged = filtered.filter(isPrivilegedMember);
+    const regular = filtered.filter((m) => !isPrivilegedMember(m));
+    return [...privileged, ...regular];
   }, [workspaceMembers, memberSearch]);
 
   if (!isOpen) return null;
@@ -336,6 +362,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                       </>
                     )}
                   </div>
+                  {(shareWith === "all" || shareWith === "specific") && (
+                    <p className="text-xs text-gray-500 mt-1 leading-snug">
+                      The workspace owner and workspace admins are always given at least <strong>Editor</strong> on shared projects. Only the workspace owner can remove them from the project later.
+                    </p>
+                  )}
                 </div>
               </label>
 
@@ -365,6 +396,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                   <div className="text-sm text-gray-500">
                     Choose active workspace members and their project role
                   </div>
+                  {shareWith === "specific" && workspaceMembers.some(isPrivilegedMember) && (
+                    <p className="text-xs text-purple-600 mt-1">
+                      Owner and admins are always included with Editor access.
+                    </p>
+                  )}
                   {!hasShareableMembers && !loadingMembers && (
                     <p className="text-xs text-gray-500 mt-1">
                       Invite another member to the workspace first, or use All Workspace Members.
@@ -412,36 +448,56 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                       </p>
                     ) : (
                       visibleMembers.map((member) => {
-                        const isSelected = selectedMembers.some(
+                        const privileged = isPrivilegedMember(member);
+                        const isSelected = privileged || selectedMembers.some(
                           (value) => normalizeEmail(value) === normalizeEmail(member.email),
                         );
+                        const roleBadgeLabel = member.role?.toUpperCase() === "OWNER" ? "Owner" : "Admin";
 
                         return (
                           <div
                             key={member.userId || member.email}
-                            className="flex items-center gap-2 p-2 bg-white hover:bg-gray-50 rounded border border-transparent hover:border-gray-200"
+                            className={`flex items-center gap-2 p-2 rounded border ${
+                              privileged
+                                ? "bg-purple-50 border-purple-100"
+                                : "bg-white hover:bg-gray-50 border-transparent hover:border-gray-200"
+                            }`}
                           >
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              onChange={() => toggleMember(member.email)}
-                              className="rounded text-purple-600"
+                              onChange={() => toggleMember(member.email, privileged)}
+                              disabled={privileged}
+                              className="rounded text-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
                             />
                             <div className="text-sm flex-1 min-w-0">
-                              <div className="font-medium text-gray-900 truncate">{member.username}</div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-medium text-gray-900 truncate">{member.username}</span>
+                                {privileged && (
+                                  <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-purple-100 text-purple-700 flex-shrink-0">
+                                    {roleBadgeLabel}
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-gray-500 text-xs truncate">{member.email}</div>
                             </div>
-                            <select
-                              value={getMemberRole(member.email)}
-                              onChange={(e) =>
-                                handleMemberRoleChange(member.email, e.target.value as ProjectShareRole)
-                              }
-                              disabled={!isSelected}
-                              className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 disabled:text-gray-400 shrink-0"
-                            >
-                              <option value="VIEWER">Viewer</option>
-                              <option value="EDITOR">Editor</option>
-                            </select>
+                            {privileged ? (
+                              <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded-lg font-medium shrink-0">
+                                Editor
+                              </span>
+                            ) : (
+                              <select
+                                value={getMemberRole(member.email)}
+                                onChange={(e) =>
+                                  handleMemberRoleChange(member.email, e.target.value as ProjectShareRole)
+                                }
+                                disabled={!isSelected}
+                                className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 disabled:text-gray-400 shrink-0"
+                              >
+                                <option value="VIEWER">Viewer</option>
+                                <option value="EDITOR">Editor</option>
+                              </select>
+                            )}
                           </div>
                         );
                       })

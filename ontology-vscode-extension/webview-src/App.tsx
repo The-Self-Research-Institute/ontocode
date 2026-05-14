@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy } from "react";
 import { useAuth } from "./custom-hook/useAuth";
-import apiClient, { updateBaseUrl } from "./services/apiClient";
+import apiClient, { updateBaseUrl, ApiError } from "./services/apiClient";
 import { openOntologyFile, fileContentToBase64 } from "./utils/fileAccess";
 import { getGatewayUrl } from "./config/deploymentConfig";
 import { CollaborationProvider } from "./contexts/CollaborationContext";
@@ -107,6 +107,7 @@ const AppContent = () => {
     interval: "monthly" | "annual";
     trialEligible: boolean;
   } | null>(null);
+  const [subscriptionPaymentError, setSubscriptionPaymentError] = useState<string | null>(null);
   const [workspaceBillingStatus, setWorkspaceBillingStatus] = useState<string | null>(null);
   const [accountSubscriptionStatus, setAccountSubscriptionStatus] = useState<string | null>(null);
   const [accountPlanName, setAccountPlanName] = useState<string | null>(null);
@@ -1053,6 +1054,7 @@ const AppContent = () => {
   };
 
   const startSubscriptionCheckout = async (planId: string, interval: "monthly" | "annual") => {
+    setSubscriptionPaymentError(null);
     const response = await apiClient.post("/api/billing/setup", {});
     const data = response?.data || response;
 
@@ -1090,6 +1092,7 @@ const AppContent = () => {
       });
 
       try { localStorage.removeItem("pendingPaymentRecovery"); } catch {}
+      setSubscriptionPaymentError(null);
       setSubscriptionCheckout(null);
       setAccountPlanName(resolvedPlan.toUpperCase());
       setAccountBillingInterval(resolvedInterval === "annual" ? "annual" : "monthly");
@@ -1110,7 +1113,13 @@ const AppContent = () => {
       });
     } catch (error: any) {
       console.error("Failed to complete subscription:", error);
-      const errMsg = error?.error || error?.data?.error || error?.response?.data?.error || error?.message || "";
+      const errMsg =
+        (error instanceof ApiError && (error.data?.error || error.message)) ||
+        error?.error ||
+        error?.data?.error ||
+        error?.response?.data?.error ||
+        error?.message ||
+        "";
       if (errMsg.toLowerCase().includes("already") && errMsg.toLowerCase().includes("subscription")) {
         try { localStorage.removeItem("pendingPaymentRecovery"); } catch {}
         setSubscriptionCheckout(null);
@@ -1135,12 +1144,17 @@ const AppContent = () => {
         });
         return;
       }
-      throw error;
+      const friendly =
+        (typeof errMsg === "string" && errMsg.trim()) ||
+        "We could not complete checkout. Check your card and try again, or use Manage Billing.";
+      setSubscriptionPaymentError(friendly);
+      throw new Error(friendly);
     }
   };
 
   const handlePlanSelected = async (planId: string, interval: "monthly" | "annual") => {
     console.log("Selected plan:", planId, "interval:", interval);
+    setSubscriptionPaymentError(null);
     try {
       if (planId.toUpperCase() === "FREE") {
         // Free plan changes do not require Stripe. Keep this path for first-time setup.
@@ -1189,6 +1203,11 @@ const AppContent = () => {
       await startSubscriptionCheckout(planId, interval);
     } catch (error: any) {
       console.error("Failed to start subscription flow:", error);
+      const msg =
+        (error instanceof ApiError && (error.data?.error || error.message)) ||
+        error?.message ||
+        "Could not start payment setup. Check your connection and try again.";
+      setSubscriptionPaymentError(msg);
     }
   };
 
@@ -1262,6 +1281,11 @@ const AppContent = () => {
         );
         handlePaymentConfirmed(setupIntentId, planName, interval).catch((err) => {
           console.error("[App] Failed to resume subscription after redirect:", err);
+          const msg =
+            (err instanceof ApiError && (err.data?.error || err.message)) ||
+            err?.message ||
+            "Subscription could not be completed after payment redirect.";
+          setSubscriptionPaymentError(msg);
         });
       } catch (err) {
         console.error("[App] Failed to parse pending subscription:", err);
@@ -1278,6 +1302,11 @@ const AppContent = () => {
 
       handlePaymentConfirmed(recoveryIntentId, planName, interval).catch((err) => {
         console.error("[App] Failed to retry pending subscription:", err);
+        const msg =
+          (err instanceof ApiError && (err.data?.error || err.message)) ||
+          err?.message ||
+          "Could not complete a pending subscription. Open Billing and try again.";
+        setSubscriptionPaymentError(msg);
       });
     } catch {
       try { localStorage.removeItem("pendingPaymentRecovery"); } catch {}
@@ -1667,6 +1696,11 @@ const AppContent = () => {
     }
     return (
       <>
+        {subscriptionPaymentError && (
+          <div className="mx-auto max-w-3xl mb-4 px-4 py-3 rounded-xl border border-red-400/40 bg-red-500/10 text-red-200 text-sm text-center">
+            {subscriptionPaymentError}
+          </div>
+        )}
         <SubscriptionPlanSelection
           username={user.username}
           workspaceId=""
@@ -1690,12 +1724,13 @@ const AppContent = () => {
               workspaceId=""
               trialEligible={subscriptionCheckout.trialEligible}
               currentStatus={accountSubscriptionStatus || ""}
-              onConfirmed={(setupIntentId) => {
-                handlePaymentConfirmed(setupIntentId).catch((err) => {
-                  console.error("[App] Failed to confirm subscription:", err);
-                });
+              onConfirmed={async (setupIntentId) => {
+                await handlePaymentConfirmed(setupIntentId);
               }}
-              onClose={() => setSubscriptionCheckout(null)}
+              onClose={() => {
+                setSubscriptionCheckout(null);
+                setSubscriptionPaymentError(null);
+              }}
             />
           </Suspense>
         )}
