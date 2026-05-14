@@ -300,7 +300,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-gradient-to-br from-slate-900 via-violet-950/40 to-slate-900 border border-white/10 rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-gradient-to-br from-slate-900 via-violet-950/40 to-slate-900 border border-white/10 rounded-2xl shadow-2xl max-w-5xl w-full h-[90vh] max-h-[760px] flex flex-col overflow-hidden">
 
                 {/* ── Header ── */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 flex-shrink-0">

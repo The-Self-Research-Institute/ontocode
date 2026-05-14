@@ -14,6 +14,7 @@ interface PaymentSetupModalProps {
     interval: 'monthly' | 'annual';
     workspaceId: string;
     trialEligible?: boolean;
+    currentStatus?: string;
     onConfirmed: (setupIntentId: string) => void;
     onClose: () => void;
 }
@@ -25,11 +26,12 @@ interface PaymentFormProps {
     interval: 'monthly' | 'annual';
     workspaceId: string;
     trialEligible: boolean;
+    currentStatus?: string;
     onConfirmed: (setupIntentId: string) => void;
     onClose: () => void;
 }
 
-const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspaceId, trialEligible, onConfirmed, onClose }) => {
+const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspaceId, trialEligible, currentStatus, onConfirmed, onClose }) => {
     const stripe = useStripe();
     const elements = useElements();
     const [submitting, setSubmitting] = useState(false);
@@ -37,6 +39,8 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
 
     const { getDisplayPrice, trialPeriodDays } = usePlanPricing();
     const price = getDisplayPrice(planName, interval);
+    const isEnterprisePlan = planName.toUpperCase() === 'ENTERPRISE';
+    const showEnterpriseTrialEndingWarning = isEnterprisePlan && currentStatus?.toLowerCase() === 'trialing';
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -90,10 +94,20 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                 <div className="text-right">
                     <p className="text-purple-300 font-semibold">{price}</p>
                     <p className={`text-[11px] ${trialEligible ? 'text-green-400' : 'text-amber-300'}`}>
-                        {trialEligible ? `First ${trialPeriodDays} days free` : 'Charged when activated'}
+                        {trialEligible
+                            ? `First ${trialPeriodDays} days free`
+                            : isEnterprisePlan
+                                ? 'No trial • charged immediately'
+                                : 'Charged when activated'}
                     </p>
                 </div>
             </div>
+
+            {showEnterpriseTrialEndingWarning && (
+                <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                    Enterprise upgrades do not include a new trial. Your Enterprise plan will be charged when you confirm.
+                </div>
+            )}
 
             {/* Stripe Payment Element */}
             <div>
@@ -120,6 +134,8 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                 <span>
                     {trialEligible
                         ? `Secured by Stripe — card not charged for ${trialPeriodDays} days — cancel any time before trial ends`
+                        : isEnterprisePlan
+                            ? 'Secured by Stripe — Enterprise upgrades are charged immediately and do not include a new trial'
                         : 'Secured by Stripe — your trial has already been used and your card will be charged when activated'}
                 </span>
             </div>
@@ -147,7 +163,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                     ) : (
                         <>
                             <CheckCircle size={18} />
-                            {trialEligible ? `Start ${trialPeriodDays}-day free trial` : 'Confirm and activate plan'}
+                            {trialEligible ? `Start ${trialPeriodDays}-day free trial` : 'Confirm and pay'}
                         </>
                     )}
                 </button>
@@ -165,6 +181,7 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
     interval,
     workspaceId,
     trialEligible = true,
+    currentStatus,
     onConfirmed,
     onClose,
 }) => {
@@ -217,10 +234,10 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
 
     return (
         <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="dark-surface relative w-full max-w-md bg-gradient-to-b from-slate-900 to-indigo-950 border border-white/15 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="dark-surface relative w-full max-w-md h-[85vh] max-h-[720px] bg-gradient-to-b from-slate-900 to-indigo-950 border border-white/15 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
 
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-5 border-b border-white/10">
+                <div className="flex items-center justify-between px-6 py-5 border-b border-white/10 flex-shrink-0">
                     <div>
                         <h2 className="text-lg font-bold text-white">
                             {trialEligible ? 'Start your free trial' : 'Activate your plan'}
@@ -241,13 +258,14 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
                 </div>
 
                 {/* Form */}
-                <div className="px-6 py-6">
+                <div className="px-6 py-6 overflow-y-auto flex-1">
                     <Elements stripe={stripePromise} options={options}>
                         <PaymentForm
                             planName={planName}
                             interval={interval}
                             workspaceId={workspaceId}
                             trialEligible={trialEligible}
+                            currentStatus={currentStatus}
                             onConfirmed={onConfirmed}
                             onClose={onClose}
                         />

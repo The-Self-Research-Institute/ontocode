@@ -197,6 +197,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const canManageOpenProject = projectSettingsModal
     ? canManageProjectSettings(projectRoleForUser(projectSettingsModal), effectiveWorkspaceRole)
     : false;
+  const currentWorkspaceName = workspaceDisplayName || user?.workspaceName || "Workspace";
 
   const canManageProjectRow = (project: Project) =>
     canManageProjectSettings(projectRoleForUser(project), effectiveWorkspaceRole);
@@ -913,10 +914,13 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <ArrowLeft size={20} />
               </button>
               <div className="min-w-0">
-                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">OntoCode</h1>
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate flex items-center gap-2">
+                  <Building2 size={22} className="text-purple-600 flex-shrink-0" />
+                  <span className="truncate">{currentWorkspaceName}</span>
+                </h1>
                 <p className="text-xs sm:text-sm text-gray-500 truncate">
-                  Welcome, {user?.username}
-                  {(workspaceDisplayName || user?.workspaceName) && (
+                  OntoCode Project Dashboard · Welcome, {user?.username}
+                  {currentWorkspaceName && (
                     <button
                       onClick={() => {
                         console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (inline)");
@@ -926,7 +930,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       title="Click to switch workspace"
                     >
                       <Building2 size={11} />
-                      <span className="truncate">{workspaceDisplayName || user?.workspaceName}</span>
+                      <span className="truncate">Switch workspace</span>
                     </button>
                   )}
                 </p>
@@ -1452,8 +1456,13 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         user={{
           username: user?.username || "",
           email: user?.email,
-          workspaceName: user?.workspaceName,
+          workspaceName: currentWorkspaceName,
           workspaceId: user?.workspaceId,
+        }}
+        isWorkspaceOwner={isWorkspaceOwner}
+        onWorkspaceRenamed={(workspaceName) => {
+          setWorkspaceDisplayName(workspaceName);
+          refreshPermissions().catch(() => undefined);
         }}
       />
 

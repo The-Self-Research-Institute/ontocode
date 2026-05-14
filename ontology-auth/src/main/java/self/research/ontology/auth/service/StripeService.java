@@ -188,7 +188,7 @@ public class StripeService {
     public String createSubscriptionAfterSetup(User user, String setupIntentId,
             String planName, String interval, String workspaceId) throws StripeException {
 
-        validateAllowedPlanChange(user, planName);
+        validateAllowedPlanChange(user, planName, interval);
 
         // Model B/C: one subscription per user account.
         // If an active/trialing subscription exists, treat this as an UPDATE (plan/interval change),
@@ -224,9 +224,9 @@ public class StripeService {
             }
 
             String itemId = subscription.getItems().getData().get(0).getId();
-            String idempotencyKey = "sub-update-" + user.getId() + "-" + subscription.getId() + "-" + priceId;
+            String idempotencyKey = "sub-update-immediate-v2-" + user.getId() + "-" + subscription.getId() + "-" + priceId + "-" + setupIntentId;
 
-            SubscriptionUpdateParams params = SubscriptionUpdateParams.builder()
+            SubscriptionUpdateParams.Builder paramsBuilder = SubscriptionUpdateParams.builder()
                     .setDefaultPaymentMethod(paymentMethodId)
                     .addItem(
                             SubscriptionUpdateParams.Item.builder()
@@ -234,16 +234,20 @@ public class StripeService {
                                     .setPrice(priceId)
                                     .build()
                     )
-                    // Keep the subscription running; Stripe will compute prorations based on their config.
+                    // Charge plan upgrades immediately instead of deferring prorations to the next renewal invoice.
                     .setCancelAtPeriodEnd(false)
-                    .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.CREATE_PRORATIONS)
+                    .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.ALWAYS_INVOICE)
+                    .setPaymentBehavior(SubscriptionUpdateParams.PaymentBehavior.ERROR_IF_INCOMPLETE)
                     .putMetadata("planName", planName.toUpperCase())
                     .putMetadata("billingInterval", interval.toLowerCase())
-                    .putMetadata("workspaceId", workspaceId != null ? workspaceId : "")
-                    .build();
+                    .putMetadata("workspaceId", workspaceId != null ? workspaceId : "");
+
+            if ("trialing".equalsIgnoreCase(subscription.getStatus())) {
+                paramsBuilder.setTrialEnd(Instant.now().getEpochSecond());
+            }
 
             subscription = subscription.update(
-                    params,
+                    paramsBuilder.build(),
                     com.stripe.net.RequestOptions.builder().setIdempotencyKey(idempotencyKey).build()
             );
             log.info("Updated subscription {} for user {} to {}/{}",
@@ -398,7 +402,7 @@ public class StripeService {
      * @return Stripe Checkout client secret for embedded checkout
      */
     public String createCheckoutSession(User user, String planName, String interval, String workspaceId) throws StripeException {
-        validateAllowedPlanChange(user, planName);
+        validateAllowedPlanChange(user, planName, interval);
 
         String priceId = resolvePriceId(planName, interval);
         Customer customer = getOrCreateCustomer(user);
@@ -1118,7 +1122,7 @@ public class StripeService {
         };
     }
 
-    private void validateAllowedPlanChange(User user, String requestedPlan) {
+    private void validateAllowedPlanChange(User user, String requestedPlan, String requestedInterval) {
         String normalizedRequested = requestedPlan != null ? requestedPlan.toUpperCase() : "";
         int requestedRank = planRank(normalizedRequested);
         if (requestedRank < 2) {
@@ -1137,6 +1141,21 @@ public class StripeService {
             throw new IllegalStateException(
                     "Downgrading is not permitted. You can renew your existing plan or upgrade to a higher tier.");
         }
+
+        String currentStatus = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus() : "";
+        boolean activeLike = "active".equalsIgnoreCase(currentStatus) || "trialing".equalsIgnoreCase(currentStatus);
+        String currentInterval = normalizeBillingInterval(user.getBillingInterval());
+        String targetInterval = normalizeBillingInterval(requestedInterval);
+        if (activeLike && "annual".equals(currentInterval) && "monthly".equals(targetInterval)) {
+            throw new IllegalStateException(
+                    "Switching from annual to monthly is not available during the current annual period.");
+        }
+    }
+
+    private String normalizeBillingInterval(String interval) {
+        if (interval == null) return "";
+        String normalized = interval.trim().toLowerCase();
+        return "yearly".equals(normalized) ? "annual" : normalized;
     }
 
     private int planRank(String plan) {

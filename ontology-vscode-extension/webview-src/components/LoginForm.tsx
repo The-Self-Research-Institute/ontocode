@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
-import { Loader2, Eye, EyeOff, ArrowLeft, Bug } from 'lucide-react';
+import { Loader2, Eye, EyeOff, ArrowLeft, Bug, RefreshCw } from 'lucide-react';
 import ReportIssueModal from './ReportIssueModal';
 
 interface LoginFormProps {
@@ -23,20 +23,46 @@ const LoginForm = ({
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
   const [error, setError] = useState("");
+  const [resendMessage, setResendMessage] = useState("");
+  const [resendError, setResendError] = useState("");
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
-  const { login, sessionExpiredMessage } = useAuth();
+  const { login, resendVerification, sessionExpiredMessage } = useAuth();
+  const showResendVerification = error.toLowerCase().includes("account not verified");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError("");
+    setResendMessage("");
+    setResendError("");
     try {
       await login(username, password);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An unknown error occurred.");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    const identifier = username.trim();
+    if (!identifier) {
+      setResendError("Enter your email or username first.");
+      return;
+    }
+
+    setIsResendingVerification(true);
+    setResendMessage("");
+    setResendError("");
+    try {
+      const message = await resendVerification(identifier);
+      setResendMessage(message);
+    } catch (err) {
+      setResendError(err instanceof Error ? err.message : "Failed to resend verification email");
+    } finally {
+      setIsResendingVerification(false);
     }
   };
 
@@ -61,7 +87,25 @@ const LoginForm = ({
 
         {error && (
           <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-lg mb-6 text-sm backdrop-blur-sm">
-            {error}
+            <div>{error}</div>
+            {showResendVerification && (
+              <div className="mt-3 pt-3 border-t border-red-400/20">
+                <p className="text-red-200/90 mb-2">
+                  Need a new verification email?
+                </p>
+                {resendMessage && <p className="text-green-300 mb-2">{resendMessage}</p>}
+                {resendError && <p className="text-red-200 mb-2">{resendError}</p>}
+                <button
+                  type="button"
+                  onClick={handleResendVerification}
+                  disabled={isResendingVerification}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-white hover:bg-white/20 transition-colors disabled:opacity-60"
+                >
+                  {isResendingVerification ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                  {isResendingVerification ? "Sending..." : "Resend verification link"}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
