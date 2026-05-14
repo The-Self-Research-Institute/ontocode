@@ -484,6 +484,65 @@ public class WorkspaceController {
     }
 
     /**
+     * Update workspace details. Only the workspace owner can rename a workspace.
+     */
+    @PatchMapping("/{workspaceId}")
+    public ResponseEntity<?> updateWorkspace(
+            @PathVariable String workspaceId,
+            @RequestBody Map<String, String> request) {
+        try {
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
+
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+            Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
+            if (workspaceOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+            }
+
+            Workspace workspace = workspaceOpt.get();
+            if (!workspace.getOwnerId().equals(user.getId())) {
+                return ResponseEntity.status(403).body(Map.of(
+                    "error", "Only workspace owner can update workspace settings"
+                ));
+            }
+
+            String name = request.get("name");
+            if (name != null && !name.isBlank()) {
+                String trimmedName = name.trim();
+                boolean duplicateName = workspaceService.getOwnedWorkspaces(user.getId()).stream()
+                    .anyMatch(w -> !w.getWorkspaceId().equals(workspaceId)
+                        && w.getName().equalsIgnoreCase(trimmedName));
+                if (duplicateName) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "error", "A workspace with this name already exists"
+                    ));
+                }
+            }
+
+            Workspace updatedWorkspace = workspaceService.updateWorkspace(
+                workspaceId,
+                name,
+                request.get("description")
+            );
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Workspace updated successfully",
+                "workspace", convertToDTO(updatedWorkspace)
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Error updating workspace {}", workspaceId, e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
      * Delete a workspace
      */
     @DeleteMapping("/{workspaceId}")

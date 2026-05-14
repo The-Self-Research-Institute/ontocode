@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff } from 'lucide-react';
+import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 
 interface SettingsModalProps {
@@ -12,9 +12,11 @@ interface SettingsModalProps {
         workspaceName?: string;
         workspaceId?: string;
     };
+    isWorkspaceOwner?: boolean;
+    onWorkspaceRenamed?: (workspaceName: string) => void;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout, user }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout, user, isWorkspaceOwner = false, onWorkspaceRenamed }) => {
     const [activeTab, setActiveTab] = useState('profile');
     const [saving, setSaving] = useState(false);
     const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -24,7 +26,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         notifications: true,
         emailNotifications: true,
         theme: 'light',
-        language: 'en'
+        language: 'en',
+        workspaceName: user.workspaceName || ''
     });
     const [passwordData, setPasswordData] = useState({
         currentPassword: '',
@@ -50,7 +53,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                     notifications: parsed.notifications ?? true,
                     emailNotifications: parsed.emailNotifications ?? true,
                     theme: parsed.theme || 'light',
-                    language: parsed.language || 'en'
+                    language: parsed.language || 'en',
+                    workspaceName: user.workspaceName || ''
                 });
             } catch (e) {
                 // Fall back to defaults
@@ -60,7 +64,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                     notifications: true,
                     emailNotifications: true,
                     theme: 'light',
-                    language: 'en'
+                    language: 'en',
+                    workspaceName: user.workspaceName || ''
                 });
             }
         } else {
@@ -70,7 +75,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 notifications: true,
                 emailNotifications: true,
                 theme: 'light',
-                language: 'en'
+                language: 'en',
+                workspaceName: user.workspaceName || ''
             });
         }
     }, [user, isOpen]);
@@ -79,6 +85,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
 
     const tabs = [
         { id: 'profile', label: 'Profile', icon: User },
+        { id: 'workspace', label: 'Workspace', icon: Building2 },
         // { id: 'notifications', label: 'Notifications', icon: Bell },
         { id: 'security', label: 'Security', icon: Lock },
         // { id: 'appearance', label: 'Appearance', icon: Palette },
@@ -94,6 +101,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         try {
             setSaving(true);
             console.log('Saving settings:', settings);
+
+            if (activeTab === 'workspace') {
+                if (!user.workspaceId) {
+                    showMessage('error', 'No workspace selected');
+                    return;
+                }
+                const workspaceName = settings.workspaceName.trim();
+                if (!workspaceName) {
+                    showMessage('error', 'Workspace name is required');
+                    return;
+                }
+
+                const response = await apiClient.patch(`/api/workspaces/${user.workspaceId}`, {
+                    name: workspaceName
+                });
+                const data = response?.data || response;
+                const updatedName = data?.workspace?.name || workspaceName;
+                onWorkspaceRenamed?.(updatedName);
+                showMessage('success', 'Workspace name updated successfully!');
+                setTimeout(() => onClose(), 1500);
+                return;
+            }
             
             // Try to save profile settings - handle gracefully if endpoint doesn't exist
             try {
@@ -257,6 +286,34 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                           className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 cursor-not-allowed"
                         />
                         <p className="text-xs text-gray-500 mt-1">Email address cannot be changed</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === "workspace" && (
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-4">Workspace Settings</h4>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Workspace Name</label>
+                        <input
+                          type="text"
+                          value={settings.workspaceName}
+                          onChange={(e) => setSettings({ ...settings, workspaceName: e.target.value })}
+                          disabled={!isWorkspaceOwner}
+                          className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent ${
+                            isWorkspaceOwner ? "bg-white text-gray-900" : "bg-gray-100 text-gray-600 cursor-not-allowed"
+                          }`}
+                          placeholder="Workspace name"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          {isWorkspaceOwner
+                            ? "This name is shown across the project dashboard and workspace switcher."
+                            : "Only the workspace owner can change the workspace name."}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -458,7 +515,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || (activeTab === "workspace" && !isWorkspaceOwner)}
                   className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
                 >
                   {saving && <Loader2 size={16} className="animate-spin" />}

@@ -18,7 +18,7 @@ import InviteAcceptPage from "./components/InviteAcceptPage";
 import EmailVerificationNotice from "./components/EmailVerificationNotice";
 import ForgotPasswordForm from "./components/ForgotPasswordForm";
 import ResetPasswordForm from "./components/ResetPasswordForm";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
 import { clearLastOpenedProjectState, SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "./utils/sessionCleanup";
 const BillingManagement = lazy(() => import("./components/BillingManagement"));
@@ -80,7 +80,7 @@ const AppContent = () => {
     updateSubscriptionPlan,
     updateUserRole,
     refreshPermissions,
-    verifyEmailAndLogin,
+    resendVerification,
   } = useAuth();
   console.log(
     "[App] 🔄 AppContent render - user:",
@@ -110,7 +110,9 @@ const AppContent = () => {
   const [workspaceBillingStatus, setWorkspaceBillingStatus] = useState<string | null>(null);
   const [accountSubscriptionStatus, setAccountSubscriptionStatus] = useState<string | null>(null);
   const [accountPlanName, setAccountPlanName] = useState<string | null>(null);
+  const [accountBillingInterval, setAccountBillingInterval] = useState<"monthly" | "annual">("monthly");
   const [trialEligible, setTrialEligible] = useState(true);
+  const [subscriptionPageRefreshing, setSubscriptionPageRefreshing] = useState(false);
   const [showManageSubscription, setShowManageSubscription] = useState(false);
   const [showBillingPage, setShowBillingPage] = useState(false);
   const [subscriptionReturnRoute, setSubscriptionReturnRoute] = useState<"billing" | null>(null);
@@ -164,6 +166,10 @@ const AppContent = () => {
   );
   const [emailVerifyError, setEmailVerifyError] = useState<string>("");
   const [verifiedEmail, setVerifiedEmail] = useState<string>("");
+  const [verifyResendEmail, setVerifyResendEmail] = useState<string>("");
+  const [verifyResendMessage, setVerifyResendMessage] = useState<string>("");
+  const [verifyResendError, setVerifyResendError] = useState<string>("");
+  const [isVerifyResending, setIsVerifyResending] = useState(false);
 
   // Helper to check if workspace selection is required
   const shouldShowWorkspaceSelection = useCallback((): boolean => {
@@ -248,37 +254,55 @@ const AppContent = () => {
     };
   }, [user?.workspaceId]);
 
+  const refreshAccountSubscription = useCallback(async () => {
+    if (!user) {
+      setTrialEligible(true);
+      setAccountPlanName(null);
+      setAccountSubscriptionStatus(null);
+      setAccountBillingInterval("monthly");
+      return null;
+    }
+
+    const response = await apiClient.get("/api/billing/subscription");
+    const data = response?.data || response;
+    const planName = (data?.planName || "FREE").toUpperCase();
+    setAccountPlanName(planName);
+    setTrialEligible(data?.trialEligible !== false);
+    setAccountSubscriptionStatus(data?.status || null);
+    setAccountBillingInterval((data?.billingInterval || "").toLowerCase() === "yearly" || (data?.billingInterval || "").toLowerCase() === "annual"
+      ? "annual"
+      : "monthly");
+    return data;
+  }, [user?.userId]);
+
   useEffect(() => {
     let cancelled = false;
 
     if (!user) {
       setTrialEligible(true);
       setAccountSubscriptionStatus(null);
+      setAccountBillingInterval("monthly");
       return;
     }
 
-    apiClient
-      .get("/api/billing/subscription")
+    refreshAccountSubscription()
       .then((response: any) => {
         if (cancelled) return;
-        const data = response?.data || response;
-        const planName = (data?.planName || "FREE").toUpperCase();
-        setAccountPlanName(planName);
-        setTrialEligible(data?.trialEligible !== false);
-        setAccountSubscriptionStatus(data?.status || null);
+        if (!response) return;
       })
       .catch(() => {
         if (!cancelled) {
           setAccountPlanName(null);
           setTrialEligible(true);
           setAccountSubscriptionStatus(null);
+          setAccountBillingInterval("monthly");
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [user?.userId]);
+  }, [refreshAccountSubscription]);
 
   const isWorkspacePaymentPending =
     !!user?.workspaceId &&
@@ -622,14 +646,35 @@ const AppContent = () => {
   // Initialize router
   const { clearHistory, navigateTo } = useRouter(currentRoute, handleRouteChange);
 
-  const openAccountSubscription = useCallback(() => {
+  const openAccountSubscription = useCallback(async () => {
+    await refreshAccountSubscription().catch(() => null);
     setSubscriptionReturnRoute(currentRoute.view === "billing" || showBillingPage ? "billing" : null);
     setShowBillingPage(false);
     setShowSubscriptionPlan(true);
     setSkipWorkspaceRequested(true);
     setForceShowWorkspace(false);
     navigateTo({ view: "subscription", showSubscriptionPlan: true });
-  }, [currentRoute.view, navigateTo, showBillingPage]);
+  }, [currentRoute.view, navigateTo, refreshAccountSubscription, showBillingPage]);
+
+  useEffect(() => {
+    if (!user || currentRoute.view !== "subscription") return;
+
+    let cancelled = false;
+    setSubscriptionPageRefreshing(true);
+    refreshAccountSubscription()
+      .catch((err) => {
+        console.warn("[App] Failed to refresh subscription route state:", err);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSubscriptionPageRefreshing(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRoute.view, refreshAccountSubscription, user?.userId]);
 
   const goToWorkspaceHub = useCallback(() => {
     resetWorkspaceHubNavigation();
@@ -718,6 +763,11 @@ const AppContent = () => {
       })
       .catch((err: any) => {
         console.error("[App] Email verification failed:", err);
+        const email = err?.data?.email || "";
+        if (email) {
+          setVerifiedEmail(email);
+          setVerifyResendEmail(email);
+        }
         setEmailVerifyStatus("error");
         setEmailVerifyError(err?.message || "Verification failed");
       });
@@ -1041,7 +1091,10 @@ const AppContent = () => {
 
       try { localStorage.removeItem("pendingPaymentRecovery"); } catch {}
       setSubscriptionCheckout(null);
+      setAccountPlanName(resolvedPlan.toUpperCase());
+      setAccountBillingInterval(resolvedInterval === "annual" ? "annual" : "monthly");
       await refreshPermissions();
+      await refreshAccountSubscription().catch(() => null);
       setShowSubscriptionPlan(false);
       setSubscriptionReturnRoute(null);
       resetWorkspaceHubNavigation();
@@ -1061,7 +1114,12 @@ const AppContent = () => {
       if (errMsg.toLowerCase().includes("already") && errMsg.toLowerCase().includes("subscription")) {
         try { localStorage.removeItem("pendingPaymentRecovery"); } catch {}
         setSubscriptionCheckout(null);
+        if (resolvedPlan) {
+          setAccountPlanName(resolvedPlan.toUpperCase());
+        }
+        setAccountBillingInterval(resolvedInterval === "annual" ? "annual" : "monthly");
         await refreshPermissions().catch(() => {});
+        await refreshAccountSubscription().catch(() => null);
         setShowSubscriptionPlan(false);
         setSubscriptionReturnRoute(null);
         resetWorkspaceHubNavigation();
@@ -1380,6 +1438,28 @@ const AppContent = () => {
       setAuthSubView("login");
       setIsLoginView(true);
     };
+
+    const handleResendVerification = async () => {
+      const email = verifyResendEmail.trim();
+      setVerifyResendMessage("");
+      setVerifyResendError("");
+
+      if (!email) {
+        setVerifyResendError("Enter your email address to resend the verification link.");
+        return;
+      }
+
+      setIsVerifyResending(true);
+      try {
+        const message = await resendVerification(email);
+        setVerifyResendMessage(message);
+      } catch (err) {
+        setVerifyResendError(err instanceof Error ? err.message : "Failed to resend verification email");
+      } finally {
+        setIsVerifyResending(false);
+      }
+    };
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -1423,6 +1503,33 @@ const AppContent = () => {
               </div>
               <h2 className="text-xl font-bold text-white mb-2">Verification Failed</h2>
               <p className="text-red-300 text-sm mb-4">{emailVerifyError}</p>
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4 text-left">
+                <label htmlFor="verify-resend-email" className="block text-xs font-medium text-gray-300 mb-2">
+                  Resend verification link
+                </label>
+                <input
+                  id="verify-resend-email"
+                  type="email"
+                  value={verifyResendEmail}
+                  onChange={(e) => setVerifyResendEmail(e.target.value)}
+                  placeholder="Enter your email address"
+                  className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                {verifyResendMessage && (
+                  <p className="mt-2 text-xs text-green-300">{verifyResendMessage}</p>
+                )}
+                {verifyResendError && (
+                  <p className="mt-2 text-xs text-red-300">{verifyResendError}</p>
+                )}
+                <button
+                  onClick={handleResendVerification}
+                  disabled={isVerifyResending}
+                  className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium text-white transition-all duration-300 bg-white/10 border border-white/20 hover:bg-white/20 disabled:opacity-60"
+                >
+                  {isVerifyResending ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                  {isVerifyResending ? "Sending..." : "Resend Verification Link"}
+                </button>
+              </div>
               <button
                 onClick={handleGoToLogin}
                 className="px-6 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white rounded-lg text-sm font-medium"
@@ -1548,6 +1655,16 @@ const AppContent = () => {
       && status !== "trialing";
     // Anyone who has had a paid plan before must not get a free trial again.
     const effectiveTrialEligible = trialEligible && resolvedPlanId === "FREE";
+    if (subscriptionPageRefreshing) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-[#0f172a]">
+          <div className="flex flex-col items-center gap-3 text-slate-300">
+            <Loader2 size={40} className="text-purple-500 animate-spin" />
+            <p className="text-sm">Refreshing subscription details...</p>
+          </div>
+        </div>
+      );
+    }
     return (
       <>
         <SubscriptionPlanSelection
@@ -1556,6 +1673,7 @@ const AppContent = () => {
           workspaceName="Your Account"
           currentPlanId={resolvedPlanId}
           currentStatus={accountSubscriptionStatus || ""}
+          currentBillingInterval={accountBillingInterval}
           trialEligible={effectiveTrialEligible}
           allowCurrentPlanSelection={allowCurrentPlanSelection}
           onPlanSelected={handlePlanSelected}
@@ -1571,6 +1689,7 @@ const AppContent = () => {
               interval={subscriptionCheckout.interval}
               workspaceId=""
               trialEligible={subscriptionCheckout.trialEligible}
+              currentStatus={accountSubscriptionStatus || ""}
               onConfirmed={(setupIntentId) => {
                 handlePaymentConfirmed(setupIntentId).catch((err) => {
                   console.error("[App] Failed to confirm subscription:", err);

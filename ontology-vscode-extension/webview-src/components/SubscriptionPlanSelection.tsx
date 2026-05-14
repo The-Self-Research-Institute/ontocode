@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, X, Sparkles, Zap, Crown, ArrowRight, LogOut, Bug, Star, Shield, Gift } from 'lucide-react';
 import ReportIssueModal from './ReportIssueModal';
 import { usePlanPricing } from '../hooks/usePlanPricing';
@@ -10,6 +10,7 @@ interface SubscriptionPlanSelectionProps {
     workspaceName: string;
     currentPlanId?: string;
     currentStatus?: string;
+    currentBillingInterval?: BillingInterval;
     trialEligible?: boolean;
     allowCurrentPlanSelection?: boolean;
     onPlanSelected: (planId: string, interval: "monthly" | "annual") => Promise<void> | void;
@@ -114,6 +115,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     workspaceName,
     currentPlanId = 'FREE',
     currentStatus = '',
+    currentBillingInterval = 'monthly',
     trialEligible = true,
     allowCurrentPlanSelection = false,
     onPlanSelected,
@@ -160,6 +162,14 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     const availablePlans = plans.filter(plan =>
         currentRank >= 2 ? getPlanRank(plan.id) >= currentRank : true
     );
+
+    useEffect(() => {
+        if (getPlanRank(normalizedCurrentPlanId) > 0) {
+            setSelectedPlan(normalizedCurrentPlanId);
+        }
+    }, [normalizedCurrentPlanId]);
+
+
     const discountPercentages = availablePlans.filter(p => p.monthlyPrice > 0).map(getDiscountPercent);
     const maxDiscount = discountPercentages.length > 0 ? Math.max(...discountPercentages) : 0;
 
@@ -178,8 +188,19 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     const isInactiveCurrentPlan = allowCurrentPlanSelection && currentRank > 1;
     const isPaidSelected = (selectedPlanData?.monthlyPrice ?? 0) > 0;
     const isEnterpriseSelected = selectedPlan === 'ENTERPRISE';
+    const isEnterpriseUpgrade = isEnterpriseSelected && isUpgrade && currentRank > 1;
     const selectedPlanHasTrial = trialEligible && isPaidSelected && !isEnterpriseSelected;
     const normalizedCurrentStatus = currentStatus.toUpperCase();
+    const isTrialingEnterpriseUpgrade = isEnterpriseUpgrade && normalizedCurrentStatus === 'TRIALING';
+    const normalizedCurrentBillingInterval = currentBillingInterval === 'annual' ? 'annual' : 'monthly';
+    const currentPlanIsActiveLike = normalizedCurrentStatus === 'ACTIVE' || normalizedCurrentStatus === 'TRIALING';
+    const disableMonthlyInterval = currentRank > 1 && currentPlanIsActiveLike && normalizedCurrentBillingInterval === 'annual';
+
+    useEffect(() => {
+        if (disableMonthlyInterval && billingInterval === 'monthly') {
+            setBillingInterval('annual');
+        }
+    }, [billingInterval, disableMonthlyInterval]);
 
     const handleContinue = async () => {
         if (disableContinue) return;
@@ -279,12 +300,18 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 <div className="flex justify-center mb-4 shrink-0">
                     <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-1">
                         <button
-                            onClick={() => setBillingInterval('monthly')}
+                            onClick={() => {
+                                if (!disableMonthlyInterval) {
+                                    setBillingInterval('monthly');
+                                }
+                            }}
+                            disabled={disableMonthlyInterval}
+                            title={disableMonthlyInterval ? 'Annual subscriptions cannot switch to monthly until the current annual period ends.' : 'Monthly billing'}
                             className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
                                 billingInterval === 'monthly'
                                     ? 'bg-purple-600 text-white shadow-sm'
                                     : 'text-slate-400 hover:text-white'
-                            }`}
+                            } ${disableMonthlyInterval ? 'opacity-40 cursor-not-allowed hover:text-slate-400' : ''}`}
                         >
                             Monthly
                         </button>
@@ -309,6 +336,11 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                         </button>
                     </div>
                 </div>
+                {disableMonthlyInterval && (
+                    <p className="mb-3 text-center text-xs text-slate-400">
+                        Annual plans stay annual until the current billing period ends. Monthly to annual upgrades are charged immediately with Stripe proration.
+                    </p>
+                )}
 
                 {/* Plan cards (scrollable region) */}
                 <div className="flex-1 min-h-0 flex items-start justify-center overflow-y-auto px-1 pb-3">
@@ -471,9 +503,9 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                             )}
                         </p>
                     )}
-                    {false && isEnterpriseSelected && (
-                        <p className="text-amber-400 text-xs text-center font-medium">
-                            Enterprise plans are charged immediately. No trial period is available for this tier.
+                    {isTrialingEnterpriseUpgrade && (
+                        <p className="max-w-xl rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-2 text-amber-200 text-xs text-center font-medium">
+                            Heads up: Enterprise upgrades do not include a new trial. Your current trial ends and Enterprise is charged immediately.
                         </p>
                     )}
                     {isDowngradeAttempt && (
