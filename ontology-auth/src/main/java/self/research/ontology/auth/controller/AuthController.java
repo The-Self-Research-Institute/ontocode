@@ -315,7 +315,8 @@ public class AuthController {
         // Check if token is expired
         if (user.isVerificationTokenExpired()) {
             return ResponseEntity.badRequest().body(Map.of(
-                "error", "Verification token has expired. Please register again."
+                "error", "Verification token has expired. Please request a new verification link.",
+                "email", user.getEmail()
             ));
         }
 
@@ -348,13 +349,15 @@ public class AuthController {
      */
     @PostMapping("/resend-verification")
     public ResponseEntity<?> resendVerification(@RequestBody Map<String, String> request) {
-        String email = request.get("email") == null ? "" : request.get("email").trim().toLowerCase(Locale.ROOT);
-        if (email == null || email.isBlank()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Email is required"));
+        String identifier = request.get("email") == null ? "" : request.get("email").trim();
+        if (identifier == null || identifier.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Email or username is required"));
         }
 
         // Always return success to prevent email enumeration
-        userRepository.findByEmailIgnoreCase(email).ifPresent(user -> {
+        userRepository.findByEmailIgnoreCase(identifier.toLowerCase(Locale.ROOT))
+            .or(() -> userRepository.findByUsername(identifier))
+            .ifPresent(user -> {
             if (!user.isEnabled()) {
                 String verificationToken = UUID.randomUUID().toString();
                 user.setVerificationToken(verificationToken);
