@@ -326,11 +326,9 @@ public class CollaborativeEditService {
                  "deleteNegativeObjectPropertyAssertion", "deleteNegativeDataPropertyAssertion" -> EditOperation.OperationType.INDIVIDUAL_MODIFIED;
             case "addSubClass", "addSubClassOf" -> EditOperation.OperationType.SUBCLASS_ADDED;
             case "removeSubClass", "deleteSubClassOf", "updateSubClassOf" -> EditOperation.OperationType.SUBCLASS_REMOVED;
-            case "addPropertyDomain" -> EditOperation.OperationType.PROPERTY_DOMAIN_ADDED;
-            case "deletePropertyDomain" -> EditOperation.OperationType.PROPERTY_DOMAIN_REMOVED;
-            case "addPropertyRange" -> EditOperation.OperationType.PROPERTY_RANGE_ADDED;
-            case "deletePropertyRange" -> EditOperation.OperationType.PROPERTY_RANGE_REMOVED;
-            case "addSubPropertyOf", "deleteSubPropertyOf", "addInverseProperty", "deleteInverseProperty",
+            case "addPropertyDomain", "deletePropertyDomain",
+                 "addPropertyRange", "deletePropertyRange",
+                 "addSubPropertyOf", "deleteSubPropertyOf", "addInverseProperty", "deleteInverseProperty",
                  "addPropertyChain", "deletePropertyChain", "addCharacteristic", "deleteCharacteristic" -> EditOperation.OperationType.PROPERTY_MODIFIED;
             case "addDisjointWith" -> EditOperation.OperationType.DISJOINT_ADDED;
             case "deleteDisjointWith", "updateDisjointWith" -> EditOperation.OperationType.DISJOINT_REMOVED;
@@ -339,6 +337,17 @@ public class CollaborativeEditService {
             case "addDisjointProperty", "deleteDisjointProperty", "addEquivalentProperty", "deleteEquivalentProperty" -> EditOperation.OperationType.PROPERTY_MODIFIED;
             case "createDatatype" -> EditOperation.OperationType.CLASS_ADDED;
             case "deleteDatatype" -> EditOperation.OperationType.CLASS_DELETED;
+            case "addObjectRestriction", "addDataRestriction",
+                 "deleteObjectRestriction", "deleteDataRestriction" -> EditOperation.OperationType.CLASS_MODIFIED;
+            case "addAxiom", "deleteAxiom", "updateAxiom" -> EditOperation.OperationType.CLASS_MODIFIED;
+            case "addDisjointUnion", "deleteDisjointUnion" -> EditOperation.OperationType.CLASS_MODIFIED;
+            case "addHasKey", "deleteHasKey" -> EditOperation.OperationType.CLASS_MODIFIED;
+            case "updateObjectPropertyLabel", "updateDataPropertyLabel", "updateAnnotationPropertyLabel" -> EditOperation.OperationType.PROPERTY_MODIFIED;
+            case "addIntersection", "addUnion",
+                 "addGCAIntersection", "addGCAUnion" -> EditOperation.OperationType.CLASS_MODIFIED;
+            case "addDatatypeDefinition", "updateDatatypeDefinition", "deleteDatatypeDefinition" -> EditOperation.OperationType.CLASS_MODIFIED;
+            case "addSameIndividual", "deleteSameIndividual",
+                 "addDifferentIndividual", "deleteDifferentIndividual" -> EditOperation.OperationType.INDIVIDUAL_MODIFIED;
             default -> null;
         };
     }

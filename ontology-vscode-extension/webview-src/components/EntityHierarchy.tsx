@@ -97,7 +97,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   const [draggedItem, setDraggedItem] = useState<SelectableItem | null>(null);
   const [renamingItemId, setRenamingItemId] = useState<string | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
-  const { state: collaborationState } = useCollaboration();
+  const { state: collaborationState, publishCursor } = useCollaboration();
   
   // Get active users as array and filter by current project
   const allUsers = Array.from(collaborationState.activeUsers.values());
@@ -260,14 +260,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           style={{ paddingLeft: `${level * 16 + 4}px` }}
           onClick={() => {
             onSelectItem(item);
-            // Broadcast cursor position to other users
-            if (window.vscode) {
-              window.vscode.postMessage({
-                type: 'cursorMoved',
-                nodeId: item.id,
-                nodeName: item.label
-              });
-            }
+            publishCursor(item.id, item.label);
           }}
           onContextMenu={(e) => handleContextMenu(e, item)}
         >

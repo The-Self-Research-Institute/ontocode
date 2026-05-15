@@ -47,6 +47,7 @@ interface CollaborationContextType {
   addNotification: (notification: Omit<EditNotification, "id">) => void;
   removeNotification: (id: string) => void;
   clearNotifications: () => void;
+  publishCursor: (nodeId: string, nodeLabel: string) => void;
 }
 
 export const CollaborationContext = createContext<CollaborationContextType | undefined>(undefined);
@@ -633,6 +634,41 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     console.log("[CollaborationContext] 📢 Added notification for remote edit");
   }, []);
 
+  const publishCursor = useCallback(
+    (nodeId: string, nodeLabel: string) => {
+      const projectId = currentProjectRef.current;
+      if (!projectId) return;
+
+      const userId = user?.userId || user?.username || "";
+      const username = user?.username || "";
+
+      if (isBrowserMode()) {
+        const client = stompClientRef.current;
+        if (!client?.connected) return;
+        client.publish({
+          destination: `/app/collab/${projectId}/presence`,
+          body: JSON.stringify({
+            type: "CURSOR_MOVED",
+            projectId,
+            userId,
+            username,
+            cursorPosition: nodeId,
+            selectedNodes: [nodeId],
+            timestamp: Date.now(),
+          }),
+        });
+      } else if (window.vscode) {
+        window.vscode.postMessage({
+          type: "cursorMoved",
+          projectId,
+          nodeId,
+          nodeName: nodeLabel,
+        });
+      }
+    },
+    [user?.userId, user?.username],
+  );
+
   const setCurrentProject = useCallback(
     (projectId: string | null) => {
       currentProjectRef.current = projectId;
@@ -666,8 +702,9 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       addNotification,
       removeNotification,
       clearNotifications,
+      publishCursor,
     }),
-    [state, setCurrentProject, addNotification, removeNotification, clearNotifications],
+    [state, setCurrentProject, addNotification, removeNotification, clearNotifications, publishCursor],
   );
 
   return <CollaborationContext.Provider value={value}>{children}</CollaborationContext.Provider>;
