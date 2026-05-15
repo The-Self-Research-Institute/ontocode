@@ -255,7 +255,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       invitations instead
                     </li>
                     <li>
-                      <strong>No Workspace Management:</strong> ❌ Neglecting to archive or delete unused workspaces
+                      <strong>No Workspace Management:</strong> ❌ Neglecting to delete unused workspaces
                     </li>
                   </ul>
                 </div>
@@ -295,7 +295,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                     <strong>Available Plans:</strong>
                     <ul style={styles.roleList}>
                       <li><strong>FREE:</strong> Limited members &amp; projects — ideal for exploring OntoCode</li>
-                      <li><strong>PRO:</strong> Increased member limits, priority support, monthly or annual billing</li>
+                      <li><strong>PRO:</strong> Increased member limits, priority support, monthly or annual billing — annual discount available</li>
                       <li><strong>ENTERPRISE:</strong> Unlimited members, custom limits, annual discount available</li>
                     </ul>
                   </div>
@@ -534,7 +534,6 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                     <li>🔹 Track invitation status (Pending/Accepted/Expired)</li>
                     <li>🔹 Cancel pending invitations anytime</li>
                     <li>🔹 7days is the invitation expiry time (security feature)</li>
-                    <li>🔹 Bulk invite multiple users via CSV upload (Enterprise)</li>
                   </ul>
                 </div>
               </div>
@@ -565,14 +564,15 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       <strong>Verify Sender:</strong> Ensure the invitation is from a legitimate source you recognize
                     </li>
                     <li>
-                      <strong>Click Invitation Link:</strong> Click the "Accept Invitation" button in the email
+                      <strong>Click Invitation Link:</strong> Click the invitation link in the email — it will open in
+                      your browser or webview
+                    </li>
+                    <li>
+                      <strong>Login or Sign Up:</strong> If you already have an account, log in; if you're new, create
+                      an account using the same email address the invitation was sent to
                     </li>
                     <li>
                       <strong>Review Details:</strong> Check workspace name, your assigned role, and inviter details
-                    </li>
-                    <li>
-                      <strong>Create Account or Login:</strong> If new user, create account; if existing user, login
-                      with your credentials
                     </li>
                     <li>
                       <strong>Accept & Join:</strong> Click "Accept & Join Workspace" to complete the process
@@ -585,9 +585,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   <div style={styles.example}>
                     <strong>✅ Acceptance Flow:</strong>
                     <div style={styles.exampleContent}>
-                      1. Email notification → 2. Click link → 3. Review workspace info
+                      1. Email notification → 2. Click link (opens in browser/webview)
                       <br />
-                      4. Login/Signup → 5. Accept invitation → 6. Access workspace
+                      3. Login or Sign Up → 4. Review workspace info → 5. Accept invitation → 6. Access workspace
                     </div>
                   </div>
                 </div>
@@ -749,7 +749,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   <ul style={styles.list}>
                     <li>🔹 Create multiple projects within workspace limits</li>
                     <li>🔹 Set project visibility and access permissions</li>
-                    <li>🔹 Delete projects (only owners can delete)</li>
+                    <li>🔹 Delete projects (owners and workspace admins can delete)</li>
                   </ul>
                 </div>
               </div>
@@ -877,13 +877,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                     Positive Cases (Recommended) - Multiple Ways to Create Files
                   </h4>
 
-                  <p style={{ marginBottom: "16px", fontSize: "14px", color: "#6b7280" }}>
-                    OntoCode provides three different methods to create new files depending on your workflow:
-                  </p>
-
                   <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #3b82f6" }}>
                     <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
-                      📁 Method 1: From Project Library
+                      📁 From Project Library
                     </h5>
                     <ul style={styles.list}>
                       <li>
@@ -902,75 +898,32 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                         <strong>Auto-Open:</strong> File is created and automatically opens in the editor
                       </li>
                     </ul>
-                    <div style={styles.example}>
-                      <strong>✅ Best For:</strong> Quick file creation while browsing project files
-                    </div>
                   </div>
 
                   <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #10b981" }}>
                     <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
-                      ✏️ Method 2: From Project Dashboard
+                      ✏️ From Within the Editor
                     </h5>
                     <ul style={styles.list}>
                       <li>
-                        <strong>Open Editor:</strong> Click "Editor" button from project dashboard
+                        <strong>Open a File:</strong> Click "File" → "Open" — the dialog lists all files in your
+                        current project. Select a file to open it in the editor
                       </li>
                       <li>
-                        <strong>Open File Dialog:</strong> In the editor, click "File" → "Open" or use the "Open File"
-                        button
+                        <strong>Upload a File:</strong> Use the upload option in the file dialog to upload a file from
+                        your computer — it is added directly to the current project
                       </li>
                       <li>
-                        <strong>Browse View:</strong> The file browser dialog appears showing existing files
-                      </li>
-                      <li>
-                        <strong>Create New File:</strong> At the bottom of the dialog, click "Create New File" button
-                      </li>
-                      <li>
-                        <strong>Enter Details:</strong> Enter filename and click create - file is added to current
-                        folder
-                      </li>
-                      <li>
-                        <strong>Immediate Access:</strong> File opens automatically after creation
+                        <strong>Create New File:</strong> Click "File" → "New File" to create a new file — it is added
+                        to the current project and opens automatically in the editor
                       </li>
                     </ul>
-                    <div style={styles.example}>
-                      <strong>✅ Best For:</strong> Creating files after opening the editor from dashboard
-                    </div>
-                  </div>
-
-                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #f59e0b" }}>
-                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
-                      �️ Method 3: From Open File Menu
-                    </h5>
-                    <ul style={styles.list}>
-                      <li>
-                        <strong>Open File Dialog:</strong> While already in the editor, click "File" → "Open" or use the
-                        "Open File" button
-                      </li>
-                      <li>
-                        <strong>Browse View:</strong> The file browser dialog appears showing existing files
-                      </li>
-                      <li>
-                        <strong>New File Option:</strong> At the bottom of the dialog, click "Create New File Instead"
-                        button
-                      </li>
-                      <li>
-                        <strong>Quick Create:</strong> Enter filename and click create - file is added to current folder
-                      </li>
-                      <li>
-                        <strong>Immediate Access:</strong> File opens automatically after creation
-                      </li>
-                    </ul>
-                    <div style={styles.example}>
-                      <strong>✅ Best For:</strong> Quick creation when you're already working in the editor and
-                      browsing files
-                    </div>
                   </div>
 
                   <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#f0f9ff", borderRadius: "6px" }}>
                     <p style={{ fontSize: "13px", color: "#075985", margin: 0 }}>
-                      <strong>💡 Pro Tip:</strong> All methods create files in the currently active project. Always
-                      verify you're in the correct project before creating files.
+                      <strong>💡 Pro Tip:</strong> Files are created in the currently active project. Always verify
+                      you're in the correct project before creating files.
                     </p>
                   </div>
                 </div>
@@ -1024,7 +977,6 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   <ul style={styles.list}>
                     <li>🔹 Create unlimited files per project (based on storage limits)</li>
                     <li>🔹 Support for multiple file formats: .owl, .rdf, .ttl, .omn, .json (JSON-LD)</li>
-                    <li>🔹 Three convenient creation methods - library, editor, and open dialog</li>
                     <li>🔹 Create files in specific folders within project structure</li>
                     <li>🔹 Filename uniqueness validation prevents overwrites</li>
                   </ul>
@@ -1040,8 +992,8 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   >
                     <p style={{ fontSize: "13px", color: "#065f46", margin: 0 }}>
                       <strong>🎯 Recommendation:</strong> Use <strong>Project Library</strong> for quick file creation
-                      while browsing, <strong>Editor File button</strong> for convenience while working in the editor,
-                      and <strong>Open File dialog</strong> when already browsing for files.
+                      while browsing projects. Once in the editor, use <strong>File → Open</strong> to open existing
+                      files or <strong>File → New File</strong> to create new ones.
                     </p>
                   </div>
                 </div>

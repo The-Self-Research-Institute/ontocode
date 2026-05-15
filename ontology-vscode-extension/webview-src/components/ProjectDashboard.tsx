@@ -30,7 +30,6 @@ import {
   Crown,
   Zap,
   Sparkles,
-  Code2,
   ArrowLeft,
   HelpCircle,
   CreditCard,
@@ -99,7 +98,6 @@ interface ProjectDashboardProps {
   onSelectProject: (projectId: string, projectName: string) => void;
   pendingFile?: { fileName: string; fileContent: string; fileSize: number } | null;
   onOpenLocalFile?: () => void;
-  onOpenEditor?: () => void;
   onManageSubscription?: () => void;
   onOpenSubscriptionPlans?: () => void;
 }
@@ -108,7 +106,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   onSelectProject,
   pendingFile,
   onOpenLocalFile,
-  onOpenEditor,
   onManageSubscription,
   onOpenSubscriptionPlans,
 }) => {
@@ -1012,16 +1009,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 >
                   <Plus size={14} />
                   New Project
-                </button>
-              )}
-              {onOpenEditor && (
-                <button
-                  onClick={onOpenEditor}
-                  className="h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs text-blue-600 border border-blue-300 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors font-medium"
-                  title="Open OntoCode Editor"
-                >
-                  <Code2 size={14} />
-                  Editor
                 </button>
               )}
               <button
