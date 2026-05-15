@@ -5475,6 +5475,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     setProjectFiles([]);
   }, [initialProjectId]);
 
+  // When editor opens with a project but no specific file (e.g. Editor button from Project Library),
+  // pre-fetch project files so the Open File dialog isn't empty.
+  useEffect(() => {
+    if (initialProjectId && (!selectedFileId || selectedFileId === "__editor__")) {
+      fetchProjectFiles(initialProjectId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialProjectId]);
+
   // Track if a file is currently being loaded to prevent duplicate loads
   const fileLoadingRef = useRef(false);
   const lastLoadedFileRef = useRef<string | null>(null);

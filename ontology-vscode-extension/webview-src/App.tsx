@@ -1821,11 +1821,6 @@ const AppContent = () => {
           onSelectProject={handleProjectSelected}
           pendingFile={pendingFile}
           onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined}
-          onOpenEditor={() => {
-            console.log("[App] Opening editor from Project Dashboard (no file)");
-            setSelectedFileId("__editor__");
-            setSelectedFileName("");
-          }}
           onManageSubscription={hasPaidPlan ? () => navigateTo({ view: 'billing' }) : undefined}
           onOpenSubscriptionPlans={openAccountSubscription}
         />
