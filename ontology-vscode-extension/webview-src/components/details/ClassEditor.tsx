@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Search, ExternalLink, AlertCircle, Edit3, User } from 'lucide-react';
-import { Panel, AnnotationsDisplay, AxiomSubsection } from './common';
+import { Panel, AnnotationsDisplay, AxiomSubsection, CollaboratorPresenceBar } from './common';
 import { ClassExpressionDialog, MultiClassSelectorDialog, MultiPropertySelectorDialog, IRIEditorDialog, IndividualSelectorDialog, RestrictionData } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
@@ -552,6 +552,28 @@ const ClassEditor: React.FC<{
     if (isEditorOpen) loadAllClassesLookup();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditorOpen]);
+
+  // Auto-reload when a collaborator modifies this class
+  useEffect(() => {
+    const handleRemoteEdit = (e: Event) => {
+      const edit = (e as CustomEvent).detail;
+      if (!edit || edit.nodeId !== item.id) return;
+      // Any change targeting this class IRI should refresh the details panel
+      const CLASS_CHANGE_TYPES = new Set([
+        "CLASS_MODIFIED", "CLASS_RENAMED",
+        "EQUIVALENT_ADDED", "EQUIVALENT_REMOVED",
+        "SUBCLASS_ADDED", "SUBCLASS_REMOVED",
+        "DISJOINT_ADDED", "DISJOINT_REMOVED",
+        "ANNOTATION_ADDED", "ANNOTATION_MODIFIED", "ANNOTATION_DELETED",
+      ]);
+      if (CLASS_CHANGE_TYPES.has(edit.type)) {
+        loadClassDetails();
+      }
+    };
+    window.addEventListener("remoteEditReceived", handleRemoteEdit);
+    return () => window.removeEventListener("remoteEditReceived", handleRemoteEdit);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
 
   const loadProperties = async () => {
     try {
@@ -2037,6 +2059,7 @@ const ClassEditor: React.FC<{
           <Edit3 size={16} />
         </button>
       </div>
+      <CollaboratorPresenceBar entityId={item.id} />
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 bg-gray-50">

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, HelpCircle, Tag } from "lucide-react";
+import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, HelpCircle, Tag, MousePointer2 } from "lucide-react";
+import { useCollaboration } from "../../contexts/CollaborationContext";
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
 
@@ -152,7 +153,7 @@ const ColorizedAxiomDefinition: React.FC<{
           <span className="font-bold text-gray-900">
             {/* Property name - can be a link */}
             <span 
-              className={onNavigate ? "text-fuchsia-600 underline cursor-pointer hover:text-fuchsia-800" : "text-gray-900"}
+              className={onNavigate ? "text-blue-600 underline cursor-pointer hover:text-blue-800" : "text-gray-900"}
               onClick={onNavigate ? () => onNavigate(axiom.propertyIri!, 'property') : undefined}
               title={axiom.propertyIri}
             >
@@ -1174,4 +1175,32 @@ export const MultiSelectSection: React.FC<{
              </div>
          </div>
     );
+};
+
+export const CollaboratorPresenceBar: React.FC<{ entityId: string }> = ({ entityId }) => {
+  const { state } = useCollaboration();
+  const viewers = Array.from(state.activeUsers.values()).filter(
+    u => u.cursorPosition === entityId
+  );
+  if (viewers.length === 0) return null;
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 border-b border-indigo-100">
+      <MousePointer2 size={11} className="text-indigo-400 flex-shrink-0" />
+      <span className="text-[10px] text-indigo-500 mr-0.5">Also viewing:</span>
+      {viewers.map(u => (
+        <span
+          key={u.userId}
+          className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+          style={{ backgroundColor: `${u.color}20`, color: u.color, border: `1px solid ${u.color}60` }}
+          title={u.username}
+        >
+          <span
+            className="w-2 h-2 rounded-full flex-shrink-0"
+            style={{ backgroundColor: u.color }}
+          />
+          {u.username}
+        </span>
+      ))}
+    </div>
+  );
 };

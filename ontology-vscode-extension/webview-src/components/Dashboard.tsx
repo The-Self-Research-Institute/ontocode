@@ -6694,7 +6694,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] ✏️ Class modified/renamed:", edit);
           // For modification, we can just fetch details and update state
           // This preserves the tree structure
-          const classId = (edit as any).iri || (edit as any).id;
+          const classId = (edit as any).nodeId || (edit as any).iri || (edit as any).id;
           if (classId) {
             console.log(`[Dashboard] Fetching details for modified class: ${classId}`);
             // Add delay to ensure backend is ready
@@ -6776,23 +6776,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "PROPERTY_ADDED":
         case "PROPERTY_MODIFIED":
         case "PROPERTY_DELETED":
-          console.log("[Dashboard] 🔗 Refreshing properties due to property edit");
-          // Trigger refresh of properties
-          apiClient
-            .get(`/api/ontology/properties/${encodeProjectId(projectId)}`)
-            .then((response) => {
-              const allProps = Array.isArray(response.data)
-                ? response.data
-                : Array.isArray(response.properties)
-                  ? response.properties
-                  : Array.isArray(response)
-                    ? response
-                    : [];
-              const opList = allProps.filter((p: any) => p.type === "ObjectProperty");
-              setObjectProperties(opList);
-              console.log("[Dashboard] ✅ Object properties refreshed");
-            })
-            .catch((error) => console.error("[Dashboard] Failed to refresh properties:", error));
+          console.log("[Dashboard] 🔗 Refreshing all properties due to property edit");
+          // Refresh object + data property hierarchies
+          refreshProperties();
+          // Refresh annotation properties (separate endpoint)
+          handleRefreshAnnotationProperties();
           break;
 
         case "INDIVIDUAL_ADDED":
