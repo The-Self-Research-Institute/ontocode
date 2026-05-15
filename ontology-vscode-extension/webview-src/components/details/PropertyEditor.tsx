@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, Trash2, CheckSquare, Square, Edit3, Search } from 'lucide-react';
-import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
+import { Panel, AnnotationsDisplay, MultiSelectSection, CollaboratorPresenceBar } from './common';
 import { ManchesterSyntaxEditor, PropertyChainDialog, IRIEditorDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
@@ -401,6 +401,7 @@ const PropertyEditor: React.FC<{
                     <Edit3 size={16} />
                 </button>
             </div>
+            <CollaboratorPresenceBar entityId={item.id} />
 
             {/* Tabs - Protégé style */}
             <div className="flex border-b border-gray-200 bg-gray-50">

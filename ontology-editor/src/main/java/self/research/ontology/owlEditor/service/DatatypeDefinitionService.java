@@ -47,6 +47,10 @@ public class DatatypeDefinitionService {
         return existing;
     }
 
+    public Optional<DatatypeDefinitionEntity> findById(String projectId, String id) {
+        return repository.findByIdAndProjectId(id, projectId);
+    }
+
     public boolean deleteDefinition(String projectId, String id) {
         Optional<DatatypeDefinitionEntity> existing = repository.findByIdAndProjectId(id, projectId);
         if (existing.isEmpty()) {

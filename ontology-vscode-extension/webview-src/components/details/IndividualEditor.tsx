@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Loader2, Search } from 'lucide-react';
-import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
+import { Panel, AnnotationsDisplay, MultiSelectSection, CollaboratorPresenceBar } from './common';
 import type { Individual, PropertyAssertion, TreeNode } from '../../types';
 import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDialog, ClassExpressionDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
@@ -151,6 +151,30 @@ const IndividualEditor: React.FC<{
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
   const [typeClassHierarchy, setTypeClassHierarchy] = useState<TreeNode[]>([]);
 
+  const loadIndividualDetails = async () => {
+    if (!projectId || !item.id) return;
+    setIsLoading(true);
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(item.id)}`);
+      const details = response?.data || response;
+      if (details) {
+        onUpdate({
+          ...item,
+          types: details.types || item.types,
+          annotations: details.annotations || item.annotations,
+          propertyAssertions: details.propertyAssertions || [],
+          sameIndividualAs: details.sameIndividualAs || item.sameIndividualAs,
+          differentIndividualFrom: details.differentIndividualFrom || item.differentIndividualFrom,
+        });
+        setDetailsFetched(item.id);
+      }
+    } catch (error) {
+      console.error('[IndividualEditor] Failed to fetch individual details:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Fetch individual details when component mounts or item changes.
   // Uses an "alive" flag so stale responses from a previously selected
   // individual are discarded (prevents showing the previous individual's data).
@@ -198,6 +222,24 @@ const IndividualEditor: React.FC<{
     return () => { alive = false; clearTimeout(watchdog); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, projectId]);
+
+  // Auto-reload when a collaborator modifies this individual
+  useEffect(() => {
+    const handleRemoteEdit = (e: Event) => {
+      const edit = (e as CustomEvent).detail;
+      if (!edit || edit.nodeId !== item.id) return;
+      const INDIVIDUAL_CHANGE_TYPES = new Set([
+        "INDIVIDUAL_MODIFIED", "INDIVIDUAL_ADDED",
+        "ANNOTATION_ADDED", "ANNOTATION_MODIFIED", "ANNOTATION_DELETED",
+      ]);
+      if (INDIVIDUAL_CHANGE_TYPES.has(edit.type)) {
+        loadIndividualDetails();
+      }
+    };
+    window.addEventListener("remoteEditReceived", handleRemoteEdit);
+    return () => window.removeEventListener("remoteEditReceived", handleRemoteEdit);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
 
   // Separate positive/negative property assertions
   const positiveObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && !a.isNegative) || [];
@@ -435,6 +477,7 @@ const IndividualEditor: React.FC<{
           </div>
         </div>
       </div>
+      <CollaboratorPresenceBar entityId={item.id} />
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 bg-gray-50">

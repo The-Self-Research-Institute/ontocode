@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Tag, Edit3, Search } from 'lucide-react';
-import { AnnotationsDisplay, MultiSelectSection } from './common';
+import { AnnotationsDisplay, MultiSelectSection, CollaboratorPresenceBar } from './common';
 import { IRIEditorDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
@@ -270,6 +270,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
           <Edit3 size={16} />
         </button>
       </div>
+      <CollaboratorPresenceBar entityId={item.id} />
 
       {/* Tabs - Protégé style with Annotations, Description, Usage */}
       <div className="flex border-b border-gray-200 bg-gray-50">

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Search } from 'lucide-react';
-import { Panel, AnnotationsDisplay } from './common';
+import { Panel, AnnotationsDisplay, CollaboratorPresenceBar } from './common';
 import { DatatypeDefinitionDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import datatypeDefinitionService, { DatatypeDefinition } from '../../services/datatypeDefinitionService';
@@ -150,6 +150,22 @@ const DescriptionTab: React.FC<{
     };
   }, [item?.id, projectId]);
 
+  // Auto-reload when a collaborator modifies this datatype's definitions
+  useEffect(() => {
+    const handleRemoteEdit = (e: Event) => {
+      const edit = (e as CustomEvent).detail;
+      if (!edit || edit.nodeId !== item?.id) return;
+      if (edit.type === "CLASS_MODIFIED" || edit.type === "CLASS_ADDED" || edit.type === "CLASS_DELETED") {
+        datatypeDefinitionService.listDefinitions(projectId, item.id)
+          .then(data => setDefinitions(data || []))
+          .catch(() => {});
+      }
+    };
+    window.addEventListener("remoteEditReceived", handleRemoteEdit);
+    return () => window.removeEventListener("remoteEditReceived", handleRemoteEdit);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id, projectId]);
+
   const handleAddDefinition = () => {
     setIsAddDialogOpen(true);
   };
@@ -284,6 +300,7 @@ const DatatypeEditor: React.FC<{
           </div>
         </div>
       </div>
+      <CollaboratorPresenceBar entityId={item.id} />
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 bg-gray-50 flex-shrink-0">
