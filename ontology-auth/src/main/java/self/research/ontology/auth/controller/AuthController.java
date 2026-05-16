@@ -18,9 +18,12 @@ import org.springframework.web.bind.annotation.*;
 import self.research.ontology.auth.dto.AuthRequests.*;
 import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.repository.UserRepository;
+import self.research.ontology.auth.model.Workspace;
+import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.service.AuditService;
 import self.research.ontology.auth.service.EmailService;
 import self.research.ontology.auth.service.RateLimitService;
+import self.research.ontology.auth.service.SystemSettingsService;
 import self.research.ontology.auth.util.JwtUtil;
 
 import java.time.LocalDateTime;
@@ -36,10 +39,12 @@ public class AuthController {
     private final UserDetailsService userDetailsService;
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
+    private final WorkspaceRepository workspaceRepository;
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
     private final RateLimitService rateLimitService;
     private final AuditService auditService;
+    private final SystemSettingsService systemSettingsService;
 
     @Value("${app.admin.password:}")
     private String adminPassword;
@@ -47,22 +52,46 @@ public class AuthController {
     @Value("${app.admin.email:admin@example.com}")
     private String adminEmail;
 
+    /**
+     * Comma-separated list of allowed email domains for login/signup during restricted testing.
+     * Empty = allow all. Example: "coretopia.com,example.com"
+     */
+    @Value("${app.allowed.email.domains:}")
+    private String allowedEmailDomains;
+
     public AuthController(AuthenticationManager authenticationManager,
                           UserDetailsService userDetailsService,
                           JwtUtil jwtUtil,
                           UserRepository userRepository,
+                          WorkspaceRepository workspaceRepository,
                           PasswordEncoder passwordEncoder,
                           EmailService emailService,
                           RateLimitService rateLimitService,
-                          AuditService auditService) {
+                          AuditService auditService,
+                          SystemSettingsService systemSettingsService) {
         this.authenticationManager = authenticationManager;
         this.userDetailsService = userDetailsService;
         this.jwtUtil = jwtUtil;
         this.userRepository = userRepository;
+        this.workspaceRepository = workspaceRepository;
         this.passwordEncoder = passwordEncoder;
         this.emailService = emailService;
         this.rateLimitService = rateLimitService;
         this.auditService = auditService;
+        this.systemSettingsService = systemSettingsService;
+    }
+
+    private boolean isDomainAllowed(String email) {
+        if (allowedEmailDomains == null || allowedEmailDomains.isBlank()) {
+            return true; // no restriction
+        }
+        String lower = email.toLowerCase(Locale.ROOT);
+        for (String domain : allowedEmailDomains.split(",")) {
+            if (lower.endsWith("@" + domain.trim().toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -146,6 +175,16 @@ public class AuthController {
             ));
         }
 
+        // Maintenance mode check (DB-backed, overrides env-var check)
+        if (systemSettingsService.isBlockedByMaintenance(user.getEmail())
+                && !isDomainAllowed(user.getEmail())) {
+            log.warn("Login blocked — maintenance mode active for: {}", user.getEmail());
+            return ResponseEntity.status(403).body(Map.of(
+                "error", "Access is restricted to authorised users only. Please contact support.",
+                "maintenance", true
+            ));
+        }
+
         // Authenticate directly against the selected user's stored BCrypt hash.
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             // Increment failed attempts
@@ -174,6 +213,19 @@ public class AuthController {
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
 
+        // Enterprise domain bypass: auto-grant ENTERPRISE to this user's workspaces
+        if (systemSettingsService.isEnterpriseDomain(user.getEmail())) {
+            workspaceRepository.findByOwnerId(user.getId()).stream()
+                .filter(ws -> !Boolean.TRUE.equals(ws.getIsDeleted()))
+                .filter(ws -> !"ENTERPRISE".equalsIgnoreCase(ws.getSubscriptionPlan()))
+                .forEach(ws -> {
+                    ws.setSubscriptionPlan("ENTERPRISE");
+                    ws.setCollaborationEnabled(true);
+                    workspaceRepository.save(ws);
+                    log.info("Enterprise domain bypass: upgraded workspace {} for {}", ws.getWorkspaceId(), user.getEmail());
+                });
+        }
+
         // Generate JWT token
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
         String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
@@ -183,7 +235,6 @@ public class AuthController {
 
         auditService.logLoginSuccess(loginIdentifier, clientIp);
 
-        // Check if user is admin
         boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
 
         return ResponseEntity.ok(Map.of(
@@ -191,7 +242,8 @@ public class AuthController {
             "username", user.getUsername(),
             "email", user.getEmail(),
             "roles", user.getRoles(),
-            "isAdmin", isAdmin
+            "isAdmin", isAdmin,
+            "enterpriseDomainBypass", systemSettingsService.isEnterpriseDomain(user.getEmail())
         ));
     }
 
@@ -259,6 +311,15 @@ public class AuthController {
         if (userRepository.findByEmailIgnoreCase(email).isPresent()) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Email already registered"
+            ));
+        }
+
+        // Maintenance mode check (DB-backed + env-var fallback)
+        if (systemSettingsService.isBlockedByMaintenance(email) && !isDomainAllowed(email)) {
+            log.warn("Signup blocked — maintenance mode active for: {}", email);
+            return ResponseEntity.status(403).body(Map.of(
+                "error", "Registration is currently restricted to authorised users only. Please contact support.",
+                "maintenance", true
             ));
         }
 

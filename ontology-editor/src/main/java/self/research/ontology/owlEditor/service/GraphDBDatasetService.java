@@ -7,7 +7,13 @@ import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.query.*;
 import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
-import org.eclipse.rdf4j.repository.http.HTTPRepository;
+import org.apache.http.auth.AuthScope;
+import org.apache.http.auth.UsernamePasswordCredentials;
+import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.eclipse.rdf4j.http.client.SharedHttpClientSessionManager;
+import org.eclipse.rdf4j.repository.sparql.SPARQLRepository;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.RDFHandler;
 import org.eclipse.rdf4j.rio.RDFParser;
@@ -59,17 +65,23 @@ public class GraphDBDatasetService {
     private static final Logger log = LoggerFactory.getLogger(GraphDBDatasetService.class);
     private static final Logger sparqlLog = LoggerFactory.getLogger("SPARQL");
     
-    @Value("${graphdb.url:http://localhost:7200}")
-    private String graphdbUrl;
-    
-    @Value("${graphdb.repository:ontocode}")
-    private String repositoryId;
-    
+    @Value("${ontocode.fuseki.queryEndpoint:http://localhost:3030/ontocode/query}")
+    private String fusekiQueryEndpoint;
+
+    @Value("${ontocode.fuseki.updateEndpoint:http://localhost:3030/ontocode/update}")
+    private String fusekiUpdateEndpoint;
+
+    @Value("${ontocode.fuseki.gspEndpoint:http://localhost:3030/ontocode/data}")
+    private String fusekiGspEndpoint;
+
+    @Value("${ontocode.fuseki.adminUser:admin}")
+    private String fusekiAdminUser;
+
+    @Value("${ontocode.fuseki.adminPassword:admin}")
+    private String fusekiAdminPassword;
+
     @Value("${ontocode.data.dir:./data}")
     private String dataDir;
-    
-    @Value("${graphdb.import.dir:/opt/graphdb-import}")
-    private String graphdbImportDir;
     
     @Autowired(required = false)
     private CacheManager cacheManager;
@@ -159,52 +171,34 @@ public class GraphDBDatasetService {
     }
     
     /**
-     * Initialize GraphDB repository connection
+     * Initialize Fuseki SPARQL endpoint connection via SPARQLRepository
      */
     public void init() {
         if (repository == null) {
-            log.info("Initializing GraphDB repository connection: {} / {}", graphdbUrl, repositoryId);
+            log.info("Initializing Fuseki SPARQL connection: query={} update={}", fusekiQueryEndpoint, fusekiUpdateEndpoint);
             try {
-                HTTPRepository httpRepo = new HTTPRepository(graphdbUrl, repositoryId);
-                
-                // Configure HTTP client timeouts to match SPARQL query execution time
-                org.apache.http.impl.client.CloseableHttpClient httpClient = org.apache.http.impl.client.HttpClients.custom()
-                    .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
-                        .setConnectTimeout(30_000)        // 30s to establish connection
-                        .setSocketTimeout(1_800_000)       // 30 min to wait for data (large imports need this)
-                        .setConnectionRequestTimeout(30_000)
-                        .build())
-                    .setMaxConnTotal(50)
-                    .setMaxConnPerRoute(20)
-                    .build();
-                httpRepo.setHttpClient(httpClient);
-                
-                httpRepo.setAdditionalHttpHeaders(java.util.Map.of(
-                    "Keep-Alive", "timeout=3600, max=100",
-                    "Connection", "keep-alive",
-                    "Accept-Encoding", "gzip, deflate"
-                ));
-                
-                repository = httpRepo;
-                repository.init();
-                
-                log.info("✅ GraphDB HTTP client configured with:");
-                log.info("   - Connect timeout: 30s");
-                log.info("   - Socket timeout: 1800s (30 min)");
-                log.info("   - Connection pool: 50 total, 20 per route");
-                log.info("   - Compression enabled");
-                
-                // Test connection
+                BasicCredentialsProvider credsProvider = new BasicCredentialsProvider();
+                credsProvider.setCredentials(AuthScope.ANY,
+                        new UsernamePasswordCredentials(fusekiAdminUser, fusekiAdminPassword));
+                CloseableHttpClient httpClient = HttpClients.custom()
+                        .setDefaultCredentialsProvider(credsProvider)
+                        .build();
+                SPARQLRepository sparqlRepo = new SPARQLRepository(fusekiQueryEndpoint, fusekiUpdateEndpoint);
+                java.util.concurrent.ScheduledExecutorService scheduler =
+                        java.util.concurrent.Executors.newScheduledThreadPool(1);
+                sparqlRepo.setHttpClientSessionManager(new SharedHttpClientSessionManager(httpClient, scheduler));
+                sparqlRepo.init();
+                repository = sparqlRepo;
+
+                // Test connectivity with a cheap ASK query
                 try (RepositoryConnection conn = repository.getConnection()) {
-                    log.info("Successfully connected to GraphDB repository at {}", graphdbUrl);
+                    conn.prepareBooleanQuery("ASK { }").evaluate();
+                    log.info("✅ Fuseki connection verified: {}", fusekiQueryEndpoint);
                 }
             } catch (Exception e) {
-                log.error("Failed to connect to GraphDB at {} with repository '{}'", graphdbUrl, repositoryId, e);
-                log.error("Please ensure:");
-                log.error("  1. GraphDB is running on {}", graphdbUrl);
-                log.error("  2. Repository '{}' exists in GraphDB", repositoryId);
-                log.error("  3. You can access GraphDB Workbench at {}/webapi", graphdbUrl);
-                throw new RuntimeException("GraphDB connection failed: " + e.getMessage(), e);
+                log.error("Failed to connect to Fuseki at {}", fusekiQueryEndpoint, e);
+                log.error("Start Fuseki: docker compose up fuseki");
+                throw new RuntimeException("Fuseki connection failed: " + e.getMessage(), e);
             }
         }
     }
@@ -1167,21 +1161,24 @@ public class GraphDBDatasetService {
                 }
             }
 
-            // Step 2: POST entire file to GraphDB statements endpoint
-            // URL: POST {graphdbUrl}/repositories/{repositoryId}/statements?context=<graphUri>
-            String encodedContext = URLEncoder.encode("<" + graphUri + ">", StandardCharsets.UTF_8);
-            String url = graphdbUrl + "/repositories/" + repositoryId + "/statements?context=" + encodedContext;
+            // Step 2: PUT entire file to Fuseki Graph Store Protocol endpoint
+            // Fuseki GSP: PUT {gspEndpoint}?graph={graphUri} — atomically replaces named graph
+            String url = fusekiGspEndpoint + "?graph=" + URLEncoder.encode(graphUri, StandardCharsets.UTF_8);
 
-            log.info("[DirectUpload] POSTing to: {}", url);
+            log.info("[DirectUpload] PUTting to Fuseki GSP: {}", url);
 
             HttpClient client = HttpClient.newBuilder()
                     .version(HttpClient.Version.HTTP_1_1)
                     .build();
 
+            String gspAuth = "Basic " + java.util.Base64.getEncoder()
+                    .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword)
+                            .getBytes(StandardCharsets.UTF_8));
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Content-Type", contentType)
-                    .POST(HttpRequest.BodyPublishers.ofFile(sourceFile))
+                    .header("Authorization", gspAuth)
+                    .PUT(HttpRequest.BodyPublishers.ofFile(sourceFile))
                     .build();
 
             // Report initial progress
@@ -1216,7 +1213,7 @@ public class GraphDBDatasetService {
                 log.info("✓ DIRECT HTTP UPLOAD COMPLETE for project: {}", projectId);
                 log.info("  Verified triples: {}", verifiedSize);
                 log.info("  TIMING BREAKDOWN:");
-                log.info("    • HTTP upload + GraphDB indexing: {} ms ({} sec)", uploadMs, uploadMs / 1000);
+                log.info("    • HTTP upload + Fuseki indexing: {} ms ({} sec)", uploadMs, uploadMs / 1000);
                 log.info("    • Verification: {} ms", verifyMs);
                 log.info("  TOTAL TIME: {} ms ({} seconds)", totalMs, totalMs / 1000);
                 if (verifiedSize > 0) {
@@ -1225,13 +1222,13 @@ public class GraphDBDatasetService {
                 log.info("═══════════════════════════════════════════════════════════");
 
                 if (verifiedSize == 0 && fileSizeBytes > 0) {
-                    log.error("❌ DIRECT UPLOAD: GraphDB returned 2xx but graph is empty! Falling back to chunked.");
+                    log.error("❌ DIRECT UPLOAD: Fuseki returned 2xx but graph is empty! Falling back to chunked.");
                     return false;
                 }
 
                 return true;
             } else {
-                log.warn("[DirectUpload] GraphDB returned HTTP {}: {}. Falling back to chunked.",
+                log.warn("[DirectUpload] Fuseki returned HTTP {}: {}. Falling back to chunked.",
                         response.statusCode(), response.body().substring(0, Math.min(500, response.body().length())));
                 return false;
             }
@@ -1242,17 +1239,7 @@ public class GraphDBDatasetService {
     }
 
     /**
-     * Import an RDF file using GraphDB's server-side import API.
-     * This is significantly faster than client-side bulk load because GraphDB reads the file
-     * directly from its local filesystem — no HTTP serialization overhead per batch.
-     *
-     * @param projectId   The project ID (determines the named graph)
-     * @param sourceFile  Path to the RDF file on the editor's filesystem
-     * @param rdfFormat   The RDF format of the file
-     * @param fileSizeBytes The file size in bytes (for logging)
-     * @param options     Import options (mode, partition strategy)
-     * @param progressListener Optional callback for progress updates
-     * @return true if server-side import succeeded, false if it should fall back to chunked
+     * Fuseki has no server-side import directory API — always falls back to chunked or directHttpUpload.
      */
     public boolean serverSideImport(String projectId,
                                      Path sourceFile,
@@ -1260,9 +1247,12 @@ public class GraphDBDatasetService {
                                      long fileSizeBytes,
                                      ImportOptions options,
                                      ProgressListener progressListener) {
-        Path importDir = Paths.get(graphdbImportDir);
+        log.debug("[ServerImport] Not supported on Fuseki — falling back to directHttpUpload / chunked");
+        return false;
+        /*
+        // Legacy GraphDB server-side import body kept for reference — not used with Fuseki
+        Path importDir = Paths.get("/opt/graphdb-import");
         if (!Files.isDirectory(importDir)) {
-            log.info("[ServerImport] Import directory {} not available, falling back to chunked", graphdbImportDir);
             return false;
         }
 
@@ -1409,6 +1399,7 @@ public class GraphDBDatasetService {
             // Clean up the import file
             try { Files.deleteIfExists(importFile); } catch (Exception ignored) {}
         }
+        */
     }
     
     /**
@@ -1422,8 +1413,8 @@ public class GraphDBDatasetService {
             Repository repo = getRepository();
             String graphUri = getGraphUri(projectId);
 
-            log.info("Starting bulk load for project: {} with format: {} (GraphDB: {} repo: {})",
-                    projectId, rdfFormat, graphdbUrl, repositoryId);
+            log.info("Starting bulk load for project: {} with format: {} (endpoint: {})",
+                    projectId, rdfFormat, fusekiQueryEndpoint);
 
             // Wrap with BOM-aware input stream to handle UTF-8 BOM (Byte Order Mark)
             // Many OWL files downloaded from the internet have BOM which can cause parse failures
@@ -1598,11 +1589,11 @@ public class GraphDBDatasetService {
             
         } catch (org.eclipse.rdf4j.repository.RepositoryException e) {
             if (e.getMessage().contains("404") || e.getMessage().contains("not found")) {
-                log.error("GraphDB repository '{}' not found at {}", repositoryId, graphdbUrl);
-                log.error("Please create the repository via GraphDB Workbench: {}/repository", graphdbUrl);
-                throw new RuntimeException("GraphDB repository '" + repositoryId + "' not found. Please create it first.", e);
+                log.error("Fuseki dataset not found at {}", fusekiQueryEndpoint);
+                log.error("Start Fuseki: docker compose up fuseki");
+                throw new RuntimeException("Fuseki dataset not found at " + fusekiQueryEndpoint + ". Is Fuseki running?", e);
             } else {
-                log.error("GraphDB repository error for project: {}", projectId, e);
+                log.error("SPARQL repository error for project: {}", projectId, e);
                 logCauseChain(e);
                 throw new RuntimeException("GraphDB error: " + e.getMessage(), e);
             }
@@ -1671,11 +1662,8 @@ public class GraphDBDatasetService {
 
         } catch (org.eclipse.rdf4j.repository.RepositoryException e) {
             if (e.getMessage().contains("404") || e.getMessage().contains("not found")) {
-                log.error("GraphDB repository not found. Please ensure:");
-                log.error("  1. GraphDB is running: {}", graphdbUrl);
-                log.error("  2. Repository '{}' exists", repositoryId);
-                log.error("  3. Create repository via GraphDB Workbench: {}/repository", graphdbUrl);
-                throw new RuntimeException("GraphDB repository '" + repositoryId + "' not found at " + graphdbUrl + ". Please create it first.", e);
+                log.error("Fuseki dataset not found. Ensure Fuseki is running: docker compose up fuseki");
+                throw new RuntimeException("Fuseki dataset not found at " + fusekiQueryEndpoint + ". Start Fuseki.", e);
             } else {
                 log.error("Failed to clear dataset for project: {}", projectId, e);
                 throw new RuntimeException("Failed to clear dataset: " + e.getMessage(), e);
@@ -2176,7 +2164,7 @@ public class GraphDBDatasetService {
                 }
                 // Verify GraphDB is reachable before retrying
                 if (!waitForGraphDB(15_000)) {
-                    throw new RuntimeException("GraphDB did not recover within timeout. Last error: " + e.getMessage(), e);
+                    throw new RuntimeException("Fuseki did not recover within timeout. Last error: " + e.getMessage(), e);
                 }
                 backoffMs *= 2;
             }
@@ -2201,8 +2189,8 @@ public class GraphDBDatasetService {
     }
 
     /**
-     * Wait for GraphDB to become reachable, polling every 2 seconds.
-     * @return true if GraphDB responds within the timeout
+     * Wait for Fuseki to become reachable, polling every 2 seconds.
+     * @return true if Fuseki responds within the timeout
      */
     private boolean waitForGraphDB(long timeoutMs) {
         long deadline = System.currentTimeMillis() + timeoutMs;
@@ -2212,13 +2200,14 @@ public class GraphDBDatasetService {
                         .connectTimeout(java.time.Duration.ofSeconds(3))
                         .build();
                 HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(graphdbUrl + "/rest/repositories"))
+                        .uri(URI.create(fusekiQueryEndpoint))
                         .timeout(java.time.Duration.ofSeconds(5))
                         .GET()
                         .build();
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() == 200) {
-                    log.info("GraphDB is reachable again (status {})", response.statusCode());
+                if (response.statusCode() == 200 || response.statusCode() == 400) {
+                    // 400 = endpoint reachable but needs a query param — that's OK
+                    log.info("Fuseki is reachable again (status {})", response.statusCode());
                     return true;
                 }
             } catch (Exception ignored) {
