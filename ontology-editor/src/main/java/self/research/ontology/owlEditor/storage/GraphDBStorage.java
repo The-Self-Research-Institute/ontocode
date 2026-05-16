@@ -4,7 +4,7 @@ import org.eclipse.rdf4j.query.*;
 import org.eclipse.rdf4j.query.resultio.text.tsv.SPARQLResultsTSVWriter;
 import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
-import org.eclipse.rdf4j.repository.http.HTTPRepository;
+import org.eclipse.rdf4j.repository.sparql.SPARQLRepository;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.RDFWriter;
 import org.eclipse.rdf4j.rio.Rio;
@@ -24,32 +24,19 @@ public class GraphDBStorage implements OntologyStorage {
 
     private static final Logger log = LoggerFactory.getLogger(GraphDBStorage.class);
 
-    private final String graphdbUrl;
-    private final String repositoryId;
+    private final String queryEndpoint;
+    private final String updateEndpoint;
     private final Repository repository;
     private final long maxTripleCount;
 
-    public GraphDBStorage(String graphdbUrl, String repositoryId) {
-        this.graphdbUrl = graphdbUrl;
-        this.repositoryId = repositoryId;
-        this.maxTripleCount = 100_000_000; // 100M triples max
-        
-        // Initialize HTTP repository connection to GraphDB with proper timeouts
-        HTTPRepository httpRepo = new HTTPRepository(graphdbUrl, repositoryId);
-        org.apache.http.impl.client.CloseableHttpClient httpClient = org.apache.http.impl.client.HttpClients.custom()
-            .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
-                .setConnectTimeout(30_000)        // 30s to establish connection
-                .setSocketTimeout(600_000)         // 10 min to wait for data
-                .setConnectionRequestTimeout(30_000)
-                .build())
-            .setMaxConnTotal(50)
-            .setMaxConnPerRoute(20)
-            .evictExpiredConnections()
-            .evictIdleConnections(5, java.util.concurrent.TimeUnit.MINUTES)
-            .build();
-        httpRepo.setHttpClient(httpClient);
-        this.repository = httpRepo;
-        this.repository.init();
+    public GraphDBStorage(String queryEndpoint, String updateEndpoint) {
+        this.queryEndpoint = queryEndpoint;
+        this.updateEndpoint = updateEndpoint;
+        this.maxTripleCount = 100_000_000;
+
+        SPARQLRepository sparqlRepo = new SPARQLRepository(queryEndpoint, updateEndpoint);
+        sparqlRepo.init();
+        this.repository = sparqlRepo;
     }
 
     @Override

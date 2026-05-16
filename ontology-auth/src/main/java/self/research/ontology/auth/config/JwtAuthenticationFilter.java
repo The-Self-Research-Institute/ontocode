@@ -20,6 +20,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.security.Key;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 /**
  * JWT Authentication Filter for validating Bearer tokens
@@ -62,10 +65,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 log.info("[JWT Filter] ✓ Extracted username: {}", username);
 
                 if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+                    List<SimpleGrantedAuthority> authorities = new ArrayList<>();
+                    Object rolesClaim = claims.get("roles");
+                    if (rolesClaim instanceof List<?> roleList) {
+                        roleList.stream()
+                                .filter(r -> r instanceof String)
+                                .map(r -> new SimpleGrantedAuthority((String) r))
+                                .forEach(authorities::add);
+                    }
                     UserDetails userDetails = User.builder()
                         .username(username)
                         .password("")
-                        .authorities(new ArrayList<>())
+                        .authorities(authorities)
                         .build();
 
                     UsernamePasswordAuthenticationToken authentication =

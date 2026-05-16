@@ -46,6 +46,7 @@ const PlanDetailsModal = lazy(() => import("./PlanDetailsModal"));
 import { UserGuideModal } from "./UserGuideModal";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { Bug } from "lucide-react";
+import AdminSettingsModal from "./AdminSettingsModal";
 import {
   WORKSPACE_ROLES,
   type WorkspaceRole,
@@ -130,6 +131,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [showInviteMember, setShowInviteMember] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAdminSettings, setShowAdminSettings] = useState(false);
   const [showPlanDetails, setShowPlanDetails] = useState(false);
   const [showUserGuide, setShowUserGuide] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
@@ -1034,6 +1036,15 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   <CreditCard size={20} />
                 </button>
               )}
+              {user?.isAdmin && (
+                <button
+                  onClick={() => setShowAdminSettings(true)}
+                  className="h-9 w-9 inline-flex items-center justify-center text-purple-600 hover:bg-purple-50 rounded-lg"
+                  title="Admin Settings"
+                >
+                  <Shield size={20} />
+                </button>
+              )}
               <button
                 onClick={() => setShowSettings(true)}
                 className="h-9 w-9 inline-flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg"
@@ -1449,6 +1460,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           type={confirmModal.type}
         />
       )}
+
+      {/* Admin Settings Modal */}
+      <AdminSettingsModal
+        isOpen={showAdminSettings}
+        onClose={() => setShowAdminSettings(false)}
+      />
 
       {/* Settings Modal */}
       <SettingsModal

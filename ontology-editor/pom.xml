@@ -19,7 +19,6 @@
     <properties>
         <java.version>21</java.version>
         <rdf4j.version>4.3.7</rdf4j.version>
-        <!-- Neo4j REMOVED - Using optimized GraphDB with caching for better performance -->
     </properties>
     
     
@@ -126,22 +125,22 @@
             </exclusions>
         </dependency>
         
-        <!-- ========== ECLIPSE RDF4J (GraphDB) ========== -->
+        <!-- ========== ECLIPSE RDF4J (SPARQL client + in-memory cache) ========== -->
         <!-- RDF4J Repository API -->
         <dependency>
             <groupId>org.eclipse.rdf4j</groupId>
             <artifactId>rdf4j-repository-api</artifactId>
             <version>${rdf4j.version}</version>
         </dependency>
-        
-        <!-- RDF4J HTTP Repository (for GraphDB connection) -->
+
+        <!-- RDF4J SPARQL Repository — standard SPARQL 1.1 HTTP client, works with Fuseki -->
         <dependency>
             <groupId>org.eclipse.rdf4j</groupId>
-            <artifactId>rdf4j-repository-http</artifactId>
+            <artifactId>rdf4j-repository-sparql</artifactId>
             <version>${rdf4j.version}</version>
         </dependency>
 
-        <!-- RDF4J Sail Repository + in-memory Sail (Phase C: per-project ontology cache) -->
+        <!-- RDF4J Sail Repository + in-memory Sail (per-project ontology cache) -->
         <dependency>
             <groupId>org.eclipse.rdf4j</groupId>
             <artifactId>rdf4j-repository-sail</artifactId>
@@ -245,8 +244,6 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Neo4j Dependencies REMOVED - Using optimized GraphDB with server-side caching -->
-        <!-- This provides better performance without the operational complexity of Neo4j -->
 
         <!-- Caffeine Cache - High-performance in-memory caching -->
         <dependency>
