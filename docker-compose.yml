@@ -52,7 +52,7 @@ services:
         limits:
           memory: 3g
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3030/$/ping"]
+      test: ["CMD-SHELL", "curl -sf -u admin:${FUSEKI_ADMIN_PASSWORD:-admin} http://localhost:3030/$/ping || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
