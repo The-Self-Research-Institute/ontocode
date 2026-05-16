@@ -30,20 +30,21 @@ services:
       retries: 5
       start_period: 40s
 
-  # GraphDB (RDF Triple Store) - with embedded license
-  graphdb:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-graphdb:${VERSION:-latest}
-    container_name: ontocode-graphdb
+  # Fuseki (Apache Jena Fuseki + TDB2 triple store)
+  # Admin UI: http://localhost:3030 (user: admin, password: admin)
+  # SPARQL query: http://localhost:3030/ontocode/query
+  fuseki:
+    image: stain/jena-fuseki:5.0.0
+    container_name: ontocode-fuseki
     restart: unless-stopped
     ports:
-      - "7200:7200"
+      - "3030:3030"
     environment:
-      GDB_HEAP_SIZE: 2560m
-      GDB_LICENSE_PATH: /opt/graphdb
-      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=8m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+      ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
+      JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xmx2g -XX:+UseG1GC}"
     volumes:
-      - graphdb-data:/opt/graphdb/home/data
-      - graphdb-import:/opt/graphdb/home/graphdb-import
+      - ./fuseki-config.ttl:/fuseki/configuration/ontocode.ttl:ro
+      - fuseki-data:/fuseki/databases
     networks:
       - ontology-net
     deploy:
@@ -51,75 +52,11 @@ services:
         limits:
           memory: 3g
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7200/rest/repositories"]
+      test: ["CMD", "curl", "-sf", "http://localhost:3030/$/ping"]
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 180s
-
-  # GraphDB Repository Initializer - Creates 'ontocode' repository with inference DISABLED
-  graphdb-init:
-    image: curlimages/curl:latest
-    container_name: ontocode-graphdb-init
-    depends_on:
-      graphdb:
-        condition: service_healthy
-    networks:
-      - ontology-net
-    restart: "no"
-    command:
-      - sh
-      - -c
-      - |
-        echo "=== GraphDB Repository Init ==="
-        for i in $$(seq 1 30); do
-          curl -sf http://graphdb:7200/rest/repositories >/dev/null 2>&1 && break
-          echo "Waiting for GraphDB... attempt $$i/30"
-          sleep 5
-        done
-        
-        if curl -s http://graphdb:7200/rest/repositories | grep -q "ontocode"; then
-          echo "[OK] Repository ontocode already exists"
-        else
-          echo "Creating ontocode repository with inference DISABLED..."
-          cat > /tmp/repo.ttl << 'EOFCONFIG'
-        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-        @prefix rep: <http://www.openrdf.org/config/repository#> .
-        @prefix sr: <http://www.openrdf.org/config/repository/sail#> .
-        @prefix sail: <http://www.openrdf.org/config/sail#> .
-        @prefix graphdb: <http://www.ontotext.com/config/graphdb#> .
-        [] a rep:Repository ;
-            rep:repositoryID "ontocode" ;
-            rdfs:label "OntoCode Repository - No Inference" ;
-            rep:repositoryImpl [
-                rep:repositoryType "graphdb:SailRepository" ;
-                sr:sailImpl [
-                    sail:sailType "graphdb:Sail" ;
-                    graphdb:ruleset "empty" ;
-                    graphdb:disable-sameAs "true" ;
-                    graphdb:check-for-inconsistencies "false" ;
-                    graphdb:in-memory-literal-properties "true" ;
-                    graphdb:enable-literal-index "true" ;
-                    graphdb:entity-index-size "10000000" ;
-                    graphdb:enable-context-index "true" ;
-                    graphdb:enablePredicateList "true" ;
-                    graphdb:read-only "false" ;
-                ]
-            ] .
-        EOFCONFIG
-          curl -v -X POST -H "Content-Type: multipart/form-data" -F "config=@/tmp/repo.ttl" http://graphdb:7200/rest/repositories
-          echo "[OK] Repository created successfully"
-        fi
-        
-        echo "Setting ontocode as active repository..."
-        if curl -sf http://graphdb:7200/rest/repositories/ontocode/size >/dev/null 2>&1; then
-          echo "[OK] Repository ontocode is ACTIVE and accessible"
-          echo "[OK] Active Repository: ontocode"
-          echo "[OK] Inference: DISABLED (ruleset: empty)"
-        else
-          echo "[ERROR] Repository not accessible"
-        fi
-        echo "=== Init Complete ==="
+      start_period: 30s
 
   # Authentication Service
   auth:
@@ -164,6 +101,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
@@ -213,6 +151,9 @@ services:
 
   # Ontology Editor Service
   owl-editor:
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
     image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-editor:${VERSION:-latest}
     container_name: ontocode-editor
     restart: unless-stopped
@@ -221,9 +162,10 @@ services:
       - "8083:8083"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
-      GRAPHDB_URL: http://graphdb:7200
-      GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
-      GRAPHDB_IMPORT_DIR: /opt/graphdb-import
+      FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
+      FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
+      FUSEKI_GSP_ENDPOINT: http://fuseki:3030/ontocode/data
+      DATA_DIR: /app/data
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
@@ -249,10 +191,9 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
-      graphdb:
+      fuseki:
         condition: service_healthy
     volumes:
-      - graphdb-import:/opt/graphdb-import
       - /var/log/ontocode/editor:/app/logs
     networks:
       - ontology-net
@@ -277,8 +218,8 @@ services:
       - "8084:8084"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
-      GRAPHDB_URL: http://graphdb:7200
-      GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
+      FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
+      FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
@@ -293,7 +234,7 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
-      graphdb:
+      fuseki:
         condition: service_healthy
     networks:
       - ontology-net
@@ -402,8 +343,7 @@ services:
 
 volumes:
   mongo-data:
-  graphdb-data:
-  graphdb-import:
+  fuseki-data:
 
 networks:
   ontology-net:
