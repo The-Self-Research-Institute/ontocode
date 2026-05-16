@@ -105,7 +105,9 @@ public class SubscriptionController {
                                              ? user.getSubscriptionCanceledAt().toString() : "",
                 "hasStripeCustomer",     user.getStripeCustomerId() != null,
                 "hasUsedFreeTrial",      user.isHasUsedFreeTrial(),
-                "trialEligible",         !user.isHasUsedFreeTrial() && user.getFirstSubscriptionAt() == null
+                "trialEligible",         !user.isHasUsedFreeTrial()
+                                             && user.getFirstSubscriptionAt() == null
+                                             && (user.getStripeSubscriptionId() == null || user.getStripeSubscriptionId().isBlank())
         ));
     }
 
@@ -179,7 +181,9 @@ public class SubscriptionController {
                     "clientSecret", clientSecret,
                     "stripePublishableKey", stripeService.getPublishableKey(),
                     "hasUsedFreeTrial", user.isHasUsedFreeTrial(),
-                    "trialEligible", !user.isHasUsedFreeTrial() && user.getFirstSubscriptionAt() == null
+                    "trialEligible", !user.isHasUsedFreeTrial()
+                            && user.getFirstSubscriptionAt() == null
+                            && (user.getStripeSubscriptionId() == null || user.getStripeSubscriptionId().isBlank())
             ));
         } catch (Exception e) {
             log.error("Setup intent creation failed for {}: {}", principal.getUsername(), e.getMessage());
