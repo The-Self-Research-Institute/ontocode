@@ -268,16 +268,21 @@ public class StripeService {
                     .putMetadata("billingInterval", interval.toLowerCase())
                     .putMetadata("workspaceId", workspaceId != null ? workspaceId : "");
 
+            // A prior stripeSubscriptionId means the user has already subscribed once —
+            // guard against data inconsistency where hasUsedFreeTrial wasn't persisted.
+            boolean hadPriorSubscription = user.getStripeSubscriptionId() != null
+                    && !user.getStripeSubscriptionId().isBlank();
             boolean firstEverSubscription = !user.isHasUsedFreeTrial()
-                    && user.getFirstSubscriptionAt() == null;
+                    && user.getFirstSubscriptionAt() == null
+                    && !hadPriorSubscription;
             if (firstEverSubscription && trialPeriodDays != null && trialPeriodDays > 0L) {
                 createParams.setTrialPeriodDays(trialPeriodDays);
                 log.info("Granting {}-day trial to user {} (first ever subscription)",
                         trialPeriodDays, user.getUsername());
             } else {
-                log.info("Skipping trial for user {} (hasUsedFreeTrial={}, firstSubscriptionAt={}). " +
+                log.info("Skipping trial for user {} (hasUsedFreeTrial={}, firstSubscriptionAt={}, hadPriorSub={}). " +
                         "Card will be charged immediately.",
-                        user.getUsername(), user.isHasUsedFreeTrial(), user.getFirstSubscriptionAt());
+                        user.getUsername(), user.isHasUsedFreeTrial(), user.getFirstSubscriptionAt(), hadPriorSubscription);
             }
 
             subscription = com.stripe.model.Subscription.create(createParams.build());
@@ -412,8 +417,11 @@ public class StripeService {
                 .putMetadata("planName", planName.toUpperCase())
                 .putMetadata("billingInterval", interval.toLowerCase())
                 .putMetadata("workspaceId", workspaceId != null ? workspaceId : "");
+        boolean hadPriorSubscription = user.getStripeSubscriptionId() != null
+                && !user.getStripeSubscriptionId().isBlank();
         boolean firstEverSubscription = !user.isHasUsedFreeTrial()
-                && user.getFirstSubscriptionAt() == null;
+                && user.getFirstSubscriptionAt() == null
+                && !hadPriorSubscription;
         if (firstEverSubscription && trialPeriodDays != null && trialPeriodDays > 0L) {
             subData.setTrialPeriodDays(trialPeriodDays);
         }

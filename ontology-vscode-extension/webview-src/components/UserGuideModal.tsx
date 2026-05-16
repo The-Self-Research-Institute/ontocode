@@ -205,7 +205,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       selector to add your first workspace.
                     </li>
                     <li>
-                      <strong>Additional Workspaces:</strong> Click "Create Workspace" from workspace selector dropdown
+                      <strong>Additional Workspaces:</strong> Click "Create New Workspace" from workspace selector dropdown
                     </li>
                     <li>
                       <strong>Naming Convention:</strong> Use organization/team names (e.g., "Research Lab",
@@ -301,7 +301,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   </div>
                   <ul style={styles.list}>
                     <li>
-                      <strong>14-Day Free Trial:</strong> New subscribers on PRO or ENTERPRISE get a 14-day trial — no
+                      <strong>14-Day Free Trial:</strong> New subscribers on PRO get a 14-day trial — no
                       charge until the trial ends. The trial is a one-time offer per account.
                     </li>
                     <li>
@@ -372,7 +372,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   <div style={styles.example}>
                     <strong>Recommended Flow:</strong>
                     <div style={styles.exampleContent}>
-                      Start FREE → Explore features → Upgrade to PRO with annual billing (save ~16%)
+                      Start FREE → Explore features → Upgrade to PRO with annual billing (save ~20%)
                       <br />
                       Use 14-day trial → Confirm subscription → Access full plan features immediately
                     </div>
