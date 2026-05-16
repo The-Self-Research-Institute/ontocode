@@ -8,17 +8,11 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
 
-/**
- * Configuration for GraphDB triple store
- */
 @Configuration
 @EnableAsync
 @EnableScheduling
-public class GraphDBConfig {
-    
-    /**
-     * Thread pool executor for metadata computation
-     */
+public class JenaConfig {
+
     @Bean(name = "metadataExecutor")
     public Executor metadataExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -29,10 +23,7 @@ public class GraphDBConfig {
         executor.initialize();
         return executor;
     }
-    
-    /**
-     * Thread pool executor for SPARQL queries
-     */
+
     @Bean(name = "sparqlExecutor")
     public Executor sparqlExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

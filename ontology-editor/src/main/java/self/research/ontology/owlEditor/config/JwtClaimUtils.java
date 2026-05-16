@@ -28,6 +28,13 @@ public final class JwtClaimUtils {
         return !email.isEmpty() ? email : null;
     }
 
+    public static boolean extractIsAdmin(String authHeader) {
+        JsonNode claims = parsePayload(authHeader);
+        if (claims == null) return false;
+        JsonNode node = claims.get("isAdmin");
+        return node != null && !node.isNull() && node.asBoolean(false);
+    }
+
     /** @return { plan, userId } or null if token missing/invalid; userId null if absent or blank */
     public static String[] extractPlanAndUserId(String authHeader) {
         JsonNode claims = parsePayload(authHeader);

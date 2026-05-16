@@ -1,7 +1,48 @@
 import React, { useState, useEffect } from 'react';
-import { Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
+import { Mail, Lock, User, Eye, EyeOff, Wrench, Clock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocation, useNavigate } from 'react-router-dom';
+
+const MaintenancePage: React.FC = () => (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 via-slate-900 to-gray-900 p-6">
+        <div className="max-w-lg w-full text-center">
+            <div className="inline-flex items-center justify-center w-20 h-20 bg-yellow-500/20 border border-yellow-500/30 rounded-full mb-6">
+                <Wrench className="w-10 h-10 text-yellow-400" />
+            </div>
+            <h1 className="text-3xl font-bold text-white mb-3">Under Maintenance</h1>
+            <p className="text-slate-300 text-lg mb-2">
+                OntoCode is currently undergoing scheduled maintenance.
+            </p>
+            <p className="text-slate-400 mb-8">
+                We're working hard to improve your experience. The system will be back online shortly.
+            </p>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-6 mb-8 text-left space-y-3">
+                <div className="flex items-start gap-3">
+                    <Clock className="w-5 h-5 text-yellow-400 mt-0.5 shrink-0" />
+                    <div>
+                        <p className="text-white font-medium text-sm">Estimated downtime</p>
+                        <p className="text-slate-400 text-sm">This maintenance window is temporary. Please check back soon.</p>
+                    </div>
+                </div>
+                <div className="flex items-start gap-3">
+                    <Mail className="w-5 h-5 text-blue-400 mt-0.5 shrink-0" />
+                    <div>
+                        <p className="text-white font-medium text-sm">Need access?</p>
+                        <p className="text-slate-400 text-sm">
+                            Contact us at{' '}
+                            <a href="mailto:support@coretopia.com" className="text-blue-400 hover:text-blue-300 underline">
+                                support@coretopia.com
+                            </a>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <p className="text-slate-500 text-sm">
+                We apologise for the inconvenience and appreciate your patience.
+            </p>
+        </div>
+    </div>
+);
 
 const Login: React.FC = () => {
     const [isSignup, setIsSignup] = useState(false);
@@ -11,6 +52,7 @@ const Login: React.FC = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [maintenanceMode, setMaintenanceMode] = useState(false);
 
     const { login } = useAuth();
     const location = useLocation();
@@ -46,11 +88,19 @@ const Login: React.FC = () => {
                 navigate('/');
             }
         } catch (err: any) {
-            setError(err.response?.data?.error || err.message || 'Authentication failed');
+            if (err.response?.status === 403) {
+                setMaintenanceMode(true);
+            } else {
+                setError(err.response?.data?.error || err.message || 'Authentication failed');
+            }
         } finally {
             setLoading(false);
         }
     };
+
+    if (maintenanceMode) {
+        return <MaintenancePage />;
+    }
 
     return (
         <div className="min-h-screen overflow-y-auto flex items-center justify-center bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-50 p-6">

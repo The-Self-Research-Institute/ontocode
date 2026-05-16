@@ -15,80 +15,56 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
-/**
- * Validates GraphDB connectivity on application startup
- */
 @Component
-public class GraphDBHealthCheck {
-    
-    private static final Logger log = LoggerFactory.getLogger(GraphDBHealthCheck.class);
-    
+public class JenaHealthCheck {
+
+    private static final Logger log = LoggerFactory.getLogger(JenaHealthCheck.class);
+
     private final GraphDBDatasetService datasetService;
-    
-    @Value("${graphdb.url}")
-    private String graphdbUrl;
-    
-    @Value("${graphdb.repository}")
-    private String repositoryId;
-    
+
+    @Value("${ontocode.fuseki.queryEndpoint:http://localhost:3030/ontocode/query}")
+    private String fusekiQueryEndpoint;
+
     @Value("${ontocode.data.dir:./data}")
     private String dataDir;
-    
-    public GraphDBHealthCheck(GraphDBDatasetService datasetService) {
+
+    public JenaHealthCheck(GraphDBDatasetService datasetService) {
         this.datasetService = datasetService;
     }
-    
+
     @EventListener(ApplicationReadyEvent.class)
-    public void checkGraphDBConnection() {
+    public void checkFusekiConnection() {
         log.info("========================================");
-        log.info("Checking GraphDB connectivity...");
-        log.info("GraphDB URL: {}", graphdbUrl);
-        log.info("Repository: {}", repositoryId);
+        log.info("Checking Fuseki connectivity...");
+        log.info("Fuseki query endpoint: {}", fusekiQueryEndpoint);
         log.info("========================================");
-        
+
         try {
-            // Try to initialize connection
             datasetService.init();
-            log.info("✓ GraphDB connection successful!");
-            log.info("✓ Repository '{}' is accessible", repositoryId);
-            
+            log.info("✓ Fuseki connection successful!");
+
         } catch (Exception e) {
             log.error("========================================");
-            log.error("✗ GraphDB connection FAILED!");
+            log.error("✗ Fuseki connection FAILED!");
             log.error("========================================");
             log.error("");
             log.error("SETUP REQUIRED:");
             log.error("");
-            log.error("1. Start GraphDB:");
-            log.error("   - Download from: https://www.ontotext.com/products/graphdb/download/");
-            log.error("   - Or run: docker run -d -p 7200:7200 ontotext/graphdb:10.7.0-free");
+            log.error("1. Start Fuseki via Docker:");
+            log.error("   docker compose up fuseki");
             log.error("");
-            log.error("2. Create Repository:");
-            log.error("   - Open GraphDB Workbench: {}/webapi", graphdbUrl);
-            log.error("   - Navigate to: Setup → Repositories");
-            log.error("   - Click: Create new repository");
-            log.error("   - Set Repository ID: {}", repositoryId);
-            log.error("   - Set Ruleset: OWL2-RL (Optimized)");
-            log.error("   - Click: Create");
+            log.error("2. Verify dataset is available:");
+            log.error("   curl http://localhost:3030/$/datasets");
             log.error("");
-            log.error("3. Verify Setup:");
-            log.error("   - Check repositories: {}/rest/repositories", graphdbUrl);
-            log.error("   - Should list: '{}'", repositoryId);
-            log.error("");
-            log.error("For detailed instructions, see: GRAPHDB_SETUP.md");
             log.error("========================================");
-            log.warn("Application will continue but GraphDB operations will FAIL until setup is complete.");
+            log.warn("Application will continue but SPARQL operations will FAIL until Fuseki is running.");
         }
-        
+
         log.info("========================================");
-        
+
         cleanupStaleTempFiles();
     }
-    
-    /**
-     * Remove stale multipart temp files older than 1 hour.
-     * Tomcat writes upload data here and failed/interrupted requests can leave orphaned files.
-     */
+
     private void cleanupStaleTempFiles() {
         Path tmpDir = Paths.get(dataDir, "tmp");
         if (!Files.isDirectory(tmpDir)) {
@@ -100,10 +76,10 @@ public class GraphDBHealthCheck {
             }
             return;
         }
-        
+
         Instant cutoff = Instant.now().minus(1, ChronoUnit.HOURS);
         try (var stream = Files.list(tmpDir)) {
-            long[] counts = {0, 0}; // [deleted, totalSize]
+            long[] counts = {0, 0};
             stream.filter(Files::isRegularFile).forEach(file -> {
                 try {
                     Instant modified = Files.getLastModifiedTime(file).toInstant();
