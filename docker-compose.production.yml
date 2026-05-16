@@ -58,11 +58,11 @@ services:
         limits:
           memory: 5g
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3030/$/ping"]
+      test: ["CMD-SHELL", "curl -sf -u admin:${FUSEKI_ADMIN_PASSWORD:-admin} http://localhost:3030/$/ping || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 60s
 
   # Authentication Service
   auth:
