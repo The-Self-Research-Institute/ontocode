@@ -100,25 +100,34 @@ public class AuthController {
      */
     @PostConstruct
     public void createDefaultUsers() {
-        if (userRepository.findByUsername("admin").isEmpty()) {
+        // Look up by email (the authoritative identity field) — username may differ
+        userRepository.findByEmailIgnoreCase(adminEmail).ifPresentOrElse(admin -> {
+            boolean needsSave = false;
+            if (admin.getRoles() == null || !admin.getRoles().contains("ROLE_ADMIN")) {
+                admin.setRoles(Set.of("ROLE_ADMIN"));
+                needsSave = true;
+                log.warn("✓ Admin user roles corrected to ROLE_ADMIN (email={})", adminEmail);
+            }
+            if (admin.getSubscriptionPlanName() == null) {
+                admin.setSubscriptionPlanName("FREE");
+                needsSave = true;
+            }
+            if (needsSave) userRepository.save(admin);
+        }, () -> {
             if (adminPassword == null || adminPassword.isBlank()) {
-                log.error("⚠️  ADMIN_PASSWORD environment variable not set!");
-                log.error("⚠️  Default admin user NOT created.");
-                log.error("⚠️  Set ADMIN_PASSWORD to create admin user.");
+                log.error("⚠️  ADMIN_PASSWORD environment variable not set — admin user NOT created.");
                 return;
             }
-
             User admin = new User();
             admin.setUsername("admin");
             admin.setPassword(passwordEncoder.encode(adminPassword));
             admin.setEmail(adminEmail);
             admin.setRoles(Set.of("ROLE_ADMIN"));
+            admin.setSubscriptionPlanName("FREE");
             admin.setEnabled(true);
             userRepository.save(admin);
-
-            log.warn("✓ Default admin user created");
-            log.warn("⚠️  CHANGE THE ADMIN PASSWORD IMMEDIATELY!");
-        }
+            log.warn("✓ Default admin user created (email={})", adminEmail);
+        });
     }
 
     /**
@@ -235,16 +244,17 @@ public class AuthController {
 
         auditService.logLoginSuccess(loginIdentifier, clientIp);
 
-        boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
+        Set<String> loginRoles = user.getRoles() != null ? user.getRoles() : Set.of();
+        boolean isAdmin = loginRoles.contains("ROLE_ADMIN");
 
-        return ResponseEntity.ok(Map.of(
-            "jwt", jwt,
-            "username", user.getUsername(),
-            "email", user.getEmail(),
-            "roles", user.getRoles(),
-            "isAdmin", isAdmin,
-            "enterpriseDomainBypass", systemSettingsService.isEnterpriseDomain(user.getEmail())
-        ));
+        Map<String, Object> loginResp = new HashMap<>();
+        loginResp.put("jwt", jwt);
+        loginResp.put("username", user.getUsername());
+        loginResp.put("email", user.getEmail());
+        loginResp.put("roles", loginRoles);
+        loginResp.put("isAdmin", isAdmin);
+        loginResp.put("enterpriseDomainBypass", systemSettingsService.isEnterpriseDomain(user.getEmail()));
+        return ResponseEntity.ok(loginResp);
     }
 
     /**
@@ -271,20 +281,22 @@ public class AuthController {
             
             User user = userOpt.get();
             UserDetails userDetails = userDetailsService.loadUserByUsername(email);
-            
+
+            Set<String> roles = user.getRoles() != null ? user.getRoles() : Set.of();
+            String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "FREE";
+            boolean isAdmin = roles.contains("ROLE_ADMIN");
+
             // Generate fresh token with current subscription plan
-            String newJwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
-            
-            boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
-            
-            return ResponseEntity.ok(Map.of(
-                "jwt", newJwt,
-                "username", user.getUsername(),
-                "email", user.getEmail(),
-                "roles", user.getRoles(),
-                "isAdmin", isAdmin,
-                "subscriptionPlan", user.getSubscriptionPlanName()
-            ));
+            String newJwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), planName);
+
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("jwt", newJwt);
+            resp.put("username", user.getUsername());
+            resp.put("email", user.getEmail());
+            resp.put("roles", roles);
+            resp.put("isAdmin", isAdmin);
+            resp.put("subscriptionPlan", planName);
+            return ResponseEntity.ok(resp);
         } catch (Exception e) {
             log.error("Token refresh failed", e);
             return ResponseEntity.status(401).body(Map.of("error", "Failed to refresh session: " + e.getMessage()));
@@ -393,16 +405,17 @@ public class AuthController {
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
         String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
 
-        boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
+        Set<String> verifyRoles = user.getRoles() != null ? user.getRoles() : Set.of();
+        boolean isAdmin = verifyRoles.contains("ROLE_ADMIN");
 
-        return ResponseEntity.ok(Map.of(
-            "message", "Email verified successfully!",
-            "jwt", jwt,
-            "username", user.getUsername(),
-            "email", user.getEmail(),
-            "roles", user.getRoles(),
-            "isAdmin", isAdmin
-        ));
+        Map<String, Object> verifyResp = new HashMap<>();
+        verifyResp.put("message", "Email verified successfully!");
+        verifyResp.put("jwt", jwt);
+        verifyResp.put("username", user.getUsername());
+        verifyResp.put("email", user.getEmail());
+        verifyResp.put("roles", verifyRoles);
+        verifyResp.put("isAdmin", isAdmin);
+        return ResponseEntity.ok(verifyResp);
     }
 
     /**
@@ -647,10 +660,11 @@ public class AuthController {
             User user = userOpt.get();
             log.info("Current user roles: {}", user.getRoles());
             
-            // Set role based on deployment type
-            // Self-hosted: Users get admin access (they own the instance)
-            // Cloud: Users get regular user access (shared multi-tenant environment)
-            if ("self-hosted".equalsIgnoreCase(deploymentType)) {
+            // Never strip ROLE_ADMIN — admins keep their role regardless of deployment type
+            Set<String> currentRoles = user.getRoles() != null ? user.getRoles() : new HashSet<>();
+            if (currentRoles.contains("ROLE_ADMIN")) {
+                log.info("Skipping role update — user {} is ROLE_ADMIN, preserving admin role", username);
+            } else if ("self-hosted".equalsIgnoreCase(deploymentType)) {
                 user.setRoles(Set.of("ROLE_USER", "ROLE_ADMIN"));
                 log.info("Setting self-hosted roles (ROLE_USER, ROLE_ADMIN) for user: {}", username);
             } else {
