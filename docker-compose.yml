@@ -45,6 +45,7 @@ services:
       JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xmx2g -XX:+UseG1GC}"
     volumes:
       - ./fuseki-config.ttl:/fuseki/configuration/ontocode.ttl:ro
+      - ./fuseki-shiro.ini:/fuseki/shiro.ini:ro
       - fuseki-data:/fuseki/databases
     networks:
       - ontology-net
