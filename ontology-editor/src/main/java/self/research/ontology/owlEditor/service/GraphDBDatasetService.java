@@ -180,8 +180,29 @@ public class GraphDBDatasetService {
                 BasicCredentialsProvider credsProvider = new BasicCredentialsProvider();
                 credsProvider.setCredentials(AuthScope.ANY,
                         new UsernamePasswordCredentials(fusekiAdminUser, fusekiAdminPassword));
+                // Preemptive Basic Auth — RDF4J's SPARQLProtocolSession intercepts 401 and
+                // throws UnauthorizedException before HttpClient can retry with credentials,
+                // so we must send the Authorization header on every request upfront.
+                String encodedCreds = java.util.Base64.getEncoder().encodeToString(
+                        (fusekiAdminUser + ":" + fusekiAdminPassword)
+                                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                final String basicAuthHeader = "Basic " + encodedCreds;
+                // 2-hour socket timeout matches the gateway and tomcat timeouts — prevents
+                // QueryInterruptedException (SocketTimeoutException) on large ontology commits
+                org.apache.http.client.config.RequestConfig requestConfig =
+                        org.apache.http.client.config.RequestConfig.custom()
+                                .setConnectTimeout(30_000)
+                                .setSocketTimeout(7_200_000)
+                                .setConnectionRequestTimeout(30_000)
+                                .build();
                 CloseableHttpClient httpClient = HttpClients.custom()
                         .setDefaultCredentialsProvider(credsProvider)
+                        .setDefaultRequestConfig(requestConfig)
+                        .addInterceptorFirst((org.apache.http.HttpRequestInterceptor) (request, context) -> {
+                            if (!request.containsHeader("Authorization")) {
+                                request.addHeader("Authorization", basicAuthHeader);
+                            }
+                        })
                         .build();
                 SPARQLRepository sparqlRepo = new SPARQLRepository(fusekiQueryEndpoint, fusekiUpdateEndpoint);
                 java.util.concurrent.ScheduledExecutorService scheduler =
