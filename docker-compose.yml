@@ -44,7 +44,7 @@ services:
       ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
       JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xmx2g -XX:+UseG1GC}"
     volumes:
-      - ./fuseki-config.ttl:/fuseki/configuration/ontocode.ttl:ro
+      - ./fuseki-config.ttl:/fuseki/config.ttl:ro
       - ./fuseki-shiro.ini:/fuseki/shiro.ini:ro
       - fuseki-data:/fuseki/databases
     networks:
