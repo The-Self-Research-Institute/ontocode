@@ -166,6 +166,8 @@ services:
       FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
       FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
       FUSEKI_GSP_ENDPOINT: http://fuseki:3030/ontocode/data
+      FUSEKI_ADMIN_USER: ${FUSEKI_ADMIN_USER:-admin}
+      FUSEKI_ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
       DATA_DIR: /app/data
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
