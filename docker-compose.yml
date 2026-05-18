@@ -45,6 +45,8 @@ services:
       JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xmx2g -XX:+UseG1GC}"
     volumes:
       - fuseki-data:/fuseki/databases
+      - ./fuseki-config.ttl:/config.ttl:ro
+    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
     networks:
       - ontology-net
     deploy:
