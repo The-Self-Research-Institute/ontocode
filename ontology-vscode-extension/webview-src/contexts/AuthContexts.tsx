@@ -18,6 +18,7 @@ interface User {
     workspaceName?: string;
     workspaceRole?: string;
     subscriptionPlan?: string; // Workspace subscription plan: 'free', 'pro', or 'enterprise'
+    enterpriseDomainBypass?: boolean; // true = access granted via allowed-domain list, not payment
 }
 
 interface AuthContextType {
@@ -93,6 +94,10 @@ const decodeToken = (token: string): { userId?: string; username: string; email?
     }
 };
 
+const getStoredEnterpriseDomainBypass = (): boolean => {
+    try { return localStorage.getItem('enterpriseDomainBypass') === 'true'; } catch { return false; }
+};
+
 const getStoredDeploymentType = (): DeploymentType | null => {
     try {
         const value = localStorage.getItem('deploymentType');
@@ -133,7 +138,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         clearSessionCache();
         ignoringWorkspaceRef.current = false;
-        
+        try { localStorage.removeItem('enterpriseDomainBypass'); } catch {}
+
         setUser(null);
         setNeedsWorkspaceSelection(false);
         if (showExpiredMessage) {
@@ -185,7 +191,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const deploymentType = getStoredDeploymentType();
                 
                 // Cloud users are always admins
-                const isAdmin = deploymentType === 'cloud' ? true : (userInfo.isAdmin || false);
+                const isAdmin = userInfo.isAdmin || false;
                 
                 const requiresWorkspace = shouldRequireWorkspaceSelection(
                     deploymentType,
@@ -194,24 +200,25 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 );
 
                 // Persist user state from token
-                setUser({ 
+                setUser({
                     token: token,
                     userId: userInfo.userId,
-                    username: userInfo.username, 
+                    username: userInfo.username,
                     email: userInfo.email,
                     roles: userInfo.roles,
                     isAdmin: isAdmin,
                     workspaceId: skipWorkspaceMode ? undefined : userInfo.workspaceId,
                     workspaceName: skipWorkspaceMode ? undefined : userInfo.workspaceName,
                     workspaceRole: skipWorkspaceMode ? undefined : userInfo.workspaceRole,
-                    subscriptionPlan: userInfo.subscriptionPlan
+                    subscriptionPlan: userInfo.subscriptionPlan,
+                    enterpriseDomainBypass: getStoredEnterpriseDomainBypass()
                 });
 
                 // Workspace selection based on deployment choice and role
                 setNeedsWorkspaceSelection(skipWorkspaceMode ? false : requiresWorkspace);
                 setSessionExpiredMessage(null);
             }
-            
+
             setLoading(false);
         }
     }, [logout]);
@@ -248,7 +255,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         const deploymentType = getStoredDeploymentType();
                         
                         // Cloud users are always admins
-                        const isAdmin = deploymentType === 'cloud' ? true : (userInfo.isAdmin || false);
+                        const isAdmin = userInfo.isAdmin || false;
                         
                         const requiresWorkspace = shouldRequireWorkspaceSelection(
                             deploymentType,
@@ -272,7 +279,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             workspaceId: skipWorkspaceMode ? undefined : userInfo.workspaceId,
                             workspaceName: skipWorkspaceMode ? undefined : userInfo.workspaceName,
                             workspaceRole: skipWorkspaceMode ? undefined : userInfo.workspaceRole,
-                            subscriptionPlan: userInfo.subscriptionPlan
+                            subscriptionPlan: userInfo.subscriptionPlan,
+                            enterpriseDomainBypass: getStoredEnterpriseDomainBypass()
                         });
 
                         // Workspace selection based on deployment choice and role
@@ -324,10 +332,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const responseData = response?.data || response;
             const roles = responseData?.roles || [];
             const email = responseData?.email || '';
-            
+
             // Cloud users are always admins
             const deploymentType = getStoredDeploymentType();
-            const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || false);
+            const isAdmin = responseData?.isAdmin || false;
+            const enterpriseDomainBypass = responseData?.enterpriseDomainBypass || false;
+            try { localStorage.setItem('enterpriseDomainBypass', String(enterpriseDomainBypass)); } catch {}
 
             if (!token) {
                 // Check if it's an error response
@@ -372,17 +382,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         }
                         
                         const wsUserInfo = decodeToken(selectResponse.jwt);
-                        const userData = { 
+                        const userData = {
                             token: selectResponse.jwt,
                             userId: wsUserInfo.userId || userInfo.userId,
-                            username: wsUserInfo.username || username, 
+                            username: wsUserInfo.username || username,
                             email: wsUserInfo.email || email,
                             roles: wsUserInfo.roles || roles,
                             isAdmin: wsUserInfo.isAdmin || isAdmin,
                             workspaceId: selectResponse.workspaceId,
                             workspaceName: selectResponse.workspaceName,
                             workspaceRole: selectResponse.role,
-                            subscriptionPlan: selectResponse.subscriptionPlan || wsUserInfo.subscriptionPlan
+                            subscriptionPlan: selectResponse.subscriptionPlan || wsUserInfo.subscriptionPlan,
+                            enterpriseDomainBypass
                         };
                         console.log('[AuthContext] 👤 Setting user with workspace:', userData);
                         setUser(userData);
@@ -404,17 +415,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
             
             // Set user data (either workspace wasn't auto-selected, or user already has workspace in JWT)
-            setUser({ 
+            setUser({
                 token,
                 userId: userInfo.userId,
-                username: userInfo.username || username, 
+                username: userInfo.username || username,
                 email: userInfo.email || email,
                 roles: userInfo.roles || roles,
                 isAdmin: userInfo.isAdmin || isAdmin,
                 workspaceId: userInfo.workspaceId,
                 workspaceName: userInfo.workspaceName,
                 workspaceRole: userInfo.workspaceRole,
-                subscriptionPlan: userInfo.subscriptionPlan
+                subscriptionPlan: userInfo.subscriptionPlan,
+                enterpriseDomainBypass
             });
             
             // After login, update user role based on deployment type
@@ -439,22 +451,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         
                         const roleData = roleResponse?.data || roleResponse;
                         // Cloud users are always admins
-                        const newIsAdmin = deploymentType === 'cloud' ? true : (roleData?.isAdmin || false);
+                        const newIsAdmin = roleData?.isAdmin || false;
                         const newRoles = roleData?.roles || [];
                         
-                        setUser({ 
+                        setUser({
                             token: newToken,
                             userId: userInfo.userId,
-                            username: userInfo.username || username, 
+                            username: userInfo.username || username,
                             email: userInfo.email || email,
                             roles: newRoles,
                             isAdmin: newIsAdmin,
                             workspaceId: userInfo.workspaceId,
                             workspaceName: userInfo.workspaceName,
                             workspaceRole: userInfo.workspaceRole,
-                            subscriptionPlan: userInfo.subscriptionPlan
+                            subscriptionPlan: userInfo.subscriptionPlan,
+                            enterpriseDomainBypass
                         });
-                        
+
                         // Determine workspace selection based on deployment type and role
                         const requiresWorkspace = shouldRequireWorkspaceSelection(
                             deploymentType,
@@ -531,7 +544,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 
                 // Cloud users are always admins
                 const deploymentType = getStoredDeploymentType();
-                const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || userInfo.isAdmin || false);
+                const isAdmin = responseData?.isAdmin || userInfo.isAdmin || false;
                 
                 console.log('[AuthContext] Initial signup - deploymentType:', deploymentType, 'isAdmin:', isAdmin);
                 
@@ -566,7 +579,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             
                             const roleData = roleResponse?.data || roleResponse;
                             // Cloud users are always admins, don't let role update override this
-                            const newIsAdmin = deploymentType === 'cloud' ? true : (roleData?.isAdmin || false);
+                            const newIsAdmin = roleData?.isAdmin || false;
                             const newRoles = roleData?.roles || [];
                             
                             setUser({ 
@@ -679,7 +692,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         const userInfo = decodeToken(jwt);
         const deploymentType = getStoredDeploymentType();
-        const isAdmin = deploymentType === 'cloud' ? true : (data?.isAdmin || false);
+        const isAdmin = data?.isAdmin || false;
 
         setUser({
             token: jwt,
@@ -761,17 +774,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const roles = userInfo.roles || user?.roles || [];
         const isAdmin = userInfo.isAdmin || user?.isAdmin || roles.includes('ROLE_ADMIN');
         
-        setUser({ 
+        setUser({
             token: workspaceData.jwt,
             userId: userInfo.userId || user?.userId,
-            username: workspaceData.username || userInfo.username, 
+            username: workspaceData.username || userInfo.username,
             email: userInfo.email || user?.email,
             roles: roles,
             isAdmin: isAdmin,
             workspaceId: workspaceData.workspaceId,
             workspaceName: workspaceData.workspaceName,
             workspaceRole: workspaceData.role,
-            subscriptionPlan: workspaceData.subscriptionPlan || 'FREE' // Workspace subscription plan
+            subscriptionPlan: workspaceData.subscriptionPlan || 'FREE',
+            enterpriseDomainBypass: user?.enterpriseDomainBypass || getStoredEnterpriseDomainBypass()
         });
         setNeedsWorkspaceSelection(false);
         console.log('[AuthContext]  Workspace selection complete');
@@ -869,7 +883,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     workspaceId: userInfo.workspaceId || user?.workspaceId,
                     workspaceName: userInfo.workspaceName || user?.workspaceName,
                     workspaceRole: userInfo.workspaceRole || user?.workspaceRole,
-                    subscriptionPlan: userInfo.subscriptionPlan || user?.subscriptionPlan
+                    subscriptionPlan: userInfo.subscriptionPlan || user?.subscriptionPlan,
+                    enterpriseDomainBypass: user?.enterpriseDomainBypass || getStoredEnterpriseDomainBypass()
                 });
                 
                 // Update needsWorkspaceSelection based on new token info
@@ -915,7 +930,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 
                 const responseData = response?.data || response;
                 // Cloud users are always admins
-                const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || false);
+                const isAdmin = responseData?.isAdmin || false;
                 const roles = responseData?.roles || [];
                 
                 setUser({

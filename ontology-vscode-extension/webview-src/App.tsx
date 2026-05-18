@@ -21,6 +21,7 @@ import ResetPasswordForm from "./components/ResetPasswordForm";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
 import { clearLastOpenedProjectState, SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "./utils/sessionCleanup";
+import AdminSettingsModal from "./components/AdminSettingsModal";
 const BillingManagement = lazy(() => import("./components/BillingManagement"));
 const PaymentSetupModal = lazy(() => import("./components/PaymentSetupModal"));
 
@@ -1738,6 +1739,11 @@ const AppContent = () => {
     );
   }
 
+  // Admin users bypass workspace selection entirely — they only configure the system
+  if (user?.isAdmin) {
+    return <AdminSettingsModal isOpen={true} onClose={() => {}} pageMode onLogout={handleLogout} />;
+  }
+
   // Show workspace selection if user is logged in but hasn't selected a workspace
   const showWorkspaceSelectionScreen = user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending);
   console.log("[App] Render decision - showWorkspaceSelectionScreen:", showWorkspaceSelectionScreen);
@@ -1757,8 +1763,8 @@ const AppContent = () => {
           // BillingManagement page in account-level mode instead of the
           // legacy in-place modal. The page treats an empty workspaceId as
           // "your account" and the backend's billing endpoints accept it.
-          onManageAccountBilling={() => navigateTo({ view: 'billing' })}
-          onUpgradeAccountPlan={openAccountSubscription}
+          onManageAccountBilling={user.enterpriseDomainBypass ? undefined : () => navigateTo({ view: 'billing' })}
+          onUpgradeAccountPlan={user.enterpriseDomainBypass ? undefined : openAccountSubscription}
           onWorkspaceSelected={handleWorkspaceSelected}
           onSkipWorkspace={() => {
             console.log("[App] 🚀 User chose to continue without workspace");
@@ -1814,7 +1820,8 @@ const AppContent = () => {
       !!pendingFile,
     );
     const workspacePlan = (user.subscriptionPlan || "FREE").toUpperCase();
-    const hasPaidPlan = workspacePlan === "PRO" || workspacePlan === "ENTERPRISE";
+    const isEnterpriseDomainBypass = user.enterpriseDomainBypass || false;
+    const hasPaidPlan = !isEnterpriseDomainBypass && (workspacePlan === "PRO" || workspacePlan === "ENTERPRISE");
     return (
       <>
         <ProjectDashboard
@@ -1822,7 +1829,7 @@ const AppContent = () => {
           pendingFile={pendingFile}
           onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined}
           onManageSubscription={hasPaidPlan ? () => navigateTo({ view: 'billing' }) : undefined}
-          onOpenSubscriptionPlans={openAccountSubscription}
+          onOpenSubscriptionPlans={isEnterpriseDomainBypass ? undefined : openAccountSubscription}
         />
       </>
     );

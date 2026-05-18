@@ -62,6 +62,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import org.bson.Document;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.gridfs.GridFsResource;
 
 @RestController
 @RequestMapping("/api/ontology")
@@ -86,6 +89,7 @@ public class ProjectLoadController {
     private final ProjectRepository projectRepository;
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
+    private final MongoTemplate mongoTemplate;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
@@ -99,7 +103,8 @@ public class ProjectLoadController {
                                  GraphDBDatasetService datasetService,
                                  ProjectRepository projectRepository,
                                  OntologyPreparseService preparseService,
-                                 ImportWorkerDispatcher importWorkerDispatcher) {
+                                 ImportWorkerDispatcher importWorkerDispatcher,
+                                 MongoTemplate mongoTemplate) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
@@ -113,6 +118,7 @@ public class ProjectLoadController {
         this.projectRepository = projectRepository;
         this.preparseService = preparseService;
         this.importWorkerDispatcher = importWorkerDispatcher;
+        this.mongoTemplate = mongoTemplate;
     }
 
     @PostMapping("/upload/{projectId:.+}")  // Allow slashes in path variable
@@ -372,6 +378,111 @@ public class ProjectLoadController {
         }
     }
     
+    /**
+     * Server-side import by file reference — avoids browser download/re-upload for large files.
+     * Reads the file directly from the shared MongoDB GridFS (via file_metadata UUID → gridfsId),
+     * writes it to disk, and dispatches the import job exactly as the regular upload does.
+     */
+    @PostMapping("/upload-by-file-ref/{projectId:.+}")
+    public ResponseEntity<Map<String, Object>> uploadByFileRef(
+            @PathVariable String projectId,
+            @RequestParam String fileId,
+            @RequestParam String parentProjectId,
+            @RequestParam(required = false) String ownerEmail,
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String importMode,
+            @RequestParam(required = false) String partition,
+            @RequestParam(required = false) String workspaceId) {
+        long startTime = System.nanoTime();
+        log.info("[ProjectLoadController] ═══ UploadByFileRef STARTED - projectId: {}, fileId: {}, ownerEmail: {}",
+                projectId, fileId, ownerEmail);
+        try {
+            // 1. Look up file_metadata by UUID fileId to resolve gridfsId and fileName
+            Document fileMeta = mongoTemplate.getDb()
+                    .getCollection("file_metadata")
+                    .find(new Document("fileId", fileId)
+                            .append("isDeleted", new Document("$ne", true)))
+                    .first();
+
+            if (fileMeta == null) {
+                log.warn("[ProjectLoadController] file_metadata not found for fileId: {}", fileId);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("success", false, "error", "File not found: " + fileId));
+            }
+
+            String gridfsId = fileMeta.getString("gridfsId");
+            String fileName = fileMeta.getString("fileName");
+            log.info("[ProjectLoadController] Resolved file: fileName={}, gridfsId={}", fileName, gridfsId);
+
+            // 2. Stream file bytes from GridFS
+            Optional<GridFsResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
+            if (resourceOpt.isEmpty()) {
+                log.error("[ProjectLoadController] GridFS content missing for gridfsId: {}", gridfsId);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("success", false, "error", "File content not found in storage"));
+            }
+
+            // 3. Clear dataset when replacing
+            if ("replace".equals(action)) {
+                try {
+                    datasetService.clearDataset(projectId);
+                    log.info("[ProjectLoadController] Cleared GraphDB dataset for project {}", projectId);
+                } catch (Exception e) {
+                    log.warn("[ProjectLoadController] Failed to clear dataset for {}: {}", projectId, e.getMessage());
+                }
+            }
+
+            // 4. Write file to project directory (same path as normal upload)
+            Path projectDir = storageManager.prepareProjectDir(projectId);
+            Path original = projectDir.resolve("ontology.original.owl");
+            Files.createDirectories(original.getParent());
+
+            try (InputStream in = resourceOpt.get().getInputStream();
+                 OutputStream out = Files.newOutputStream(original,
+                         StandardOpenOption.CREATE,
+                         StandardOpenOption.TRUNCATE_EXISTING,
+                         StandardOpenOption.WRITE)) {
+                in.transferTo(out);
+            }
+            log.info("[ProjectLoadController] [TIMING] GridFS read + disk write: {} ms",
+                    (System.nanoTime() - startTime) / 1_000_000);
+
+            // 5. Citation mappings, metadata, dispatch import
+            storageManager.extractCitationMappingsFromFile(original, projectId);
+            ProjectStatus status = ProjectStatus.uploaded(fileName);
+            metadataService.updateProjectMetadata(projectId, status, gridfsId, ownerEmail, workspaceId, parentProjectId);
+
+            ImportOptions options = resolveImportOptions(importMode, partition);
+            importWorkerDispatcher.dispatch(projectId, original, ownerEmail, fileName, gridfsId, options);
+
+            RDFFormat format = detectFormat(original);
+            if (Files.size(original) <= 50L * 1024 * 1024) {
+                preparseService.preparse(original, projectId, format);
+            } else {
+                log.info("[ProjectLoadController] Skipping preparse for large file ref ({} bytes)", Files.size(original));
+            }
+
+            long totalMs = (System.nanoTime() - startTime) / 1_000_000;
+            log.info("[ProjectLoadController] ═══ UploadByFileRef COMPLETED in {} ms for project: {}", totalMs, projectId);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "gridfsFileId", gridfsId,
+                    "filename", fileName,
+                    "message", "Import from file reference scheduled"));
+        } catch (IOException e) {
+            log.error("[ProjectLoadController] UploadByFileRef IO error", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("[ProjectLoadController] UploadByFileRef failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error",
+                            e.getMessage() != null ? e.getMessage() : "Unexpected error"));
+        }
+    }
+
     /**
      * Generate a unique filename for a copy by adding a numeric suffix
      * @param originalFilename The original filename

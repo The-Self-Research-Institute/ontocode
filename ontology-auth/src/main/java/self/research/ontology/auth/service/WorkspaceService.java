@@ -34,17 +34,20 @@ public class WorkspaceService {
     private final ProjectRepository projectRepository;
     private final FileMetadataRepository fileMetadataRepository;
     private final PlanFeatureConfigService planFeatureConfigService;
+    private final SystemSettingsService systemSettingsService;
 
-    public WorkspaceService(WorkspaceRepository workspaceRepository, 
+    public WorkspaceService(WorkspaceRepository workspaceRepository,
                            UserRepository userRepository,
                            ProjectRepository projectRepository,
                            FileMetadataRepository fileMetadataRepository,
-                           PlanFeatureConfigService planFeatureConfigService) {
+                           PlanFeatureConfigService planFeatureConfigService,
+                           SystemSettingsService systemSettingsService) {
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
         this.projectRepository = projectRepository;
         this.fileMetadataRepository = fileMetadataRepository;
         this.planFeatureConfigService = planFeatureConfigService;
+        this.systemSettingsService = systemSettingsService;
     }
 
     /**
@@ -101,6 +104,11 @@ public class WorkspaceService {
 
         // Resolve owner's current plan and standing (Model C: Inherit from account)
         String ownerPlan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName().toUpperCase() : "FREE";
+        // Enterprise domain bypass overrides FREE — the user's DB plan may not yet reflect the bypass
+        if ("FREE".equals(ownerPlan) && systemSettingsService.isEnterpriseDomain(user.getEmail())) {
+            ownerPlan = "ENTERPRISE";
+            log.info("Enterprise domain bypass: creating workspace as ENTERPRISE for {}", user.getEmail());
+        }
         String status = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus().toLowerCase() : "active";
         
         boolean isPaidPlan = "PRO".equals(ownerPlan) || "ENTERPRISE".equals(ownerPlan);
