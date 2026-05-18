@@ -13,6 +13,7 @@ import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.model.Workspace.WorkspaceRole;
 import self.research.ontology.auth.repository.UserRepository;
+import self.research.ontology.auth.service.SystemSettingsService;
 import self.research.ontology.auth.service.WorkspaceService;
 import self.research.ontology.auth.util.JwtUtil;
 
@@ -32,13 +33,16 @@ public class WorkspaceController {
     private final WorkspaceService workspaceService;
     private final UserRepository userRepository;
     private final JwtUtil jwtUtil;
+    private final SystemSettingsService systemSettingsService;
 
-    public WorkspaceController(WorkspaceService workspaceService, 
+    public WorkspaceController(WorkspaceService workspaceService,
                               UserRepository userRepository,
-                              JwtUtil jwtUtil) {
+                              JwtUtil jwtUtil,
+                              SystemSettingsService systemSettingsService) {
         this.workspaceService = workspaceService;
         this.userRepository = userRepository;
         this.jwtUtil = jwtUtil;
+        this.systemSettingsService = systemSettingsService;
     }
 
     /**
@@ -140,6 +144,13 @@ public class WorkspaceController {
             String rawAccountPlan = user.getSubscriptionPlanName() != null
                     ? user.getSubscriptionPlanName().toUpperCase() : "FREE";
             String accountStatus = user.getSubscriptionStatus();
+
+            // Enterprise domain bypass: treat as unlimited regardless of stored plan/status
+            if (systemSettingsService.isEnterpriseDomain(user.getEmail())) {
+                rawAccountPlan = "ENTERPRISE";
+                accountStatus = "active";
+            }
+
             String activeAccountPlan = ("active".equalsIgnoreCase(accountStatus)
                     || "trialing".equalsIgnoreCase(accountStatus))
                     ? rawAccountPlan : "FREE";

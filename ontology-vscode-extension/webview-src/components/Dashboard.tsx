@@ -6116,8 +6116,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                   cleanupUI();
                 });
               } else {
-                console.log("[Dashboard] No fetchData in progress, cleaning up UI directly");
-                cleanupUI();
+                // Server-side import (upload-by-file-ref) bypasses the VSCode bridge,
+                // so no fileReady message is sent. Trigger fetchData here directly.
+                console.log("[Dashboard] No fetchData in progress — server-side import flow, triggering fetchData now");
+                const targetProjectId = message.status.projectId || projectId;
+                loadingPromiseRef.current = fetchData(targetProjectId, false, initialProjectId)
+                  .then(() => {
+                    loadingPromiseRef.current = null;
+                    cleanupUI();
+                  })
+                  .catch(() => {
+                    loadingPromiseRef.current = null;
+                    cleanupUI();
+                  });
               }
 
               // Refresh projects list
@@ -7741,59 +7752,48 @@ const Dashboard: React.FC<DashboardProps> = ({
         setHasUnsavedChanges(false);
         setDraftCount(0);
 
-        // Fetch file content from auth service
-        const fileContent = await apiClient.get<{
-          id: string;
-          name: string;
-          content: string;
-          type: string;
-          size: number;
-        }>(`/api/projects/${initialProjectId}/files/${fileId}/content`);
+        // Server-side import: editor reads file directly from MongoDB GridFS.
+        // Eliminates the browser download+re-upload roundtrip that caused 10+ min
+        // timeouts for large files (e.g. 224 MB go-plus.owl).
+        const resolvedEmail = resolveUserEmail();
 
-        if (!fileContent || !fileContent.content) {
-          throw new Error("File content not found");
-        }
-
-        console.log(
-          `[Dashboard] [PERF] Fetch file content from MongoDB: ${Date.now() - loadFilePerfStart}ms (${((fileContent.content.length * 3) / 4 / (1024 * 1024)).toFixed(2)}MB raw)`,
-        );
-        console.log("[Dashboard] 📥 File content retrieved, uploading to ontology editor...");
-
-        // Use hierarchical naming: project--fileId
-        // This organizes all files under their MongoDB project in GraphDB
-        // e.g., http://ontocode.org/project/project-123--file-456
-        // Note: Using -- instead of / to avoid URL encoding issues (%2F blocked by gateway)
-
-        // Extract pure base64 data (remove data URL prefix if present)
-        const base64Data = fileContent.content.includes(",") ? fileContent.content.split(",")[1] : fileContent.content;
-
-        // Set the project ID first so IMPORT_COMPLETED knows which project to load
+        // Set project state before dispatching so IMPORT_COMPLETED targets the right project.
         setProjectId(ontologyProjectId);
         pendingImportProjectIdRef.current = ontologyProjectId;
 
-        // Upload to ontology editor service via VSCodeBridge (works in both VS Code and browser)
-        const resolvedEmail = resolveUserEmail();
-        // Workspace files use hierarchical IDs (proj--fileId). Skip duplicate check
-        // because the file is scoped to this project — a standalone file with the same
-        // name should NOT short-circuit the upload.
-        const isWorkspaceFile = ontologyProjectId.includes("--");
-        window.vscode.postMessage({
-          type: "uploadOntology",
-          projectId: ontologyProjectId,
-          fileName: fileName,
-          fileContent: base64Data,
-          ownerEmail: resolvedEmail || undefined,
-          workspaceId: user?.workspaceId || undefined,
-          skipDuplicateCheck: isWorkspaceFile,
-          forceUpload: true, // Dashboard already confirmed GraphDB is empty; skip status cache check
-          importMode,
-          partition: partitionStrategy,
-        });
+        const importResult = await apiClient.post<{
+          success: boolean;
+          projectId: string;
+          filename: string;
+          message: string;
+        }>(
+          `/api/ontology/upload-by-file-ref/${encodeProjectId(ontologyProjectId)}`,
+          null,
+          {
+            params: {
+              fileId,
+              parentProjectId: initialProjectId,
+              ownerEmail: resolvedEmail || "",
+              workspaceId: user?.workspaceId || "",
+              importMode,
+              partition: partitionStrategy,
+              action: "replace",
+            },
+          },
+        );
+
+        if (!importResult?.success) {
+          throw new Error(importResult?.message || "Failed to trigger server-side import");
+        }
+
+        console.log(
+          `[Dashboard] [PERF] Server-side import dispatched: ${Date.now() - loadFilePerfStart}ms`,
+        );
+        console.log("[Dashboard] ✅ Server-side import triggered via uploadByFileRef");
+        console.log("[Dashboard] Pending import project:", ontologyProjectId);
 
         // The fileReady message will trigger fetchData via the message handler
         setIsExpectingFileReady(true);
-        console.log("[Dashboard] ✅ Upload request sent via VSCodeBridge");
-        console.log("[Dashboard] Pending import project:", ontologyProjectId);
         notificationService.info("Loading", `Loading ${fileName}...`);
       } catch (error: any) {
         console.error("[Dashboard] ❌ Failed to load project file:", error);

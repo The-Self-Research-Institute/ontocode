@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { X, Shield, Wrench, Building2, Plus, Loader2, CheckCircle, AlertTriangle, ToggleLeft, ToggleRight, Users, Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { X, Shield, Wrench, Building2, Plus, Loader2, CheckCircle, AlertTriangle, ToggleLeft, ToggleRight, Users, Wifi, WifiOff, RefreshCw, LogOut } from 'lucide-react';
 import apiClient from '../services/apiClient';
 
 interface SystemSettings {
@@ -13,9 +13,11 @@ interface SystemSettings {
 interface AdminSettingsModalProps {
     isOpen: boolean;
     onClose: () => void;
+    pageMode?: boolean;
+    onLogout?: () => void;
 }
 
-const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose }) => {
+const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose, pageMode = false, onLogout }) => {
     const [settings, setSettings] = useState<SystemSettings>({
         maintenanceModeEnabled: false,
         maintenanceAllowedDomains: [],
@@ -147,37 +149,19 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
     if (!isOpen) return null;
 
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-
-                {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-                    <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 bg-purple-100 rounded-lg flex items-center justify-center">
-                            <Shield className="w-5 h-5 text-purple-600" />
-                        </div>
-                        <div>
-                            <h2 className="text-lg font-semibold text-gray-900">Admin Settings</h2>
-                            <p className="text-xs text-gray-500">System-wide configuration</p>
-                        </div>
-                    </div>
-                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100">
-                        <X size={20} />
-                    </button>
+    const content = (
+        <>
+            {/* Toast */}
+            {toast && (
+                <div className={`mx-6 mt-4 px-4 py-3 rounded-lg flex items-center gap-2 text-sm font-medium
+                    ${toast.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                    {toast.type === 'success' ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
+                    {toast.message}
                 </div>
+            )}
 
-                {/* Toast */}
-                {toast && (
-                    <div className={`mx-6 mt-4 px-4 py-3 rounded-lg flex items-center gap-2 text-sm font-medium
-                        ${toast.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
-                        {toast.type === 'success' ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
-                        {toast.message}
-                    </div>
-                )}
-
-                {/* Body */}
-                <div className="overflow-y-auto flex-1 px-6 py-5 space-y-8">
+            {/* Body */}
+            <div className={`overflow-y-auto flex-1 px-6 py-5 space-y-8 ${pageMode ? 'max-w-2xl mx-auto w-full' : ''}`}>
 
                     {loading ? (
                         <div className="flex items-center justify-center py-12">
@@ -394,7 +378,58 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                             )}
                         </>
                     )}
+            </div>
+        </>
+    );
+
+    if (pageMode) {
+        return (
+            <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--color-background, #fff)' }}>
+                <header className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white sticky top-0 z-10">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 bg-purple-100 rounded-lg flex items-center justify-center">
+                            <Shield className="w-5 h-5 text-purple-600" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-semibold text-gray-900">Admin Settings</h2>
+                            <p className="text-xs text-gray-500">System-wide configuration</p>
+                        </div>
+                    </div>
+                    {onLogout && (
+                        <button
+                            onClick={onLogout}
+                            className="flex items-center gap-2 text-sm text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+                        >
+                            <LogOut size={16} />
+                            Sign out
+                        </button>
+                    )}
+                </header>
+                <div className="flex-1 flex flex-col">
+                    {content}
                 </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 bg-purple-100 rounded-lg flex items-center justify-center">
+                            <Shield className="w-5 h-5 text-purple-600" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-semibold text-gray-900">Admin Settings</h2>
+                            <p className="text-xs text-gray-500">System-wide configuration</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100">
+                        <X size={20} />
+                    </button>
+                </div>
+                {content}
             </div>
         </div>
     );
