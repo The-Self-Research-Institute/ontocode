@@ -32,7 +32,11 @@ public class ImportQueueManager {
     private final Map<String, ImportQueueItem> activeImports = new ConcurrentHashMap<>();
 
     // Tuned via ONTOCODE_IMPORT_MAX_CONCURRENT env var in docker-compose.
-    // t3.large (2 vCPU / 8GB): 1   t3.xlarge (4 vCPU / 16GB): 2   t3.2xlarge (8 vCPU / 32GB): 3
+    // With Apache Jena TDB2 (current triplestore), keep this at 1 on ALL tiers.
+    // TDB2 is single-writer: concurrent imports parse into heap simultaneously but
+    // writes to Fuseki serialize at the transaction lock anyway — no throughput gain,
+    // double the memory pressure. Only raise above 1 if the triplestore is replaced
+    // with a multi-writer backend.
     @Value("${ontocode.import.max-concurrent:1}")
     private int maxConcurrentImports;
 

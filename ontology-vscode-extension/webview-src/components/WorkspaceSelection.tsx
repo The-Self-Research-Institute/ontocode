@@ -521,33 +521,35 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
       <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-4xl flex flex-col my-auto">
         <div className="absolute top-4 right-4 flex items-center gap-2">
-          {accountSubscription && (accountSubscription.status === "active" || accountSubscription.status === "trialing") && accountSubscription.planName !== "FREE" ? (
-            <button
-              type="button"
-              // Bug #44: route to the new full-page BillingManagement view in
-              // account-level mode when the host provided a navigator;
-              // otherwise fall back to the legacy in-place modal.
-              onClick={() => {
-                if (onManageAccountBilling) {
-                  onManageAccountBilling();
-                }
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
-              title={`${accountSubscription.planName} plan — manage billing`}
-            >
-              <CreditCard size={14} />
-              Manage Billing
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onUpgradeAccountPlan}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600/80 hover:bg-purple-600 border border-purple-500/50 text-xs font-medium text-white transition-colors backdrop-blur-sm"
-              title={accountSubscription?.planName && accountSubscription.planName !== "FREE" ? "Renew or upgrade your account plan" : "Upgrade your account to PRO or ENTERPRISE"}
-            >
-              <CreditCard size={14} />
-              {accountSubscription?.planName && accountSubscription.planName !== "FREE" ? "Renew Plan" : "Upgrade Plan"}
-            </button>
+          {!(onManageAccountBilling || onUpgradeAccountPlan) ? null : (
+            accountSubscription && (accountSubscription.status === "active" || accountSubscription.status === "trialing") && accountSubscription.planName !== "FREE" ? (
+              <button
+                type="button"
+                // Bug #44: route to the new full-page BillingManagement view in
+                // account-level mode when the host provided a navigator;
+                // otherwise fall back to the legacy in-place modal.
+                onClick={() => {
+                  if (onManageAccountBilling) {
+                    onManageAccountBilling();
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
+                title={`${accountSubscription.planName} plan — manage billing`}
+              >
+                <CreditCard size={14} />
+                Manage Billing
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onUpgradeAccountPlan}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600/80 hover:bg-purple-600 border border-purple-500/50 text-xs font-medium text-white transition-colors backdrop-blur-sm"
+                title={accountSubscription?.planName && accountSubscription.planName !== "FREE" ? "Renew or upgrade your account plan" : "Upgrade your account to PRO or ENTERPRISE"}
+              >
+                <CreditCard size={14} />
+                {accountSubscription?.planName && accountSubscription.planName !== "FREE" ? "Renew Plan" : "Upgrade Plan"}
+              </button>
+            )
           )}
           <button
             type="button"
@@ -581,7 +583,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             <div className="text-center py-12">
               <Building2 size={64} className="text-gray-400 mx-auto mb-4 opacity-50" />
               <p className="text-gray-300 mb-6">You don't have any workspaces yet.</p>
-              {isAdmin && (
+              {(isAdmin || user?.enterpriseDomainBypass) && (
                 <button
                   onClick={() => setShowCreateDialog(true)}
                   className="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all shadow-lg hover:shadow-purple-500/50"
@@ -682,7 +684,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           )}
         </div>
 
-        {workspaces.length > 0 && isAdmin && (
+        {workspaces.length > 0 && (isAdmin || user?.enterpriseDomainBypass) && (
           <button
             onClick={() => setShowCreateDialog(true)}
             className="w-full py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-white/10 transition-all flex items-center justify-center space-x-2"
@@ -700,7 +702,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           <span>Continue without workspace</span>
         </button> */}
 
-        {workspaces.length === 0 && !isAdmin && (
+        {workspaces.length === 0 && !isAdmin && !user?.enterpriseDomainBypass && (
           <div className="text-center py-8">
             <p className="text-gray-400 mb-2">No workspaces available</p>
             <p className="text-gray-500 text-sm">

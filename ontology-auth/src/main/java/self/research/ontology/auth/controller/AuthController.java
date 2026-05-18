@@ -167,6 +167,16 @@ public class AuthController {
 
         User user = userOpt.get();
 
+        // Maintenance mode — checked first, before any account-state errors.
+        // Bypass list is the DB-managed maintenanceAllowedDomains (admin UI).
+        if (systemSettingsService.isBlockedByMaintenance(user.getEmail())) {
+            log.warn("Login blocked — maintenance mode active for: {}", user.getEmail());
+            return ResponseEntity.status(503).body(Map.of(
+                "error", "The system is currently under maintenance. Please try again later.",
+                "maintenance", true
+            ));
+        }
+
         // Check if account is locked
         if (user.isAccountLocked()) {
             auditService.logAccountLocked(loginIdentifier, clientIp);
@@ -181,16 +191,6 @@ public class AuthController {
             auditService.logLoginFailure(loginIdentifier, clientIp, "Account not verified");
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Account not verified. Please check your email to verify your account."
-            ));
-        }
-
-        // Maintenance mode check (DB-backed, overrides env-var check)
-        if (systemSettingsService.isBlockedByMaintenance(user.getEmail())
-                && !isDomainAllowed(user.getEmail())) {
-            log.warn("Login blocked — maintenance mode active for: {}", user.getEmail());
-            return ResponseEntity.status(403).body(Map.of(
-                "error", "Access is restricted to authorised users only. Please contact support.",
-                "maintenance", true
             ));
         }
 
@@ -222,8 +222,14 @@ public class AuthController {
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
 
-        // Enterprise domain bypass: auto-grant ENTERPRISE to this user's workspaces
+        // Enterprise domain bypass: auto-grant ENTERPRISE to user account and all their workspaces
         if (systemSettingsService.isEnterpriseDomain(user.getEmail())) {
+            if (!"ENTERPRISE".equalsIgnoreCase(user.getSubscriptionPlanName())) {
+                user.setSubscriptionPlanName("ENTERPRISE");
+                user.setSubscriptionStatus("active");
+                userRepository.save(user);
+                log.info("Enterprise domain bypass: set user plan to ENTERPRISE for {}", user.getEmail());
+            }
             workspaceRepository.findByOwnerId(user.getId()).stream()
                 .filter(ws -> !Boolean.TRUE.equals(ws.getIsDeleted()))
                 .filter(ws -> !"ENTERPRISE".equalsIgnoreCase(ws.getSubscriptionPlan()))
@@ -278,8 +284,19 @@ public class AuthController {
             if (userOpt.isEmpty()) {
                 return ResponseEntity.notFound().build();
             }
-            
+
             User user = userOpt.get();
+
+            // Maintenance mode: block token refresh.
+            // Bypass list is the DB-managed maintenanceAllowedDomains (admin UI).
+            if (systemSettingsService.isBlockedByMaintenance(user.getEmail())) {
+                log.warn("Token refresh blocked — maintenance mode active for: {}", user.getEmail());
+                return ResponseEntity.status(503).body(Map.of(
+                    "error", "The system is currently under maintenance. Please try again later.",
+                    "maintenance", true
+                ));
+            }
+
             UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
             Set<String> roles = user.getRoles() != null ? user.getRoles() : Set.of();
@@ -299,7 +316,8 @@ public class AuthController {
             return ResponseEntity.ok(resp);
         } catch (Exception e) {
             log.error("Token refresh failed", e);
-            return ResponseEntity.status(401).body(Map.of("error", "Failed to refresh session: " + e.getMessage()));
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return ResponseEntity.status(401).body(Map.of("error", "Failed to refresh session: " + msg));
         }
     }
 
@@ -326,8 +344,8 @@ public class AuthController {
             ));
         }
 
-        // Maintenance mode check (DB-backed + env-var fallback)
-        if (systemSettingsService.isBlockedByMaintenance(email) && !isDomainAllowed(email)) {
+        // Maintenance mode check — bypass list is the DB-managed maintenanceAllowedDomains (admin UI).
+        if (systemSettingsService.isBlockedByMaintenance(email)) {
             log.warn("Signup blocked — maintenance mode active for: {}", email);
             return ResponseEntity.status(403).body(Map.of(
                 "error", "Registration is currently restricted to authorised users only. Please contact support.",

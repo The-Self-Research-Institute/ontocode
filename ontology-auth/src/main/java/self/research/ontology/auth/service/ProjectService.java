@@ -1,5 +1,7 @@
 package self.research.ontology.auth.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.Workspace;
@@ -16,6 +18,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class ProjectService {
+
+    private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
 
     private final ProjectRepository projectRepository;
     private final WorkspaceRepository workspaceRepository;
@@ -204,10 +208,14 @@ public class ProjectService {
      * Get a specific project
      */
     public Optional<Project> getProject(String projectId) {
-        Optional<Project> projectOpt = projectRepository.findActiveByProjectId(projectId);
-        if (projectOpt.isEmpty()) {
+        List<Project> projects = projectRepository.findAllActiveByProjectId(projectId);
+        if (projects.isEmpty()) {
             return Optional.empty();
         }
+        if (projects.size() > 1) {
+            log.warn("Duplicate active project documents for projectId={} (count={}), using first", projectId, projects.size());
+        }
+        Optional<Project> projectOpt = Optional.of(projects.get(0));
         return isWorkspaceAccessibleForUsage(projectOpt.get().getWorkspaceId()) ? projectOpt : Optional.empty();
     }
 
@@ -222,7 +230,7 @@ public class ProjectService {
      * Update project details
      */
     public Project updateProject(String projectId, String userId, String name, String description) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -282,7 +290,7 @@ public class ProjectService {
      * Add a member to a project
      */
     public Project addMember(String projectId, String userId, String targetUserId, String targetUsername, String targetEmail, String role) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -311,7 +319,7 @@ public class ProjectService {
      * Update a member's role in a project
      */
     public Project updateMemberRole(String projectId, String userId, String targetUserId, String newRole) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -358,7 +366,7 @@ public class ProjectService {
      * Remove a member from a project
      */
     public Project removeMember(String projectId, String userId, String targetUserId) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -398,7 +406,7 @@ public class ProjectService {
      * Archive a project
      */
     public void archiveProject(String projectId, String userId) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -418,7 +426,7 @@ public class ProjectService {
      * Soft delete a project and cascade to all related files
      */
     public void deleteProject(String projectId, String userId) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -450,7 +458,7 @@ public class ProjectService {
      * Restore a soft deleted project and optionally restore files
      */
     public void restoreProject(String projectId, String userId, boolean restoreFiles) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -488,11 +496,14 @@ public class ProjectService {
      * Check if user has access to a project
      */
     public boolean hasAccess(String projectId, String userId) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
-        if (projectOpt.isEmpty()) {
+        List<Project> projects = projectRepository.findAllActiveByProjectId(projectId);
+        if (projects.isEmpty()) {
             return false;
         }
-        Project project = projectOpt.get();
+        if (projects.size() > 1) {
+            log.warn("Duplicate active project documents for projectId={} (count={}) in hasAccess, using first", projectId, projects.size());
+        }
+        Project project = projects.get(0);
         // Check direct project membership first
         if (project.hasMember(userId)) {
             return true;
@@ -589,6 +600,15 @@ public class ProjectService {
         return isWorkspaceOwnerOrAdmin(project.getWorkspaceId(), userId);
     }
 
+    private Optional<Project> findProjectByIdTolerant(String projectId) {
+        List<Project> projects = projectRepository.findAllByProjectId(projectId);
+        if (projects.isEmpty()) return Optional.empty();
+        if (projects.size() > 1) {
+            log.warn("Duplicate project documents for projectId={} (count={}), using first", projectId, projects.size());
+        }
+        return Optional.of(projects.get(0));
+    }
+
     /**
      * Generate unique project ID
      */
@@ -604,12 +624,14 @@ public class ProjectService {
      * Get project by ID and verify user access
      */
     private Project getProjectById(String projectId, String userId) {
-        Optional<Project> projectOpt = projectRepository.findActiveByProjectId(projectId);
-        if (projectOpt.isEmpty()) {
+        List<Project> projects = projectRepository.findAllActiveByProjectId(projectId);
+        if (projects.isEmpty()) {
             throw new IllegalArgumentException("Project not found or has been deleted");
         }
-        
-        Project project = projectOpt.get();
+        if (projects.size() > 1) {
+            log.warn("Duplicate active project documents for projectId={} (count={}), using first", projectId, projects.size());
+        }
+        Project project = projects.get(0);
         if (!isWorkspaceAccessibleForUsage(project.getWorkspaceId())) {
             throw new SecurityException("Workspace payment is pending. Complete payment to continue.");
         }
