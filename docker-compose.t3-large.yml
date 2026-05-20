@@ -1,11 +1,11 @@
 # Memory sizing override — t3.large (8 GB RAM)
-# Total container limits ≈ 6.8 GB | leaves ~1.2 GB for OS + Docker overhead
+# Total container limits ≈ 5.5 GB | leaves ~2.5 GB for OS + Docker overhead
 #
 # Usage:
 #   docker compose -f docker-compose.production.yml -f docker-compose.t3-large.yml up -d
 #
 # NOTE: Editor heap is capped at 1.5 GB on this tier. Large ontology imports
-# will be slower and may require increasing swap. Upgrade to t3.xlarge for comfort.
+# (>100 MB) will be slow. Upgrade to t3.xlarge for comfort.
 
 services:
   mongo:
@@ -15,10 +15,9 @@ services:
         limits:
           memory: 512m
 
-  graphdb:
+  fuseki:
     environment:
-      GDB_HEAP_SIZE: 1500m
-      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=4m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+      JVM_ARGS: "-Xmx1500m -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
     deploy:
       resources:
         limits:

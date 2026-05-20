@@ -1,5 +1,5 @@
 # Memory sizing override — r5.2xlarge (64 GB RAM)
-# Total container limits ≈ 45 GB | leaves ~19 GB for OS + Docker overhead
+# Total container limits ≈ 40 GB | leaves ~24 GB for OS + Docker overhead
 #
 # Usage:
 #   docker compose -f docker-compose.production.yml -f docker-compose.r5-2xlarge.yml up -d
@@ -12,14 +12,13 @@ services:
         limits:
           memory: 3g
 
-  graphdb:
+  fuseki:
     environment:
-      GDB_HEAP_SIZE: 16g
-      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=16m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+      JVM_ARGS: "-Xmx12g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
     deploy:
       resources:
         limits:
-          memory: 20g
+          memory: 14g
 
   auth:
     environment:
@@ -40,7 +39,7 @@ services:
   owl-editor:
     environment:
       JAVA_OPTS: "-Xms4g -Xmx12g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
-      ONTOCODE_IMPORT_MAX_CONCURRENT: 3
+      ONTOCODE_IMPORT_MAX_CONCURRENT: 1
     deploy:
       resources:
         limits:
