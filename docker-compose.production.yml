@@ -42,6 +42,7 @@ services:
     image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-fuseki:${FUSEKI_VERSION:-6.1.0}
     container_name: ontocode-fuseki
     restart: unless-stopped
+    user: root
     ports:
       - "3030:3030"
     environment:
