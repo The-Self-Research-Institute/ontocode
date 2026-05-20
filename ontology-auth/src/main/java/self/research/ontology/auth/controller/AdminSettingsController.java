@@ -111,10 +111,20 @@ public class AdminSettingsController {
                     workspaceRepository.findByOwnerId(user.getId()).stream()
                         .filter(ws -> !Boolean.TRUE.equals(ws.getIsDeleted()))
                         .forEach(ws -> {
+                            boolean dirty = false;
                             if (!"ENTERPRISE".equalsIgnoreCase(ws.getSubscriptionPlan())) {
                                 ws.setSubscriptionPlan("ENTERPRISE");
+                                dirty = true;
+                            }
+                            if (!Boolean.TRUE.equals(ws.getCollaborationEnabled())) {
                                 ws.setCollaborationEnabled(true);
-                                // No Stripe subscription — domain bypass
+                                dirty = true;
+                            }
+                            if (ws.getMaxMembers() == null || ws.getMaxMembers() != Integer.MAX_VALUE) {
+                                ws.setMaxMembers(Integer.MAX_VALUE);
+                                dirty = true;
+                            }
+                            if (dirty) {
                                 workspaceRepository.save(ws);
                                 log.info("Auto-granted ENTERPRISE to workspace {} (owner={})", ws.getWorkspaceId(), user.getEmail());
                             }

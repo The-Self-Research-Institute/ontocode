@@ -1027,7 +1027,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               >
                 <Bug size={20} />
               </button>
-              {isOwner && onManageSubscription && (
+              {isOwner && onManageSubscription && !user?.enterpriseDomainBypass && (
                 <button
                   onClick={onManageSubscription}
                   className="h-9 w-9 inline-flex items-center justify-center text-purple-600 hover:bg-purple-50 rounded-lg"

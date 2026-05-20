@@ -142,18 +142,29 @@ public class WorkspaceService {
      */
     public void syncWorkspacesToOwnerPlan(User owner) {
         if (owner == null) return;
-        
-        String planName = owner.getSubscriptionPlanName() != null ? owner.getSubscriptionPlanName().toUpperCase() : "FREE";
-        String status = owner.getSubscriptionStatus() != null ? owner.getSubscriptionStatus().toLowerCase() : "active";
-        
-        // Collaboration is only enabled for paid plans that are in good standing
-        boolean isPaidPlan = "PRO".equals(planName) || "ENTERPRISE".equals(planName);
-        boolean isStatusGood = "active".equals(status) || "trialing".equals(status);
-        boolean collaborationEnabled = isPaidPlan && isStatusGood;
-        
-        Map<String, PlanFeatureConfig> configs = planFeatureConfigService.getAllByPlanId();
-        PlanFeatureConfig currentPlanConfig = configs.get(planName);
-        int maxMembers = currentPlanConfig != null ? currentPlanConfig.getMaxMembers() : 3;
+
+        String planName;
+        String status;
+        boolean collaborationEnabled;
+        int maxMembers;
+
+        if (systemSettingsService.isEnterpriseDomain(owner.getEmail())) {
+            // Enterprise domain bypass: treat as ENTERPRISE/active regardless of DB record
+            planName = "ENTERPRISE";
+            status = "active";
+            collaborationEnabled = true;
+            maxMembers = Integer.MAX_VALUE;
+        } else {
+            planName = owner.getSubscriptionPlanName() != null ? owner.getSubscriptionPlanName().toUpperCase() : "FREE";
+            status = owner.getSubscriptionStatus() != null ? owner.getSubscriptionStatus().toLowerCase() : "active";
+            // Collaboration is only enabled for paid plans that are in good standing
+            boolean isPaidPlan = "PRO".equals(planName) || "ENTERPRISE".equals(planName);
+            boolean isStatusGood = "active".equals(status) || "trialing".equals(status);
+            collaborationEnabled = isPaidPlan && isStatusGood;
+            Map<String, PlanFeatureConfig> configs = planFeatureConfigService.getAllByPlanId();
+            PlanFeatureConfig currentPlanConfig = configs.get(planName);
+            maxMembers = currentPlanConfig != null ? currentPlanConfig.getMaxMembers() : 3;
+        }
         
         workspaceRepository.findByOwnerId(owner.getId()).forEach(workspace -> {
             boolean dirty = false;
@@ -358,17 +369,16 @@ public class WorkspaceService {
 
         workspaceRepository.save(workspace);
 
-        // Remove WS_EDITOR_LINK_ADMIN entries from projects in this workspace.
-        // These entries are added automatically when the user is a workspace admin.
-        // Without this cleanup the removed user retains project access via hasMember().
+        // Remove the user from ALL projects in this workspace — both admin-link entries
+        // and regular member entries added on invite acceptance.
         if (removedUserId != null) {
             final String finalUserId = removedUserId;
             projectRepository.findByWorkspaceId(workspaceId).forEach(project -> {
                 Project.ProjectMember pm = project.getMember(finalUserId);
-                if (pm != null && Project.WS_EDITOR_LINK_ADMIN.equals(pm.getWorkspaceEditorLink())) {
+                if (pm != null) {
                     project.removeMember(finalUserId);
                     projectRepository.save(project);
-                    log.info("Removed WS_EDITOR_LINK_ADMIN entry for user {} from project {} after workspace removal",
+                    log.info("Removed user {} from project {} after workspace member removal",
                             finalUserId, project.getProjectId());
                 }
             });

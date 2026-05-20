@@ -30,6 +30,8 @@ import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.ImportOptions;
 
 import jakarta.annotation.PreDestroy;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -51,6 +53,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -89,6 +94,10 @@ public class GraphDBDatasetService {
     // Phase C: in-memory mirror of project graphs to bypass GraphDB on hot reads.
     @Autowired(required = false)
     private ProjectRepoCache projectRepoCache;
+
+    // MongoDB persistent top-level class cache — evicted on import/mutation.
+    @Autowired(required = false)
+    private TopLevelClassCacheService topLevelCacheService;
 
     // Shared repository connection
     private Repository repository;
@@ -225,6 +234,66 @@ public class GraphDBDatasetService {
     }
     
     /**
+     * Warm up TDB2 B-tree indexes after startup so the first user request isn't cold.
+     * Runs asynchronously — never blocks startup or user requests.
+     *
+     * <p>Strategy: run cheap predicate-scoped COUNT queries first (seconds each) to
+     * load the POS index pages for the three predicates our queries use most heavily.
+     * These complete long before the full triple scan, so the first user request that
+     * opens a project hits warm indexes even if the background scan is still running.
+     *
+     * <p>Then run the full GRAPH GROUP-BY scan to finish warming the GSPO index.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void warmupFusekiAsync() {
+        CompletableFuture.runAsync(() -> {
+            try {
+                log.info("[WARMUP] Starting background Fuseki/TDB2 warmup...");
+                long start = System.currentTimeMillis();
+                Repository repo = getRepository();
+
+                // Phase 1: warm the three POS index ranges our queries depend on most.
+                // Each is a range scan on one predicate — loads just the B-tree pages
+                // for that predicate into OS page cache, takes seconds on cold TDB2.
+                String[][] priorityScans = {
+                    {"rdfs:subClassOf", "SELECT (COUNT(*) AS ?c) WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?o }"},
+                    {"rdf:type",        "SELECT (COUNT(*) AS ?c) WHERE { ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?o }"},
+                    {"rdfs:label",      "SELECT (COUNT(*) AS ?c) WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?o }"}
+                };
+                for (String[] scan : priorityScans) {
+                    try (RepositoryConnection conn = repo.getConnection()) {
+                        TupleQuery q = conn.prepareTupleQuery(scan[1]);
+                        q.setMaxExecutionTime(120);
+                        try (TupleQueryResult r = q.evaluate()) {
+                            long count = r.hasNext() ? Long.parseLong(r.next().getValue("c").stringValue()) : 0;
+                            log.info("[WARMUP] {} index warm: {} triples in {}ms",
+                                    scan[0], count, System.currentTimeMillis() - start);
+                        }
+                    } catch (Exception e) {
+                        log.warn("[WARMUP] Priority scan {} failed (non-fatal): {}", scan[0], e.getMessage());
+                    }
+                }
+
+                // Phase 2: full GRAPH GROUP-BY scan — warms the GSPO index for all named graphs.
+                // This can take minutes on large datasets but runs in the background.
+                try (RepositoryConnection conn = repo.getConnection()) {
+                    TupleQuery q = conn.prepareTupleQuery(
+                        "SELECT ?g (COUNT(*) AS ?c) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g");
+                    q.setMaxExecutionTime(600); // up to 10 min for very large datasets
+                    try (TupleQueryResult r = q.evaluate()) {
+                        int graphs = 0;
+                        while (r.hasNext()) { r.next(); graphs++; }
+                        log.info("[WARMUP] Full warmup complete: {} named graphs in {}ms",
+                                graphs, System.currentTimeMillis() - start);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[WARMUP] Fuseki warmup failed (non-fatal): {}", e.getMessage());
+            }
+        });
+    }
+
+    /**
      * Get repository instance (lazy init)
      */
     public Repository getRepository() {
@@ -355,6 +424,11 @@ public class GraphDBDatasetService {
         return execSelect(projectId, sparqlQuery, false);
     }
 
+    /** True if this project has been confirmed to exceed the no-cache threshold. */
+    public boolean isKnownLargeProject(String projectId) {
+        return projectRepoCache != null && projectRepoCache.isKnownLarge(projectId);
+    }
+
     /**
      * Execute a SPARQL SELECT query with control over inference.
      * @param includeInferred false to skip transitive/OWL inference (much faster on large repos)
@@ -383,6 +457,27 @@ public class GraphDBDatasetService {
             }
             @Override public String graphUri(String pid) {
                 return getGraphUri(pid);
+            }
+            @Override public long estimateTripleCount(String pid) {
+                // Run COUNT with a 8-second timeout so cold TDB2 doesn't block
+                // the request thread for 60+ seconds and hit the ALB timeout.
+                // On timeout we return -1 (unknown) → caller proceeds to cache load.
+                try {
+                    return CompletableFuture.supplyAsync(() -> {
+                        try (RepositoryConnection conn = getRepository().getConnection()) {
+                            return countGraphTriplesSparql(conn, getGraphUri(pid));
+                        } catch (Exception e) {
+                            log.debug("[MEMCACHE] estimateTripleCount inner error for {}: {}", pid, e.getMessage());
+                            return -1L;
+                        }
+                    }).get(8, TimeUnit.SECONDS);
+                } catch (TimeoutException te) {
+                    log.warn("[MEMCACHE] estimateTripleCount timed out for {} (>8s) — skipping cache threshold check", pid);
+                    return -1L;
+                } catch (Exception e) {
+                    log.debug("[MEMCACHE] estimateTripleCount failed for {}: {}", pid, e.getMessage());
+                    return -1L;
+                }
             }
         });
         if (memRepo == null) {
@@ -608,13 +703,20 @@ public class GraphDBDatasetService {
         String graphUri = getGraphUri(projectId);
         
         try (RepositoryConnection conn = repo.getConnection()) {
-            
-            // Inject FROM clause if not present
+
+            // Inject FROM clause if not present.
+            // ASK queries legally omit the WHERE keyword (ASK { } is valid SPARQL), so we
+            // cannot rely on finding WHERE — fall back to injecting FROM before the opening brace.
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
-                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
-                    buildFromClause(conn, projectId) + " WHERE");
+                String fromClause = buildFromClause(conn, projectId);
+                if (sparqlQuery.toUpperCase().contains("WHERE")) {
+                    sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE", fromClause + " WHERE");
+                } else {
+                    // ASK { ... } without WHERE — insert FROM <graph> WHERE before the body brace
+                    sparqlQuery = sparqlQuery.replaceFirst("(?i)(ASK\\s*)\\{", "$1" + fromClause + " WHERE {");
+                }
             }
-            
+
             log.info("[GRAPHDB] Executing ASK query for project: {}", projectId);
             long askStart = System.nanoTime();
             BooleanQuery query = conn.prepareBooleanQuery(sparqlQuery);
@@ -622,7 +724,7 @@ public class GraphDBDatasetService {
             boolean askResult = query.evaluate();
             log.info("[TIMING] execAsk for project {}: {} ms (result: {})", projectId, elapsedMillis(askStart), askResult);
             return askResult;
-            
+
         } catch (Exception e) {
             log.error("SPARQL ASK query failed for project: {}", projectId, e);
             throw new RuntimeException("SPARQL ASK execution failed", e);
@@ -2342,9 +2444,13 @@ public class GraphDBDatasetService {
      */
     private void invalidateContextCaches(String projectId) {
         partitionGraphCache.remove(projectId);
-        // Phase C: drop the in-memory project mirror so imports are visible.
+        // Drop the in-memory project mirror so imports are visible.
         if (projectRepoCache != null) {
             projectRepoCache.evict(projectId);
+        }
+        // Drop the MongoDB persistent top-level class cache for this project.
+        if (topLevelCacheService != null) {
+            topLevelCacheService.evict(projectId);
         }
         // Evict Spring-managed Caffeine caches that depend on ontology data
         if (cacheManager != null) {
