@@ -38,7 +38,7 @@ services:
   # Admin UI: http://localhost:3030  (admin / admin)
   # SPARQL:   http://localhost:3030/ontocode/query
   fuseki:
-    image: stain/jena-fuseki:5.0.0
+    image: stain/jena-fuseki:6.1.0
     container_name: ontocode-fuseki
     restart: unless-stopped
     user: root
@@ -47,8 +47,9 @@ services:
     environment:
       ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
       JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xmx2g -XX:+UseG1GC}"
+    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
     volumes:
-      - ./fuseki-config.ttl:/fuseki/configuration/ontocode.ttl:ro
+      - ./fuseki-config.ttl:/config.ttl:ro
       - fuseki-data:/fuseki/databases
     networks:
       - ontology-net
