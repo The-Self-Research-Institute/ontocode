@@ -24,11 +24,13 @@ public class ProjectService {
     private final ProjectRepository projectRepository;
     private final WorkspaceRepository workspaceRepository;
     private final UserRepository userRepository;
+    private final SystemSettingsService systemSettingsService;
 
-    public ProjectService(ProjectRepository projectRepository, WorkspaceRepository workspaceRepository, UserRepository userRepository) {
+    public ProjectService(ProjectRepository projectRepository, WorkspaceRepository workspaceRepository, UserRepository userRepository, SystemSettingsService systemSettingsService) {
         this.projectRepository = projectRepository;
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
+        this.systemSettingsService = systemSettingsService;
     }
 
     /**
@@ -216,7 +218,12 @@ public class ProjectService {
             log.warn("Duplicate active project documents for projectId={} (count={}), using first", projectId, projects.size());
         }
         Optional<Project> projectOpt = Optional.of(projects.get(0));
-        return isWorkspaceAccessibleForUsage(projectOpt.get().getWorkspaceId()) ? projectOpt : Optional.empty();
+        if (!isWorkspaceAccessibleForUsage(projectOpt.get().getWorkspaceId())) {
+            log.warn("[ProjectService] getProject blocked: projectId={} workspaceId={} — workspace not accessible (billing or enterprise check)",
+                    projectId, projectOpt.get().getWorkspaceId());
+            return Optional.empty();
+        }
+        return projectOpt;
     }
 
     /**
@@ -686,6 +693,9 @@ public class ProjectService {
         User owner = userRepository.findById(workspace.getOwnerId()).orElse(null);
         if (owner == null) return true; // Safety fallback for legacy data
 
+        // Enterprise domain bypass owners always have accessible workspaces
+        if (systemSettingsService.isEnterpriseDomain(owner.getEmail())) return true;
+
         String subStatus = owner.getSubscriptionStatus();
         String subPlan = owner.getSubscriptionPlanName();
 
@@ -695,7 +705,13 @@ public class ProjectService {
         }
 
         // Paid plans must be active or trialing
-        return "active".equalsIgnoreCase(subStatus) || "trialing".equalsIgnoreCase(subStatus);
+        boolean accessible = "active".equalsIgnoreCase(subStatus) || "trialing".equalsIgnoreCase(subStatus);
+        if (!accessible) {
+            log.warn("[ProjectService] canUseWorkspace=false workspaceId={} ownerEmail={} plan={} status={} (enterprise domains configured: {})",
+                    workspace.getWorkspaceId(), owner.getEmail(), subPlan, subStatus,
+                    systemSettingsService.get().getEnterpriseDomains());
+        }
+        return accessible;
     }
 
     /**

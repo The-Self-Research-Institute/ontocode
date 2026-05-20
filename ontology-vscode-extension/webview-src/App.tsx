@@ -1398,6 +1398,10 @@ const AppContent = () => {
     setInviteToken(null);
     setInviteEmail(null);
 
+    // Clear any previously-loaded editor state so the old workspace's file
+    // is not shown after the user lands in the new workspace.
+    clearLastOpenedProjectState();
+
     if (workspaceData) {
       console.log("[App] Successfully joined workspace:", workspaceData.workspaceId || workspaceData.workspace?.id);
       // Select the workspace the user just joined

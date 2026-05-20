@@ -36,6 +36,7 @@ public class OntologyMutationService {
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final GraphGeneratingService graphGeneratingService;
+    private final TopLevelClassCacheService topLevelCacheService;
     private final Executor metadataExecutor;
 
     @Autowired @Lazy
@@ -45,11 +46,13 @@ public class OntologyMutationService {
                                    OntologyIndexService indexService,
                                    ProjectMetadataService metadataService,
                                    GraphGeneratingService graphGeneratingService,
+                                   TopLevelClassCacheService topLevelCacheService,
                                    @Qualifier("metadataExecutor") Executor metadataExecutor) {
         this.datasetService = datasetService;
         this.indexService = indexService;
         this.metadataService = metadataService;
         this.graphGeneratingService = graphGeneratingService;
+        this.topLevelCacheService = topLevelCacheService;
         this.metadataExecutor = metadataExecutor;
     }
 
@@ -100,7 +103,10 @@ public class OntologyMutationService {
             datasetService.execUpdate(projectId, sparql);
             long sparqlDuration = System.currentTimeMillis() - sparqlStart;
             log.info("[MUTATION] SPARQL update completed in {}ms for project={}", sparqlDuration, projectId);
-            
+
+            // Evict MongoDB persistent top-level class cache so next read recomputes
+            topLevelCacheService.evict(projectId);
+
             // Clear graph cache after mutations
             graphGeneratingService.clearGraphCache();
             if (visualizationController != null) {
@@ -172,6 +178,7 @@ public class OntologyMutationService {
         }
 
         datasetService.execUpdate(projectId, sparql);
+        topLevelCacheService.evict(projectId);
         graphGeneratingService.clearGraphCache();
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
@@ -224,6 +231,7 @@ public class OntologyMutationService {
         sparqlBuilder.append("}");
         
         datasetService.execUpdate(projectId, sparqlBuilder.toString());
+        topLevelCacheService.evict(projectId);
 
         // Clear graph cache
         graphGeneratingService.clearGraphCache();

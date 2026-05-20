@@ -187,6 +187,10 @@ public class OntologyMergeController {
             
             return ResponseEntity.ok(result);
             
+        } catch (StackOverflowError soe) {
+            log.error("[MERGE] Stack overflow during merge — ontology may be too large or circular", soe);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Merge failed: the ontology is too large or complex to serialize. Try splitting into smaller files."));
         } catch (Exception e) {
             log.error("[MERGE] Error executing merge", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -245,6 +249,10 @@ public class OntologyMergeController {
             
             return ResponseEntity.ok(result);
             
+        } catch (StackOverflowError soe) {
+            log.error("[MERGE] Stack overflow during merge-with-resolutions — ontology may be too large or circular", soe);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Merge failed: the ontology is too large or complex to serialize. Try splitting into smaller files."));
         } catch (Exception e) {
             log.error("[MERGE] Error executing merge with resolutions", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

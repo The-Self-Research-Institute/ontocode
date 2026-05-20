@@ -49,49 +49,92 @@ public class OntologyQueryService {
         """;
 
     private final GraphDBDatasetService datasetService;
+    private final TopLevelClassCacheService topLevelCacheService;
 
-    public OntologyQueryService(GraphDBDatasetService datasetService) {
+    public OntologyQueryService(GraphDBDatasetService datasetService,
+                                TopLevelClassCacheService topLevelCacheService) {
         this.datasetService = datasetService;
+        this.topLevelCacheService = topLevelCacheService;
     }
 
     /**
      * Get top-level classes (direct children of owl:Thing or implicit root classes).
      *
-     * Two-phase strategy, performance-safe:
+     * Three-layer read path — fastest to slowest:
+     *   L1: Caffeine in-memory cache (@Cacheable) — microseconds, same JVM session.
+     *   L2: MongoDB persistent cache (TopLevelClassCacheService) — milliseconds, survives restarts.
+     *   L3: Fuseki SPARQL computation — seconds/minutes, used only on true cache miss.
      *
-     * Phase 1 — fast indexed lookup (O(k), predicate index): finds classes with explicit
-     *   rdfs:subClassOf owl:Thing triples (e.g. Animal, Vehicle).
+     * SPARQL computation uses a two-stage strategy:
+     *   Phase 1a — IRI-only scan: pure POS index lookup, no per-row OPTIONALs or EXISTS.
+     *              ORDER BY ?c (IRI) is free from the index — avoids loading all labels before LIMIT.
+     *   Phase 1b — VALUES-anchored hydration: labels/descriptions/hasChildren fetched only for
+     *              the N IRIs returned by Phase 1a via direct index lookups (O(N), not O(all classes)).
+     *   Phase 2  — orphan supplement: classes declared owl:Class but with no named parent.
+     *              Skipped for known-large or cold-TDB2 projects (p1Duration > 5s).
      *
-     * Phase 2 — orphan supplement (runs always, but only scans owl:Class declarations):
-     *   finds classes that are declared as owl:Class but have NO rdfs:subClassOf to any
-     *   named parent (e.g. Country, Company which are implicitly under owl:Thing by semantics).
-     *   Any class already returned by Phase 1 is excluded via VALUES filter — so the NOT EXISTS
-     *   scan is over a reduced set and Phase 1 classes are never re-scanned.
-     *
-     * Results are @Cacheable — both phases are paid only once per project/limit combination.
+     * Results stored in MongoDB after computation so subsequent restarts skip Fuseki entirely.
      */
     @Cacheable(value = "topLevelClasses", key = "#projectId + '_' + #limit")
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
         long startTime = System.currentTimeMillis();
 
-        // Phase 1: direct indexed lookup — O(k), fast for any size ontology
-        String fastQuery = PREFIXES + """
-            SELECT DISTINCT ?c ?label ?description
-            (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c && isIRI(?child)) } AS ?hasChildren)
-            WHERE {
+        // === L2: MongoDB persistent cache ===
+        List<OntologyDto.TreeNode> mongoHit = topLevelCacheService.get(projectId, limit);
+        if (mongoHit != null) {
+            log.info("[PERF] Top-level classes served from MongoDB cache for project={} in {}ms",
+                    projectId, System.currentTimeMillis() - startTime);
+            return mongoHit;
+        }
+
+        // === L3: Compute from Fuseki — two-stage Phase 1 ===
+        //
+        // Phase 1a: pure POS index scan — returns only IRIs, no label/description/EXISTS loading.
+        // ORDER BY ?c (IRI string) is satisfied by the SPO index iteration order — zero extra
+        // disk reads. The old single-query approach used ORDER BY LCASE(?label) which forced
+        // TDB2 to load every label from disk before LIMIT could trim anything.
+        log.info("[PERF] Top-level classes (phase 1a - IRI scan) for project={}", projectId);
+        String phase1aQuery = PREFIXES + """
+            SELECT ?c WHERE {
               ?c rdfs:subClassOf <http://www.w3.org/2002/07/owl#Thing> .
               FILTER(isIRI(?c))
-              OPTIONAL { ?c rdfs:label ?label }
-              OPTIONAL { ?c rdfs:comment ?description }
             }
-            ORDER BY COALESCE(LCASE(?label), STR(?c))
+            ORDER BY ?c
             LIMIT %d
             """.formatted(Math.max(1, limit));
 
-        log.info("[PERF] Loading top-level classes (phase 1 - explicit subClassOf) for project: {}", projectId);
-        List<OntologyDto.TreeNode> phase1 = mapTreeNodes(projectId, fastQuery, null);
+        List<String> p1Iris = new java.util.ArrayList<>();
+        TupleQueryResult p1aRs = datasetService.execSelect(projectId, phase1aQuery);
+        while (p1aRs.hasNext()) {
+            Value v = p1aRs.next().getValue("c");
+            if (v != null) p1Iris.add(v.stringValue());
+        }
+        long p1aDuration = System.currentTimeMillis() - startTime;
+        log.info("[PERF] Phase 1a: {} IRIs in {}ms", p1Iris.size(), p1aDuration);
+
+        // Phase 1b: VALUES-anchored hydration — bounded by p1Iris.size(), NOT by total class count.
+        // Jena resolves VALUES via direct hash/index lookup per IRI, so OPTIONALs and EXISTS
+        // are O(N) where N = p1Iris.size() (≤ limit), not O(all owl:Class declarations).
+        List<OntologyDto.TreeNode> phase1;
+        if (p1Iris.isEmpty()) {
+            phase1 = java.util.Collections.emptyList();
+        } else {
+            String valuesBlock = p1Iris.stream()
+                    .map(iri -> "<" + iri + ">")
+                    .collect(java.util.stream.Collectors.joining(" "));
+            String phase1bQuery = PREFIXES + """
+                SELECT ?c ?label ?description
+                (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c && isIRI(?child)) } AS ?hasChildren)
+                WHERE {
+                  VALUES ?c { %s }
+                  OPTIONAL { ?c rdfs:label ?label }
+                  OPTIONAL { ?c rdfs:comment ?description }
+                }
+                """.formatted(valuesBlock);
+            phase1 = mapTreeNodes(projectId, phase1bQuery, null);
+        }
         long p1Duration = System.currentTimeMillis() - startTime;
-        log.info("[PERF] Top-level classes phase 1: {} results in {}ms", phase1.size(), p1Duration);
+        log.info("[PERF] Top-level classes phase 1 complete: {} results in {}ms", phase1.size(), p1Duration);
 
         // Phase 2: supplement with orphan classes (owl:Class declarations with no named parent).
         // First, run a cheap ASK to detect if any orphans exist at all — skips the expensive
@@ -103,16 +146,43 @@ public class OntologyQueryService {
         String exclusionValues = phase1Iris.isEmpty() ? "" :
                 "  FILTER(?c NOT IN (<" + String.join(">, <", phase1Iris) + ">))\n";
 
+        // MINUS is used instead of FILTER NOT EXISTS. Semantically they're equivalent
+        // here (both compute the set of ?c with no named-IRI rdfs:subClassOf parent).
+        // Both forms are valid in Jena ARQ; we use MINUS for consistency with the
+        // two-stage orphan SELECT below, where MINUS pairs well with VALUES-based
+        // hydration. See https://www.w3.org/TR/sparql11-query/#neg-minus.
         String orphanAsk = PREFIXES + """
             ASK {
               ?c a owl:Class .
               FILTER(isIRI(?c) && ?c != <http://www.w3.org/2002/07/owl#Thing>)
-            %s  FILTER NOT EXISTS {
+            %s  MINUS {
                 ?c rdfs:subClassOf ?any .
                 FILTER(isIRI(?any))
               }
             }
             """.formatted(exclusionValues);
+
+        // For very large projects (>1.5M triples), the MINUS-based orphan scan is
+        // extremely expensive on TDB2 (O(classes) × index-lookup). Skip it entirely —
+        // phase 1 covers the well-structured top-level classes and that is sufficient
+        // for production-scale ontologies like NCBITaxon.
+        // Also skip when Phase 1 itself was slow (>5s): cold TDB2 after a Fuseki restart.
+        // In that scenario the COUNT timed out so the project isn't in knownLargeProjects yet,
+        // but the MINUS-based orphan scan would add another 7-40 s and breach the ALB 60 s limit.
+        boolean knownLarge = datasetService.isKnownLargeProject(projectId);
+        if (knownLarge || p1Duration > 5000) {
+            log.info("[PERF] Skipping orphan ASK for project={} (p1Duration={}ms, knownLarge={})",
+                     projectId, p1Duration, knownLarge);
+            List<OntologyDto.TreeNode> merged = new java.util.ArrayList<>(phase1);
+            merged.sort(java.util.Comparator.comparing(n -> n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
+            List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
+            enrichWithEquivalentClasses(projectId, result);
+            // Persist to MongoDB even on the fast path — future restarts hit MongoDB not Fuseki
+            final List<OntologyDto.TreeNode> toStore = new java.util.ArrayList<>(result);
+            final int finalLimit = limit;
+            CompletableFuture.runAsync(() -> topLevelCacheService.put(projectId, toStore, finalLimit));
+            return result;
+        }
 
         boolean hasOrphans = datasetService.execAsk(projectId, orphanAsk);
         long askDuration = System.currentTimeMillis() - startTime - p1Duration;
@@ -120,34 +190,81 @@ public class OntologyQueryService {
 
         List<OntologyDto.TreeNode> orphans = java.util.Collections.emptyList();
         if (hasOrphans) {
-            String orphanQuery = PREFIXES + """
-                SELECT DISTINCT ?c ?label ?description
-                (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c && isIRI(?child)) } AS ?hasChildren)
-                WHERE {
+            // Two-stage query.
+            //
+            // Stage 1 (IRI lookup): a stripped-down query that returns ONLY the
+            // orphan IRIs — no labels, no descriptions, no hasChildren EXISTS, no
+            // label-based ORDER BY. This is what was making the original query
+            // explode on GO-scale ontologies: ARQ was materialising labels +
+            // running per-row EXISTS / NOT EXISTS over the full 50k owl:Class set
+            // *before* the LIMIT could trim anything (ORDER BY label forces full
+            // materialisation). Now stage 1 only does the cheap candidate filter.
+            //
+            // Stage 2 (hydration): given the small set of orphan IRIs (≤ limit),
+            // pull label / description / hasChildren in a second query whose WHERE
+            // is anchored by VALUES — Jena resolves VALUES via direct index lookup
+            // per IRI, so the OPTIONALs and EXISTS are bounded by `limit`, not by
+            // the total class count.
+            //
+            // Behavior preserved: the result set is the same orphan IRIs each with
+            // identical label / description / hasChildren. The outer Java sort
+            // (further down at `merged.sort(...)`) re-orders by label, so the
+            // stage-1 `ORDER BY ?c` only governs which IRIs are kept when total
+            // orphans exceed `limit` — and it does so deterministically.
+            String orphanIrisQuery = PREFIXES + """
+                SELECT ?c WHERE {
                   ?c a owl:Class .
                   FILTER(isIRI(?c) && ?c != <http://www.w3.org/2002/07/owl#Thing>)
-                %s  FILTER NOT EXISTS {
+                %s  MINUS {
                     ?c rdfs:subClassOf ?super .
                     FILTER(isIRI(?super) && ?super != <http://www.w3.org/2002/07/owl#Thing> && ?super != ?c)
                   }
-                  OPTIONAL { ?c rdfs:label ?label }
-                  OPTIONAL { ?c rdfs:comment ?description }
                 }
-                ORDER BY COALESCE(LCASE(?label), STR(?c))
+                ORDER BY ?c
                 LIMIT %d
                 """.formatted(exclusionValues, Math.max(1, limit));
-            orphans = mapTreeNodes(projectId, orphanQuery, null);
+
+            List<String> orphanIris = new java.util.ArrayList<>();
+            TupleQueryResult irisRs = datasetService.execSelect(projectId, orphanIrisQuery);
+            while (irisRs.hasNext()) {
+                BindingSet sol = irisRs.next();
+                String iri = resource(sol, "c");
+                if (iri != null) orphanIris.add(iri);
+            }
+
+            if (!orphanIris.isEmpty()) {
+                String valuesBlock = orphanIris.stream()
+                        .map(iri -> "<" + iri + ">")
+                        .collect(java.util.stream.Collectors.joining(" "));
+                String hydrationQuery = PREFIXES + """
+                    SELECT ?c ?label ?description
+                    (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c && isIRI(?child)) } AS ?hasChildren)
+                    WHERE {
+                      VALUES ?c { %s }
+                      OPTIONAL { ?c rdfs:label ?label }
+                      OPTIONAL { ?c rdfs:comment ?description }
+                    }
+                    """.formatted(valuesBlock);
+                orphans = mapTreeNodes(projectId, hydrationQuery, null);
+            }
         }
         long totalDuration = System.currentTimeMillis() - startTime;
         log.info("[PERF] Top-level classes phase 2 (orphans): {} new results, total {}ms", orphans.size(), totalDuration);
 
-        // Merge and sort
+        // Merge, sort by label, trim to limit, enrich with equivalent classes
         List<OntologyDto.TreeNode> merged = new java.util.ArrayList<>(phase1);
         merged.addAll(orphans);
         merged.sort(java.util.Comparator.comparing(n ->
                 n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
         List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
         enrichWithEquivalentClasses(projectId, result);
+
+        // Persist fully-enriched result to MongoDB (L2 cache) asynchronously — never blocks response.
+        // On the next restart, this entry is served directly without touching Fuseki.
+        final List<OntologyDto.TreeNode> toStore = new java.util.ArrayList<>(result);
+        final int finalLimit = limit;
+        CompletableFuture.runAsync(() -> topLevelCacheService.put(projectId, toStore, finalLimit));
+
         return result;
     }
 
