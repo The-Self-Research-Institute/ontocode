@@ -617,8 +617,6 @@ public class OntologyQueryService {
             LIMIT %d OFFSET %d
             """.formatted(Math.max(1, limit), Math.max(0, offset));
 
-        System.out.println("=== ANNOTATION PROPERTIES QUERY ===");
-        System.out.println(query);
         TupleQueryResult rs = datasetService.execSelect(projectId, query);
         List<AnnotationPropertyDto> props = new ArrayList<>();
         int count = 0;
@@ -944,20 +942,12 @@ public class OntologyQueryService {
         // Multiple rows for the same IRI arise when a class has several rdfs:label annotations;
         // we keep the first (non-blank) label encountered and merge hasChildren truthfully.
         Map<String, OntologyDto.TreeNode> seen = new java.util.LinkedHashMap<>();
-        System.out.println("=== MAPPING TREE NODES ===");
-        System.out.println("Available binding names: " + rs.getBindingNames());
-        int count = 0;
         while (rs.hasNext()) {
-            count++;
             BindingSet sol = rs.next();
-            System.out.println("Row " + count + " bindings: " + sol.getBindingNames());
             String iri = resource(sol, parentIri == null ? "c" : "child");
             if (iri == null) {
-                System.out.println("Row " + count + ": IRI is null for variable '" + (parentIri == null ? "c" : "child") + "'");
-                System.out.println("Row " + count + ": All values: " + sol);
                 continue;
             }
-            System.out.println("Row " + count + ": IRI = " + iri);
 
             if (seen.containsKey(iri)) {
                 // Duplicate row (extra label/description) — merge hasChildren only
@@ -985,9 +975,7 @@ public class OntologyQueryService {
             node.setParent(parentIri);
             seen.put(iri, node);
         }
-        List<OntologyDto.TreeNode> nodes = new ArrayList<>(seen.values());
-        System.out.println("=== MAPPED " + nodes.size() + " NODES FROM " + count + " ROWS ===");
-        return nodes;
+        return new ArrayList<>(seen.values());
     }
 
     /**
