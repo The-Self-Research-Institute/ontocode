@@ -39,7 +39,7 @@ services:
 
   # Fuseki (Apache Jena Fuseki + TDB2 triple store) — production sizing
   fuseki:
-    image: stain/jena-fuseki:6.1.0
+    image: stain/jena-fuseki:5.4.0
     container_name: ontocode-fuseki
     restart: unless-stopped
     ports:
