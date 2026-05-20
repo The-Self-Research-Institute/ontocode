@@ -34,7 +34,7 @@ services:
   # Admin UI: http://localhost:3030 (user: admin, password: admin)
   # SPARQL query: http://localhost:3030/ontocode/query
   fuseki:
-    image: stain/jena-fuseki:5.0.0
+    image: stain/jena-fuseki:6.1.0
     container_name: ontocode-fuseki
     restart: unless-stopped
     user: root
@@ -45,8 +45,7 @@ services:
       JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xmx2g -XX:+UseG1GC}"
     volumes:
       - fuseki-data:/fuseki/databases
-      - ./fuseki-config.ttl:/config.ttl:ro
-    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
+      - ./fuseki-config.ttl:/fuseki/configuration/ontocode.ttl:ro
     networks:
       - ontology-net
     deploy:
@@ -62,7 +61,7 @@ services:
 
   # Authentication Service
   auth:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-auth:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-auth:${VERSION:-latest}
     container_name: ontocode-auth
     restart: unless-stopped
     user: root
@@ -123,7 +122,7 @@ services:
 
   # API Gateway
   gateway:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-gateway:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-gateway:${VERSION:-latest}
     container_name: ontocode-gateway
     restart: unless-stopped
     user: root
@@ -156,7 +155,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.editor
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-editor:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-editor:${VERSION:-latest}
     container_name: ontocode-editor
     restart: unless-stopped
     user: root
@@ -214,7 +213,7 @@ services:
 
   # SWRL Rules Service
   swrl-service:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-swrl:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-swrl:${VERSION:-latest}
     container_name: ontocode-swrl
     restart: unless-stopped
     user: root
@@ -249,7 +248,7 @@ services:
 
   # Plugin Service
   plugin-service:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-plugin:${VERSION:-latest}
     container_name: ontocode-plugin
     restart: unless-stopped
     ports:
@@ -276,7 +275,7 @@ services:
 
   # Plugin Initialization Service
   plugin-init:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin-init:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-plugin-init:${VERSION:-latest}
     container_name: ontocode-plugin-init
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
@@ -291,7 +290,7 @@ services:
 
   # VS Code Web Extension (Self-Contained) - DISABLED
   # vscode-web:
-  #   image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-vscode-web:${VERSION:-latest}
+  #   image: ${DOCKER_REGISTRY:-ontocode}/ontocode-vscode-web:${VERSION:-latest}
   #   container_name: ontocode-vscode-web
   #   restart: unless-stopped
   #   ports:
@@ -322,7 +321,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.webapp
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-web:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-web:${VERSION:-latest}
     container_name: ontocode-web
     restart: unless-stopped
     ports:

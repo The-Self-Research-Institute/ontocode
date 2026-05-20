@@ -39,7 +39,7 @@ services:
 
   # Fuseki (Apache Jena Fuseki + TDB2 triple store) — production sizing
   fuseki:
-    image: stain/jena-fuseki:5.0.0
+    image: stain/jena-fuseki:6.1.0
     container_name: ontocode-fuseki
     restart: unless-stopped
     ports:
@@ -47,9 +47,9 @@ services:
     environment:
       ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?FUSEKI_ADMIN_PASSWORD is required in production}
       JVM_ARGS: "-Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
-    command: ["--config=/fuseki/config/ontocode.ttl"]
+    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
     volumes:
-      - ./fuseki-config.ttl:/fuseki/config/ontocode.ttl:ro
+      - ./fuseki-config.ttl:/config.ttl:ro
       - fuseki-data:/fuseki/databases
     networks:
       - ontology-net
@@ -168,6 +168,8 @@ services:
       FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
       FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
       FUSEKI_GSP_ENDPOINT: http://fuseki:3030/ontocode/data
+      FUSEKI_ADMIN_USER: ${FUSEKI_ADMIN_USER:-admin}
+      FUSEKI_ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
@@ -188,8 +190,8 @@ services:
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
       JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
       JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
-      # Import concurrency: 1 on t3.large, 2 on t3.xlarge, 3 on t3.2xlarge+
-      ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-2}
+      # TDB2 is single-writer: keep at 1 on all tiers. See ImportQueueManager.
+      ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-1}
     depends_on:
       mongo:
         condition: service_healthy
