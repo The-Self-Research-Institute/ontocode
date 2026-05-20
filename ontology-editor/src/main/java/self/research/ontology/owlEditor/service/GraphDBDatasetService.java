@@ -1292,6 +1292,7 @@ public class GraphDBDatasetService {
 
             HttpClient client = HttpClient.newBuilder()
                     .version(HttpClient.Version.HTTP_1_1)
+                    .connectTimeout(java.time.Duration.ofSeconds(30))
                     .build();
 
             String gspAuth = "Basic " + java.util.Base64.getEncoder()
@@ -1302,6 +1303,7 @@ public class GraphDBDatasetService {
                     .header("Content-Type", contentType)
                     .header("Authorization", gspAuth)
                     .PUT(HttpRequest.BodyPublishers.ofFile(sourceFile))
+                    .timeout(java.time.Duration.ofMinutes(30))
                     .build();
 
             // Report initial progress
@@ -2231,18 +2233,11 @@ public class GraphDBDatasetService {
 
         long start = System.nanoTime();
         try {
-            conn.add(batch, graphIri);
+            postBatchToGSP(batch, graphIri.stringValue());
         } catch (Exception e) {
-            // Log the failing batch details to identify the problematic IRI
             log.error("Failed to add batch of {} statements to graph {}. Error: {}",
                     batch.size(), graphIri, e.getMessage());
-            for (Statement st : batch) {
-                String subj = st.getSubject().stringValue();
-                String pred = st.getPredicate().stringValue();
-                String obj = st.getObject().stringValue();
-                log.error("  Statement: <{}> <{}> <{}>", subj, pred, obj);
-            }
-            throw e;
+            throw e instanceof RuntimeException ? (RuntimeException) e : new RuntimeException(e);
         }
         long count = totalTriples.addAndGet(batch.size());
         long durationMs = elapsedMillis(start);
@@ -2255,6 +2250,60 @@ public class GraphDBDatasetService {
                      batch.size(), durationMs, (long)((batch.size() * 1000.0) / Math.max(durationMs, 1)), count);
         }
         batch.clear();
+    }
+
+    /**
+     * POST a batch of statements directly to Fuseki's GSP endpoint as Turtle.
+     * Bypasses RDF4J SPARQL INSERT DATA transactions — no Jetty 20MB form limit.
+     * GSP POST appends to the named graph without replacing it.
+     */
+    private void postBatchToGSP(List<Statement> batch, String graphUri) {
+        if (batch.isEmpty()) return;
+
+        StringWriter sw = new StringWriter(batch.size() * 80);
+        try {
+            org.eclipse.rdf4j.rio.RDFWriter tw = Rio.createWriter(RDFFormat.TURTLE, sw);
+            tw.startRDF();
+            for (Statement st : batch) {
+                tw.handleStatement(st);
+            }
+            tw.endRDF();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize batch to Turtle: " + e.getMessage(), e);
+        }
+
+        String encodedGraph;
+        try {
+            encodedGraph = URLEncoder.encode(graphUri, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to encode graph URI", e);
+        }
+        String url = fusekiGspEndpoint + "?graph=" + encodedGraph;
+        String auth = "Basic " + java.util.Base64.getEncoder()
+                .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword).getBytes(StandardCharsets.UTF_8));
+
+        try {
+            HttpClient gspClient = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .connectTimeout(java.time.Duration.ofSeconds(30))
+                    .build();
+            HttpRequest gspReq = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Content-Type", "text/turtle")
+                    .header("Authorization", auth)
+                    .POST(HttpRequest.BodyPublishers.ofString(sw.toString(), StandardCharsets.UTF_8))
+                    .timeout(java.time.Duration.ofMinutes(10))
+                    .build();
+            HttpResponse<String> resp = gspClient.send(gspReq, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+                throw new RuntimeException("GSP POST HTTP " + resp.statusCode() + ": "
+                        + resp.body().substring(0, Math.min(200, resp.body().length())));
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("GSP POST failed: " + e.getMessage(), e);
+        }
     }
 
     /**
