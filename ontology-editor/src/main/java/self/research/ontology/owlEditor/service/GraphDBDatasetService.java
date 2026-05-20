@@ -101,7 +101,14 @@ public class GraphDBDatasetService {
 
     // Shared repository connection
     private Repository repository;
-    
+
+    // Shared Java HttpClient — reused for GSP batch POSTs and direct file uploads.
+    // HttpClient is expensive to construct (thread pools); one instance per service is correct.
+    private static final java.net.http.HttpClient SHARED_HTTP_CLIENT = java.net.http.HttpClient.newBuilder()
+            .version(java.net.http.HttpClient.Version.HTTP_1_1)
+            .connectTimeout(java.time.Duration.ofSeconds(30))
+            .build();
+
     // Cache of graph URIs per project (projectId -> graphUri)
     private final Map<String, String> graphUriCache = new ConcurrentHashMap<>();
     private final Map<String, PartitionGraphs> partitionGraphCache = new ConcurrentHashMap<>();
@@ -1290,11 +1297,6 @@ public class GraphDBDatasetService {
 
             log.info("[DirectUpload] PUTting to Fuseki GSP: {}", url);
 
-            HttpClient client = HttpClient.newBuilder()
-                    .version(HttpClient.Version.HTTP_1_1)
-                    .connectTimeout(java.time.Duration.ofSeconds(30))
-                    .build();
-
             String gspAuth = "Basic " + java.util.Base64.getEncoder()
                     .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword)
                             .getBytes(StandardCharsets.UTF_8));
@@ -1312,7 +1314,7 @@ public class GraphDBDatasetService {
             }
 
             long uploadStart = System.nanoTime();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
             long uploadMs = elapsedMillis(uploadStart);
 
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
@@ -1767,20 +1769,19 @@ public class GraphDBDatasetService {
                 }
 
                 for (String g : graphs) {
-                    String deleteQuery = String.format(
-                        "DELETE { GRAPH <%s> { ?s ?p ?o } } WHERE { GRAPH <%s> { ?s ?p ?o } }",
-                        g, g
-                    );
-
+                    // CLEAR GRAPH operates at index level — does not read node table values.
+                    // DELETE WHERE { GRAPH <g> { ?s ?p ?o } } iterates node table entries and
+                    // throws NodeTableTRDF/Read on corrupt TDB2 data written by older Jena versions.
+                    String clearQuery = String.format("CLEAR GRAPH <%s>", g);
                     try {
-                        long deleteStart = System.nanoTime();
-                        conn.prepareUpdate(deleteQuery).execute();
-                        log.info("[TIMING] clearDataset DELETE for project {} graph {}: {} ms", projectId, g, elapsedMillis(deleteStart));
-                    } catch (Exception e) {
-                        log.warn("SPARQL DELETE failed for graph {}: {}. Falling back to conn.clear()", g, e.getMessage());
                         long clearStart = System.nanoTime();
-                        conn.clear(conn.getValueFactory().createIRI(g));
-                        log.info("[TIMING] clearDataset conn.clear() for project {} graph {}: {} ms", projectId, g, elapsedMillis(clearStart));
+                        conn.prepareUpdate(clearQuery).execute();
+                        log.info("[TIMING] clearDataset CLEAR GRAPH for project {} graph {}: {} ms", projectId, g, elapsedMillis(clearStart));
+                    } catch (Exception e) {
+                        log.warn("SPARQL CLEAR GRAPH failed for graph {}: {}. Falling back to DROP SILENT GRAPH", g, e.getMessage());
+                        long dropStart = System.nanoTime();
+                        conn.prepareUpdate(String.format("DROP SILENT GRAPH <%s>", g)).execute();
+                        log.info("[TIMING] clearDataset DROP GRAPH for project {} graph {}: {} ms", projectId, g, elapsedMillis(dropStart));
                     }
                 }
             }
@@ -2283,10 +2284,6 @@ public class GraphDBDatasetService {
                 .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword).getBytes(StandardCharsets.UTF_8));
 
         try {
-            HttpClient gspClient = HttpClient.newBuilder()
-                    .version(HttpClient.Version.HTTP_1_1)
-                    .connectTimeout(java.time.Duration.ofSeconds(30))
-                    .build();
             HttpRequest gspReq = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Content-Type", "text/turtle")
@@ -2294,7 +2291,7 @@ public class GraphDBDatasetService {
                     .POST(HttpRequest.BodyPublishers.ofString(sw.toString(), StandardCharsets.UTF_8))
                     .timeout(java.time.Duration.ofMinutes(10))
                     .build();
-            HttpResponse<String> resp = gspClient.send(gspReq, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = SHARED_HTTP_CLIENT.send(gspReq, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
                 throw new RuntimeException("GSP POST HTTP " + resp.statusCode() + ": "
                         + resp.body().substring(0, Math.min(200, resp.body().length())));
@@ -2418,7 +2415,11 @@ public class GraphDBDatasetService {
             if (result.hasNext()) {
                 BindingSet bs = result.next();
                 if (bs.hasBinding("count")) {
-                    return Long.parseLong(bs.getValue("count").stringValue());
+                    try {
+                        return Long.parseLong(bs.getValue("count").stringValue());
+                    } catch (NumberFormatException e) {
+                        log.warn("Unexpected COUNT value for graph {}: {}", graphUri, bs.getValue("count"));
+                    }
                 }
             }
         }
