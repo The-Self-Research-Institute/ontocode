@@ -7378,25 +7378,26 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
           if (entitiesTab === "Classes" || mainTab === "IndividualsByClass") {
             setLoadingNodes((prev) => new Set([...prev, nodeId]));
-            const timeout = new Promise<void>((_, reject) =>
-              setTimeout(() => reject(new Error("NODE_TIMEOUT")), 5000)
-            );
+            // Spinner timeout: stop the spinner after 30s but keep the node expanded.
+            // loadChildren continues in the background — children appear when the API
+            // responds (Spring @Cacheable makes retries fast after the first warm-up).
+            const spinnerTimeout = setTimeout(() => {
+              setLoadingNodes((prev) => { const n = new Set(prev); n.delete(nodeId); return n; });
+            }, 30000);
             try {
               const shouldLoadInferredClassChildren =
                 mainTab === "IndividualsByClass"
                   ? hierarchyViewModes.Classes === "inferred"
                   : currentHierarchyViewMode === "inferred";
               if (shouldLoadInferredClassChildren) {
-                await Promise.race([loadInferredChildren(nodeId), timeout]);
+                await loadInferredChildren(nodeId);
               } else {
-                await Promise.race([loadChildren(nodeId), timeout]);
+                await loadChildren(nodeId);
               }
             } catch (err: any) {
-              if (err?.message === "NODE_TIMEOUT") {
-                // Collapse the node so user isn't stuck on an empty expand
-                setExpandedNodes((prev) => prev.filter((id) => id !== nodeId));
-              }
+              console.warn(`[toggleNode] Failed to load children for ${nodeId}:`, err);
             } finally {
+              clearTimeout(spinnerTimeout);
               setLoadingNodes((prev) => { const n = new Set(prev); n.delete(nodeId); return n; });
             }
           }
