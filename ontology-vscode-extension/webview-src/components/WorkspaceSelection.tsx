@@ -478,7 +478,8 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       (m) => m.userId === user?.userId || m.email === user?.email || m.username === username
     );
 
-  const isPlanExpired = accountSubscription !== null &&
+  const isPlanExpired = !user?.enterpriseDomainBypass &&
+    accountSubscription !== null &&
     accountSubscription.planName !== "FREE" &&
     accountSubscription.status !== "" &&
     accountSubscription.status !== "active" &&
@@ -583,15 +584,18 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             <div className="text-center py-12">
               <Building2 size={64} className="text-gray-400 mx-auto mb-4 opacity-50" />
               <p className="text-gray-300 mb-6">You don't have any workspaces yet.</p>
-              {(isAdmin || user?.enterpriseDomainBypass) && (
-                <button
-                  onClick={() => setShowCreateDialog(true)}
-                  className="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all shadow-lg hover:shadow-purple-500/50"
-                >
-                  <Plus size={20} className="inline mr-2" />
-                  Create Your First Workspace
-                </button>
-              )}
+              {/* Workspace creation is open to all signed-in users; the backend
+                  enforces the plan-based quota (WorkspaceController returns a
+                  "Workspace limit reached" 400 with an upgrade hint when the
+                  user is over their plan, and the Create dialog surfaces that
+                  message together with an "Upgrade Account" CTA). */}
+              <button
+                onClick={() => setShowCreateDialog(true)}
+                className="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all shadow-lg hover:shadow-purple-500/50"
+              >
+                <Plus size={20} className="inline mr-2" />
+                Create Your First Workspace
+              </button>
             </div>
           ) : (
             <>
@@ -684,7 +688,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           )}
         </div>
 
-        {workspaces.length > 0 && (isAdmin || user?.enterpriseDomainBypass) && (
+        {workspaces.length > 0 && (
           <button
             onClick={() => setShowCreateDialog(true)}
             className="w-full py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-white/10 transition-all flex items-center justify-center space-x-2"
@@ -702,14 +706,10 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           <span>Continue without workspace</span>
         </button> */}
 
-        {workspaces.length === 0 && !isAdmin && !user?.enterpriseDomainBypass && (
-          <div className="text-center py-8">
-            <p className="text-gray-400 mb-2">No workspaces available</p>
-            <p className="text-gray-500 text-sm">
-              You can continue without a workspace or contact an administrator to be added to one
-            </p>
-          </div>
-        )}
+        {/* Previous "No workspaces available — contact an administrator" fallback
+            was only reachable when the Create button was gated behind admin /
+            enterprise. With creation open to all users, the empty-state Create
+            button above covers the zero-workspace case. */}
       </div>
 
       {/* Create Workspace Dialog */}

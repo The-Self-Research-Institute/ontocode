@@ -619,69 +619,6 @@ public class WorkspaceController {
                 ));
             }
 
-            // BILLING CHECK: Prevent deletion of paid workspaces during validity period
-            String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
-            String billingStatus = resolveBillingStatus(workspace);
-            
-            // Only check validity period for PRO/ENTERPRISE plans that have an active Stripe subscription
-            if (("PRO".equalsIgnoreCase(plan) || "ENTERPRISE".equalsIgnoreCase(plan)) && workspace.getStripeSubscriptionId() != null) {
-                LocalDateTime currentPeriodEnd = workspace.getSubscriptionCurrentPeriodEnd();
-                LocalDateTime now = LocalDateTime.now();
-                
-                // If we're within the validity period AND subscription is active/pending, block deletion
-                if (currentPeriodEnd != null && currentPeriodEnd.isAfter(now)) {
-                    // Still within validity period - cannot delete
-                    String billingInterval = workspace.getBillingInterval() != null ? workspace.getBillingInterval() : "monthly";
-                    String renewalDate = currentPeriodEnd.toString().substring(0, 10); // YYYY-MM-DD format
-                    
-                    return ResponseEntity.status(402).body(Map.of(
-                        "error", "Cannot delete workspace during active subscription period.",
-                        "billingStatus", billingStatus,
-                        "subscriptionPlan", plan,
-                        "billingInterval", billingInterval,
-                        "validityPeriodEnd", renewalDate,
-                        "requiresAction", "Cancel your subscription in Billing Settings to stop the renewal. Workspace can be deleted after the current " + billingInterval + " cycle ends.",
-                        "actions", Map.of(
-                            "cancelSubscription", "/api/billing/cancel?workspaceId=" + workspaceId,
-                            "manageSubscription", "/api/billing/portal?workspaceId=" + workspaceId,
-                            "currentStatus", billingStatus
-                        )
-                    ));
-                }
-                
-                // If validity period has ended but subscription hasn't been cancelled
-                if (currentPeriodEnd != null && !currentPeriodEnd.isAfter(now) && 
-                    !"CANCELLED".equalsIgnoreCase(billingStatus) && !"EXPIRED".equalsIgnoreCase(billingStatus)) {
-                    
-                    return ResponseEntity.status(402).body(Map.of(
-                        "error", "Subscription period has ended. Please cancel your subscription or renew it.",
-                        "billingStatus", billingStatus,
-                        "subscriptionPlan", plan,
-                        "requiresAction", "Cancel or renew your subscription in Billing Settings before deleting this workspace.",
-                        "actions", Map.of(
-                            "cancelSubscription", "/api/billing/cancel?workspaceId=" + workspaceId,
-                            "manageSubscription", "/api/billing/portal?workspaceId=" + workspaceId
-                        )
-                    ));
-                }
-                
-                // If subscription is explicitly cancelled, allow deletion
-                if ("CANCELLED".equalsIgnoreCase(billingStatus) || "EXPIRED".equalsIgnoreCase(billingStatus)) {
-                    // Proceed to deletion below
-                    log.info("Allowing deletion of cancelled/expired {} workspace {}", plan, workspaceId);
-                } else if (!"PENDING".equalsIgnoreCase(billingStatus)) {
-                    // Unexpected state - be cautious
-                    return ResponseEntity.status(402).body(Map.of(
-                        "error", "Cannot delete workspace. Billing status unclear. Please contact support or manage subscription.",
-                        "billingStatus", billingStatus,
-                        "subscriptionPlan", plan,
-                        "actions", Map.of(
-                            "manageSubscription", "/api/billing/portal?workspaceId=" + workspaceId
-                        )
-                    ));
-                }
-            }
-
             // Soft delete the workspace (cascade to projects and files)
             workspaceService.deleteWorkspace(workspaceId, user.getId());
 

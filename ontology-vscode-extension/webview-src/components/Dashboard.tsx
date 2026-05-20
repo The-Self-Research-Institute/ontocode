@@ -935,6 +935,7 @@ const TopMenuBar = ({
   onGoToWorkspace,
   subscription,
   onExportProAction,
+  isViewOnly,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -971,6 +972,7 @@ const TopMenuBar = ({
   onGoToWorkspace?: () => void;
   subscription?: any;
   onExportProAction?: () => void;
+  isViewOnly?: boolean;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1295,9 +1297,11 @@ const TopMenuBar = ({
                     <button
                       onClick={(e) => {
                         e.preventDefault();
-                        if (currentProjectId) setShowExportFormats((v) => !v);
+                        if (currentProjectId && !isViewOnly) setShowExportFormats((v) => !v);
+                        if (isViewOnly) onExportProAction?.();
                       }}
                       disabled={!currentProjectId}
+                      title={isViewOnly ? "Viewers cannot export files" : undefined}
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
                     >
                       <span className="flex items-center gap-2">
@@ -1326,7 +1330,7 @@ const TopMenuBar = ({
                               // is implied by hasExport on paid tiers but we
                               // keep both keys explicit so future tiers can
                               // diverge (e.g. a Starter plan with TTL-only).
-                              if (!subscription.canAccessFeature('hasExport')
+                              if (isViewOnly || !subscription.canAccessFeature('hasExport')
                                   || !subscription.canAccessFeature('hasMultipleExportFormats')) {
                                 onExportProAction?.();
                                 return;
@@ -1395,7 +1399,9 @@ const TopMenuBar = ({
                     <button
                       onClick={(e) => {
                         e.preventDefault();
-                        if (currentProjectId) {
+                        if (isViewOnly) {
+                          onExportProAction?.();
+                        } else if (currentProjectId) {
                           onOpenMergeWizard();
                         } else if (window.vscode) {
                           window.vscode.postMessage({
@@ -6124,6 +6130,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   .then(() => {
                     loadingPromiseRef.current = null;
                     cleanupUI();
+                    // Force hierarchy refresh after import — the initial fetch ran before
+                    // GraphDB had data, so the cache was empty; reset throttle then reload.
+                    lastClassHierarchyRefreshAt.current = 0;
+                    refreshClassHierarchy();
                   })
                   .catch(() => {
                     loadingPromiseRef.current = null;
@@ -6296,6 +6306,14 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] 📢 Attaching message listener");
     window.addEventListener("message", handleMessage);
 
+    // CollaborationContext dispatches CustomEvent("importStatusUpdate") from WebSocket.
+    // The "message" listener above only catches VSCode postMessage — bridge the gap here.
+    const handleImportStatusCustomEvent = (e: Event) => {
+      const status = (e as CustomEvent).detail;
+      handleMessage({ data: { type: "importStatusUpdate", status } } as MessageEvent);
+    };
+    window.addEventListener("importStatusUpdate", handleImportStatusCustomEvent);
+
     // CRITICAL: Send webviewReady AFTER listener is attached, but ONLY ONCE
     // This ensures we receive any immediate messages (like showLoading) from the extension
     if (window.vscode && !webviewReadySentRef.current) {
@@ -6307,6 +6325,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     return () => {
       console.log("[Dashboard] 📢 Removing message listener");
       window.removeEventListener("message", handleMessage);
+      window.removeEventListener("importStatusUpdate", handleImportStatusCustomEvent);
     };
   }, [projectId, initialProjectId, isExpectingFileReady]); // Remove fetchData to prevent infinite loop - it's captured in the closure
 
@@ -12176,7 +12195,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                       onSaveContent={handleSaveCodeContent}
                       syntaxError={codeViewSyntaxError}
                       readOnly={isViewOnlyMember}
-                      canExport={subscription.canAccessFeature('hasExport')}
+                      canExport={subscription.canAccessFeature('hasExport') && !isViewOnlyMember}
                       onExportProAction={handleExportProAction}
                     />
                   )}
@@ -14754,6 +14773,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onGoToWorkspace={onGoToWorkspace}
           subscription={subscription}
           onExportProAction={handleExportProAction}
+          isViewOnly={isViewOnlyMember}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -15387,6 +15407,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         projectId={projectId || ""}
         projectTitle={activeFileName || myFiles.find((f) => f.projectId === projectId)?.filename || "Unknown"}
         initialProjectId={initialProjectId || undefined}
+        isViewOnly={isViewOnlyMember}
+        onProAction={handleExportProAction}
         availableFiles={
           // Show files from the current project, not all user's projects
           projectFiles.length > 0

@@ -17,6 +17,7 @@ import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.service.InvitationService;
+import self.research.ontology.auth.service.SystemSettingsService;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -34,7 +35,8 @@ public class InvitationController {
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
     private final ProjectRepository projectRepository;
-    
+    private final SystemSettingsService systemSettingsService;
+
     @Value("${app.base-url:http://localhost:8082}")
     private String baseUrl;
 
@@ -42,12 +44,14 @@ public class InvitationController {
                                InvitationRepository invitationRepository,
                                UserRepository userRepository,
                                WorkspaceRepository workspaceRepository,
-                               ProjectRepository projectRepository) {
+                               ProjectRepository projectRepository,
+                               SystemSettingsService systemSettingsService) {
         this.invitationService = invitationService;
         this.invitationRepository = invitationRepository;
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
         this.projectRepository = projectRepository;
+        this.systemSettingsService = systemSettingsService;
     }
 
     /**
@@ -92,7 +96,11 @@ public class InvitationController {
             // ── Plan enforcement: collaboration gate ─────────────────────────
             // FREE plan allows up to 3 members — seat limit enforced below.
             // Paid plans require collaborationEnabled=true (set on subscription activation).
-            if (!Boolean.TRUE.equals(workspace.getCollaborationEnabled())) {
+            // Enterprise domain bypass owners are always allowed to collaborate.
+            boolean ownerIsEnterpriseDomain = userRepository.findById(workspace.getOwnerId())
+                .map(o -> systemSettingsService.isEnterpriseDomain(o.getEmail()))
+                .orElse(false);
+            if (!ownerIsEnterpriseDomain && !Boolean.TRUE.equals(workspace.getCollaborationEnabled())) {
                 String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
                 if (!"FREE".equalsIgnoreCase(plan)) {
                     return ResponseEntity.status(402).body(Map.of(
@@ -305,18 +313,32 @@ public class InvitationController {
             // Accept the invitation (marks it as ACCEPTED)
             Invitation acceptedInvitation = invitationService.acceptInvitation(token, user.getId());
 
-            // Auto-add new member to all active projects in the workspace
+            // Auto-add new member to workspace projects based on the invited role and project visibility:
+            //   ADMIN  → added to every non-private project (WORKSPACE or SPECIFIC, or legacy shared)
+            //   VIEWER → added only to WORKSPACE projects (created with "all workspace members")
+            // Private projects (visibility=PRIVATE or legacy single-owner) are never exposed.
             try {
+                boolean isNewAdmin = "ADMIN".equalsIgnoreCase(invitation.getRole());
                 List<Project> workspaceProjects = projectRepository.findActiveByWorkspaceId(workspace.getWorkspaceId());
                 for (Project project : workspaceProjects) {
                     boolean alreadyMember = project.getMembers().stream()
                             .anyMatch(m -> user.getId().equals(m.getUserId()));
                     boolean isOwner = user.getId().equals(project.getOwnerId());
-                    if (!alreadyMember && !isOwner) {
-                        project.addMember(user.getId(), user.getUsername(), user.getEmail(), "VIEWER");
+                    if (alreadyMember || isOwner) continue;
+
+                    String visibility = project.getVisibility();
+                    boolean isPrivate = "PRIVATE".equals(visibility)
+                            || (visibility == null && (project.getMembers() == null || project.getMembers().size() <= 1));
+                    if (isPrivate) continue;
+
+                    // Admins get added to all non-private projects; regular members only to WORKSPACE ones
+                    boolean shouldAdd = isNewAdmin || "WORKSPACE".equals(visibility);
+                    if (shouldAdd) {
+                        String autoRole = isNewAdmin ? "EDITOR" : "VIEWER";
+                        project.addMember(user.getId(), user.getUsername(), user.getEmail(), autoRole);
                         projectRepository.save(project);
-                        log.info("Auto-added user {} to project {} in workspace {}",
-                                user.getUsername(), project.getName(), workspace.getWorkspaceId());
+                        log.info("Auto-added {} as {} to project {} (visibility={}) in workspace {}",
+                                user.getUsername(), autoRole, project.getName(), visibility, workspace.getWorkspaceId());
                     }
                 }
             } catch (Exception e) {

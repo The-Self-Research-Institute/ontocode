@@ -58,8 +58,9 @@ public class ProjectController {
     private final GridFsTemplate gridFsTemplate;
     private final org.springframework.web.client.RestTemplate restTemplate;
     private final self.research.ontology.auth.service.EmailService emailService;
+    private final self.research.ontology.auth.service.SystemSettingsService systemSettingsService;
 
-    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, GridFsTemplate gridFsTemplate, self.research.ontology.auth.service.EmailService emailService) {
+    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, GridFsTemplate gridFsTemplate, self.research.ontology.auth.service.EmailService emailService, self.research.ontology.auth.service.SystemSettingsService systemSettingsService) {
         this.projectService = projectService;
         this.userRepository = userRepository;
         this.fileMetadataRepository = fileMetadataRepository;
@@ -69,6 +70,7 @@ public class ProjectController {
         this.gridFsTemplate = gridFsTemplate;
         this.restTemplate = new org.springframework.web.client.RestTemplate();
         this.emailService = emailService;
+        this.systemSettingsService = systemSettingsService;
     }
 
     /**
@@ -292,7 +294,16 @@ public class ProjectController {
                 request.name,
                 request.description
             );
-            
+
+            // Persist visibility so invitation acceptance can make the right auto-add decision
+            if ("all".equals(request.shareWith)) {
+                project.setVisibility("WORKSPACE");
+            } else if ("specific".equals(request.shareWith)) {
+                project.setVisibility("SPECIFIC");
+            } else {
+                project.setVisibility("PRIVATE");
+            }
+
             // Handle member sharing - add members before final save
             boolean membersAdded = false;
 
@@ -1078,6 +1089,7 @@ public class ProjectController {
         dto.put("updatedAt", project.getUpdatedAt().toString());
         dto.put("fileIds", project.getFileIds()); // Keep for backward compatibility
         dto.put("files", project.getActiveFiles()); // Only include non-deleted files
+        dto.put("visibility", project.getVisibility() != null ? project.getVisibility() : "PRIVATE");
         return dto;
     }
 
@@ -1832,8 +1844,20 @@ public class ProjectController {
             var writeBlock = checkProjectWriteAccess(project.getWorkspaceId(), projectId, user.getId());
             if (writeBlock.isPresent()) return writeBlock.get();
 
-            if (!project.getOwnerId().equals(user.getId())) {
-                return ResponseEntity.status(403).body(Map.of("error", "Only project owner can rename"));
+            // Project owner can always rename; workspace owner/admin can rename any project
+            boolean isProjectOwner = project.getOwnerId().equals(user.getId());
+            boolean isWsOwnerOrAdmin = false;
+            if (!isProjectOwner && project.getWorkspaceId() != null) {
+                Optional<Workspace> wsOpt = workspaceService.getWorkspace(project.getWorkspaceId());
+                if (wsOpt.isPresent()) {
+                    Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
+                    isWsOwnerOrAdmin = wsMember != null &&
+                        (wsMember.getRole() == Workspace.WorkspaceRole.OWNER ||
+                         wsMember.getRole() == Workspace.WorkspaceRole.ADMIN);
+                }
+            }
+            if (!isProjectOwner && !isWsOwnerOrAdmin) {
+                return ResponseEntity.status(403).body(Map.of("error", "Only project owner or workspace owner/admin can rename"));
             }
 
             // Update project name
@@ -1909,6 +1933,10 @@ public class ProjectController {
         if (userId.equals(ownerId)) return Optional.empty();
         // Members operate under the workspace owner's subscription plan
         Optional<User> ownerOpt = userRepository.findById(ownerId);
+        // Enterprise domain bypass owners have full collaboration enabled
+        if (ownerOpt.isPresent() && systemSettingsService.isEnterpriseDomain(ownerOpt.get().getEmail())) {
+            return Optional.empty();
+        }
         String ownerPlan = ownerOpt.map(User::getSubscriptionPlanName).orElse(null);
         if (ownerPlan == null || "FREE".equalsIgnoreCase(ownerPlan)) {
             return Optional.of(ResponseEntity.status(403).body(Map.of(

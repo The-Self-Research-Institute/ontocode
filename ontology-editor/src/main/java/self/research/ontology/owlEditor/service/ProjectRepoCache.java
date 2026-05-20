@@ -20,6 +20,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -62,8 +63,23 @@ public class ProjectRepoCache {
     @Value("${ontocode.cache.memstore.max-triples:5000000}")
     private long maxTriples;
 
+    /**
+     * Projects with more triples than this skip the in-memory cache entirely
+     * and are always served from Fuseki directly.  Keeps the 65-second reload
+     * penalty from blocking every concurrent request when a huge ontology is
+     * evicted.  Default: 1_500_000 triples (~600 MB heap).
+     */
+    @Value("${ontocode.cache.memstore.no-cache-threshold:1500000}")
+    private long noCacheThreshold;
+
     private final Map<String, Entry> cache = new ConcurrentHashMap<>();
     private final Map<String, Object> loadLocks = new ConcurrentHashMap<>();
+
+    /**
+     * Projects confirmed to exceed noCacheThreshold — skip COUNT query on subsequent requests.
+     * Cleared on evict() so a project that shrinks below the threshold gets re-evaluated.
+     */
+    private final Set<String> knownLargeProjects = ConcurrentHashMap.newKeySet();
 
     private final AtomicLong hits = new AtomicLong();
     private final AtomicLong misses = new AtomicLong();
@@ -91,6 +107,37 @@ public class ProjectRepoCache {
             hits.incrementAndGet();
             return entry.repo;
         }
+        // Fast path: if we already know this project is too large, skip the COUNT query entirely.
+        if (knownLargeProjects.contains(projectId)) {
+            return null;
+        }
+
+        // Pre-flight: ask Fuseki for the triple count.
+        //   estimate > threshold  → mark as large, skip caching.
+        //   estimate == -1        → COUNT timed out or failed; skip loading too — CONSTRUCT ALL
+        //                           would be even slower than COUNT on a cold/large dataset.
+        //   estimate <= threshold → proceed to cache-load.
+        try {
+            long estimate = loader.estimateTripleCount(projectId);
+            if (estimate < 0) {
+                // COUNT timed out (cold TDB2 or Fuseki unreachable) — skip cache loading.
+                // The caller will fall back to direct Fuseki queries which use indexed
+                // lookups and are much faster than a full CONSTRUCT ALL scan.
+                log.info("[MEMCACHE] estimateTripleCount returned {} for {} — skipping cache load",
+                        estimate, projectId);
+                return null;
+            }
+            if (estimate > noCacheThreshold) {
+                knownLargeProjects.add(projectId);
+                log.info("[MEMCACHE] Skipping cache for project={} (estimate={} > no-cache-threshold={}) — marked as large",
+                        projectId, estimate, noCacheThreshold);
+                return null;
+            }
+        } catch (Exception e) {
+            log.debug("[MEMCACHE] estimateTripleCount failed for {}: {} — skipping cache load", projectId, e.getMessage());
+            return null;
+        }
+
         // Coalesce concurrent loaders for the same project.
         Object lock = loadLocks.computeIfAbsent(projectId, k -> new Object());
         synchronized (lock) {
@@ -133,6 +180,12 @@ public class ProjectRepoCache {
             try { removed.repo.shutDown(); } catch (Exception ignore) {}
             log.info("[MEMCACHE] Evicted project={}", projectId);
         }
+        knownLargeProjects.remove(projectId);
+    }
+
+    /** True if this project has been confirmed to exceed the no-cache threshold. */
+    public boolean isKnownLarge(String projectId) {
+        return knownLargeProjects.contains(projectId);
     }
 
     public void evictAll() {
@@ -174,18 +227,27 @@ public class ProjectRepoCache {
 
     private void evictIfNeeded() {
         while (cache.size() >= maxProjects) {
-            // Evict LRU (oldest lastAccessMs).
-            String oldest = null;
-            long oldestTs = Long.MAX_VALUE;
+            // Cost-aware eviction: prefer to evict the project with the lowest
+            // reload cost (fewest triples).  When multiple projects have similar
+            // sizes, break ties by least-recently-used.  This keeps expensive-
+            // to-reload large ontologies in cache as long as possible.
+            String victim = null;
+            long victimScore = Long.MAX_VALUE; // lower = evict first
+            long now = System.currentTimeMillis();
             for (Map.Entry<String, Entry> e : cache.entrySet()) {
-                long ts = e.getValue().lastAccessMs;
-                if (ts < oldestTs) {
-                    oldestTs = ts;
-                    oldest = e.getKey();
+                Entry v = e.getValue();
+                long ageSec = (now - v.lastAccessMs) / 1000;
+                // score = triples * 1000 / (ageSec + 1)
+                // small + old → low score → evicted first
+                // large + young → high score → kept longest
+                long score = (v.triples * 1000) / (ageSec + 1);
+                if (score < victimScore) {
+                    victimScore = score;
+                    victim = e.getKey();
                 }
             }
-            if (oldest == null) break;
-            evict(oldest);
+            if (victim == null) break;
+            evict(victim);
         }
     }
 
@@ -220,6 +282,8 @@ public class ProjectRepoCache {
     public interface Loader {
         GraphQueryResult streamTriples(String projectId) throws Exception;
         String graphUri(String projectId);
+        /** Quick COUNT query — return -1 if unknown / unsupported. */
+        default long estimateTripleCount(String projectId) { return -1; }
     }
 
     private static final class Entry {

@@ -12,6 +12,7 @@ import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.model.PlanFeatureConfig;
 import self.research.ontology.auth.service.PlanFeatureConfigService;
 import self.research.ontology.auth.service.StripeService;
+import self.research.ontology.auth.service.SystemSettingsService;
 import self.research.ontology.auth.service.WorkspaceService;
 
 import java.time.LocalDateTime;
@@ -34,16 +35,19 @@ public class SubscriptionController {
     private final UserRepository userRepository;
     private final WorkspaceService workspaceService;
     private final PlanFeatureConfigService planFeatureConfigService;
+    private final SystemSettingsService systemSettingsService;
 
     @Value("${stripe.trial-period-days:14}")
     private Long trialPeriodDays;
 
     public SubscriptionController(StripeService stripeService, UserRepository userRepository,
-                                  WorkspaceService workspaceService, PlanFeatureConfigService planFeatureConfigService) {
+                                  WorkspaceService workspaceService, PlanFeatureConfigService planFeatureConfigService,
+                                  SystemSettingsService systemSettingsService) {
         this.stripeService = stripeService;
         this.userRepository = userRepository;
         this.workspaceService = workspaceService;
         this.planFeatureConfigService = planFeatureConfigService;
+        this.systemSettingsService = systemSettingsService;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -91,6 +95,19 @@ public class SubscriptionController {
     @GetMapping("/subscription")
     public ResponseEntity<?> getSubscription(@AuthenticationPrincipal UserDetails principal) {
         User user = resolveUser(principal);
+        if (systemSettingsService.isEnterpriseDomain(user.getEmail())) {
+            return ResponseEntity.ok(Map.of(
+                "planName",          "ENTERPRISE",
+                "status",            "active",
+                "billingInterval",   "monthly",
+                "autoRenewEnabled",  true,
+                "currentPeriodEnd",  "",
+                "canceledAt",        "",
+                "hasStripeCustomer", user.getStripeCustomerId() != null,
+                "hasUsedFreeTrial",  user.isHasUsedFreeTrial(),
+                "trialEligible",     false
+            ));
+        }
         // Sync live status + period end from Stripe to repair any stale snapshot in MongoDB
         // (e.g. period end stuck at trial-end timestamp after immediate trial→paid upgrade).
         String liveStatus = stripeService.syncStatusFromStripe(user);

@@ -50,6 +50,13 @@ public class Project {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     
+    // Visibility controls auto-add behaviour when new workspace members join.
+    // "PRIVATE"   – only the owner; never auto-added.
+    // "WORKSPACE" – created with "all workspace members"; new members get auto-added as viewer.
+    // "SPECIFIC"  – created for a hand-picked set; new admins are added, regular viewers are not.
+    // null        – legacy; treated like SPECIFIC (non-private for admins, not auto-added for viewers).
+    private String visibility;
+
     // Soft delete fields
     private Boolean isDeleted = false;
     private LocalDateTime deletedAt;
@@ -292,6 +299,9 @@ public class Project {
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
     
+    public String getVisibility() { return visibility; }
+    public void setVisibility(String visibility) { this.visibility = visibility; }
+
     public Boolean getIsDeleted() { return isDeleted; }
     public void setIsDeleted(Boolean isDeleted) { this.isDeleted = isDeleted; }
     
