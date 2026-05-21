@@ -278,16 +278,25 @@ public class OntologyMutationService {
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("addAnnotation")) {
             return "INSERT DATA {\n"
-                + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
+                + "<" + op.iri() + "> <" + op.property() + "> " + annotationLiteral(op.value(), op.language(), op.datatype()) + " .\n"
                 + "}";
         } else if (type.equals("updateAnnotation")) {
+            String whereClause = op.oldValue() != null && !op.oldValue().isBlank()
+                ? "{ <" + op.iri() + "> <" + op.property() + "> ?oldValue . FILTER(STR(?oldValue) = " + literal(op.oldValue()) + ") }"
+                : "{ <" + op.iri() + "> <" + op.property() + "> ?oldValue }";
             return "DELETE { <" + op.iri() + "> <" + op.property() + "> ?oldValue }\n"
-                + "INSERT { <" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " }\n"
-                + "WHERE  { <" + op.iri() + "> <" + op.property() + "> ?oldValue }";
+                + "INSERT { <" + op.iri() + "> <" + op.property() + "> " + annotationLiteral(op.value(), op.language(), op.datatype()) + " }\n"
+                + "WHERE  " + whereClause;
         } else if (type.equals("deleteAnnotation")) {
-            return "DELETE DATA {\n"
-                + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
-                + "}";
+            if (op.language() != null || op.datatype() != null) {
+                // Language/datatype known: use exact DELETE DATA
+                return "DELETE DATA {\n"
+                    + "<" + op.iri() + "> <" + op.property() + "> " + annotationLiteral(op.value(), op.language(), op.datatype()) + " .\n"
+                    + "}";
+            }
+            // Language/datatype unknown: match any literal with the same string value
+            return "DELETE { <" + op.iri() + "> <" + op.property() + "> ?v }\n"
+                + "WHERE  { <" + op.iri() + "> <" + op.property() + "> ?v . FILTER(STR(?v) = " + literal(op.value()) + ") }";
         } else if (type.equals("addSubClassOf")) {
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> rdfs:subClassOf <" + op.target() + "> .\n"
@@ -696,6 +705,19 @@ public class OntologyMutationService {
             .replace("\r", "\\r")    // Carriage return
             .replace("\t", "\\t");   // Tab
         return "\"%s\"".formatted(escaped);
+    }
+
+    private String annotationLiteral(String value, String language, String datatype) {
+        String base = literal(value);
+        if (language != null && !language.isBlank()) {
+            return base + "@" + language.trim().toLowerCase();
+        }
+        if (datatype != null && !datatype.isBlank()) {
+            // Support both full IRI and prefixed form (e.g. "xsd:boolean")
+            String dt = datatype.startsWith("http") ? "<" + datatype + ">" : datatype;
+            return base + "^^" + dt;
+        }
+        return base;
     }
 
     private String negativePropertyAssertionIri(MutationOp op, boolean isObjectTarget) {
@@ -1361,9 +1383,9 @@ public class OntologyMutationService {
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     public record MutationOp(
-        String type, 
-        String iri, 
-        String label, 
+        String type,
+        String iri,
+        String label,
         String parent,
         String property,
         String value,
@@ -1373,6 +1395,8 @@ public class OntologyMutationService {
         String restrictionType, // some, only, min, max, exactly, value
         Integer cardinality,    // For min, max, exactly restrictions
         String axiomType,       // EquivalentTo, SubClassOf
-        String oldValue         // For tracking the old value in updates
+        String oldValue,        // For tracking the old value in updates
+        String language,        // Language tag for annotation literals (e.g. "en", "fr")
+        String datatype         // Datatype IRI for annotation literals (e.g. xsd:boolean)
     ) {}
 }

@@ -167,6 +167,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
     if (!selectedFile) return;
 
     setAnalyzing(true);
+    setMergeError(null);
     try {
       const formData = new FormData();
       formData.append("file", selectedFile);
@@ -191,7 +192,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
     } catch (error: any) {
       console.error("Error analyzing ontologies:", error);
       const errMsg = error?.response?.data?.error || error?.data?.error || error?.message || "Unknown error";
-      alert("Analysis failed: " + errMsg);
+      setMergeError("Analysis failed: " + errMsg);
     } finally {
       setAnalyzing(false);
     }
@@ -580,6 +581,12 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                 )}
               </div>
 
+              {mergeError && (
+                <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{mergeError}</span>
+                </div>
+              )}
               <div className="flex justify-end gap-2 mt-6">
                 <button
                   onClick={onClose}

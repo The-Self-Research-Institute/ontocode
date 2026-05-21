@@ -89,7 +89,12 @@ public class DraftTrackingService {
                 if (op.value() != null) data.put("value", op.value());
                 if (op.target() != null) data.put("target", op.target());
                 if (op.classIri() != null) data.put("classIri", op.classIri());
+                if (op.restrictionType() != null) data.put("restrictionType", op.restrictionType());
+                if (op.cardinality() != null) data.put("cardinality", op.cardinality());
+                if (op.axiomType() != null) data.put("axiomType", op.axiomType());
                 if (op.oldValue() != null) data.put("oldValue", op.oldValue());
+                if (op.language() != null) data.put("language", op.language());
+                if (op.datatype() != null) data.put("datatype", op.datatype());
                 
                 log.info("[DRAFT CREATION] operationType: {}, iri: {}, value: '{}', oldValue: '{}'", 
                     op.type(), op.iri(), op.value(), op.oldValue());
@@ -440,7 +445,9 @@ public class DraftTrackingService {
             (String) data.get("restrictionType"),
             cardinality,
             (String) data.get("axiomType"),
-            (String) data.get("oldValue")
+            (String) data.get("oldValue"),
+            (String) data.get("language"),
+            (String) data.get("datatype")
         );
     }
     

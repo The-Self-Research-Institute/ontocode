@@ -109,12 +109,14 @@ export const ontologyMutationService = {
    * Add annotation to an entity
    */
   async addAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string,
-                     userId?: string, username?: string): Promise<void> {
+                     userId?: string, username?: string, language?: string, datatype?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addAnnotation',
       iri: entityIri,
       property: propertyIri,
-      value
+      value,
+      language,
+      datatype,
     }], undefined, userId, username);
   },
 
@@ -122,12 +124,14 @@ export const ontologyMutationService = {
    * Delete annotation from an entity
    */
   async deleteAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string,
-                        userId?: string, username?: string): Promise<void> {
+                        userId?: string, username?: string, language?: string, datatype?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteAnnotation',
       iri: entityIri,
       property: propertyIri,
-      value
+      value,
+      language,
+      datatype,
     }], undefined, userId, username);
   },
 
@@ -135,13 +139,15 @@ export const ontologyMutationService = {
    * Update annotation value (atomic operation)
    */
   async updateAnnotation(projectId: string, entityIri: string, propertyIri: string, newValue: string,
-                        userId?: string, username?: string, oldValue?: string): Promise<void> {
+                        userId?: string, username?: string, oldValue?: string, language?: string, datatype?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'updateAnnotation',
       iri: entityIri,
       property: propertyIri,
       value: newValue,
-      oldValue: oldValue
+      oldValue,
+      language,
+      datatype,
     }], undefined, userId, username);
   },
 

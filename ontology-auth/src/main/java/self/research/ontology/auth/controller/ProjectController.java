@@ -43,6 +43,10 @@ public class ProjectController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectController.class);
 
+    private static final java.net.http.HttpClient HTTP_CLIENT = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(10))
+            .build();
+
     @Value("${storage.limit.free.gb:10}")
     private double storageLimitFreeGb;
 
@@ -1371,15 +1375,13 @@ public class ProjectController {
                 
                 log.debug("Checking GraphDB for duplicates at: {}", graphdbCheckUrl);
                 
-                // Make HTTP call to editor service to check GraphDB
-                java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
                 java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(graphdbCheckUrl))
                     .GET()
                     .timeout(java.time.Duration.ofSeconds(5))
                     .build();
-                
-                java.net.http.HttpResponse<String> response = httpClient.send(request, 
+
+                java.net.http.HttpResponse<String> response = HTTP_CLIENT.send(request,
                     java.net.http.HttpResponse.BodyHandlers.ofString());
                 
                 if (response.statusCode() == 200) {
@@ -1470,14 +1472,13 @@ public class ProjectController {
                     
                     log.info("Checking GraphDB for duplicate data before upload: {}", graphdbCheckUrl);
                     
-                    java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
                     java.net.http.HttpRequest checkRequest = java.net.http.HttpRequest.newBuilder()
                         .uri(java.net.URI.create(graphdbCheckUrl))
                         .GET()
                         .timeout(java.time.Duration.ofSeconds(5))
                         .build();
-                    
-                    java.net.http.HttpResponse<String> checkResponse = httpClient.send(checkRequest, 
+
+                    java.net.http.HttpResponse<String> checkResponse = HTTP_CLIENT.send(checkRequest,
                         java.net.http.HttpResponse.BodyHandlers.ofString());
                     
                     if (checkResponse.statusCode() == 200) {
