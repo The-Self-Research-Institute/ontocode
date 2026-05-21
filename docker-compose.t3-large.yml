@@ -1,15 +1,15 @@
 # Memory sizing override — t3.large (8 GB RAM)
-# Total container limits ≈ 5.5 GB | leaves ~2.5 GB for OS + Docker overhead
+# Total container limits ≈ 7.1 GB | leaves ~0.9 GB for OS + Docker overhead
 #
 # Usage:
 #   docker compose -f docker-compose.production.yml -f docker-compose.t3-large.yml up -d
 #
-# NOTE: Editor heap is capped at 1.5 GB on this tier. Large ontology imports
-# (>100 MB) will be slow. Upgrade to t3.xlarge for comfort.
+# NOTE: Reasoner is limited to 500K triples on this tier (vs 1M default) to prevent OOM.
+# Upgrade to t3.xlarge for heavier reasoning workloads or larger ontologies.
 
 services:
   mongo:
-    command: ["mongod", "--wiredTigerCacheSizeGB", "0.15", "--auth"]
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25", "--auth"]
     deploy:
       resources:
         limits:
@@ -21,7 +21,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2g
+          memory: 1800m
 
   auth:
     environment:
@@ -41,12 +41,14 @@ services:
 
   owl-editor:
     environment:
-      JAVA_OPTS: "-Xms512m -Xmx1500m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+      JAVA_OPTS: "-Xms512m -Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
       ONTOCODE_IMPORT_MAX_CONCURRENT: 1
+      # Tighter reasoner limit on 8 GB tier — prevents OOM from in-memory export of large ontologies
+      ONTOCODE_REASONER_MAX_TRIPLES: 500000
     deploy:
       resources:
         limits:
-          memory: 2g
+          memory: 2500m
 
   swrl-service:
     environment:
