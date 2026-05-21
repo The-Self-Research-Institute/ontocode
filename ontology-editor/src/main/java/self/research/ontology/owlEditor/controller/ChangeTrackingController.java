@@ -643,96 +643,96 @@ public class ChangeTrackingController {
                 // If something was added, we need to delete it
                 if (typeLower.contains("class") && !typeLower.contains("annotation")) {
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "deleteClass", entityIRI, null, null, null, null, null, null, null, null, null, null));
+                        "deleteClass", entityIRI, null, null, null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("objectproperty") || typeLower.contains("object_property")) {
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "deleteObjectProperty", entityIRI, null, null, null, null, null, null, null, null, null, null));
+                        "deleteObjectProperty", entityIRI, null, null, null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("dataproperty") || typeLower.contains("data_property") || typeLower.contains("datatypeproperty")) {
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "deleteDataProperty", entityIRI, null, null, null, null, null, null, null, null, null, null));
+                        "deleteDataProperty", entityIRI, null, null, null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("annotationproperty") || typeLower.contains("annotation_property")) {
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "deleteAnnotationProperty", entityIRI, null, null, null, null, null, null, null, null, null, null));
+                        "deleteAnnotationProperty", entityIRI, null, null, null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("property") && !typeLower.contains("annotation")) {
                     // Generic property - assume object property
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "deleteObjectProperty", entityIRI, null, null, null, null, null, null, null, null, null, null));
+                        "deleteObjectProperty", entityIRI, null, null, null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("individual")) {
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "deleteIndividual", entityIRI, null, null, null, null, null, null, null, null, null, null));
+                        "deleteIndividual", entityIRI, null, null, null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("annotation") || typeLower.contains("label") || typeLower.contains("comment")) {
                     // For annotation added, delete it - use rdfs:label as default property
                     String annotationProp = determineAnnotationProperty(typeLower);
                     if (newValue != null && !newValue.isEmpty()) {
                         mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                            "deleteAnnotation", entityIRI, null, null, annotationProp, newValue, null, null, null, null, null, null));
+                            "deleteAnnotation", entityIRI, null, null, annotationProp, newValue, null, null, null, null, null, null, null, null));
                     }
                 } else {
                     log.warn("[ROLLBACK] Unknown type for 'added' action: {}, skipping mutation", changeType);
                 }
                 break;
-                
+
             case "deleted":
                 // If something was deleted, we need to add it back
                 if (typeLower.contains("class") && !typeLower.contains("annotation")) {
                     // For deleted class, we recreate it with label - use owl:Thing as parent
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "createClass", entityIRI, entityLabel != null ? entityLabel : extractLabel(entityIRI), 
-                        "http://www.w3.org/2002/07/owl#Thing", null, null, null, null, null, null, null, null));
+                        "createClass", entityIRI, entityLabel != null ? entityLabel : extractLabel(entityIRI),
+                        "http://www.w3.org/2002/07/owl#Thing", null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("objectproperty") || typeLower.contains("object_property")) {
                     // No parent for rollback - create as standalone property
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "createObjectProperty", entityIRI, entityLabel, null, null, null, null, null, null, null, null, null));
+                        "createObjectProperty", entityIRI, entityLabel, null, null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("dataproperty") || typeLower.contains("data_property") || typeLower.contains("datatypeproperty")) {
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "createDataProperty", entityIRI, entityLabel, null, null, null, null, null, null, null, null, null));
+                        "createDataProperty", entityIRI, entityLabel, null, null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("annotationproperty") || typeLower.contains("annotation_property")) {
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "createAnnotationProperty", entityIRI, entityLabel, null, null, null, null, null, null, null, null, null));
+                        "createAnnotationProperty", entityIRI, entityLabel, null, null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("property") && !typeLower.contains("annotation")) {
                     // Generic property - assume object property, no parent
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "createObjectProperty", entityIRI, entityLabel, null, null, null, null, null, null, null, null, null));
+                        "createObjectProperty", entityIRI, entityLabel, null, null, null, null, null, null, null, null, null, null, null));
                 } else if (typeLower.contains("individual")) {
                     // For individual, we need a class - use owl:Thing if unknown
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "createIndividual", entityIRI, entityLabel, null, null, null, null, "http://www.w3.org/2002/07/owl#Thing", null, null, null, null));
+                        "createIndividual", entityIRI, entityLabel, null, null, null, null, "http://www.w3.org/2002/07/owl#Thing", null, null, null, null, null, null));
                 } else if (typeLower.contains("annotation") || typeLower.contains("label") || typeLower.contains("comment")) {
                     // For annotation deleted, add it back
                     String annotationProp = determineAnnotationProperty(typeLower);
                     if (oldValue != null && !oldValue.isEmpty()) {
                         mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                            "addAnnotation", entityIRI, null, null, annotationProp, oldValue, null, null, null, null, null, null));
+                            "addAnnotation", entityIRI, null, null, annotationProp, oldValue, null, null, null, null, null, null, null, null));
                     }
                 } else {
                     log.warn("[ROLLBACK] Unknown type for 'deleted' action: {}, skipping mutation", changeType);
                 }
                 break;
-                
+
             case "modified":
                 // If something was modified, we need to change it back
                 // For rollback: set value to oldValue (revert), pass newValue as oldValue param (current value)
                 // Check if this is a label/annotation change based on having old and new values
                 if (hasOldAndNewValue) {
                     // Use the actual annotation property from history, fallback to rdfs:label
-                    String propertyToUse = annotationProperty != null && !annotationProperty.isEmpty() 
-                        ? annotationProperty 
+                    String propertyToUse = annotationProperty != null && !annotationProperty.isEmpty()
+                        ? annotationProperty
                         : "http://www.w3.org/2000/01/rdf-schema#label";
-                    log.info("[ROLLBACK] Detected label/annotation change, reverting property '{}' to oldValue: '{}' from newValue: '{}'", 
+                    log.info("[ROLLBACK] Detected label/annotation change, reverting property '{}' to oldValue: '{}' from newValue: '{}'",
                         propertyToUse, oldValue, newValue);
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "updateAnnotation", entityIRI, null, null, propertyToUse, oldValue, null, null, null, null, null, newValue));
+                        "updateAnnotation", entityIRI, null, null, propertyToUse, oldValue, null, null, null, null, null, newValue, null, null));
                 } else if (typeLower.contains("label")) {
                     // For label change, use updateAnnotation with rdfs:label
                     if (oldValue != null && !oldValue.isEmpty()) {
                         mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                            "updateAnnotation", entityIRI, null, null, "http://www.w3.org/2000/01/rdf-schema#label", oldValue, null, null, null, null, null, newValue));
+                            "updateAnnotation", entityIRI, null, null, "http://www.w3.org/2000/01/rdf-schema#label", oldValue, null, null, null, null, null, newValue, null, null));
                     }
                 } else if (typeLower.contains("comment")) {
                     // For comment change
                     if (oldValue != null && !oldValue.isEmpty()) {
                         mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                            "updateAnnotation", entityIRI, null, null, "http://www.w3.org/2000/01/rdf-schema#comment", oldValue, null, null, null, null, null, newValue));
+                            "updateAnnotation", entityIRI, null, null, "http://www.w3.org/2000/01/rdf-schema#comment", oldValue, null, null, null, null, null, newValue, null, null));
                     }
                 } else if (typeLower.contains("annotation")) {
                     // Generic annotation change - use actual property or determine from type
@@ -741,7 +741,7 @@ public class ChangeTrackingController {
                         : determineAnnotationProperty(typeLower);
                     if (oldValue != null && !oldValue.isEmpty()) {
                         mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                            "updateAnnotation", entityIRI, null, null, annotationProp, oldValue, null, null, null, null, null, newValue));
+                            "updateAnnotation", entityIRI, null, null, annotationProp, oldValue, null, null, null, null, null, newValue, null, null));
                     }
                 } else {
                     log.warn("[ROLLBACK] Unknown type for 'modified' action: {}, skipping mutation", changeType);

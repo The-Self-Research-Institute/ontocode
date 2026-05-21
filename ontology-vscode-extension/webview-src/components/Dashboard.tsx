@@ -2663,6 +2663,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isDlQueryLoading, setIsDlQueryLoading] = useState(false);
 
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
+  const [isHierarchyLoading, setIsHierarchyLoading] = useState(false);
   const [inferredClassHierarchy, setInferredClassHierarchy] = useState<TreeNode[]>([]);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
@@ -3717,6 +3718,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (fetchAbortControllerRef.current) {
           fetchAbortControllerRef.current.abort();
         }
+        setIsHierarchyLoading(true);
+        setLoadingStatusMessage("Loading ontology metadata...");
         const abortController = new AbortController();
         fetchAbortControllerRef.current = abortController;
         const signal = abortController.signal;
@@ -3741,6 +3744,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         const apiFetchStart = Date.now();
         const metadataRes = await apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal });
+        setLoadingStatusMessage("Building class hierarchy...");
         const [topLevelClassesRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] =
           await Promise.all([
             apiClient
@@ -3883,6 +3887,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
         console.log("[Dashboard] 📊 Class hierarchy loaded with", topLevelNodes.length, "top-level classes");
         setClassHierarchy(hierarchyWithCounts);
+        setLoadingStatusMessage("");
+        setIsHierarchyLoading(false);
 
         // Handle properties response
         console.log("=== PROPERTIES RESPONSE DEBUG ===");
@@ -4184,6 +4190,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         notificationService.error("Loading Failed", `Failed to load ontology "${currentProjectId}". Please try again.`);
       } finally {
         setIsInitialLoading(false);
+        setIsHierarchyLoading(false);
+        setLoadingStatusMessage("");
       }
     },
     [waitForProcessingComplete, applyInstanceCountsToTree, user, fetchProjectFiles, resolveUserEmail],
@@ -7930,6 +7938,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             value,
             user?.email || "anonymous",
             user?.username || "Anonymous",
+            lang,
+            datatype,
           );
 
           // Update local state
@@ -8027,6 +8037,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             user?.email || "anonymous",
             user?.username || "Anonymous",
             oldValue,
+            lang,
+            datatype,
           );
 
           // Update local state
@@ -13214,6 +13226,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   loadingNodes={loadingNodes}
                   isViewOnly={isViewOnlyMember}
                   onViewOnlyAction={handleViewOnlyAction}
+                  isLoading={isHierarchyLoading}
                 />
               </div>
             </aside>
@@ -14143,7 +14156,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   return (
     <>
       <LoadingDialog
-        isOpen={isInitialLoading || showLoadingChoice}
+        isOpen={isInitialLoading || isHierarchyLoading || showLoadingChoice}
         projectName={loadingProjectName || undefined}
         loadingStatusMessage={loadingStatusMessage || undefined}
         progress={backgroundImportProgress}
@@ -14258,14 +14271,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         onAdd={async (importIri) => {
           if (!projectId) return;
           await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri });
-          const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
-          const importsData = Array.isArray(importsRes?.data)
-            ? importsRes.data
-            : Array.isArray(importsRes?.imports)
-              ? importsRes.imports
-              : Array.isArray(importsRes)
-                ? importsRes
-                : [];
+          const importsRes = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/imports`);
+          const importsPayload = importsRes?.data?.data ?? importsRes?.data ?? importsRes;
+          const importsData = Array.isArray(importsPayload) ? importsPayload : [];
           setOntologyImports(importsData);
           showNotification("Import added successfully", "info");
         }}
@@ -14959,6 +14967,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   loadingNodes={loadingNodes}
                   isViewOnly={isViewOnlyMember}
                   onViewOnlyAction={handleViewOnlyAction}
+                  isLoading={isHierarchyLoading}
                 />
               </div>
 
@@ -15136,26 +15145,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                   const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
                   const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
 
-                  // Extract data with fallbacks
-                  const annotationsData = Array.isArray(annotationsRes?.data)
-                    ? annotationsRes.data
-                    : Array.isArray(annotationsRes)
-                      ? annotationsRes
-                      : [];
-                  const importsData = Array.isArray(importsRes?.data)
-                    ? importsRes.data
-                    : Array.isArray(importsRes?.imports)
-                      ? importsRes.imports
-                      : Array.isArray(importsRes)
-                        ? importsRes
-                        : [];
-                  const gciData = Array.isArray(gciRes?.data)
-                    ? gciRes.data
-                    : Array.isArray(gciRes?.axioms)
-                      ? gciRes.axioms
-                      : Array.isArray(gciRes)
-                        ? gciRes
-                        : [];
+                  // Extract data with fallbacks (API returns {success, data: [...]})
+                  const annotationsPayload = annotationsRes?.data?.data ?? annotationsRes?.data ?? annotationsRes;
+                  const annotationsData = Array.isArray(annotationsPayload) ? annotationsPayload : [];
+                  const importsPayload2 = importsRes?.data?.data ?? importsRes?.data ?? importsRes;
+                  const importsData = Array.isArray(importsPayload2) ? importsPayload2 : [];
+                  const gciPayload = gciRes?.data?.data ?? gciRes?.data ?? gciRes;
+                  const gciData = Array.isArray(gciPayload) ? gciPayload : [];
 
                   const updatedMetadata = {
                     ...(metadataRes.data || metadataRes),

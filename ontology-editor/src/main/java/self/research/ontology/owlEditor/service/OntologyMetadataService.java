@@ -124,8 +124,7 @@ public class OntologyMetadataService {
               FILTER(?property != rdf:type || ?value != owl:Ontology)
               FILTER(?property != owl:imports)
               FILTER(?property != owl:versionIRI)
-              FILTER(?property != owl:versionInfo)
-              
+
               # Keep common annotation properties and any other non-owl/rdf internal properties
               FILTER(
                 strstarts(str(?property), str(rdfs:)) ||
@@ -516,23 +515,20 @@ public class OntologyMetadataService {
         String formattedNew = formatResource(newOntologyIri);
 
         StringBuilder update = new StringBuilder(PREFIXES);
-        update.append("DELETE { ");
         if (formattedOld != null) {
-            update.append(formattedOld).append(" a owl:Ontology . ");
-            update.append(formattedOld).append(" owl:versionIRI ?v . ");
+            // Move ALL triples from the old IRI to the new IRI (preserves annotations, imports, etc.)
+            update.append("DELETE { ").append(formattedOld).append(" ?p ?o } ");
+            update.append("INSERT { ").append(formattedNew).append(" ?p ?o } ");
+            update.append("WHERE  { ").append(formattedOld).append(" ?p ?o } ;");
         }
-        update.append(" } INSERT { ");
-        update.append(formattedNew).append(" a owl:Ontology . ");
+        // Ensure the new IRI is declared as owl:Ontology (in case old IRI had no triples)
+        update.append("\nINSERT DATA { ").append(formattedNew).append(" a owl:Ontology . } ;");
         if (newVersionIri != null && !newVersionIri.isEmpty()) {
-            update.append(formattedNew).append(" owl:versionIRI <").append(newVersionIri).append("> . ");
+            // Replace any existing versionIRI with the supplied one
+            update.append("\nDELETE { ").append(formattedNew).append(" owl:versionIRI ?v } ");
+            update.append("WHERE  { ").append(formattedNew).append(" owl:versionIRI ?v } ;");
+            update.append("\nINSERT DATA { ").append(formattedNew).append(" owl:versionIRI <").append(newVersionIri).append("> . }");
         }
-        update.append(" } WHERE { ");
-        if (formattedOld != null) {
-            update.append("OPTIONAL { ").append(formattedOld).append(" owl:versionIRI ?v } ");
-        } else {
-            update.append("BIND(1 as ?dummy) ");
-        }
-        update.append(" }");
 
         datasetService.execUpdate(projectId, update.toString());
         
@@ -834,6 +830,20 @@ public class OntologyMetadataService {
             log.debug("Using cached prefixes from MongoDB for project {} ({} entries)", projectId, prefixMap.size());
         }
 
+        // Always include the standard OWL/RDF/RDFS/XSD prefixes (like Protégé shows by default).
+        // User-defined prefixes take precedence; we only add a standard one if not already present.
+        Map<String, String> defaults = new java.util.LinkedHashMap<>();
+        defaults.put("owl",   "http://www.w3.org/2002/07/owl#");
+        defaults.put("rdf",   "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+        defaults.put("rdfs",  "http://www.w3.org/2000/01/rdf-schema#");
+        defaults.put("xsd",   "http://www.w3.org/2001/XMLSchema#");
+        defaults.put("dc",    "http://purl.org/dc/elements/1.1/");
+        defaults.put("dcterms", "http://purl.org/dc/terms/");
+        defaults.put("skos",  "http://www.w3.org/2004/02/skos/core#");
+        for (Map.Entry<String, String> e : defaults.entrySet()) {
+            prefixMap.putIfAbsent(e.getKey(), e.getValue());
+        }
+
         // Convert to list of objects for frontend compatibility
         List<Map<String, String>> result = new ArrayList<>();
         for (Map.Entry<String, String> entry : prefixMap.entrySet()) {
@@ -842,10 +852,10 @@ public class OntologyMetadataService {
             p.put("namespace", entry.getValue());
             result.add(p);
         }
-        
+
         // Sort by prefix name
         result.sort(Comparator.comparing(m -> m.get("prefix")));
-        
+
         return result;
     }
 

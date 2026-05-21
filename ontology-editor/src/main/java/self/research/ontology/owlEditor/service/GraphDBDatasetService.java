@@ -35,6 +35,8 @@ import org.springframework.context.event.EventListener;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.io.SequenceInputStream;
 import java.io.StringWriter;
 import java.net.URI;
@@ -204,14 +206,25 @@ public class GraphDBDatasetService {
                                 .getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 final String basicAuthHeader = "Basic " + encodedCreds;
                 // 2-hour socket timeout matches the gateway and tomcat timeouts — prevents
-                // QueryInterruptedException (SocketTimeoutException) on large ontology commits
+                // QueryInterruptedException (SocketTimeoutException) on large ontology commits.
+                // connectionRequestTimeout reduced to 10s: fail fast when pool is saturated
+                // (default Apache HttpClient pool is maxTotal=20 / defaultMaxPerRoute=2 — we
+                // override below so classDetails' 20 parallel queries don't starve children).
                 org.apache.http.client.config.RequestConfig requestConfig =
                         org.apache.http.client.config.RequestConfig.custom()
                                 .setConnectTimeout(30_000)
                                 .setSocketTimeout(7_200_000)
-                                .setConnectionRequestTimeout(30_000)
+                                .setConnectionRequestTimeout(10_000)
                                 .build();
+                // Single Fuseki host — set per-route limit equal to total so all parallel
+                // classDetails futures (up to 20) plus concurrent children/properties queries
+                // can each hold a connection without queuing.
+                org.apache.http.impl.conn.PoolingHttpClientConnectionManager connManager =
+                        new org.apache.http.impl.conn.PoolingHttpClientConnectionManager();
+                connManager.setMaxTotal(60);
+                connManager.setDefaultMaxPerRoute(60);
                 CloseableHttpClient httpClient = HttpClients.custom()
+                        .setConnectionManager(connManager)
                         .setDefaultCredentialsProvider(credsProvider)
                         .setDefaultRequestConfig(requestConfig)
                         .addInterceptorFirst((org.apache.http.HttpRequestInterceptor) (request, context) -> {
@@ -1947,9 +1960,9 @@ public class GraphDBDatasetService {
     public String exportDataset(String projectId, RDFFormat format) {
         Repository repo = getRepository();
         String graphUri = getGraphUri(projectId);
-        
+
         try (RepositoryConnection conn = repo.getConnection()) {
-            
+
             long exportStart = System.nanoTime();
             StringWriter writer = new StringWriter();
             List<String> graphs = getAllGraphUris(conn, projectId);
@@ -1959,19 +1972,46 @@ public class GraphDBDatasetService {
             }
 
             conn.export(Rio.createWriter(format, writer), contexts.toArray(new IRI[0]));
-            
+
             String result = writer.toString();
             // Post-process: strip GraphDB system xmlns declarations from RDF/XML output
             if (format == org.eclipse.rdf4j.rio.RDFFormat.RDFXML) {
                 result = stripSystemNamespaces(result);
             }
-            log.info("[TIMING] exportDataset for project {}: {} ms ({} chars, format: {})", 
+            log.info("[TIMING] exportDataset for project {}: {} ms ({} chars, format: {})",
                      projectId, elapsedMillis(exportStart), result.length(), format);
             return result;
-            
+
         } catch (Exception e) {
             log.error("Failed to export dataset for project: {}", projectId, e);
             throw new RuntimeException("Failed to export dataset", e);
+        }
+    }
+
+    /**
+     * Stream-export the dataset directly to the given OutputStream without buffering
+     * the entire graph in a StringWriter first. Callers that previously used
+     * exportDataset() + ByteArrayInputStream should switch to this method to avoid
+     * the heap spike (StringWriter + String + ByteArrayInputStream = 3× graph size in RAM).
+     */
+    public void exportDatasetToStream(String projectId, RDFFormat format, OutputStream out) {
+        Repository repo = getRepository();
+        try (RepositoryConnection conn = repo.getConnection()) {
+            long exportStart = System.nanoTime();
+            List<String> graphs = getAllGraphUris(conn, projectId);
+            List<IRI> contexts = new ArrayList<>();
+            for (String g : graphs) {
+                contexts.add(conn.getValueFactory().createIRI(g));
+            }
+            conn.export(
+                Rio.createWriter(format, new OutputStreamWriter(out, StandardCharsets.UTF_8)),
+                contexts.toArray(new IRI[0])
+            );
+            log.info("[TIMING] exportDatasetToStream for project {}: {} ms (format: {})",
+                     projectId, elapsedMillis(exportStart), format);
+        } catch (Exception e) {
+            log.error("Failed to stream-export dataset for project: {}", projectId, e);
+            throw new RuntimeException("Failed to stream-export dataset", e);
         }
     }
     

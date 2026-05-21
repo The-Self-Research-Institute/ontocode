@@ -62,6 +62,7 @@ interface EntityHierarchyProps {
   loadingNodes?: Set<string>; // Nodes currently fetching children
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
+  isLoading?: boolean;
 }
 
 const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
@@ -92,6 +93,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   loadingNodes = new Set(),
   isViewOnly = false,
   onViewOnlyAction,
+  isLoading = false,
 }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: SelectableItem } | null>(null);
   const [draggedItem, setDraggedItem] = useState<SelectableItem | null>(null);
@@ -692,7 +694,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             <p className="text-xs text-gray-500 mb-3">Run the reasoner to generate the inferred hierarchy</p>
             <p className="text-xs text-gray-400">Go to the <strong>Reasoner</strong> tab and click <strong>Start</strong></p>
           </div>
-        ) : filteredData && filteredData.length > 0 ? filteredData.map(node => renderItem(node)) : 
+        ) : filteredData && filteredData.length > 0 ? filteredData.map(node => renderItem(node)) :
           (searchQuery ? (
              <div className="p-4 text-center text-gray-600">No items found for "{searchQuery}".</div>
           ) : viewMode === 'inferred' ? (
