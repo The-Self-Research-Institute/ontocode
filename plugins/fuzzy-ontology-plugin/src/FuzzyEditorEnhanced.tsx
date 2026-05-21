@@ -2,6 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { Sparkles, Plus, Trash2, Save, Play, Download, Edit2, TrendingUp, Zap } from 'lucide-react';
 import MembershipFunctionCanvas from './components/MembershipFunctionCanvas';
 
+declare global {
+  interface Window { API_BASE_URL?: string; }
+}
+
+function apiUrl(path: string) {
+  const base = (window.API_BASE_URL || '').replace(/\/$/, '');
+  return `${base}${path}`;
+}
+
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = localStorage.getItem('authToken');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+}
+
 // Fuzzy modifier functions (like Protégé)
 
 const FUZZY_MODIFIERS = {
@@ -166,12 +182,9 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
   const loadFuzzyData = async () => {
     try {
       // Load memberships
-      const membershipResponse = await fetch(`http://localhost:8082/api/sparql/query/${projectId}`, {
+      const membershipResponse = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           query: `
             PREFIX fuzzy: <http://fuzzy.org/ontology#>
@@ -221,12 +234,9 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
       }
 
       // Load rules
-      const ruleResponse = await fetch(`http://localhost:8082/api/sparql/query/${projectId}`, {
+      const ruleResponse = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           query: `
             PREFIX fuzzy: <http://fuzzy.org/ontology#>
@@ -438,12 +448,9 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
       console.log('🗑️ Deleting existing fuzzy data...');
       
-      const deleteResponse = await fetch(`http://localhost:8082/api/sparql/update/${projectId}`, {
+      const deleteResponse = await fetch(apiUrl(`/api/sparql/update/${projectId}`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           query: deleteQuery
         })
@@ -451,7 +458,7 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
       if (!deleteResponse.ok) {
         console.error('❌ Failed to delete existing fuzzy data');
-        showSuccess('Failed to clear existing data');
+        setQueryError('Failed to clear existing data before save. Try again.');
         return;
       }
 
@@ -512,26 +519,24 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
       console.log('📝 Inserting new fuzzy data...');
 
-      const response = await fetch(`http://localhost:8082/api/sparql/update/${projectId}`, {
+      const response = await fetch(apiUrl(`/api/sparql/update/${projectId}`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           query: sparqlUpdate
         })
       });
 
       if (response.ok) {
-        console.log('✅ Fuzzy ontology saved successfully! (no duplicates)');
         showSuccess('Fuzzy ontology saved successfully!');
       } else {
-        console.error('❌ Failed to save fuzzy ontology');
-        showSuccess('Failed to save fuzzy ontology');
+        const errText = await response.text().catch(() => '');
+        let msg = `Failed to save fuzzy ontology (${response.status})`;
+        try { msg = JSON.parse(errText).error || msg; } catch { /* ignore */ }
+        setQueryError(msg);
       }
     } catch (error) {
-      console.error('❌ Error saving fuzzy ontology:', error);
+      setQueryError(`Save error: ${error}`);
     }
   };
 
@@ -553,12 +558,9 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
     try {
       setQueryError(''); // Clear previous errors
-      const response = await fetch(`http://localhost:8082/api/sparql/query/${projectId}`, {
+      const response = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           query: fuzzyQuery
         })

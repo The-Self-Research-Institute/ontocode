@@ -19,10 +19,13 @@ import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.GraphDBDatasetService;
 import org.eclipse.rdf4j.rio.RDFFormat;
+import org.springframework.beans.factory.annotation.Value;
 
-import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
@@ -65,33 +68,68 @@ public class ReasonerController {
         .expireAfterWrite(10, TimeUnit.MINUTES)
         .build();
 
+    // Ontologies above this triple count are rejected before export to prevent OOM
+    @Value("${ontocode.reasoner.max-triples:1000000}")
+    private long maxReasonerTriples;
+
     /**
-     * Load ontology from GridFS
+     * Load ontology from Fuseki/TDB2 (via temp-file stream) or GridFS fallback.
+     * Rejects oversized ontologies before attempting in-memory OWL API parsing.
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
-        
+
         OWLOntology cachedOntology = ontologyCache.getIfPresent(projectId);
         if (cachedOntology != null) {
             log.info("Returning cached ontology for project: {}", projectId);
             return cachedOntology;
         }
 
-        // Try to load from GraphDB first (most up-to-date)
+        // Guard: reject oversized ontologies before attempting OWL API parsing.
+        // Even with streaming export, loading a 2.8M-triple ontology into OWLOntology
+        // objects exhausts the heap — the guard is the only thing that prevents that.
         try {
-            log.info("Attempting to load ontology from GraphDB for project: {}", projectId);
-            String rdfData = datasetService.exportDataset(projectId, RDFFormat.RDFXML);
-            if (rdfData != null && !rdfData.isBlank()) {
+            long tripleCount = datasetService.getDatasetSize(projectId);
+            if (tripleCount > maxReasonerTriples) {
+                throw new IllegalArgumentException(String.format(
+                    "Ontology too large for in-memory reasoning: %,d triples (limit: %,d). " +
+                    "Use SPARQL queries directly against Fuseki for large ontologies.",
+                    tripleCount, maxReasonerTriples));
+            }
+            log.info("Ontology size check passed: {} triples (limit: {})", tripleCount, maxReasonerTriples);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("Could not check ontology size before reasoning (will proceed): {}", e.getMessage());
+        }
+
+        // Try to load from Fuseki/TDB2 by streaming to a temp file then parsing.
+        // Replaces the old StringWriter → String → ByteArrayInputStream path, which
+        // allocated the full graph 3× in heap before the OWL API even started parsing.
+        Path tempFile = null;
+        try {
+            log.info("Attempting to load ontology from Fuseki for project: {}", projectId);
+            tempFile = Files.createTempFile("reasoner-" + projectId + "-", ".ttl");
+            try (OutputStream out = Files.newOutputStream(tempFile)) {
+                datasetService.exportDatasetToStream(projectId, RDFFormat.TURTLE, out);
+            }
+            long tempBytes = Files.size(tempFile);
+            log.info("Streamed ontology to temp file: {} bytes", tempBytes);
+            if (tempBytes > 0) {
                 OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-                try (InputStream is = new ByteArrayInputStream(rdfData.getBytes(StandardCharsets.UTF_8))) {
-                    OWLOntology ontology = manager.loadOntologyFromOntologyDocument(is);
-                    log.info("Ontology loaded from GraphDB: {} axioms", ontology.getAxiomCount());
+                try (InputStream in = Files.newInputStream(tempFile)) {
+                    OWLOntology ontology = manager.loadOntologyFromOntologyDocument(in);
+                    log.info("Ontology loaded from Fuseki stream: {} axioms", ontology.getAxiomCount());
                     ontologyCache.put(projectId, ontology);
                     return ontology;
                 }
             }
         } catch (Exception e) {
-            log.warn("Failed to load ontology from GraphDB, falling back to GridFS: {}", e.getMessage());
+            log.warn("Failed to load ontology from Fuseki, falling back to GridFS: {}", e.getMessage());
+        } finally {
+            if (tempFile != null) {
+                try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
+            }
         }
 
         // Fallback to GridFS

@@ -945,7 +945,10 @@ public class WorkspaceController {
                 // Period has passed — mark the workspace as requiring payment and persist
                 workspace.setBillingStatus("EXPIRED");
                 workspace.setCollaborationEnabled(false);
-                try { workspaceService.updateWorkspace(workspace); } catch (Exception ignored) {}
+                try { workspaceService.updateWorkspace(workspace); } catch (Exception e) {
+                    log.error("Failed to persist EXPIRED billing status for workspace {}: {}",
+                            workspace.getWorkspaceId(), e.getMessage());
+                }
                 log.warn("Workspace {} subscription period ended ({}), auto-set to EXPIRED",
                     workspace.getWorkspaceId(), periodEnd);
                 return "EXPIRED";

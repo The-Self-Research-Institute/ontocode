@@ -14,6 +14,7 @@ import self.research.ontology.owlEditor.dto.OntologyDto;
 import self.research.ontology.owlEditor.dto.PropertyDto;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -351,8 +352,9 @@ public class OntologyQueryService {
     public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset) {
         long startTime = System.currentTimeMillis();
         
-        // Include EXISTS check for hasChildren so expand icons are accurate
-        // Results are cached so the query cost is paid only once per parent
+        // No ORDER BY: Fuseki can apply LIMIT early (stream-stop) instead of materializing
+        // all children, sorting, then cutting — critical for large taxonomy nodes.
+        // Sorting is done in Java after the fact; @Cacheable means cost is paid only once.
         String query = PREFIXES + """
             SELECT ?child ?label ?description ?hasChildren
             WHERE {
@@ -362,15 +364,15 @@ public class OntologyQueryService {
               OPTIONAL { ?child rdfs:comment ?description }
               BIND(EXISTS { ?grandchild rdfs:subClassOf ?child . FILTER(?grandchild != ?child) } AS ?hasChildren)
             }
-            ORDER BY COALESCE(LCASE(?label), STR(?child))
             LIMIT %d OFFSET %d
             """.formatted(parentIri, parentIri, Math.max(1, limit), Math.max(0, offset));
-        
+
         List<OntologyDto.TreeNode> result = mapTreeNodes(projectId, query, parentIri);
+        result.sort(Comparator.comparing(n -> n.getLabel() == null ? "" : n.getLabel().toLowerCase(java.util.Locale.ROOT)));
         enrichWithEquivalentClasses(projectId, result);
 
         long duration = System.currentTimeMillis() - startTime;
-        log.debug("✅ [PERF] Loaded {} children for {} in {}ms", result.size(), parentIri, duration);
+        log.info("[PERF] children {} count={} time={}ms project={}", parentIri, result.size(), duration, projectId);
 
         return result;
     }
@@ -503,11 +505,15 @@ public class OntologyQueryService {
             String annQuery = PREFIXES + """
                 SELECT ?prop ?value WHERE {
                   <%s> ?prop ?value .
-                  FILTER(isLiteral(?value))
+                  FILTER(isLiteral(?value) || isIRI(?value))
                   {
                     ?prop a owl:AnnotationProperty .
                   } UNION {
-                    VALUES ?prop { rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy }
+                    VALUES ?prop {
+                      rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy
+                      owl:deprecated owl:versionInfo owl:backwardCompatibleWith
+                      owl:incompatibleWith owl:priorVersion
+                    }
                   }
                 }
                 """.formatted(propertyIri);
@@ -1722,7 +1728,11 @@ public class OntologyQueryService {
               {
                 ?prop a owl:AnnotationProperty .
               } UNION {
-                VALUES ?prop { rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy }
+                VALUES ?prop {
+                  rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy
+                  owl:deprecated owl:versionInfo owl:backwardCompatibleWith
+                  owl:incompatibleWith owl:priorVersion
+                }
               }
             }
             """.formatted(classIri);
@@ -1773,7 +1783,11 @@ public class OntologyQueryService {
                   {
                     ?prop a owl:AnnotationProperty .
                   } UNION {
-                    VALUES ?prop { rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy }
+                    VALUES ?prop {
+                      rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy
+                      owl:deprecated owl:versionInfo owl:backwardCompatibleWith
+                      owl:incompatibleWith owl:priorVersion
+                    }
                   }
                 }
                 """.formatted(classIri);
@@ -2800,11 +2814,15 @@ public class OntologyQueryService {
         String annQuery = PREFIXES + """
             SELECT ?prop ?value WHERE {
               <%s> ?prop ?value .
-              FILTER(isLiteral(?value))
+              FILTER(isLiteral(?value) || isIRI(?value))
               {
                 ?prop a owl:AnnotationProperty .
               } UNION {
-                VALUES ?prop { rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy }
+                VALUES ?prop {
+                  rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy
+                  owl:deprecated owl:versionInfo owl:backwardCompatibleWith
+                  owl:incompatibleWith owl:priorVersion
+                }
               }
             }
             """.formatted(individualIri);
