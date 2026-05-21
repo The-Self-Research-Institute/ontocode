@@ -191,6 +191,12 @@ services:
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
       JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
       JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+      # In-memory RDF4J MemoryStore cache — projects above this threshold bypass it.
+      # Raised to 3M so large ontologies (e.g. mido.ttl ~2.8M triples) are cached in
+      # memory like Protégé, giving sub-ms children/classDetails instead of 30s Fuseki queries.
+      # Each cached project uses ~300-400 MB; max-projects=3 → ~1.2 GB max cache footprint.
+      ONTOCODE_MEMCACHE_NO_CACHE_THRESHOLD: ${ONTOCODE_MEMCACHE_NO_CACHE_THRESHOLD:-3000000}
+      ONTOCODE_MEMCACHE_MAX_PROJECTS: ${ONTOCODE_MEMCACHE_MAX_PROJECTS:-3}
       # TDB2 is single-writer: keep at 1 on all tiers. See ImportQueueManager.
       ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-1}
     depends_on:
