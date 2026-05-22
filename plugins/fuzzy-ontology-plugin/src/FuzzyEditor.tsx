@@ -53,6 +53,8 @@ const FuzzyEditor: React.FC<FuzzyEditorProps> = ({ projectId }) => {
   const [queryResults, setQueryResults] = useState<any[]>([]);
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isRulesLoading, setIsRulesLoading] = useState(false);
+  const [isRuleSaving, setIsRuleSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isQuerying, setIsQuerying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +62,7 @@ const FuzzyEditor: React.FC<FuzzyEditorProps> = ({ projectId }) => {
 
   useEffect(() => {
     loadFuzzyData();
+    loadRules();
   }, [projectId]);
 
   function showSuccess(msg: string) {
@@ -96,7 +99,6 @@ const FuzzyEditor: React.FC<FuzzyEditorProps> = ({ projectId }) => {
       }
 
       const data = await response.json();
-      // Backend returns flat {entity, class, degree} rows in data.results
       const rows: any[] = Array.isArray(data.results) ? data.results : [];
       const loadedMemberships = rows.map((row: any, index: number) => ({
         id: `membership-${index}`,
@@ -109,6 +111,23 @@ const FuzzyEditor: React.FC<FuzzyEditorProps> = ({ projectId }) => {
       setError(`Network error: ${err}`);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadRules = async () => {
+    setIsRulesLoading(true);
+    try {
+      const response = await fetch(apiUrl(`/api/fuzzy/${projectId}/rules`), {
+        headers: authHeaders()
+      });
+      if (response.ok) {
+        const data: FuzzyRule[] = await response.json();
+        setRules(data);
+      }
+    } catch (err) {
+      console.error('Failed to load fuzzy rules:', err);
+    } finally {
+      setIsRulesLoading(false);
     }
   };
 
@@ -133,30 +152,66 @@ const FuzzyEditor: React.FC<FuzzyEditorProps> = ({ projectId }) => {
     setMemberships(memberships.filter(m => m.id !== id));
   };
 
-  const addRule = () => {
+  const addRule = async () => {
     if (!newRuleName || !newCondition || !newAction) {
       setError('Please fill in all rule fields');
       return;
     }
-    const rule: FuzzyRule = {
-      id: `rule-${Date.now()}`,
-      name: newRuleName,
-      condition: newCondition,
-      action: newAction,
-      enabled: true
-    };
-    setRules([...rules, rule]);
-    setNewRuleName('');
-    setNewCondition('');
-    setNewAction('');
+    setIsRuleSaving(true);
+    setError(null);
+    try {
+      const response = await fetch(apiUrl(`/api/fuzzy/${projectId}/rules`), {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ name: newRuleName, condition: newCondition, action: newAction, enabled: true })
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        let msg = `Failed to save rule (${response.status})`;
+        try { msg = JSON.parse(text).error || msg; } catch { /* ignore */ }
+        setError(msg);
+        return;
+      }
+      const saved: FuzzyRule = await response.json();
+      setRules(prev => [...prev, saved]);
+      setNewRuleName('');
+      setNewCondition('');
+      setNewAction('');
+    } catch (err) {
+      setError(`Save error: ${err}`);
+    } finally {
+      setIsRuleSaving(false);
+    }
   };
 
-  const deleteRule = (id: string) => {
-    setRules(rules.filter(r => r.id !== id));
+  const deleteRule = async (id: string) => {
+    try {
+      const response = await fetch(apiUrl(`/api/fuzzy/${projectId}/rules/${id}`), {
+        method: 'DELETE',
+        headers: authHeaders()
+      });
+      if (response.ok) {
+        setRules(prev => prev.filter(r => r.id !== id));
+      }
+    } catch (err) {
+      setError(`Delete error: ${err}`);
+    }
   };
 
-  const toggleRule = (id: string) => {
-    setRules(rules.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
+  const toggleRule = async (rule: FuzzyRule) => {
+    try {
+      const response = await fetch(apiUrl(`/api/fuzzy/${projectId}/rules/${rule.id}`), {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({ enabled: !rule.enabled })
+      });
+      if (response.ok) {
+        const updated: FuzzyRule = await response.json();
+        setRules(prev => prev.map(r => r.id === updated.id ? updated : r));
+      }
+    } catch (err) {
+      setError(`Update error: ${err}`);
+    }
   };
 
   const saveFuzzyOntology = async () => {
@@ -425,8 +480,12 @@ ${memberships.map(m => `<${m.entity}> fuzzy:hasMembership [
                     onChange={(e) => setNewAction(e.target.value)}
                     className="w-full px-3 py-2 bg-[#1e1e1e] border border-gray-600 rounded h-20 text-white"
                   />
-                  <button onClick={addRule} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded flex items-center gap-2">
-                    <Plus className="w-4 h-4" />
+                  <button
+                    onClick={addRule}
+                    disabled={isRuleSaving}
+                    className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded flex items-center gap-2"
+                  >
+                    {isRuleSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                     Add Rule
                   </button>
                 </div>
@@ -434,38 +493,45 @@ ${memberships.map(m => `<${m.entity}> fuzzy:hasMembership [
 
               <div className="bg-[#252525] p-4 rounded border border-gray-700">
                 <h3 className="text-lg font-semibold mb-4">Fuzzy Rules ({rules.length})</h3>
-                <div className="space-y-3">
-                  {rules.length === 0 ? (
-                    <p className="text-gray-400 text-center py-8">No fuzzy rules yet. Add one above!</p>
-                  ) : (
-                    rules.map((rule) => (
-                      <div key={rule.id} className="p-4 bg-[#1e1e1e] rounded border border-gray-700">
-                        <div className="flex items-start justify-between mb-2">
-                          <h4 className="font-semibold text-purple-400">{rule.name}</h4>
-                          <div className="flex items-center gap-2">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input type="checkbox" checked={rule.enabled} onChange={() => toggleRule(rule.id)} className="w-4 h-4" />
-                              <span className="text-sm">Enabled</span>
-                            </label>
-                            <button onClick={() => deleteRule(rule.id)} className="p-2 text-red-400 hover:bg-red-900/20 rounded">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                {isRulesLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-purple-400" />
+                    <span className="ml-2 text-gray-400">Loading rules…</span>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {rules.length === 0 ? (
+                      <p className="text-gray-400 text-center py-8">No fuzzy rules yet. Add one above!</p>
+                    ) : (
+                      rules.map((rule) => (
+                        <div key={rule.id} className="p-4 bg-[#1e1e1e] rounded border border-gray-700">
+                          <div className="flex items-start justify-between mb-2">
+                            <h4 className="font-semibold text-purple-400">{rule.name}</h4>
+                            <div className="flex items-center gap-2">
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" checked={rule.enabled} onChange={() => toggleRule(rule)} className="w-4 h-4" />
+                                <span className="text-sm">Enabled</span>
+                              </label>
+                              <button onClick={() => deleteRule(rule.id)} className="p-2 text-red-400 hover:bg-red-900/20 rounded">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-2 text-sm">
+                            <div>
+                              <span className="text-gray-400">IF:</span>
+                              <pre className="mt-1 p-2 bg-[#2d2d2d] rounded text-xs overflow-x-auto">{rule.condition}</pre>
+                            </div>
+                            <div>
+                              <span className="text-gray-400">THEN:</span>
+                              <pre className="mt-1 p-2 bg-[#2d2d2d] rounded text-xs overflow-x-auto">{rule.action}</pre>
+                            </div>
                           </div>
                         </div>
-                        <div className="space-y-2 text-sm">
-                          <div>
-                            <span className="text-gray-400">IF:</span>
-                            <pre className="mt-1 p-2 bg-[#2d2d2d] rounded text-xs overflow-x-auto">{rule.condition}</pre>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">THEN:</span>
-                            <pre className="mt-1 p-2 bg-[#2d2d2d] rounded text-xs overflow-x-auto">{rule.action}</pre>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -220,9 +220,16 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
         setError(response.error);
         return;
       }
-      const rawRows: Record<string, any>[] = Array.isArray(response.results)
-        ? response.results
-        : response.results?.bindings || [];
+      // Defensive: handle flat array, SPARQL JSON bindings wrapper, or JSON-string (double-encode)
+      let resultsData = response.results;
+      if (typeof resultsData === 'string') {
+        try { resultsData = JSON.parse(resultsData); } catch { resultsData = []; }
+      }
+      const rawRows: Record<string, any>[] = Array.isArray(resultsData)
+        ? resultsData
+        : Array.isArray(resultsData?.bindings)
+          ? resultsData.bindings
+          : [];
       const transformedResults: SparqlQueryResult = {
         head: response.head,
         results: {
