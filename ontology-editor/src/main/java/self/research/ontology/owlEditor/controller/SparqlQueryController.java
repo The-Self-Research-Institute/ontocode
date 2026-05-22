@@ -94,6 +94,10 @@ public class SparqlQueryController {
 
     // ==================== Query Execution ====================
 
+    // Typed response so Jackson serializes results as List<Map> not raw Object
+    record SparqlHead(List<String> vars) {}
+    record SparqlQueryResponse(SparqlHead head, List<Map<String, String>> results, long executionTime) {}
+
     @PostMapping("/query/{projectId}")
     public ResponseEntity<?> query(@PathVariable String projectId,
                                    @RequestBody SparqlRequest request) {
@@ -114,10 +118,7 @@ public class SparqlQueryController {
                 rows.add(row);
             }
             long executionTime = System.currentTimeMillis() - startTime;
-            return ResponseEntity.ok(Map.of(
-                    "head", Map.of("vars", vars),
-                    "results", rows,
-                    "executionTime", executionTime));
+            return ResponseEntity.ok(new SparqlQueryResponse(new SparqlHead(vars), rows, executionTime));
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             return ResponseEntity.badRequest().body(Map.of("error", msg));

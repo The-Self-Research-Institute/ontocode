@@ -946,7 +946,7 @@ public class ProjectController {
 
             User user = userOpt.get();
 
-            Optional<Project> projectForCheck = projectRepository.findByProjectId(projectId);
+            Optional<Project> projectForCheck = projectRepository.findAllByProjectId(projectId).stream().findFirst();
             if (projectForCheck.isPresent()) {
                 var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
                 if (writeBlock.isPresent()) return writeBlock.get();
@@ -954,7 +954,7 @@ public class ProjectController {
 
             // Delete from GraphDB first (best-effort) for each file in the project
             try {
-                Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+                Optional<Project> projectOpt = projectForCheck;
                 if (projectOpt.isPresent()) {
                     Project project = projectOpt.get();
                     String editorServiceUrl = System.getenv().getOrDefault("ONTOLOGY_EDITOR_URL", "http://localhost:8083");

@@ -2890,7 +2890,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               ? inferredAnnotationPropertyHierarchy
               : annotationProperties
             : annotationProperties;
-        return mergeAnnotationProperties(Array.isArray(base) ? base : []);
+        return Array.isArray(base) ? base : [];
       }
       case "Individuals":
         return hierarchyViewModes.Individuals === "inferred"
@@ -6521,10 +6521,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           setClassHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
           break;
         case "ObjectProperties":
-          setObjectProperties((prev) => prev.map((p) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          setObjectProperties((prev: Property[]) => prev.map((p: Property) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          setObjectPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
           break;
         case "DataProperties":
-          setDataProperties((prev) => prev.map((p) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          setDataProperties((prev: Property[]) => prev.map((p: Property) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          setDataPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
           break;
         case "AnnotationProperties":
           setAnnotationProperties((prev) =>
@@ -9317,6 +9319,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (!item.id) {
         console.error("[DELETE] Item has no IRI:", item);
         showNotification("Cannot delete: item has no valid IRI", "error");
+        return;
+      }
+
+      // Prevent deletion of built-in annotation properties (rdfs:label, rdfs:comment, etc.)
+      if (activeTab === "AnnotationProperties" && STANDARD_ANNOTATION_PROPERTIES.some((p) => p.id === item.id)) {
+        showNotification(`"${item.label}" is a built-in annotation property and cannot be deleted.`, "error");
         return;
       }
 
@@ -15090,7 +15098,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="px-6 pb-5">
               <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
                 {showProPromptType === 'export' ? (
-                  <>Exporting ontologies is restricted to <span className="font-medium text-gray-800">Pro plan</span> members.</>
+                  <>Ontology export is a <span className="font-medium text-gray-800">premium feature</span>. To unlock this and other advanced tools, upgrade to a <span className="font-medium text-gray-800">Pro plan / Enterprise plan</span>.</>
                 ) : showProPromptType === 'viewer' ? (
                   <>You can <span className="font-medium text-gray-800">browse and explore</span> this ontology, but editing is restricted to <span className="font-medium text-gray-800">editors and above</span>.</>
                 ) : (

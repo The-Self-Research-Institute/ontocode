@@ -386,12 +386,15 @@ public class OntologyMutationService {
                 + "}";
         } else if (type.equals("deleteObjectProperty")) {
             return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s <" + op.iri() + "> ?o } WHERE { ?s <" + op.iri() + "> ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("deleteDataProperty")) {
             return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s <" + op.iri() + "> ?o } WHERE { ?s <" + op.iri() + "> ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("deleteAnnotationProperty")) {
             return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s <" + op.iri() + "> ?o } WHERE { ?s <" + op.iri() + "> ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("addPropertyDomain")) {
             if (op.restrictionType() != null) {
