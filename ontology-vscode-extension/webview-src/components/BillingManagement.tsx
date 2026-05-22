@@ -388,7 +388,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         // scrollable content area. `min-h-screen` + `overflow-y-auto` on
         // the same node is a known anti-pattern: the node grows past the
         // viewport so its own scrollbar never engages.
-        <div className="h-screen flex flex-col bg-[#0f172a] text-slate-200">
+        <div className="dark h-screen flex flex-col bg-[#0f172a] text-slate-200">
             {/* Header (does not scroll) */}
             <div className="flex-shrink-0 z-50 bg-[#0f172a]/80 backdrop-blur-xl border-b border-white/10 px-6 py-4 flex items-center justify-between shadow-lg">
                 <div className="flex items-center gap-4">

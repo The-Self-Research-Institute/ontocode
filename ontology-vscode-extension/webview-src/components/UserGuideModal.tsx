@@ -1196,7 +1196,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                     <ul style={styles.list}>
                       <li>
                         <strong>Issue Type:</strong> Choose <strong>Bug</strong> for something broken or{" "}
-                        <strong>Task</strong> for a feature request or improvement
+                        <strong>Feature Request</strong> for a new feature or improvement
                       </li>
                       <li>
                         <strong>Priority:</strong> Select from Highest, High, Medium, Low, or Lowest to indicate urgency
