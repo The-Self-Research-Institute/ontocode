@@ -15,9 +15,9 @@ interface AnnotationPropertyEditorProps {
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   projectId: string;
-  onAddSubPropertyClick?: () => void;
-  onAddDomainClick?: () => void;
-  onAddRangeClick?: () => void;
+  onAddSubPropertyClick?: (editingItem?: string) => void;
+  onAddDomainClick?: (editingItem?: string) => void;
+  onAddRangeClick?: (editingItem?: string) => void;
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
   onNavigate?: (iri: string, type: string) => void;

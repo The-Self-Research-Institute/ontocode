@@ -147,7 +147,7 @@ const IndividualEditor: React.FC<{
   const [detailsFetched, setDetailsFetched] = useState<string | null>(null);
   const [propertySuggestions, setPropertySuggestions] = useState<{ label: string; value: string }[]>([]);
   const [individualSuggestions, setIndividualSuggestions] = useState<{ label: string; value: string }[]>([]);
-  const [sameDiffDialog, setSameDiffDialog] = useState<null | { mode: 'same' | 'different' }>(null);
+  const [sameDiffDialog, setSameDiffDialog] = useState<null | { mode: 'same' | 'different'; editingIri?: string }>(null);
   const [allIndividuals, setAllIndividuals] = useState<Individual[]>([]);
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
   const [typeClassHierarchy, setTypeClassHierarchy] = useState<TreeNode[]>([]);
@@ -382,8 +382,8 @@ const IndividualEditor: React.FC<{
       } catch (e) { console.error(e); }
   };
 
-  const openSameDifferentDialog = async (mode: 'same' | 'different') => {
-    setSameDiffDialog({ mode });
+  const openSameDifferentDialog = async (mode: 'same' | 'different', editingIri?: string) => {
+    setSameDiffDialog({ mode, editingIri });
     try {
       const res = await apiClient.get<any>(`/api/ontology/individuals/${projectId}`);
       const inds = Array.isArray(res?.data) ? res.data : res?.data?.individuals || [];
@@ -720,7 +720,7 @@ const IndividualEditor: React.FC<{
                 <MultiSelectSection
                     title="Same Individual As"
                     items={item.sameIndividualAs}
-                    onAddClick={() => openSameDifferentDialog('same')}
+                    onAddClick={(editingItem) => openSameDifferentDialog('same', editingItem)}
                     onDelete={handleDeleteSameAs}
                     themeColor="purple"
                     itemEntityType="individual"
@@ -735,7 +735,7 @@ const IndividualEditor: React.FC<{
                 <MultiSelectSection
                     title="Different Individual From"
                     items={item.differentIndividualFrom}
-                    onAddClick={() => openSameDifferentDialog('different')}
+                    onAddClick={(editingItem) => openSameDifferentDialog('different', editingItem)}
                     onDelete={handleDeleteDifferentFrom}
                     themeColor="purple"
                     itemEntityType="individual"
@@ -807,10 +807,27 @@ const IndividualEditor: React.FC<{
           ]}
           minSelection={1}
           onConfirm={async (inds) => {
-            if (sameDiffDialog.mode === 'same') {
-              for (const ind of inds) await handleAddSameAs(ind.id);
+            const editingIri = sameDiffDialog.editingIri;
+            if (editingIri) {
+              // Replace: single API call per selection (usually 1 when editing)
+              for (const ind of inds) {
+                try {
+                  await ontologyMutationService.replaceIndividualRelation(
+                    projectId, item.id, sameDiffDialog.mode, editingIri, ind.id, userId, username
+                  );
+                  if (sameDiffDialog.mode === 'same') {
+                    onUpdate({ ...item, sameIndividualAs: (item.sameIndividualAs || []).map(i => i === editingIri ? ind.id : i) });
+                  } else {
+                    onUpdate({ ...item, differentIndividualFrom: (item.differentIndividualFrom || []).map(i => i === editingIri ? ind.id : i) });
+                  }
+                } catch (e) { console.error(e); }
+              }
             } else {
-              for (const ind of inds) await handleAddDifferentFrom(ind.id);
+              if (sameDiffDialog.mode === 'same') {
+                for (const ind of inds) await handleAddSameAs(ind.id);
+              } else {
+                for (const ind of inds) await handleAddDifferentFrom(ind.id);
+              }
             }
             setSameDiffDialog(null);
           }}
