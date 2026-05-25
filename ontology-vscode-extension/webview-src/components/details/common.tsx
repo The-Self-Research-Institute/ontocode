@@ -1353,7 +1353,7 @@ export const MultiSelectSection: React.FC<{
     title: string;
     items: string[] | undefined;
     inferredItems?: string[] | undefined;
-    onAddClick?: () => void;
+    onAddClick?: (editingItem?: string) => void;
     onDelete: (item: string) => Promise<void> | void;
     themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple'; // For header styling
     itemEntityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual'; // For item icons
@@ -1406,13 +1406,15 @@ export const MultiSelectSection: React.FC<{
     };
     
     const theme = themes[themeColor];
-    const itemEditHandler = onEdit || (onAddClick ? (editItem: string) => { onDelete(editItem); onAddClick(); } : undefined);
+    // Pass the editingItem to onAddClick — the picker's confirm handler will do
+    // delete + add in a single API call instead of delete-now / add-later.
+    const itemEditHandler = onEdit || (onAddClick ? (editItem: string) => { onAddClick(editItem); } : undefined);
 
     const handleHeaderClick = () => {
         setIsSelected(true);
         if (isViewOnly) { onViewOnlyAction?.(); return; }
         if (onAddClick) {
-            onAddClick();
+            onAddClick(undefined);
         }
     };
     

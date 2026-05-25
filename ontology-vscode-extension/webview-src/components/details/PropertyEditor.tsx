@@ -140,12 +140,12 @@ const PropertyEditor: React.FC<{
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   projectId: string;
-  onAddDomainClick?: () => void;
-  onAddRangeClick?: () => void;
-  onAddSubPropertyClick?: () => void;
-  onAddInverseClick?: () => void;
-  onAddDisjointClick?: () => void;
-  onAddEquivalentClick?: () => void;
+  onAddDomainClick?: (editingItem?: string) => void;
+  onAddRangeClick?: (editingItem?: string) => void;
+  onAddSubPropertyClick?: (editingItem?: string) => void;
+  onAddInverseClick?: (editingItem?: string) => void;
+  onAddDisjointClick?: (editingItem?: string) => void;
+  onAddEquivalentClick?: (editingItem?: string) => void;
   objectProperties?: Property[];
   viewMode?: 'asserted' | 'inferred';
   isViewOnly?: boolean;

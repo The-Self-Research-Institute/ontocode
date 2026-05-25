@@ -500,6 +500,55 @@ export const ontologyMutationService = {
     await this.applyMutations(projectId, [{ type: 'deleteEquivalentProperty', iri: propertyIri, target: equivalentPropertyIri }], undefined, userId, username);
   },
 
+  /**
+   * Replace a property relation (domain/range/subProperty/inverse/disjoint/equivalent)
+   * in a single API call — [deleteOp, addOp] together, no orphaned deletes.
+   */
+  async replacePropertyRelation(
+    projectId: string,
+    propertyIri: string,
+    relation: 'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent',
+    oldIri: string,
+    newIri: string,
+    userId?: string,
+    username?: string,
+  ): Promise<void> {
+    const deleteTypes: Record<string, string> = {
+      domain: 'deletePropertyDomain', range: 'deletePropertyRange',
+      subProperty: 'deleteSubPropertyOf', inverse: 'deleteInverseProperty',
+      disjoint: 'deleteDisjointProperty', equivalent: 'deleteEquivalentProperty',
+    };
+    const addTypes: Record<string, string> = {
+      domain: 'addPropertyDomain', range: 'addPropertyRange',
+      subProperty: 'addSubPropertyOf', inverse: 'addInverseProperty',
+      disjoint: 'addDisjointProperty', equivalent: 'addEquivalentProperty',
+    };
+    await this.applyMutations(projectId, [
+      { type: deleteTypes[relation], iri: propertyIri, target: oldIri },
+      { type: addTypes[relation],    iri: propertyIri, target: newIri },
+    ], false, userId, username);
+  },
+
+  /**
+   * Replace a Same/Different individual relation in a single API call.
+   */
+  async replaceIndividualRelation(
+    projectId: string,
+    individualIri: string,
+    relation: 'same' | 'different',
+    oldIri: string,
+    newIri: string,
+    userId?: string,
+    username?: string,
+  ): Promise<void> {
+    const deleteType = relation === 'same' ? 'deleteSameIndividual' : 'deleteDifferentIndividual';
+    const addType    = relation === 'same' ? 'addSameIndividual'    : 'addDifferentIndividual';
+    await this.applyMutations(projectId, [
+      { type: deleteType, iri: individualIri, target: oldIri },
+      { type: addType,    iri: individualIri, target: newIri },
+    ], false, userId, username);
+  },
+
   async addPropertyChain(projectId: string, propertyIri: string, chainExpression: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{ type: 'addPropertyChain', iri: propertyIri, value: chainExpression }], undefined, userId, username);
   },
@@ -714,6 +763,88 @@ export const ontologyMutationService = {
       iri: classIri,
       target: listNodeId
     }], false); // Apply immediately
+  },
+
+  /**
+   * Replace an axiom in a single API call — sends [deleteOp, addOp] together so
+   * the add can never be orphaned if the delete succeeded. Handles all combinations:
+   * simple IRI, object/data restriction, intersection, union.
+   */
+  async replaceAxiom(
+    projectId: string,
+    classIri: string,
+    axiomType: 'SubClassOf' | 'EquivalentTo' | 'DisjointWith',
+    old: {
+      iri?: string;
+      restriction?: { property: string; restrictionType: string; filler: string; cardinality?: number; isData?: boolean };
+    },
+    newVal: {
+      iri?: string;
+      restriction?: { property: string; restrictionType: string; filler: string; cardinality?: number; isData?: boolean };
+      intersection?: string[];
+      union?: string[];
+    },
+    userId?: string,
+    username?: string,
+  ): Promise<void> {
+    // Simple IRI → Simple IRI: use single atomic SPARQL DELETE+INSERT+WHERE
+    if (old.iri && newVal.iri) {
+      const opType = axiomType === 'EquivalentTo' ? 'updateEquivalentClass'
+                   : axiomType === 'DisjointWith'  ? 'updateDisjointWith'
+                   : 'updateSubClassOf';
+      await this.applyMutations(projectId, [{ type: opType, iri: classIri, value: old.iri, target: newVal.iri }], false, userId, username);
+      return;
+    }
+
+    const ops: MutationOp[] = [];
+
+    // --- Delete op ---
+    if (old.restriction) {
+      ops.push({
+        type: old.restriction.isData ? 'deleteDataRestriction' : 'deleteObjectRestriction',
+        iri: classIri,
+        axiomType,
+        property: old.restriction.property,
+        restrictionType: old.restriction.restrictionType,
+        target: old.restriction.filler,
+        cardinality: old.restriction.cardinality,
+      });
+    } else if (old.iri) {
+      ops.push({
+        type: axiomType === 'EquivalentTo' ? 'deleteEquivalentClass'
+            : axiomType === 'DisjointWith'  ? 'deleteDisjointWith'
+            : 'deleteSubClassOf',
+        iri: classIri,
+        target: old.iri,
+      });
+    }
+
+    // --- Add op ---
+    if (newVal.restriction) {
+      ops.push({
+        type: newVal.restriction.isData ? 'addDataRestriction' : 'addObjectRestriction',
+        iri: classIri,
+        axiomType,
+        property: newVal.restriction.property,
+        restrictionType: newVal.restriction.restrictionType,
+        target: newVal.restriction.filler,
+        cardinality: newVal.restriction.cardinality,
+      });
+    } else if (newVal.iri) {
+      ops.push({
+        type: axiomType === 'EquivalentTo' ? 'addEquivalentClass'
+            : axiomType === 'DisjointWith'  ? 'addDisjointWith'
+            : 'addSubClassOf',
+        iri: classIri,
+        target: newVal.iri,
+      });
+    } else if (newVal.intersection) {
+      ops.push({ type: 'addIntersection', iri: classIri, axiomType, value: newVal.intersection.join(',') });
+    } else if (newVal.union) {
+      ops.push({ type: 'addUnion', iri: classIri, axiomType, value: newVal.union.join(',') });
+    }
+
+    await this.applyMutations(projectId, ops, false, userId, username);
   },
 
   /**
