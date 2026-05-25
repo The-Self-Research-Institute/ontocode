@@ -529,6 +529,34 @@ public class OntologyQueryService {
             }
             dto.setAnnotations(annotations);
 
+            // Fetch property chains (owl:propertyChainAxiom) - up to 5 properties per chain
+            String chainQuery = PREFIXES + """
+                SELECT ?chainHead ?p0 ?p1 ?p2 ?p3 ?p4 WHERE {
+                  <%s> owl:propertyChainAxiom ?chainHead .
+                  ?chainHead rdf:first ?p0 .
+                  OPTIONAL { ?chainHead rdf:rest ?n1 . ?n1 rdf:first ?p1 .
+                    OPTIONAL { ?n1 rdf:rest ?n2 . ?n2 rdf:first ?p2 .
+                      OPTIONAL { ?n2 rdf:rest ?n3 . ?n3 rdf:first ?p3 .
+                        OPTIONAL { ?n3 rdf:rest ?n4 . ?n4 rdf:first ?p4 . }
+                      }
+                    }
+                  }
+                }
+                """.formatted(propertyIri);
+            TupleQueryResult chainRs = datasetService.execSelect(projectId, chainQuery);
+            java.util.List<String> propertyChains = new java.util.ArrayList<>();
+            while (chainRs.hasNext()) {
+                BindingSet cs = chainRs.next();
+                java.util.List<String> parts = new java.util.ArrayList<>();
+                for (String var : java.util.List.of("p0", "p1", "p2", "p3", "p4")) {
+                    String val = resource(cs, var);
+                    if (val != null && !val.isBlank()) parts.add(val);
+                    else break;
+                }
+                if (parts.size() >= 2) propertyChains.add(String.join(" o ", parts));
+            }
+            dto.setPropertyChains(propertyChains);
+
             long duration = System.currentTimeMillis() - startTime;
             log.info("[PERF] propertyDetail for {} completed in {}ms project={}", localName(propertyIri), duration, projectId);
             return dto;

@@ -673,6 +673,20 @@ public class OntologyMutationService {
                 + "<" + op.iri() + "> owl:differentFrom <" + op.target() + "> .\n"
                 + "<" + op.target() + "> owl:differentFrom <" + op.iri() + "> .\n"
                 + "}";
+        } else if (type.equals("addPropertyChain")) {
+            String[] chainProps = op.value() != null ? op.value().split(" o ") : new String[0];
+            if (chainProps.length < 2) {
+                log.warn("[MUTATION] Property chain requires at least 2 properties, got: {}", op.value());
+                return "";
+            }
+            return buildPropertyChainSparql(op.iri(), chainProps);
+        } else if (type.equals("deletePropertyChain")) {
+            String[] chainProps = op.value() != null ? op.value().split(" o ") : new String[0];
+            if (chainProps.length < 2) {
+                log.warn("[MUTATION] Property chain delete requires at least 2 properties, got: {}", op.value());
+                return "";
+            }
+            return buildDeletePropertyChainSparql(op.iri(), chainProps);
         } else if (type.equals("addClassAssertion")) {
             // Add rdf:type assertion to an existing individual
             if (op.classIri() == null) return "";
@@ -1109,6 +1123,53 @@ public class OntologyMutationService {
         return sparql;
     }
     
+    /**
+     * Build SPARQL INSERT to add an owl:propertyChainAxiom (RDF list of property IRIs).
+     * Chain expression format: "iri1 o iri2 [o iri3 ...]"
+     */
+    private String buildPropertyChainSparql(String propertyIri, String[] chainPropertyIris) {
+        log.info("[MUTATION] buildPropertyChainSparql: property={}, chain={}", propertyIri, String.join(" o ", chainPropertyIris));
+        StringBuilder sb = new StringBuilder("INSERT {\n");
+        sb.append("  <").append(propertyIri).append("> owl:propertyChainAxiom _:chain0 .\n");
+        for (int i = 0; i < chainPropertyIris.length; i++) {
+            String cur = "_:chain" + i;
+            String next = (i == chainPropertyIris.length - 1) ? "rdf:nil" : "_:chain" + (i + 1);
+            sb.append("  ").append(cur).append(" rdf:first <").append(chainPropertyIris[i].trim()).append("> ;\n");
+            sb.append("             rdf:rest ").append(next).append(" .\n");
+        }
+        sb.append("} WHERE { }");
+        return sb.toString();
+    }
+
+    /**
+     * Build SPARQL DELETE to remove a specific owl:propertyChainAxiom whose members
+     * match the given ordered sequence.
+     */
+    private String buildDeletePropertyChainSparql(String propertyIri, String[] chainPropertyIris) {
+        log.info("[MUTATION] buildDeletePropertyChainSparql: property={}, chain={}", propertyIri, String.join(" o ", chainPropertyIris));
+        int n = chainPropertyIris.length;
+        StringBuilder where = new StringBuilder();
+        where.append("  <").append(propertyIri).append("> owl:propertyChainAxiom ?head .\n");
+        // Match exact sequence to identify the right chain list
+        for (int i = 0; i < n; i++) {
+            String nodeVar = (i == 0) ? "?head" : "?cn" + i;
+            String nextVar = (i == n - 1) ? "rdf:nil" : "?cn" + (i + 1);
+            where.append("  ").append(nodeVar).append(" rdf:first <").append(chainPropertyIris[i].trim()).append("> .\n");
+            where.append("  ").append(nodeVar).append(" rdf:rest ").append(nextVar).append(" .\n");
+        }
+        // Collect all list nodes for deletion
+        where.append("  ?head rdf:rest* ?delNode .\n");
+        where.append("  ?delNode rdf:first ?delFirst .\n");
+        where.append("  ?delNode rdf:rest ?delRest .\n");
+        return "DELETE {\n"
+            + "  <" + propertyIri + "> owl:propertyChainAxiom ?head .\n"
+            + "  ?delNode rdf:first ?delFirst .\n"
+            + "  ?delNode rdf:rest ?delRest .\n"
+            + "}\nWHERE {\n"
+            + where.toString()
+            + "}";
+    }
+
     /**
      * Build SPARQL INSERT to add an owl:intersectionOf class expression
      * Format: :Class rdfs:subClassOf/:equivalentClass [ owl:intersectionOf (:A :B :C) ]

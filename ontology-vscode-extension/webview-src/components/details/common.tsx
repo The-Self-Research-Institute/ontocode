@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, HelpCircle, Tag, MousePointer2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2 } from "lucide-react";
 import { useCollaboration } from "../../contexts/CollaborationContext";
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
@@ -436,16 +436,6 @@ export const AxiomRow: React.FC<{
             </div>
           </div>
           <div className="flex items-center gap-1 ml-2">
-            {/* Explain Inference button */}
-            <button 
-              className={`p-1 rounded hover:bg-purple-100 text-gray-400 hover:text-purple-600 transition-all ${isFocused || showAxiomAnnotations ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-              title="Explain why this axiom holds"
-              aria-label="Explain inference"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <HelpCircle size={14} />
-            </button>
-
             {/* Axiom Annotations button */}
             <button 
               onClick={(e) => {
@@ -920,6 +910,17 @@ export const MultiSelectItem: React.FC<{
   themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple';
   isInferred?: boolean;
 }> = ({ item, onDelete, entityType, themeColor = 'blue', isInferred = false }) => {
+    const [showInfo, setShowInfo] = useState(false);
+    const [copied, setCopied] = useState(false);
+
+    const handleCopyIri = () => {
+        navigator.clipboard.writeText(item).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        }).catch(() => {
+            // fallback: select text
+        });
+    };
     // Check if this is an inverse property expression
     const inverseMatch = item.match(/^inverse\((.+)\)$/i);
     const isInverse = !!inverseMatch;
@@ -1021,57 +1022,65 @@ export const MultiSelectItem: React.FC<{
     const hoverBgColor = themeColor === 'green' ? 'hover:bg-green-50' : themeColor === 'orange' ? 'hover:bg-orange-50' : themeColor === 'purple' ? 'hover:bg-purple-50' : 'hover:bg-blue-50';
     
     return (
-        <div className={`group flex justify-between items-center p-1.5 border-b border-gray-100 last:border-0 ${isInferred ? 'bg-yellow-50' : 'bg-white'} ${hoverBgColor} transition-colors`}>
-            <div className="flex items-center">
-                {/* Entity type icon */}
-                {getIcon()}
-                {isInverse ? (
-                    <span className="text-sm font-bold text-gray-900">
-                        <span className="text-fuchsia-600 font-bold">inverse</span>
-                        <span className="text-gray-900">(</span>
-                        <span className="text-gray-900">'{displayName}'</span>
-                        <span className="text-gray-900">)</span>
-                    </span>
-                ) : isRestrictionExpression ? (
-                    <span className="text-sm font-bold">{formatRestrictionExpression(item)}</span>
-                ) : (
-                    <span className="text-sm font-bold text-gray-900">'{displayName}'</span>
-                )}
-                {isInferred && (
-                    <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
+        <div className={`group border-b border-gray-100 last:border-0 ${isInferred ? 'bg-yellow-50' : 'bg-white'} ${hoverBgColor} transition-colors`}>
+            <div className="flex justify-between items-center p-1.5">
+                <div className="flex items-center">
+                    {/* Entity type icon */}
+                    {getIcon()}
+                    {isInverse ? (
+                        <span className="text-sm font-bold text-gray-900">
+                            <span className="text-fuchsia-600 font-bold">inverse</span>
+                            <span className="text-gray-900">(</span>
+                            <span className="text-gray-900">'{displayName}'</span>
+                            <span className="text-gray-900">)</span>
+                        </span>
+                    ) : isRestrictionExpression ? (
+                        <span className="text-sm font-bold">{formatRestrictionExpression(item)}</span>
+                    ) : (
+                        <span className="text-sm font-bold text-gray-900">'{displayName}'</span>
+                    )}
+                    {isInferred && (
+                        <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
+                    )}
+                </div>
+                {!isInferred && (
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                        <button
+                            onClick={() => setShowInfo(v => !v)}
+                            className={`p-1 rounded transition-all ${showInfo ? 'text-blue-600 bg-blue-50 opacity-100' : 'text-gray-400 hover:bg-blue-100 hover:text-blue-600'}`}
+                            title="Show IRI info"
+                            aria-label="Axiom info"
+                        >
+                            <MessageCircle size={14} />
+                        </button>
+                        <button
+                            onClick={() => onDelete(item)}
+                            className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
+                            title={`Remove '${displayName}'`}
+                            aria-label={`Remove ${displayName}`}
+                        >
+                            <Trash2 size={14} />
+                        </button>
+                    </div>
                 )}
             </div>
-            {!isInferred && (
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                    <button 
-                    className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
-                    title="Help"
-                    aria-label="Help"
-                    >
-                        <HelpCircle size={14} />
-                    </button>
-                    <button 
-                    className="p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600"
-                    title="Axiom annotations"
-                    aria-label="Axiom annotations"
-                    >
-                        <MessageCircle size={14} />
-                    </button>
-                    <button 
-                    onClick={() => onDelete(item)} 
-                    className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
-                    title={`Remove ${displayName}`}
-                    aria-label={`Remove ${displayName}`}
-                    >
-                        <Trash2 size={14} />
-                    </button>
-                    <button 
-                    className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
-                    title="More options"
-                    aria-label="More options"
-                    >
-                        <span className="text-xs">○</span>
-                    </button>
+            {showInfo && !isInferred && (
+                <div className="mx-1.5 mb-1.5 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                    <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mb-1">IRI</div>
+                    <div className="flex items-start gap-2">
+                        <span className="font-mono text-gray-700 break-all flex-1 leading-relaxed select-all">{item}</span>
+                        <button
+                            onClick={handleCopyIri}
+                            className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                                copied
+                                    ? 'bg-green-100 border-green-300 text-green-700'
+                                    : 'bg-white border-blue-300 text-blue-600 hover:bg-blue-100'
+                            }`}
+                            title="Copy IRI to clipboard"
+                        >
+                            {copied ? '✓ Copied' : 'Copy'}
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
