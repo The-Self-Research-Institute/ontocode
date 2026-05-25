@@ -20,6 +20,7 @@ interface AnnotationPropertyEditorProps {
   onAddRangeClick?: () => void;
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
+  onNavigate?: (iri: string, type: string) => void;
 }
 
 interface UsageItem {
@@ -186,6 +187,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
   onAddRangeClick,
   isViewOnly = false,
   onViewOnlyAction,
+  onNavigate,
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
@@ -347,6 +349,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 themeColor="orange"
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                onNavigate={onNavigate}
               />
 
               {/* Ranges - Can be datatype (literal) or IRI */}
@@ -358,6 +361,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 themeColor="orange"
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                onNavigate={onNavigate}
               />
 
               {/* Superproperties */}
@@ -369,6 +373,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 themeColor="orange"
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                onNavigate={onNavigate}
               />
             </div>
           </div>

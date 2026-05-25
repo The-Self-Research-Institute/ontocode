@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2, HelpCircle, AtSign, Circle } from "lucide-react";
 import { useCollaboration } from "../../contexts/CollaborationContext";
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
@@ -909,17 +909,18 @@ export const MultiSelectItem: React.FC<{
   entityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual';
   themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple';
   isInferred?: boolean;
-}> = ({ item, onDelete, entityType, themeColor = 'blue', isInferred = false }) => {
-    const [showInfo, setShowInfo] = useState(false);
+  sectionName?: string;
+  onNavigate?: (iri: string, type: string) => void;
+}> = ({ item, onDelete, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate }) => {
+    const [showExplanation, setShowExplanation] = useState(false);
+    const [showAnnotations, setShowAnnotations] = useState(false);
     const [copied, setCopied] = useState(false);
 
     const handleCopyIri = () => {
         navigator.clipboard.writeText(item).then(() => {
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
-        }).catch(() => {
-            // fallback: select text
-        });
+        }).catch(() => {});
     };
     // Check if this is an inverse property expression
     const inverseMatch = item.match(/^inverse\((.+)\)$/i);
@@ -1045,14 +1046,35 @@ export const MultiSelectItem: React.FC<{
                 </div>
                 {!isInferred && (
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                        {/* ? — Explanation (Protégé-style justification) */}
                         <button
-                            onClick={() => setShowInfo(v => !v)}
-                            className={`p-1 rounded transition-all ${showInfo ? 'text-blue-600 bg-blue-50 opacity-100' : 'text-gray-400 hover:bg-blue-100 hover:text-blue-600'}`}
-                            title="Show IRI info"
-                            aria-label="Axiom info"
+                            onClick={(e) => { e.stopPropagation(); setShowExplanation(v => !v); if (showAnnotations) setShowAnnotations(false); }}
+                            className={`p-1 rounded transition-all ${showExplanation ? 'text-blue-600 bg-blue-50 opacity-100' : 'text-gray-400 hover:bg-blue-100 hover:text-blue-600'}`}
+                            title={`Explanation for '${displayName}'`}
+                            aria-label="Explanation"
                         >
-                            <MessageCircle size={14} />
+                            <HelpCircle size={14} />
                         </button>
+                        {/* @ — Axiom annotations */}
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setShowAnnotations(v => !v); if (showExplanation) setShowExplanation(false); }}
+                            className={`p-1 rounded transition-all ${showAnnotations ? 'text-amber-600 bg-amber-50 opacity-100' : 'text-gray-400 hover:bg-amber-100 hover:text-amber-600'}`}
+                            title={`Annotations for ${sectionName || 'axiom'}`}
+                            aria-label="Axiom annotations"
+                        >
+                            <AtSign size={14} />
+                        </button>
+                        {/* ○ — Navigate to entity in hierarchy */}
+                        {onNavigate && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onNavigate(propertyIri, detectedType || 'class'); }}
+                                className="p-1 rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-all"
+                                title={`Navigate to '${displayName}'`}
+                                aria-label={`Navigate to ${displayName}`}
+                            >
+                                <Circle size={14} />
+                            </button>
+                        )}
                         <button
                             onClick={() => onDelete(item)}
                             className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
@@ -1064,8 +1086,23 @@ export const MultiSelectItem: React.FC<{
                     </div>
                 )}
             </div>
-            {showInfo && !isInferred && (
+
+            {/* Explanation panel — like Protégé's "Explanation for …" dialog */}
+            {showExplanation && !isInferred && (
                 <div className="mx-1.5 mb-1.5 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                    <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mb-1.5">
+                        Explanation for '{displayName}'{sectionName ? ` — ${sectionName}` : ''}
+                    </div>
+                    {/* Axiom row — mirrors Protégé's "Explanation 1" block */}
+                    <div className="bg-white border border-blue-100 rounded px-2 py-1.5 mb-2 flex items-center justify-between gap-2">
+                        <span className="text-gray-700 text-xs leading-relaxed">
+                            <span className="font-semibold">'{displayName}'</span>
+                            {sectionName && <span className="text-blue-600 mx-1">{sectionName}</span>}
+                            <span className="font-mono">{displayName}</span>
+                        </span>
+                        <HelpCircle size={12} className="shrink-0 text-gray-400" />
+                    </div>
+                    <div className="text-[10px] text-gray-500 mb-2">Asserted axiom — this axiom is directly stated in the ontology.</div>
                     <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mb-1">IRI</div>
                     <div className="flex items-start gap-2">
                         <span className="font-mono text-gray-700 break-all flex-1 leading-relaxed select-all">{item}</span>
@@ -1076,11 +1113,36 @@ export const MultiSelectItem: React.FC<{
                                     ? 'bg-green-100 border-green-300 text-green-700'
                                     : 'bg-white border-blue-300 text-blue-600 hover:bg-blue-100'
                             }`}
-                            title="Copy IRI to clipboard"
                         >
-                            {copied ? '✓ Copied' : 'Copy'}
+                            {copied ? '✓ Copied' : 'Copy IRI'}
                         </button>
                     </div>
+                </div>
+            )}
+
+            {/* Annotations panel — like Protégé's "Annotations for DataPropertyRange" dialog */}
+            {showAnnotations && !isInferred && (
+                <div className="mx-1.5 mb-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs">
+                    <div className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-1.5">
+                        Annotations for {sectionName || 'Axiom'}
+                    </div>
+                    {/* The axiom expression this annotation applies to */}
+                    <div className="bg-white border border-amber-100 rounded px-2 py-1.5 mb-2 text-gray-700 text-xs">
+                        <span className="font-semibold">'{displayName}'</span>
+                        {sectionName && <span className="text-blue-600 mx-1">{sectionName}</span>}
+                        <span className="font-mono">{displayName}</span>
+                    </div>
+                    <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Annotations</span>
+                        <button
+                            className="flex items-center gap-0.5 text-amber-600 hover:text-amber-800 text-[10px]"
+                            title="Add axiom annotation (coming soon)"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <Plus size={11} /> Add
+                        </button>
+                    </div>
+                    <div className="text-[10px] text-gray-400 italic">No annotations on this axiom.</div>
                 </div>
             )}
         </div>
@@ -1097,7 +1159,8 @@ export const MultiSelectSection: React.FC<{
     itemEntityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual'; // For item icons
     isViewOnly?: boolean;
     onViewOnlyAction?: () => void;
-}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction }) => {
+    onNavigate?: (iri: string, type: string) => void;
+}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate }) => {
     const [isSelected, setIsSelected] = useState(false);
     
     // Clean minimal theme colors - Protégé-style
@@ -1171,10 +1234,10 @@ export const MultiSelectSection: React.FC<{
              {/* Content area */}
              <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm overflow-hidden">
                  {items && items.length > 0 ? (
-                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } onDelete(i); }} themeColor={themeColor} entityType={itemEntityType} />)
+                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } onDelete(i); }} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} />)
                  ) : null}
                  {inferredItems && inferredItems.length > 0 ? (
-                    inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} />)
+                    inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} sectionName={title} onNavigate={onNavigate} />)
                  ) : null}
                  {(!items || items.length === 0) && (!inferredItems || inferredItems.length === 0) && (
                     <div className="p-2 text-xs text-gray-400 italic">
