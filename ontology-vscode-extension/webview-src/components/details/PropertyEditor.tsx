@@ -149,6 +149,7 @@ const PropertyEditor: React.FC<{
   objectProperties?: Property[];
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
+  onNavigate?: (iri: string, type: string) => void;
 }> = ({
     item,
     onUpdate,
@@ -167,6 +168,7 @@ const PropertyEditor: React.FC<{
     viewMode = 'asserted',
     isViewOnly = false,
     onViewOnlyAction,
+    onNavigate,
 }) => {
     const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -514,6 +516,7 @@ const PropertyEditor: React.FC<{
                                 itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
+                                onNavigate={onNavigate}
                             />
 
                         <MultiSelectSection
@@ -526,6 +529,7 @@ const PropertyEditor: React.FC<{
                             itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
+                            onNavigate={onNavigate}
                         />
 
                         {isObjectProperty && (
@@ -538,6 +542,7 @@ const PropertyEditor: React.FC<{
                                 itemEntityType="objectProperty"
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
+                                onNavigate={onNavigate}
                             />
                         )}
 
@@ -551,6 +556,7 @@ const PropertyEditor: React.FC<{
                             itemEntityType="class"
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
+                            onNavigate={onNavigate}
                         />
                         )}
 
@@ -564,6 +570,7 @@ const PropertyEditor: React.FC<{
                             itemEntityType={isObjectProperty ? 'class' : 'datatype'}
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
+                            onNavigate={onNavigate}
                         />
                         )}
 
@@ -576,6 +583,7 @@ const PropertyEditor: React.FC<{
                             itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
+                            onNavigate={onNavigate}
                         />
 
                         {isObjectProperty && (
@@ -587,6 +595,7 @@ const PropertyEditor: React.FC<{
                                 themeColor="blue"
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
+                                onNavigate={onNavigate}
                             />
                         )}
                         </div>

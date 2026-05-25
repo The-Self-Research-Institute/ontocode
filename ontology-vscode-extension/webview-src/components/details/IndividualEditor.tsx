@@ -138,7 +138,8 @@ const IndividualEditor: React.FC<{
   dataPropertyHierarchy?: TreeNode[];
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
-}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy, dataPropertyHierarchy, isViewOnly = false, onViewOnlyAction }) => {
+  onNavigate?: (iri: string, type: string) => void;
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy, dataPropertyHierarchy, isViewOnly = false, onViewOnlyAction, onNavigate }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [isNegativeAssertion, setIsNegativeAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
@@ -725,6 +726,7 @@ const IndividualEditor: React.FC<{
                     itemEntityType="individual"
                     isViewOnly={isViewOnly}
                     onViewOnlyAction={onViewOnlyAction}
+                    onNavigate={onNavigate}
                 />
 
                 {/* Different Individual From */}
@@ -737,6 +739,7 @@ const IndividualEditor: React.FC<{
                     itemEntityType="individual"
                     isViewOnly={isViewOnly}
                     onViewOnlyAction={onViewOnlyAction}
+                    onNavigate={onNavigate}
                 />
               </div>
             </div>

@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerInterceptor;
@@ -40,6 +41,9 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         "/api/sparql/*/queries/**"  // manage saved SPARQL query templates
     );
 
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
     private final WorkspaceOwnershipService workspaceOwnershipService;
 
     public FreeViewOnlyInterceptor(WorkspaceOwnershipService workspaceOwnershipService) {
@@ -49,6 +53,14 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response,
                              Object handler) throws Exception {
+        // Desktop mode: all requests from localhost are fully trusted — no plan checks needed.
+        if (desktopMode) {
+            String remote = request.getRemoteAddr();
+            if ("127.0.0.1".equals(remote) || "0:0:0:0:0:0:0:1".equals(remote) || "::1".equals(remote)) {
+                return true;
+            }
+        }
+
         String method = request.getMethod();
 
         if ("GET".equals(method) || "HEAD".equals(method) || "OPTIONS".equals(method)) {
