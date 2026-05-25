@@ -18,6 +18,7 @@ public class PropertyDto {
     private List<String> inverseProperties;
     private List<String> disjointProperties;
     private List<String> equivalentProperties;
+    private List<String> propertyChains;
     private List<PropertyDto> children;  // NEW - for tree structure
 
     // Getters and Setters
@@ -131,6 +132,14 @@ public class PropertyDto {
 
     public void setEquivalentProperties(List<String> equivalentProperties) {
         this.equivalentProperties = equivalentProperties;
+    }
+
+    public List<String> getPropertyChains() {
+        return propertyChains;
+    }
+
+    public void setPropertyChains(List<String> propertyChains) {
+        this.propertyChains = propertyChains;
     }
 
     public List<PropertyDto> getChildren() {
