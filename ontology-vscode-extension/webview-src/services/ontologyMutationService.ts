@@ -699,6 +699,56 @@ export const ontologyMutationService = {
     },
 
   /**
+   * Single endpoint for add / edit / delete of any entity relation.
+   * For "edit": atomically deletes the old value and inserts the new value
+   * in one SPARQL UPDATE on the server — no race condition, no orphaned triples.
+   */
+  async editRelation(
+    projectId: string,
+    params: {
+      operation: 'add' | 'edit' | 'delete';
+      entityIri: string;
+      relationshipType: string;
+      targetIri?: string;
+      oldTargetIri?: string;
+      userId?: string;
+      username?: string;
+      restrictionData?: {
+        propertyIri: string;
+        restrictionType: string;
+        fillerIri: string;
+        cardinality?: number;
+        isDataRestriction: boolean;
+      };
+      oldRestrictionData?: {
+        propertyIri: string;
+        restrictionType: string;
+        fillerIri: string;
+        cardinality?: number;
+        isDataRestriction: boolean;
+      };
+      memberIris?: string[];
+      expressionType?: 'intersection' | 'union';
+    }
+  ): Promise<void> {
+    try {
+      await apiClient.put(`/api/ontology/${projectId}/relation`, params);
+    } catch (err: any) {
+      if (err?.status === 403 && err?.data?.requiresUpgrade) {
+        const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
+        (e as any).reason = 'requiresUpgrade';
+        throw e;
+      }
+      if (err?.status === 403 && err?.data?.viewOnly) {
+        const e = new Error('You have view-only access to this project. Contact the project owner to request edit permissions.');
+        (e as any).reason = 'viewOnly';
+        throw e;
+      }
+      throw err;
+    }
+  },
+
+  /**
    * Make siblings disjoint - adds pairwise disjointWith axioms
    */
   async makeSiblingsDisjoint(projectId: string, classIds: string[], userId?: string, username?: string): Promise<void> {
