@@ -12726,11 +12726,16 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       if (editing) {
-        // Replace: single API call — delete old + add new
-        await ontologyMutationService.replacePropertyRelation(
-          projectId, selectedItem.id, target, editing, expression,
-          user?.email || "anonymous", user?.username || "Anonymous",
-        );
+        // Replace: single server-side call — delete old + add new atomically
+        await ontologyMutationService.editRelation(projectId, {
+          operation: 'edit',
+          entityIri: selectedItem.id,
+          relationshipType: target,
+          oldTargetIri: editing,
+          targetIri: expression,
+          userId: user?.email || "anonymous",
+          username: user?.username || "Anonymous",
+        });
         const prop = selectedItem as Property;
         if (target === "domain") {
           updateItemInState({ ...selectedItem, domains: (prop.domains || []).map(d => d === editing ? expression : d) });
@@ -12765,11 +12770,16 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       if (editing) {
-        // Replace: single API call
-        await ontologyMutationService.replacePropertyRelation(
-          projectId, selectedItem.id, target, editing, expression,
-          user?.email || "anonymous", user?.username || "Anonymous",
-        );
+        // Replace: single server-side call — delete old + add new atomically
+        await ontologyMutationService.editRelation(projectId, {
+          operation: 'edit',
+          entityIri: selectedItem.id,
+          relationshipType: target,
+          oldTargetIri: editing,
+          targetIri: expression,
+          userId: user?.email || "anonymous",
+          username: user?.username || "Anonymous",
+        });
         const replace = (arr: string[] | undefined) => (arr || []).map(v => v === editing ? expression : v);
         if (target === "subProperty")  updateItemInState({ ...selectedItem, superProperties: replace(prop.superProperties) });
         if (target === "inverse")      updateItemInState({ ...selectedItem, inverseProperties: replace(prop.inverseProperties) });
@@ -12808,70 +12818,79 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Handler for the new ObjectPropertyExpressionDialog with inverse support
   const handleObjectPropertySelected = async (expression: string, isInverse: boolean) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
+    const target = selectorTarget as "subProperty" | "inverse" | "disjoint" | "equivalent";
+    const editing = selectorEditingItem;
 
     try {
-      // Build the final expression - if inverse, wrap with inverse()
       const finalExpression = isInverse ? `inverse(${expression})` : expression;
 
-      switch (selectorTarget) {
-        case "subProperty":
-          // Always use the raw IRI for subPropertyOf — inverse wrapping is not valid here
-          await ontologyMutationService.addSubPropertyOf(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            superProperties: [...((selectedItem as Property).superProperties || []), expression],
-          });
-          break;
-        case "inverse":
-          await ontologyMutationService.addInverseProperty(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression],
-          });
-          break;
-        case "disjoint":
-          await ontologyMutationService.addDisjointProperty(
-            projectId,
-            selectedItem.id,
-            finalExpression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            disjointProperties: [...((selectedItem as Property).disjointProperties || []), finalExpression],
-          });
-          break;
-        case "equivalent": {
-          const existing = (selectedItem as Property).equivalentProperties || [];
-          await ontologyMutationService.addEquivalentProperty(
-            projectId,
-            selectedItem.id,
-            finalExpression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({ ...selectedItem, equivalentProperties: [...existing, finalExpression] });
-          break;
+      if (editing) {
+        // Replace: single server-side call — delete old + add new atomically
+        await ontologyMutationService.editRelation(projectId, {
+          operation: 'edit',
+          entityIri: selectedItem.id,
+          relationshipType: target,
+          oldTargetIri: editing,
+          targetIri: finalExpression,
+          userId: user?.email || "anonymous",
+          username: user?.username || "Anonymous",
+        });
+        const replace = (arr: string[] | undefined) =>
+          (arr || []).map(v => v === editing ? finalExpression : v);
+        const prop = selectedItem as Property;
+        if (target === "subProperty")  updateItemInState({ ...selectedItem, superProperties: replace(prop.superProperties) });
+        if (target === "inverse")      updateItemInState({ ...selectedItem, inverseProperties: replace(prop.inverseProperties) });
+        if (target === "disjoint")     updateItemInState({ ...selectedItem, disjointProperties: replace(prop.disjointProperties) });
+        if (target === "equivalent")   updateItemInState({ ...selectedItem, equivalentProperties: replace(prop.equivalentProperties as string[] | undefined) });
+      } else {
+        switch (target) {
+          case "subProperty":
+            await ontologyMutationService.addSubPropertyOf(
+              projectId, selectedItem.id, expression,
+              user?.email || "anonymous", user?.username || "Anonymous",
+            );
+            updateItemInState({
+              ...selectedItem,
+              superProperties: [...((selectedItem as Property).superProperties || []), expression],
+            });
+            break;
+          case "inverse":
+            await ontologyMutationService.addInverseProperty(
+              projectId, selectedItem.id, expression,
+              user?.email || "anonymous", user?.username || "Anonymous",
+            );
+            updateItemInState({
+              ...selectedItem,
+              inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression],
+            });
+            break;
+          case "disjoint":
+            await ontologyMutationService.addDisjointProperty(
+              projectId, selectedItem.id, finalExpression,
+              user?.email || "anonymous", user?.username || "Anonymous",
+            );
+            updateItemInState({
+              ...selectedItem,
+              disjointProperties: [...((selectedItem as Property).disjointProperties || []), finalExpression],
+            });
+            break;
+          case "equivalent": {
+            const existing = (selectedItem as Property).equivalentProperties || [];
+            await ontologyMutationService.addEquivalentProperty(
+              projectId, selectedItem.id, finalExpression,
+              user?.email || "anonymous", user?.username || "Anonymous",
+            );
+            updateItemInState({ ...selectedItem, equivalentProperties: [...existing, finalExpression] });
+            break;
+          }
         }
       }
     } catch (error) {
-      console.error(`Failed to add ${selectorTarget}`, error);
+      console.error(`Failed to ${editing ? 'replace' : 'add'} ${target}`, error);
     } finally {
       setIsObjectPropertyExpressionDialogOpen(false);
       setSelectorTarget(null);
+      setSelectorEditingItem(null);
     }
   };
 
@@ -12904,7 +12923,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const editing = annotationEditingItem?.rel === 'domain' ? annotationEditingItem.iri : null;
     try {
       if (editing) {
-        await ontologyMutationService.replacePropertyRelation(projectId, selectedItem.id, 'domain', editing, domainIri, user?.email || "anonymous", user?.username || "Anonymous");
+        await ontologyMutationService.editRelation(projectId, { operation: 'edit', entityIri: selectedItem.id, relationshipType: 'domain', oldTargetIri: editing, targetIri: domainIri, userId: user?.email || "anonymous", username: user?.username || "Anonymous" });
         const extendedItem = selectedItem as AnnotationProperty & { domains?: string[] };
         updateItemInState({ ...selectedItem, domains: (extendedItem.domains || []).map(d => d === editing ? domainIri : d) });
       } else {
@@ -12925,7 +12944,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const editing = annotationEditingItem?.rel === 'range' ? annotationEditingItem.iri : null;
     try {
       if (editing) {
-        await ontologyMutationService.replacePropertyRelation(projectId, selectedItem.id, 'range', editing, rangeIri, user?.email || "anonymous", user?.username || "Anonymous");
+        await ontologyMutationService.editRelation(projectId, { operation: 'edit', entityIri: selectedItem.id, relationshipType: 'range', oldTargetIri: editing, targetIri: rangeIri, userId: user?.email || "anonymous", username: user?.username || "Anonymous" });
         const extendedItem = selectedItem as AnnotationProperty & { ranges?: string[] };
         updateItemInState({ ...selectedItem, ranges: (extendedItem.ranges || []).map(r => r === editing ? rangeIri : r) });
       } else {
@@ -12946,7 +12965,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const editing = annotationEditingItem?.rel === 'subProperty' ? annotationEditingItem.iri : null;
     try {
       if (editing) {
-        await ontologyMutationService.replacePropertyRelation(projectId, selectedItem.id, 'subProperty', editing, superpropertyIri, user?.email || "anonymous", user?.username || "Anonymous");
+        await ontologyMutationService.editRelation(projectId, { operation: 'edit', entityIri: selectedItem.id, relationshipType: 'subProperty', oldTargetIri: editing, targetIri: superpropertyIri, userId: user?.email || "anonymous", username: user?.username || "Anonymous" });
         const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
         updateItemInState({ ...selectedItem, superProperties: (extendedItem.superProperties || []).map(p => p === editing ? superpropertyIri : p) });
       } else {
