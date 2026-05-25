@@ -460,6 +460,7 @@ public class CollaborativeEditService {
     private GraphUpdateMessage convertEditToGraphUpdate(EditOperation operation) {
         String nodeId = operation.getNodeId();
         Map<String, Object> metadata = operation.getMetadata();
+        if (metadata == null) metadata = java.util.Collections.emptyMap();
 
         switch (operation.getType()) {
             case CLASS_ADDED:
