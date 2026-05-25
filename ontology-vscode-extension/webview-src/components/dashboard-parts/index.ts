@@ -1,13 +1,10 @@
-export { LoadingDialog, LoadingChoiceDialog } from "./LoadingDialogs";
+export { LoadingDialog } from "./LoadingDialogs";
 export { ReasonerExplanationModal } from "./ReasonerExplanationModal";
 export { ReasonerSettingsDialog } from "./ReasonerSettingsDialog";
 export { PluginPlaceholder } from "./PluginPlaceholder";
 export type { PluginPlaceholderProps } from "./PluginPlaceholder";
-export { TopMenuBar } from "./TopMenuBar";
-export { OpenFileDialog } from "./OpenFileDialog";
-export { DashboardConfirmDialog as ConfirmDialog, DashboardDuplicateFileDialog as DuplicateFileDialog } from "./DashboardDialogs";
+export { ConfirmDialog, DuplicateFileDialog } from "./DashboardDialogs";
 export { DetailsPanel } from "./DetailsPanel";
-export { default as CodeViewPanel } from "./CodeViewPanel";
 export { MainContentRouter } from "./MainContentRouter";
 export {
   type TopLevelClass,
@@ -19,6 +16,12 @@ export {
   normalizeReasonerType,
   buildHierarchyTree,
   extractResponseData,
+  normalizePrefixMappings,
+  normalizeOntologyAnnotation,
+  normalizeOntologyAnnotations,
+  mapAnnotationProperty,
+  STANDARD_ANNOTATION_PROPERTIES,
+  mergeAnnotationProperties,
   combineReasonerResults,
   showNotification,
 } from "./dashboardUtils";
