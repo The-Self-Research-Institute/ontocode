@@ -30,6 +30,7 @@ interface UsageItem {
   predicate?: string;
   object?: string;
   context?: string;
+  value?: string;
 }
 
 const PropertyUsageTab: React.FC<{ 

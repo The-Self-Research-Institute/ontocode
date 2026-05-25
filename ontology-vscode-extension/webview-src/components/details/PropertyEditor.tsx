@@ -147,6 +147,7 @@ const PropertyEditor: React.FC<{
   onAddDisjointClick?: () => void;
   onAddEquivalentClick?: () => void;
   objectProperties?: Property[];
+  viewMode?: 'asserted' | 'inferred';
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
   onNavigate?: (iri: string, type: string) => void;
@@ -286,7 +287,7 @@ const PropertyEditor: React.FC<{
                     break;
                 case 'equivalent': {
                     const currentEq = item.equivalentProperties || [];
-                    const updatedEq = [...currentEq, target];
+                    const updatedEq = [...currentEq, target] as typeof currentEq;
                     onUpdate({ ...item, equivalentProperties: updatedEq });
                     await ontologyMutationService.addEquivalentProperty(projectId, item.id, target);
                     break;
@@ -321,7 +322,7 @@ const PropertyEditor: React.FC<{
                     onUpdate({ ...item, disjointProperties: item.disjointProperties?.filter(p => p !== target) });
                     break;
                 case 'equivalent': {
-                    const remaining = item.equivalentProperties?.filter(p => p !== target) || [];
+                    const remaining = (item.equivalentProperties?.filter(p => p !== target) || []) as typeof item.equivalentProperties;
                     onUpdate({ ...item, equivalentProperties: remaining });
                     await ontologyMutationService.deleteEquivalentProperty(projectId, item.id, target);
                     break;
@@ -508,7 +509,7 @@ const PropertyEditor: React.FC<{
 
                             <MultiSelectSection
                                 title="Equivalent To"
-                                items={item.equivalentProperties}
+                                items={(item.equivalentProperties as string[] | undefined)}
                                 inferredItems={inferredDetails?.inferredEquivalentPropertiesAxioms || []}
                                 onAddClick={onAddEquivalentClick}
                                 onDelete={prop => handleDeleteRelation('equivalent', prop)}
@@ -517,6 +518,8 @@ const PropertyEditor: React.FC<{
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
                                 onNavigate={onNavigate}
+                                projectId={projectId}
+                                parentEntityIri={item.id}
                             />
 
                         <MultiSelectSection
@@ -543,6 +546,8 @@ const PropertyEditor: React.FC<{
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
                                 onNavigate={onNavigate}
+                                projectId={projectId}
+                                parentEntityIri={item.id}
                             />
                         )}
 
@@ -596,6 +601,8 @@ const PropertyEditor: React.FC<{
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
                                 onNavigate={onNavigate}
+                                projectId={projectId}
+                                parentEntityIri={item.id}
                             />
                         )}
                         </div>
@@ -628,7 +635,7 @@ const PropertyEditor: React.FC<{
                 onClose={() => setIsIRIEditorOpen(false)}
                 currentIRI={item.id}
                 currentLabel={item.label}
-                entityType={isObjectProperty ? 'ObjectProperty' : isDataProperty ? 'DataProperty' : 'Property'}
+                entityType={isObjectProperty ? 'ObjectProperty' : isDataProperty ? 'DataProperty' : 'AnnotationProperty'}
                 onSave={handleSaveIRI}
             />
         </div>
