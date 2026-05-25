@@ -906,15 +906,18 @@ export const Panel = ({
 export const MultiSelectItem: React.FC<{
   item: string;
   onDelete: (item: string) => void;
+  onEdit?: (item: string) => void;
   entityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual';
   themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple';
   isInferred?: boolean;
   sectionName?: string;
   onNavigate?: (iri: string, type: string) => void;
-}> = ({ item, onDelete, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate }) => {
+}> = ({ item, onDelete, onEdit, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate }) => {
     const [showExplanation, setShowExplanation] = useState(false);
     const [showAnnotations, setShowAnnotations] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [isHovered, setIsHovered] = useState(false);
+    const [showAnnotationComingSoon, setShowAnnotationComingSoon] = useState(false);
 
     const handleCopyIri = () => {
         navigator.clipboard.writeText(item).then(() => {
@@ -1005,40 +1008,48 @@ export const MultiSelectItem: React.FC<{
         while ((match = regex.exec(expr)) !== null) {
             // Add text before the keyword (BLACK)
             if (match.index > lastIndex) {
-                parts.push(<span key={`text-${keyIndex++}`} className="text-gray-900">{expr.slice(lastIndex, match.index)}</span>);
+                parts.push(<span key={`text-${keyIndex++}`}>{expr.slice(lastIndex, match.index)}</span>);
             }
             // Add the colored keyword (MAGENTA/PINK)
             parts.push(<span key={`kw-${keyIndex++}`} className="text-fuchsia-600 font-bold">{match[0]}</span>);
             lastIndex = regex.lastIndex;
         }
-        // Add remaining text (BLACK)
+        // Add remaining text
         if (lastIndex < expr.length) {
-            parts.push(<span key={`text-${keyIndex++}`} className="text-gray-900">{expr.slice(lastIndex)}</span>);
+            parts.push(<span key={`text-${keyIndex++}`}>{expr.slice(lastIndex)}</span>);
         }
         
         return parts.length > 0 ? parts : expr;
     };
     
-    // Hover background color based on theme
-    const hoverBgColor = themeColor === 'green' ? 'hover:bg-green-50' : themeColor === 'orange' ? 'hover:bg-orange-50' : themeColor === 'purple' ? 'hover:bg-purple-50' : 'hover:bg-blue-50';
-    
     return (
-        <div className={`group border-b border-gray-100 last:border-0 ${isInferred ? 'bg-yellow-50' : 'bg-white'} ${hoverBgColor} transition-colors`}>
+        <div
+            className="group border-b last:border-0 transition-colors"
+            style={{
+                borderColor: 'var(--border, #f3f4f6)',
+                backgroundColor: isHovered
+                    ? 'var(--surface-2)'
+                    : isInferred ? 'rgba(254, 252, 232, 0.5)' : 'var(--surface-1)',
+                color: 'var(--color-text)',
+            }}
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+        >
             <div className="flex justify-between items-center p-1.5">
                 <div className="flex items-center">
                     {/* Entity type icon */}
                     {getIcon()}
                     {isInverse ? (
-                        <span className="text-sm font-bold text-gray-900">
+                        <span className="text-sm font-bold">
                             <span className="text-fuchsia-600 font-bold">inverse</span>
-                            <span className="text-gray-900">(</span>
-                            <span className="text-gray-900">'{displayName}'</span>
-                            <span className="text-gray-900">)</span>
+                            <span>(</span>
+                            <span>'{displayName}'</span>
+                            <span>)</span>
                         </span>
                     ) : isRestrictionExpression ? (
                         <span className="text-sm font-bold">{formatRestrictionExpression(item)}</span>
                     ) : (
-                        <span className="text-sm font-bold text-gray-900">'{displayName}'</span>
+                        <span className="text-sm font-bold">'{displayName}'</span>
                     )}
                     {isInferred && (
                         <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
@@ -1064,6 +1075,17 @@ export const MultiSelectItem: React.FC<{
                         >
                             <AtSign size={14} />
                         </button>
+                        {/* ✎ — Edit item */}
+                        {onEdit && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onEdit(item); }}
+                                className="p-1 rounded text-gray-400 hover:bg-blue-100 hover:text-blue-600 transition-all"
+                                title={`Edit '${displayName}'`}
+                                aria-label={`Edit ${displayName}`}
+                            >
+                                <Edit2 size={14} />
+                            </button>
+                        )}
                         {/* ○ — Navigate to entity in hierarchy */}
                         {onNavigate && (
                             <button
@@ -1136,12 +1158,15 @@ export const MultiSelectItem: React.FC<{
                         <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Annotations</span>
                         <button
                             className="flex items-center gap-0.5 text-amber-600 hover:text-amber-800 text-[10px]"
-                            title="Add axiom annotation (coming soon)"
-                            onClick={(e) => e.stopPropagation()}
+                            title="Add axiom annotation"
+                            onClick={(e) => { e.stopPropagation(); setShowAnnotationComingSoon(true); setTimeout(() => setShowAnnotationComingSoon(false), 2500); }}
                         >
                             <Plus size={11} /> Add
                         </button>
                     </div>
+                    {showAnnotationComingSoon && (
+                        <div className="text-[10px] text-amber-600 italic mb-1">Axiom annotation support coming soon</div>
+                    )}
                     <div className="text-[10px] text-gray-400 italic">No annotations on this axiom.</div>
                 </div>
             )}
@@ -1160,7 +1185,8 @@ export const MultiSelectSection: React.FC<{
     isViewOnly?: boolean;
     onViewOnlyAction?: () => void;
     onNavigate?: (iri: string, type: string) => void;
-}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate }) => {
+    onEdit?: (item: string) => void;
+}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate, onEdit }) => {
     const [isSelected, setIsSelected] = useState(false);
     
     // Clean minimal theme colors - Protégé-style
@@ -1203,7 +1229,8 @@ export const MultiSelectSection: React.FC<{
     };
     
     const theme = themes[themeColor];
-    
+    const itemEditHandler = onEdit || (onAddClick ? (_item: string) => onAddClick() : undefined);
+
     const handleHeaderClick = () => {
         setIsSelected(true);
         if (isViewOnly) { onViewOnlyAction?.(); return; }
@@ -1232,9 +1259,9 @@ export const MultiSelectSection: React.FC<{
                  )}
              </button>
              {/* Content area */}
-             <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm overflow-hidden">
+             <div className="border border-t-0 rounded-b-sm overflow-hidden" style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border, #e5e7eb)' }}>
                  {items && items.length > 0 ? (
-                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } onDelete(i); }} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} />)
+                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } onDelete(i); }} onEdit={isViewOnly ? undefined : itemEditHandler} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} />)
                  ) : null}
                  {inferredItems && inferredItems.length > 0 ? (
                     inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} sectionName={title} onNavigate={onNavigate} />)
