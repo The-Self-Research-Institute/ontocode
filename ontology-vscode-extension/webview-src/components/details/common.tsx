@@ -1,8 +1,12 @@
-import React, { useState, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2, HelpCircle, AtSign, Circle } from "lucide-react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2, HelpCircle, AtSign, Circle, Loader } from "lucide-react";
 import { useCollaboration } from "../../contexts/CollaborationContext";
+import apiClient from "../../services/apiClient";
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
+
+type JustificationAxiom = { type: string; manchester: string; entities: { iri: string; label: string; type: string }[]; isAsserted: boolean };
+type Justification = { index: number; axioms: JustificationAxiom[]; isAsserted: boolean };
 
 // Protégé-style: Text is BLACK, only keywords are colored (magenta/pink)
 // Links are shown as underlined text for clickable entities
@@ -912,12 +916,52 @@ export const MultiSelectItem: React.FC<{
   isInferred?: boolean;
   sectionName?: string;
   onNavigate?: (iri: string, type: string) => void;
-}> = ({ item, onDelete, onEdit, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate }) => {
+  projectId?: string;
+  parentEntityIri?: string;
+}> = ({ item, onDelete, onEdit, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate, projectId, parentEntityIri }) => {
     const [showExplanation, setShowExplanation] = useState(false);
     const [showAnnotations, setShowAnnotations] = useState(false);
     const [copied, setCopied] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
-    const [showAnnotationComingSoon, setShowAnnotationComingSoon] = useState(false);
+    const [justType, setJustType] = useState<'regular' | 'laconic'>('laconic');
+    const [limitJustifications, setLimitJustifications] = useState(true);
+    const [justLimit, setJustLimit] = useState(3);
+    const [showLaconicExpl, setShowLaconicExpl] = useState(false);
+    const [explanationData, setExplanationData] = useState<Justification[] | null>(null);
+    const [explanationLoading, setExplanationLoading] = useState(false);
+    const [explanationError, setExplanationError] = useState<string | null>(null);
+    const [showAddAnnotationForm, setShowAddAnnotationForm] = useState(false);
+    const [newAnnotProp, setNewAnnotProp] = useState('http://www.w3.org/2000/01/rdf-schema#comment');
+    const [newAnnotValue, setNewAnnotValue] = useState('');
+    const [localAnnotations, setLocalAnnotations] = useState<{ property: string; value: string }[]>([]);
+
+    const fetchExplanation = useCallback(async (type: 'regular' | 'laconic', limit: number) => {
+        if (!projectId || !parentEntityIri) return;
+        setExplanationLoading(true);
+        setExplanationError(null);
+        try {
+            const res = await apiClient.post<any>(`/api/ontology/${projectId}/explain-axiom`, {
+                entityIri: parentEntityIri,
+                relatedIri: item,
+                sectionName,
+                justificationType: type,
+                maxJustifications: limit,
+            });
+            const data = res?.data ?? res;
+            setExplanationData(data?.justifications ?? []);
+        } catch (e: any) {
+            setExplanationError(e?.message ?? 'Failed to load explanation');
+        } finally {
+            setExplanationLoading(false);
+        }
+    }, [projectId, parentEntityIri, item, sectionName]);
+
+    useEffect(() => {
+        if (showExplanation) {
+            setExplanationData(null);
+            fetchExplanation(justType, limitJustifications ? justLimit : 99);
+        }
+    }, [showExplanation]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleCopyIri = () => {
         navigator.clipboard.writeText(item).then(() => {
@@ -1109,35 +1153,100 @@ export const MultiSelectItem: React.FC<{
                 )}
             </div>
 
-            {/* Explanation panel — like Protégé's "Explanation for …" dialog */}
+            {/* Explanation panel — Protégé-style justification dialog */}
             {showExplanation && !isInferred && (
-                <div className="mx-1.5 mb-1.5 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
-                    <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mb-1.5">
-                        Explanation for '{displayName}'{sectionName ? ` — ${sectionName}` : ''}
-                    </div>
-                    {/* Axiom row — mirrors Protégé's "Explanation 1" block */}
-                    <div className="bg-white border border-blue-100 rounded px-2 py-1.5 mb-2 flex items-center justify-between gap-2">
-                        <span className="text-gray-700 text-xs leading-relaxed">
-                            <span className="font-semibold">'{displayName}'</span>
-                            {sectionName && <span className="text-blue-600 mx-1">{sectionName}</span>}
-                            <span className="font-mono">{displayName}</span>
+                <div className="mx-1.5 mb-1.5 bg-blue-50 border border-blue-200 rounded text-xs" onClick={(e) => e.stopPropagation()}>
+                    {/* Title bar */}
+                    <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-blue-200 bg-blue-100">
+                        <HelpCircle size={11} className="text-blue-600 shrink-0" />
+                        <span className="text-[10px] font-semibold text-blue-800">
+                            Explanation for '{displayName}'{sectionName ? ` ${sectionName}` : ''}
                         </span>
-                        <HelpCircle size={12} className="shrink-0 text-gray-400" />
                     </div>
-                    <div className="text-[10px] text-gray-500 mb-2">Asserted axiom — this axiom is directly stated in the ontology.</div>
-                    <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mb-1">IRI</div>
-                    <div className="flex items-start gap-2">
-                        <span className="font-mono text-gray-700 break-all flex-1 leading-relaxed select-all">{item}</span>
-                        <button
-                            onClick={handleCopyIri}
-                            className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                                copied
-                                    ? 'bg-green-100 border-green-300 text-green-700'
-                                    : 'bg-white border-blue-300 text-blue-600 hover:bg-blue-100'
-                            }`}
-                        >
-                            {copied ? '✓ Copied' : 'Copy IRI'}
-                        </button>
+                    {/* Filter row — matches Protégé's radio layout */}
+                    <div className="px-2 pt-2 pb-1 grid grid-cols-2 gap-x-4 gap-y-0.5">
+                        <label className="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name={`just-${item}`} checked={justType === 'regular'}
+                                onChange={() => { setJustType('regular'); fetchExplanation('regular', limitJustifications ? justLimit : 99); }}
+                                className="w-2.5 h-2.5 accent-blue-600" />
+                            <span className="text-[10px] text-gray-700">Show regular justifications</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name={`just-limit-${item}`} checked={!limitJustifications}
+                                onChange={() => { setLimitJustifications(false); fetchExplanation(justType, 99); }}
+                                className="w-2.5 h-2.5 accent-blue-600" />
+                            <span className="text-[10px] text-gray-700">All justifications</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name={`just-${item}`} checked={justType === 'laconic'}
+                                onChange={() => { setJustType('laconic'); fetchExplanation('laconic', limitJustifications ? justLimit : 99); }}
+                                className="w-2.5 h-2.5 accent-blue-600" />
+                            <span className="text-[10px] text-gray-700">Show laconic justifications</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name={`just-limit-${item}`} checked={limitJustifications}
+                                onChange={() => { setLimitJustifications(true); fetchExplanation(justType, justLimit); }}
+                                className="w-2.5 h-2.5 accent-blue-600" />
+                            <span className="text-[10px] text-gray-700">Limit justifications to</span>
+                            <input
+                                type="number" min={1} max={99} value={justLimit}
+                                onChange={(e) => { const v = Math.max(1, parseInt(e.target.value) || 1); setJustLimit(v); setLimitJustifications(true); fetchExplanation(justType, v); }}
+                                onClick={() => setLimitJustifications(true)}
+                                className="w-8 px-1 py-0 text-[10px] border border-gray-300 rounded bg-white text-gray-700"
+                            />
+                        </label>
+                    </div>
+                    {/* Justification blocks */}
+                    <div className="px-2 pb-2">
+                        {explanationLoading && (
+                            <div className="flex items-center gap-1.5 py-2 text-[10px] text-blue-500">
+                                <Loader size={11} className="animate-spin" /> Loading justifications…
+                            </div>
+                        )}
+                        {explanationError && (
+                            <div className="text-[10px] text-red-500 py-1">{explanationError}</div>
+                        )}
+                        {!explanationLoading && !explanationError && explanationData !== null && (
+                            explanationData.length === 0 ? (
+                                <div className="text-[10px] text-gray-400 italic py-1">No justifications found (axiom may be inferred by the reasoner).</div>
+                            ) : (
+                                explanationData.map((just) => (
+                                    <div key={just.index} className="mb-2">
+                                        <div className="flex items-center justify-between mb-0.5">
+                                            <span className="text-[10px] font-semibold text-gray-700">Explanation {just.index}</span>
+                                            <label className="flex items-center gap-1 cursor-pointer">
+                                                <input type="checkbox" checked={showLaconicExpl} onChange={(e) => setShowLaconicExpl(e.target.checked)} className="w-2.5 h-2.5 accent-blue-600" />
+                                                <span className="text-[10px] text-gray-500">Display laconic explanation</span>
+                                            </label>
+                                        </div>
+                                        <div className="bg-white border border-blue-100 rounded overflow-hidden">
+                                            <div className="px-2 py-1 text-[10px] text-gray-500 border-b border-blue-50">
+                                                Explanation for: '{displayName}'{sectionName ? ` ${sectionName}` : ''}
+                                            </div>
+                                            {just.axioms.map((ax, ai) => (
+                                                <div key={ai} className="flex items-center justify-between px-2 py-1.5 bg-green-50">
+                                                    <span className="text-xs text-gray-900 font-semibold">{ax.manchester}</span>
+                                                    <HelpCircle size={12} className="shrink-0 text-gray-400 ml-2" />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))
+                            )
+                        )}
+                        {!explanationLoading && explanationData === null && !projectId && (
+                            <div className="text-[10px] text-gray-400 italic py-1">No project context available.</div>
+                        )}
+                        {/* IRI row */}
+                        <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mt-2 mb-1">IRI</div>
+                        <div className="flex items-start gap-2">
+                            <span className="font-mono text-gray-700 break-all flex-1 leading-relaxed select-all text-[10px]">{item}</span>
+                            <button onClick={handleCopyIri}
+                                className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                                    copied ? 'bg-green-100 border-green-300 text-green-700' : 'bg-white border-blue-300 text-blue-600 hover:bg-blue-100'
+                                }`}
+                            >{copied ? '✓ Copied' : 'Copy IRI'}</button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -1156,18 +1265,79 @@ export const MultiSelectItem: React.FC<{
                     </div>
                     <div className="flex items-center justify-between mb-1">
                         <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Annotations</span>
-                        <button
-                            className="flex items-center gap-0.5 text-amber-600 hover:text-amber-800 text-[10px]"
-                            title="Add axiom annotation"
-                            onClick={(e) => { e.stopPropagation(); setShowAnnotationComingSoon(true); setTimeout(() => setShowAnnotationComingSoon(false), 2500); }}
-                        >
-                            <Plus size={11} /> Add
-                        </button>
+                        {!showAddAnnotationForm && (
+                            <button
+                                className="flex items-center gap-0.5 text-amber-600 hover:text-amber-800 text-[10px]"
+                                title="Add axiom annotation"
+                                onClick={(e) => { e.stopPropagation(); setShowAddAnnotationForm(true); setNewAnnotValue(''); }}
+                            >
+                                <Plus size={11} /> Add
+                            </button>
+                        )}
                     </div>
-                    {showAnnotationComingSoon && (
-                        <div className="text-[10px] text-amber-600 italic mb-1">Axiom annotation support coming soon</div>
+                    {/* Inline add form */}
+                    {showAddAnnotationForm && (
+                        <div className="mb-2 p-2 bg-white border border-amber-300 rounded" onClick={(e) => e.stopPropagation()}>
+                            <select
+                                value={newAnnotProp}
+                                onChange={(e) => setNewAnnotProp(e.target.value)}
+                                className="w-full mb-1 px-2 py-1 text-[10px] border border-amber-200 rounded bg-white text-gray-700"
+                            >
+                                <option value="http://www.w3.org/2000/01/rdf-schema#comment">rdfs:comment</option>
+                                <option value="http://www.w3.org/2000/01/rdf-schema#label">rdfs:label</option>
+                                <option value="http://www.w3.org/2000/01/rdf-schema#seeAlso">rdfs:seeAlso</option>
+                                <option value="http://www.w3.org/2000/01/rdf-schema#isDefinedBy">rdfs:isDefinedBy</option>
+                                <option value="http://www.w3.org/2002/07/owl#deprecated">owl:deprecated</option>
+                            </select>
+                            <textarea
+                                autoFocus
+                                value={newAnnotValue}
+                                onChange={(e) => setNewAnnotValue(e.target.value)}
+                                placeholder="Annotation value..."
+                                rows={2}
+                                className="w-full mb-1 px-2 py-1 text-[10px] border border-amber-200 rounded bg-white text-gray-700 resize-none"
+                            />
+                            <div className="flex justify-end gap-1">
+                                <button
+                                    className="px-2 py-0.5 text-[10px] bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
+                                    onClick={(e) => { e.stopPropagation(); setShowAddAnnotationForm(false); setNewAnnotValue(''); }}
+                                >Cancel</button>
+                                <button
+                                    disabled={!newAnnotValue.trim()}
+                                    className="px-2 py-0.5 text-[10px] bg-amber-500 text-white rounded hover:bg-amber-600 disabled:opacity-40"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!newAnnotValue.trim()) return;
+                                        setLocalAnnotations(prev => [...prev, { property: newAnnotProp, value: newAnnotValue.trim() }]);
+                                        setShowAddAnnotationForm(false);
+                                        setNewAnnotValue('');
+                                    }}
+                                >Save</button>
+                            </div>
+                        </div>
                     )}
-                    <div className="text-[10px] text-gray-400 italic">No annotations on this axiom.</div>
+                    {/* Stored axiom annotations */}
+                    {localAnnotations.length > 0 ? (
+                        <div className="space-y-1 mb-1">
+                            {localAnnotations.map((ann, idx) => (
+                                <div key={idx} className="flex items-start justify-between bg-white border border-amber-100 rounded px-2 py-1">
+                                    <div>
+                                        <div className="text-[10px] font-medium text-amber-700">{ann.property.split('#').pop()}</div>
+                                        <div className="text-[10px] text-gray-700">{ann.value}</div>
+                                    </div>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setLocalAnnotations(prev => prev.filter((_, i) => i !== idx)); }}
+                                        className="ml-1 p-0.5 text-gray-400 hover:text-red-500"
+                                        title="Remove annotation"
+                                    >
+                                        <Trash2 size={10} />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        !showAddAnnotationForm && <div className="text-[10px] text-gray-400 italic">No annotations on this axiom.</div>
+                    )}
                 </div>
             )}
         </div>
@@ -1186,7 +1356,9 @@ export const MultiSelectSection: React.FC<{
     onViewOnlyAction?: () => void;
     onNavigate?: (iri: string, type: string) => void;
     onEdit?: (item: string) => void;
-}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate, onEdit }) => {
+    projectId?: string;
+    parentEntityIri?: string;
+}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate, onEdit, projectId, parentEntityIri }) => {
     const [isSelected, setIsSelected] = useState(false);
     
     // Clean minimal theme colors - Protégé-style
@@ -1229,7 +1401,7 @@ export const MultiSelectSection: React.FC<{
     };
     
     const theme = themes[themeColor];
-    const itemEditHandler = onEdit || (onAddClick ? (_item: string) => onAddClick() : undefined);
+    const itemEditHandler = onEdit || (onAddClick ? (editItem: string) => { onDelete(editItem); onAddClick(); } : undefined);
 
     const handleHeaderClick = () => {
         setIsSelected(true);
@@ -1261,10 +1433,10 @@ export const MultiSelectSection: React.FC<{
              {/* Content area */}
              <div className="border border-t-0 rounded-b-sm overflow-hidden" style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border, #e5e7eb)' }}>
                  {items && items.length > 0 ? (
-                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } onDelete(i); }} onEdit={isViewOnly ? undefined : itemEditHandler} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} />)
+                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } onDelete(i); }} onEdit={isViewOnly ? undefined : itemEditHandler} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} />)
                  ) : null}
                  {inferredItems && inferredItems.length > 0 ? (
-                    inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} sectionName={title} onNavigate={onNavigate} />)
+                    inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} />)
                  ) : null}
                  {(!items || items.length === 0) && (!inferredItems || inferredItems.length === 0) && (
                     <div className="p-2 text-xs text-gray-400 italic">
