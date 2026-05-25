@@ -606,4 +606,203 @@ public class DLQueryController {
             this.userEmail = userEmail;
         }
     }
+
+    // ─── Axiom Explanation ────────────────────────────────────────────────────
+
+    /**
+     * Return the justification set(s) for an asserted axiom.
+     * POST /api/ontology/{projectId}/explain-axiom
+     *
+     * Body: { entityIri, relatedIri, sectionName, justificationType, maxJustifications }
+     */
+    @PostMapping("/{projectId}/explain-axiom")
+    public ResponseEntity<Map<String, Object>> explainAxiom(
+            @PathVariable String projectId,
+            @RequestBody ExplainAxiomRequest request
+    ) {
+        long t0 = System.currentTimeMillis();
+        try {
+            log.info("explain-axiom project={} entity={} related={} section={}",
+                    projectId, request.getEntityIri(), request.getRelatedIri(), request.getSectionName());
+
+            OWLOntology ontology = loadOntology(projectId);
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+
+            String sec = request.getSectionName() != null
+                    ? request.getSectionName().toLowerCase() : "";
+            int maxJ = request.getMaxJustifications() > 0 ? request.getMaxJustifications() : 99;
+
+            List<Map<String, Object>> rawAxioms = findMatchingAxioms(
+                    ontology, df, request.getEntityIri(), request.getRelatedIri(), sec);
+
+            // Each matched axiom becomes its own justification set (asserted → justifies itself)
+            List<Map<String, Object>> justifications = new ArrayList<>();
+            for (int i = 0; i < Math.min(rawAxioms.size(), maxJ); i++) {
+                Map<String, Object> j = new LinkedHashMap<>();
+                j.put("index", i + 1);
+                j.put("axioms", List.of(rawAxioms.get(i)));
+                j.put("isAsserted", true);
+                justifications.add(j);
+            }
+
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("success", true);
+            resp.put("justifications", justifications);
+            resp.put("totalFound", rawAxioms.size());
+            resp.put("executionTimeMs", System.currentTimeMillis() - t0);
+            return ResponseEntity.ok(resp);
+
+        } catch (Exception e) {
+            log.error("explain-axiom failed for project {}: {}", projectId, e.getMessage(), e);
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage() != null ? e.getMessage() : "Failed to explain axiom"
+            ));
+        }
+    }
+
+    private List<Map<String, Object>> findMatchingAxioms(
+            OWLOntology ontology, OWLDataFactory df,
+            String entityIri, String relatedIri, String sec) {
+
+        List<Map<String, Object>> results = new ArrayList<>();
+        if (entityIri == null || relatedIri == null) return results;
+
+        IRI eIri = IRI.create(entityIri);
+
+        try {
+            if (sec.contains("range")) {
+                df.getOWLDataProperty(eIri).accept(new org.semanticweb.owlapi.model.OWLPropertyExpressionVisitor() {
+                    @Override public void visit(OWLDataProperty p) {
+                        ontology.getDataPropertyRangeAxioms(p).stream()
+                                .filter(ax -> axiomInvolves(ax, relatedIri))
+                                .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                    }
+                    @Override public void visit(OWLObjectProperty p) {}
+                    @Override public void visit(OWLObjectInverseOf p) {}
+                });
+                ontology.getObjectPropertyRangeAxioms(df.getOWLObjectProperty(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+
+            } else if (sec.contains("domain")) {
+                ontology.getDataPropertyDomainAxioms(df.getOWLDataProperty(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                ontology.getObjectPropertyDomainAxioms(df.getOWLObjectProperty(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+
+            } else if (sec.contains("subclass") || sec.contains("sub class")) {
+                ontology.getSubClassAxiomsForSubClass(df.getOWLClass(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+
+            } else if (sec.contains("equivalent")) {
+                ontology.getEquivalentClassesAxioms(df.getOWLClass(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                ontology.getEquivalentObjectPropertiesAxioms(df.getOWLObjectProperty(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                ontology.getEquivalentDataPropertiesAxioms(df.getOWLDataProperty(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+
+            } else if (sec.contains("disjoint")) {
+                ontology.getDisjointClassesAxioms(df.getOWLClass(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                ontology.getDisjointObjectPropertiesAxioms(df.getOWLObjectProperty(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+
+            } else if (sec.contains("inverse")) {
+                ontology.getInverseObjectPropertyAxioms(df.getOWLObjectProperty(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+
+            } else if (sec.contains("subproperty") || sec.contains("superprop") || sec.contains("super property")) {
+                ontology.getObjectSubPropertyAxiomsForSubProperty(df.getOWLObjectProperty(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                ontology.getDataSubPropertyAxiomsForSubProperty(df.getOWLDataProperty(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+
+            } else if (sec.contains("same")) {
+                ontology.getSameIndividualAxioms(df.getOWLNamedIndividual(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+
+            } else if (sec.contains("different")) {
+                ontology.getDifferentIndividualAxioms(df.getOWLNamedIndividual(eIri)).stream()
+                        .filter(ax -> axiomInvolves(ax, relatedIri))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+
+            } else {
+                // Generic: any axiom whose signature contains both IRIs
+                IRI rIri = IRI.create(relatedIri);
+                ontology.getAxioms().stream()
+                        .filter(ax -> ax.getSignature().stream().anyMatch(e -> e.getIRI().equals(eIri))
+                                   && ax.getSignature().stream().anyMatch(e -> e.getIRI().equals(rIri)))
+                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+            }
+        } catch (Exception e) {
+            log.warn("findMatchingAxioms error entity={} related={}: {}", entityIri, relatedIri, e.getMessage());
+        }
+        return results;
+    }
+
+    private boolean axiomInvolves(OWLAxiom axiom, String iri) {
+        return axiom.getSignature().stream().anyMatch(e -> e.getIRI().toString().equals(iri));
+    }
+
+    private Map<String, Object> axiomToMap(OWLOntology ontology, OWLAxiom axiom) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", axiom.getAxiomType().getName());
+        m.put("isAsserted", true);
+        m.put("manchester", renderAxiomLabel(ontology, axiom));
+        m.put("entities", axiom.getSignature().stream()
+                .map(e -> {
+                    Map<String, String> em = new LinkedHashMap<>();
+                    em.put("iri",   e.getIRI().toString());
+                    em.put("label", getLabel(e, ontology));
+                    em.put("type",  e.getEntityType().getName());
+                    return em;
+                })
+                .collect(Collectors.toList()));
+        return m;
+    }
+
+    private String renderAxiomLabel(OWLOntology ontology, OWLAxiom axiom) {
+        try {
+            String typeName = axiom.getAxiomType().getName();
+            String entities = axiom.getSignature().stream()
+                    .map(e -> "'" + getLabel(e, ontology) + "'")
+                    .collect(Collectors.joining(", "));
+            return typeName + ": " + entities;
+        } catch (Exception e) {
+            return axiom.getAxiomType().getName();
+        }
+    }
+
+    public static class ExplainAxiomRequest {
+        private String entityIri;
+        private String relatedIri;
+        private String sectionName;
+        private String justificationType = "regular";
+        private int maxJustifications = 3;
+
+        public String getEntityIri() { return entityIri; }
+        public void setEntityIri(String v) { this.entityIri = v; }
+        public String getRelatedIri() { return relatedIri; }
+        public void setRelatedIri(String v) { this.relatedIri = v; }
+        public String getSectionName() { return sectionName; }
+        public void setSectionName(String v) { this.sectionName = v; }
+        public String getJustificationType() { return justificationType; }
+        public void setJustificationType(String v) { this.justificationType = v; }
+        public int getMaxJustifications() { return maxJustifications; }
+        public void setMaxJustifications(int v) { this.maxJustifications = v; }
+    }
 }
