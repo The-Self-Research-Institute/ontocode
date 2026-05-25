@@ -909,7 +909,7 @@ export const Panel = ({
 
 export const MultiSelectItem: React.FC<{
   item: string;
-  onDelete: (item: string) => void;
+  onDelete: (item: string) => Promise<void> | void;
   onEdit?: (item: string) => void;
   entityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual';
   themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple';
@@ -920,6 +920,7 @@ export const MultiSelectItem: React.FC<{
   parentEntityIri?: string;
 }> = ({ item, onDelete, onEdit, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate, projectId, parentEntityIri }) => {
     const [showExplanation, setShowExplanation] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
     const [showAnnotations, setShowAnnotations] = useState(false);
     const [copied, setCopied] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
@@ -1100,7 +1101,7 @@ export const MultiSelectItem: React.FC<{
                     )}
                 </div>
                 {!isInferred && (
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                    <div className={`flex items-center gap-1 transition-all ${isDeleting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                         {/* ? — Explanation (Protégé-style justification) */}
                         <button
                             onClick={(e) => { e.stopPropagation(); setShowExplanation(v => !v); if (showAnnotations) setShowAnnotations(false); }}
@@ -1142,12 +1143,16 @@ export const MultiSelectItem: React.FC<{
                             </button>
                         )}
                         <button
-                            onClick={() => onDelete(item)}
-                            className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
+                            onClick={async () => {
+                                setIsDeleting(true);
+                                try { await onDelete(item); } finally { setIsDeleting(false); }
+                            }}
+                            disabled={isDeleting}
+                            className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
                             title={`Remove '${displayName}'`}
                             aria-label={`Remove ${displayName}`}
                         >
-                            <Trash2 size={14} />
+                            {isDeleting ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
                         </button>
                     </div>
                 )}
@@ -1349,7 +1354,7 @@ export const MultiSelectSection: React.FC<{
     items: string[] | undefined;
     inferredItems?: string[] | undefined;
     onAddClick?: () => void;
-    onDelete: (item: string) => void;
+    onDelete: (item: string) => Promise<void> | void;
     themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple'; // For header styling
     itemEntityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual'; // For item icons
     isViewOnly?: boolean;
@@ -1433,7 +1438,7 @@ export const MultiSelectSection: React.FC<{
              {/* Content area */}
              <div className="border border-t-0 rounded-b-sm overflow-hidden" style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border, #e5e7eb)' }}>
                  {items && items.length > 0 ? (
-                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } onDelete(i); }} onEdit={isViewOnly ? undefined : itemEditHandler} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} />)
+                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } return onDelete(i); }} onEdit={isViewOnly ? undefined : itemEditHandler} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} />)
                  ) : null}
                  {inferredItems && inferredItems.length > 0 ? (
                     inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} />)

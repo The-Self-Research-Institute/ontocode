@@ -286,10 +286,10 @@ const PropertyEditor: React.FC<{
                     onUpdate({ ...item, disjointProperties: [...(item.disjointProperties || []), target] });
                     break;
                 case 'equivalent': {
+                    await ontologyMutationService.addEquivalentProperty(projectId, item.id, target);
                     const currentEq = item.equivalentProperties || [];
                     const updatedEq = [...currentEq, target] as typeof currentEq;
                     onUpdate({ ...item, equivalentProperties: updatedEq });
-                    await ontologyMutationService.addEquivalentProperty(projectId, item.id, target);
                     break;
                 }
             }
@@ -322,9 +322,9 @@ const PropertyEditor: React.FC<{
                     onUpdate({ ...item, disjointProperties: item.disjointProperties?.filter(p => p !== target) });
                     break;
                 case 'equivalent': {
+                    await ontologyMutationService.deleteEquivalentProperty(projectId, item.id, target);
                     const remaining = (item.equivalentProperties?.filter(p => p !== target) || []) as typeof item.equivalentProperties;
                     onUpdate({ ...item, equivalentProperties: remaining });
-                    await ontologyMutationService.deleteEquivalentProperty(projectId, item.id, target);
                     break;
                 }
             }
