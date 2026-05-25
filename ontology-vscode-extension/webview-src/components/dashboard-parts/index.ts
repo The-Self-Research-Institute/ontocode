@@ -5,7 +5,6 @@ export { PluginPlaceholder } from "./PluginPlaceholder";
 export type { PluginPlaceholderProps } from "./PluginPlaceholder";
 export { ConfirmDialog, DuplicateFileDialog } from "./DashboardDialogs";
 export { DetailsPanel } from "./DetailsPanel";
-export { MainContentRouter } from "./MainContentRouter";
 export {
   type TopLevelClass,
   type FileInfo,
