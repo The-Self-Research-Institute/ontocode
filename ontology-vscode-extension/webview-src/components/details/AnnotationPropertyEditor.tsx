@@ -351,6 +351,8 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
                 onNavigate={onNavigate}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Ranges - Can be datatype (literal) or IRI */}
@@ -363,6 +365,8 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
                 onNavigate={onNavigate}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Superproperties */}
@@ -375,6 +379,8 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
                 onNavigate={onNavigate}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
             </div>
           </div>
