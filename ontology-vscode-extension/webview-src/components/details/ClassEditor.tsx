@@ -898,224 +898,69 @@ const ClassEditor: React.FC<{
 
   const handleEditorConfirm = async (expression: string, restrictionData?: RestrictionData) => {
     const expressionToSave = normalizeSingleClassExpressionForSave(expression, restrictionData);
-    console.log("[ClassEditor] handleEditorConfirm called:", {
-      expression,
-      expressionToSave,
-      restrictionData,
-      editorType,
-      editorExistingId,
-      classIri: item.id,
-    });
 
     if (!editorType) {
-      console.error("[ClassEditor] handleEditorConfirm - editorType is null!");
       notificationService.error("Editor Error", "Editor type not set. Please try again.");
       return;
     }
 
     try {
-      // If we have an existing axiom ID, this is an edit operation
       if (editorExistingId) {
-        console.log("[ClassEditor] Edit operation - deleting old axiom:", {
-          editorExistingId,
-          editorType,
-          newExpression: expressionToSave,
-          classIri: item.id,
-          editorInitialRestrictionData,
-          restrictionData,
-        });
+        // ── EDIT: single replaceAxiom call — delete + add in one HTTP request ──
+        const axiomType = editorType as "SubClassOf" | "EquivalentTo" | "DisjointWith";
 
-        // For edit, we need to delete the old one first, then add the new one
-        // Check if the old axiom was a restriction that needs special handling
-        if (editorInitialRestrictionData) {
-          // Delete the old restriction
-          const axiomType = editorType === "EquivalentTo" ? "EquivalentTo" : "SubClassOf";
-
-          console.log("[ClassEditor] Deleting old restriction:", editorInitialRestrictionData);
-          if (editorInitialRestrictionData.isDataProperty) {
-            await ontologyMutationService.deleteDataRestriction(
-              projectId,
-              item.id,
-              axiomType,
-              editorInitialRestrictionData.propertyIri!,
-              editorInitialRestrictionData.restrictionType!,
-              editorInitialRestrictionData.fillerIri!,
-            );
-          } else {
-            await ontologyMutationService.deleteObjectRestriction(
-              projectId,
-              item.id,
-              axiomType,
-              editorInitialRestrictionData.propertyIri!,
-              editorInitialRestrictionData.restrictionType!,
-              editorInitialRestrictionData.fillerIri!,
-            );
-          }
-          // Wait for GraphDB to process the deletion - increased delay for restrictions
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          console.log("[ClassEditor] Waited 1000ms after restriction deletion");
-        } else {
-          // Delete old simple class axiom (not a restriction)
-          // The editorExistingId should be the IRI of the target class
-          console.log("[ClassEditor] Editing simple class axiom - using UPDATE instead of DELETE+ADD:", {
-            editorExistingId,
-            editorType,
-            classIri: item.id,
-            oldTarget: editorExistingId,
-            newTarget: expressionToSave,
-          });
-
-          // Use UPDATE operations to replace in a single transaction
-          // This prevents creating duplicates
-          const isNewSimpleIRI =
-            expressionToSave.startsWith("http://") || expressionToSave.startsWith("https://") || expressionToSave.startsWith("urn:");
-
-          if (isNewSimpleIRI) {
-            switch (editorType) {
-              case "EquivalentTo":
-                console.log("[ClassEditor] Calling updateEquivalentClass with:", {
-                  projectId,
-                  classIri: item.id,
-                  oldTarget: editorExistingId,
-                  newTarget: expressionToSave,
-                });
-                await ontologyMutationService.updateEquivalentClass(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  expressionToSave,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                console.log("[ClassEditor] updateEquivalentClass completed");
-                break;
-              case "SubClassOf":
-                console.log("[ClassEditor] Calling updateSubClassOf with:", {
-                  projectId,
-                  classIri: item.id,
-                  oldTarget: editorExistingId,
-                  newTarget: expressionToSave,
-                });
-                await ontologyMutationService.updateSubClassOf(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  expressionToSave,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                console.log("[ClassEditor] updateSubClassOf completed");
-                break;
-              case "DisjointWith":
-                console.log("[ClassEditor] Calling updateDisjointWith with:", {
-                  projectId,
-                  classIri: item.id,
-                  oldTarget: editorExistingId,
-                  newTarget: expressionToSave,
-                });
-                await ontologyMutationService.updateDisjointWith(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  expressionToSave,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                console.log("[ClassEditor] updateDisjointWith completed");
-                break;
-            }
-            // Wait for GraphDB to process the update
-            await new Promise((resolve) => setTimeout(resolve, 500));
-            console.log("[ClassEditor] Waited 500ms after update operation");
-
-            // Reload details to reflect the changes
-            console.log("[ClassEditor] Reloading class details after edit");
-            await loadClassDetails();
-            console.log("[ClassEditor] Class details reloaded");
-
-            // Close the dialog
-            // Close the dialog
-            setIsEditorOpen(false);
-            setEditorExistingId(undefined);
-            return;
-          } else {
-            // For complex expressions, still use delete+add
-            console.log("[ClassEditor] Complex expression detected, using delete+add approach");
-            switch (editorType) {
-              case "EquivalentTo":
-                await ontologyMutationService.deleteEquivalentClass(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                break;
-              case "SubClassOf":
-                await ontologyMutationService.deleteSubClassOf(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                break;
-              case "DisjointWith":
-                await ontologyMutationService.deleteDisjointWith(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                break;
-            }
-            // Wait for GraphDB to process the deletion
-            await new Promise((resolve) => setTimeout(resolve, 500));
-
-            // Re-add the complex expression using the same structured path as handleAddAxiom
-            const axiomTypeForEdit = editorType as "EquivalentTo" | "SubClassOf" | "DisjointWith";
-            const isIRI = expressionToSave.startsWith("http://") || expressionToSave.startsWith("https://") || expressionToSave.startsWith("urn:");
-            if (isIRI) {
-              await ontologyMutationService.addAxiom(projectId, item.id, axiomTypeForEdit, expressionToSave);
-            } else {
-              const parsed = parseManchesterExpression(expressionToSave);
-              if (parsed && axiomTypeForEdit !== "DisjointWith") {
-                if (parsed.expressionType === "intersection") {
-                  await ontologyMutationService.addIntersection(projectId, item.id, parsed.iris, axiomTypeForEdit as "EquivalentTo" | "SubClassOf");
-                } else {
-                  await ontologyMutationService.addUnion(projectId, item.id, parsed.iris, axiomTypeForEdit as "EquivalentTo" | "SubClassOf");
-                }
-              } else {
-                throw new Error(`Cannot re-add expression: "${expressionToSave}". Use a class IRI, intersection, or union.`);
+        // Build old axiom descriptor
+        const oldDesc: Parameters<typeof ontologyMutationService.replaceAxiom>[3] =
+          editorInitialRestrictionData
+            ? {
+                restriction: {
+                  property: editorInitialRestrictionData.propertyIri!,
+                  restrictionType: editorInitialRestrictionData.restrictionType!,
+                  filler: editorInitialRestrictionData.fillerIri!,
+                  cardinality: editorInitialRestrictionData.cardinality,
+                  isData: editorInitialRestrictionData.type === 'dataRestriction',
+                },
               }
-            }
+            : { iri: editorExistingId };
 
-            // Reload details to reflect the changes
-            console.log("[ClassEditor] Reloading class details after complex expression edit");
-            await loadClassDetails();
-            console.log("[ClassEditor] Class details reloaded");
+        // Build new axiom descriptor
+        const isNewIRI =
+          expressionToSave.startsWith("http://") ||
+          expressionToSave.startsWith("https://") ||
+          expressionToSave.startsWith("urn:");
 
-            // Close the dialog
-            setIsEditorOpen(false);
-            setEditorExistingId(undefined);
-            return;
+        let newDesc: Parameters<typeof ontologyMutationService.replaceAxiom>[4];
+        if (restrictionData) {
+          newDesc = {
+            restriction: {
+              property: restrictionData.propertyIri!,
+              restrictionType: restrictionData.restrictionType!,
+              filler: restrictionData.fillerIri!,
+              cardinality: restrictionData.cardinality,
+              isData: restrictionData.type === 'dataRestriction',
+            },
+          };
+        } else if (isNewIRI) {
+          newDesc = { iri: expressionToSave };
+        } else {
+          const parsed = parseManchesterExpression(expressionToSave);
+          if (parsed && axiomType !== "DisjointWith") {
+            newDesc = parsed.expressionType === "intersection"
+              ? { intersection: parsed.iris }
+              : { union: parsed.iris };
+          } else {
+            throw new Error(`Cannot save expression: "${expressionToSave}". Use a class IRI, intersection (A and B), or union (A or B).`);
           }
         }
 
-        // For restriction edits, continue with the delete+add flow
-        console.log("[ClassEditor] Adding new restriction axiom after deletion:", {
-          expression: expressionToSave,
-          restrictionData,
-          editorType,
-        });
+        await ontologyMutationService.replaceAxiom(
+          projectId, item.id, axiomType, oldDesc, newDesc,
+          user?.email, user?.displayName || user?.email,
+        );
 
-        // Add the new restriction axiom (duplicate check removed — stale classDetails after
-        // deletion would always falsely flag the just-deleted restriction as a duplicate)
-        await handleAddAxiom(editorType, expressionToSave, restrictionData);
+        await loadClassDetails();
       } else {
-        // Otherwise it's an add operation
-        console.log("[ClassEditor] Add operation:", { expression: expressionToSave, restrictionData });
+        // ── ADD ──
         await handleAddAxiom(editorType, expressionToSave, restrictionData);
       }
     } catch (error) {

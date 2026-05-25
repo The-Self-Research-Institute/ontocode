@@ -1405,6 +1405,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectorTarget, setSelectorTarget] = useState<
     "domain" | "range" | "subProperty" | "inverse" | "disjoint" | "equivalent" | null
   >(null);
+  const [selectorEditingItem, setSelectorEditingItem] = useState<string | null>(null);
 
   // Annotation Property Description Dialogs (Protégé-style)
   const [isAnnotationDomainDialogOpen, setIsAnnotationDomainDialogOpen] = useState(false);
@@ -12663,8 +12664,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   // #endregion
 
   // #region Selector Handlers
-  const handleOpenClassSelector = (target: "domain" | "range") => {
+  const handleOpenClassSelector = (target: "domain" | "range", editingItem?: string) => {
     setSelectorTarget(target);
+    setSelectorEditingItem(editingItem || null);
 
     // For Data Property ranges, show the datatype selector instead of class expression
     if (target === "range" && selectedItem?.type === "DatatypeProperty") {
@@ -12711,112 +12713,95 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  const handleOpenPropertySelector = (target: "subProperty" | "inverse" | "disjoint" | "equivalent") => {
+  const handleOpenPropertySelector = (target: "subProperty" | "inverse" | "disjoint" | "equivalent", editingItem?: string) => {
     setSelectorTarget(target);
-    // Use the new ObjectPropertyExpressionDialog for equivalent, inverse, subProperty, and disjoint
-    // This provides the Protégé-style property selection with inverse checkbox
+    setSelectorEditingItem(editingItem || null);
     setIsObjectPropertyExpressionDialogOpen(true);
   };
 
   const handleManchesterConfirm = async (expression: string, restrictionData?: any) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
+    const target = selectorTarget as "domain" | "range";
+    const editing = selectorEditingItem;
 
     try {
-      switch (selectorTarget) {
-        case "domain":
-          await ontologyMutationService.addPropertyDomain(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-            restrictionData,
-          );
+      if (editing) {
+        // Replace: single API call — delete old + add new
+        await ontologyMutationService.replacePropertyRelation(
+          projectId, selectedItem.id, target, editing, expression,
+          user?.email || "anonymous", user?.username || "Anonymous",
+        );
+        const prop = selectedItem as Property;
+        if (target === "domain") {
+          updateItemInState({ ...selectedItem, domains: (prop.domains || []).map(d => d === editing ? expression : d) });
+        } else {
+          updateItemInState({ ...selectedItem, ranges: (prop.ranges || []).map(r => r === editing ? expression : r) });
+        }
+      } else {
+        // Pure add
+        if (target === "domain") {
+          await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous", restrictionData);
           updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
-          break;
-        case "range":
-          await ontologyMutationService.addPropertyRange(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-            restrictionData,
-          );
+        } else {
+          await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous", restrictionData);
           updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
-          break;
-      }
-    } catch (error) {
-      console.error(`Failed to add ${selectorTarget}`, error);
-    } finally {
-      setIsClassSelectorOpen(false);
-      setSelectorTarget(null);
-    }
-  };
-
-  // Handler for legacy PropertyExpressionDialog (if still needed)
-  const handlePropertySelected = async (expression: string) => {
-    if (!selectedItem || !projectId || !selectorTarget) return;
-
-    try {
-      switch (selectorTarget) {
-        case "subProperty":
-          await ontologyMutationService.addSubPropertyOf(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            superProperties: [...((selectedItem as Property).superProperties || []), expression],
-          });
-          break;
-        case "inverse":
-          await ontologyMutationService.addInverseProperty(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression],
-          });
-          break;
-        case "disjoint":
-          await ontologyMutationService.addDisjointProperty(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            disjointProperties: [...((selectedItem as Property).disjointProperties || []), expression],
-          });
-          break;
-        case "equivalent": {
-          const existing = (selectedItem as Property).equivalentProperties || [];
-          await ontologyMutationService.addEquivalentProperty(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({ ...selectedItem, equivalentProperties: [...existing, expression] });
-          break;
         }
       }
     } catch (error) {
-      console.error(`Failed to add ${selectorTarget}`, error);
+      console.error(`Failed to ${editing ? 'replace' : 'add'} ${selectorTarget}`, error);
     } finally {
+      setIsClassExpressionDialogOpen(false);
+      setSelectorTarget(null);
+      setSelectorEditingItem(null);
+    }
+  };
+
+  // Handler for property selector (subProperty/inverse/disjoint/equivalent)
+  const handlePropertySelected = async (expression: string) => {
+    if (!selectedItem || !projectId || !selectorTarget) return;
+    const target = selectorTarget as "subProperty" | "inverse" | "disjoint" | "equivalent";
+    const editing = selectorEditingItem;
+    const prop = selectedItem as Property;
+
+    try {
+      if (editing) {
+        // Replace: single API call
+        await ontologyMutationService.replacePropertyRelation(
+          projectId, selectedItem.id, target, editing, expression,
+          user?.email || "anonymous", user?.username || "Anonymous",
+        );
+        const replace = (arr: string[] | undefined) => (arr || []).map(v => v === editing ? expression : v);
+        if (target === "subProperty")  updateItemInState({ ...selectedItem, superProperties: replace(prop.superProperties) });
+        if (target === "inverse")      updateItemInState({ ...selectedItem, inverseProperties: replace(prop.inverseProperties) });
+        if (target === "disjoint")     updateItemInState({ ...selectedItem, disjointProperties: replace(prop.disjointProperties) });
+        if (target === "equivalent")   updateItemInState({ ...selectedItem, equivalentProperties: replace(prop.equivalentProperties as string[] | undefined) });
+      } else {
+        switch (target) {
+          case "subProperty":
+            await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous");
+            updateItemInState({ ...selectedItem, superProperties: [...(prop.superProperties || []), expression] });
+            break;
+          case "inverse":
+            await ontologyMutationService.addInverseProperty(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous");
+            updateItemInState({ ...selectedItem, inverseProperties: [...(prop.inverseProperties || []), expression] });
+            break;
+          case "disjoint":
+            await ontologyMutationService.addDisjointProperty(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous");
+            updateItemInState({ ...selectedItem, disjointProperties: [...(prop.disjointProperties || []), expression] });
+            break;
+          case "equivalent":
+            await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous");
+            updateItemInState({ ...selectedItem, equivalentProperties: [...(prop.equivalentProperties as string[] || []), expression] });
+            break;
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to ${editing ? 'replace' : 'add'} ${selectorTarget}`, error);
+    } finally {
+      setIsObjectPropertyExpressionDialogOpen(false);
       setIsPropertyExpressionDialogOpen(false);
       setSelectorTarget(null);
+      setSelectorEditingItem(null);
     }
   };
 
@@ -12891,92 +12876,92 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   // Handlers for Annotation Property Description Dialogs (Protégé-style)
-  const handleOpenAnnotationDomainDialog = () => {
+  const [annotationEditingItem, setAnnotationEditingItem] = useState<{ rel: 'domain'|'range'|'subProperty'; iri: string } | null>(null);
+
+  const handleOpenAnnotationDomainDialog = (editingItem?: string) => {
     if (entitiesTab === "AnnotationProperties") {
+      setAnnotationEditingItem(editingItem ? { rel: 'domain', iri: editingItem } : null);
       setIsAnnotationDomainDialogOpen(true);
     }
   };
 
-  const handleOpenAnnotationRangeDialog = () => {
+  const handleOpenAnnotationRangeDialog = (editingItem?: string) => {
     if (entitiesTab === "AnnotationProperties") {
+      setAnnotationEditingItem(editingItem ? { rel: 'range', iri: editingItem } : null);
       setIsAnnotationRangeDialogOpen(true);
     }
   };
 
-  const handleOpenAnnotationSuperpropertyDialog = () => {
+  const handleOpenAnnotationSuperpropertyDialog = (editingItem?: string) => {
     if (entitiesTab === "AnnotationProperties") {
+      setAnnotationEditingItem(editingItem ? { rel: 'subProperty', iri: editingItem } : null);
       setIsAnnotationSuperpropertyDialogOpen(true);
     }
   };
 
   const handleAnnotationDomainConfirm = async (domainIri: string) => {
     if (!selectedItem || !projectId) return;
-
+    const editing = annotationEditingItem?.rel === 'domain' ? annotationEditingItem.iri : null;
     try {
-      await ontologyMutationService.addPropertyDomain(
-        projectId,
-        selectedItem.id,
-        domainIri,
-        user?.email || "anonymous",
-        user?.username || "Anonymous",
-      );
-      const extendedItem = selectedItem as AnnotationProperty & { domains?: string[] };
-      updateItemInState({
-        ...selectedItem,
-        domains: [...(extendedItem.domains || []), domainIri],
-      });
+      if (editing) {
+        await ontologyMutationService.replacePropertyRelation(projectId, selectedItem.id, 'domain', editing, domainIri, user?.email || "anonymous", user?.username || "Anonymous");
+        const extendedItem = selectedItem as AnnotationProperty & { domains?: string[] };
+        updateItemInState({ ...selectedItem, domains: (extendedItem.domains || []).map(d => d === editing ? domainIri : d) });
+      } else {
+        await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, domainIri, user?.email || "anonymous", user?.username || "Anonymous");
+        const extendedItem = selectedItem as AnnotationProperty & { domains?: string[] };
+        updateItemInState({ ...selectedItem, domains: [...(extendedItem.domains || []), domainIri] });
+      }
     } catch (error) {
-      console.error("Failed to add annotation property domain", error);
+      console.error("Failed to add/replace annotation property domain", error);
     } finally {
       setIsAnnotationDomainDialogOpen(false);
+      setAnnotationEditingItem(null);
     }
   };
 
   const handleAnnotationRangeConfirm = async (rangeIri: string) => {
     if (!selectedItem || !projectId) return;
-
+    const editing = annotationEditingItem?.rel === 'range' ? annotationEditingItem.iri : null;
     try {
-      await ontologyMutationService.addPropertyRange(
-        projectId,
-        selectedItem.id,
-        rangeIri,
-        user?.email || "anonymous",
-        user?.username || "Anonymous",
-      );
-      const extendedItem = selectedItem as AnnotationProperty & { ranges?: string[] };
-      updateItemInState({
-        ...selectedItem,
-        ranges: [...(extendedItem.ranges || []), rangeIri],
-      });
+      if (editing) {
+        await ontologyMutationService.replacePropertyRelation(projectId, selectedItem.id, 'range', editing, rangeIri, user?.email || "anonymous", user?.username || "Anonymous");
+        const extendedItem = selectedItem as AnnotationProperty & { ranges?: string[] };
+        updateItemInState({ ...selectedItem, ranges: (extendedItem.ranges || []).map(r => r === editing ? rangeIri : r) });
+      } else {
+        await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, rangeIri, user?.email || "anonymous", user?.username || "Anonymous");
+        const extendedItem = selectedItem as AnnotationProperty & { ranges?: string[] };
+        updateItemInState({ ...selectedItem, ranges: [...(extendedItem.ranges || []), rangeIri] });
+      }
     } catch (error) {
-      console.error("Failed to add annotation property range", error);
+      console.error("Failed to add/replace annotation property range", error);
     } finally {
       setIsAnnotationRangeDialogOpen(false);
+      setAnnotationEditingItem(null);
     }
   };
 
   const handleAnnotationSuperpropertyConfirm = async (superpropertyIri: string) => {
     if (!selectedItem || !projectId) return;
-
+    const editing = annotationEditingItem?.rel === 'subProperty' ? annotationEditingItem.iri : null;
     try {
-      await ontologyMutationService.addSubPropertyOf(
-        projectId,
-        selectedItem.id,
-        superpropertyIri,
-        user?.email || "anonymous",
-        user?.username || "Anonymous",
-      );
-      const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
-      updateItemInState({
-        ...selectedItem,
-        superProperties: [...(extendedItem.superProperties || []), superpropertyIri],
-      });
+      if (editing) {
+        await ontologyMutationService.replacePropertyRelation(projectId, selectedItem.id, 'subProperty', editing, superpropertyIri, user?.email || "anonymous", user?.username || "Anonymous");
+        const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
+        updateItemInState({ ...selectedItem, superProperties: (extendedItem.superProperties || []).map(p => p === editing ? superpropertyIri : p) });
+      } else {
+        await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, superpropertyIri, user?.email || "anonymous", user?.username || "Anonymous");
+        const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
+        updateItemInState({ ...selectedItem, superProperties: [...(extendedItem.superProperties || []), superpropertyIri] });
+      }
     } catch (error) {
-      console.error("Failed to add annotation property superproperty", error);
+      console.error("Failed to add/replace annotation property superproperty", error);
     } finally {
       setIsAnnotationSuperpropertyDialogOpen(false);
+      setAnnotationEditingItem(null);
     }
   };
+
   // #endregion
 
   // #region Main Render
@@ -13831,15 +13816,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                     onAddAnnotation={handleAddAnnotation}
                     onEditAnnotation={handleEditAnnotation}
                     onDeleteAnnotation={handleDeleteAnnotation}
-                    onAddDomainClick={() => handleOpenClassSelector("domain")}
-                    onAddRangeClick={() => handleOpenClassSelector("range")}
-                    onAddSubPropertyClick={() => handleOpenPropertySelector("subProperty")}
-                    onAddInverseClick={() => handleOpenPropertySelector("inverse")}
-                    onAddDisjointClick={() => handleOpenPropertySelector("disjoint")}
-                    onAddEquivalentClick={() => handleOpenPropertySelector("equivalent")}
-                    onAddAnnotationDomainClick={handleOpenAnnotationDomainDialog}
-                    onAddAnnotationRangeClick={handleOpenAnnotationRangeDialog}
-                    onAddAnnotationSuperpropertyClick={handleOpenAnnotationSuperpropertyDialog}
+                    onAddDomainClick={(e) => handleOpenClassSelector("domain", e)}
+                    onAddRangeClick={(e) => handleOpenClassSelector("range", e)}
+                    onAddSubPropertyClick={(e) => handleOpenPropertySelector("subProperty", e)}
+                    onAddInverseClick={(e) => handleOpenPropertySelector("inverse", e)}
+                    onAddDisjointClick={(e) => handleOpenPropertySelector("disjoint", e)}
+                    onAddEquivalentClick={(e) => handleOpenPropertySelector("equivalent", e)}
+                    onAddAnnotationDomainClick={(e) => handleOpenAnnotationDomainDialog(e)}
+                    onAddAnnotationRangeClick={(e) => handleOpenAnnotationRangeDialog(e)}
+                    onAddAnnotationSuperpropertyClick={(e) => handleOpenAnnotationSuperpropertyDialog(e)}
                     classHierarchy={classHierarchy}
                     objectProperties={objectProperties}
                     dataProperties={dataProperties}
