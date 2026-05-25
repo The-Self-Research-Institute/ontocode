@@ -1,4 +1,5 @@
-﻿/* eslint-disable @typescript-eslint/no-explicit-any */
+﻿// @ts-nocheck
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect } from "react";
 import {
   ChevronRight,

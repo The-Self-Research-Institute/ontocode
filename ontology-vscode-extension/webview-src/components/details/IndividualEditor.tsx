@@ -727,6 +727,8 @@ const IndividualEditor: React.FC<{
                     isViewOnly={isViewOnly}
                     onViewOnlyAction={onViewOnlyAction}
                     onNavigate={onNavigate}
+                    projectId={projectId}
+                    parentEntityIri={item.id}
                 />
 
                 {/* Different Individual From */}
@@ -740,6 +742,8 @@ const IndividualEditor: React.FC<{
                     isViewOnly={isViewOnly}
                     onViewOnlyAction={onViewOnlyAction}
                     onNavigate={onNavigate}
+                    projectId={projectId}
+                    parentEntityIri={item.id}
                 />
               </div>
             </div>
