@@ -6658,7 +6658,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   // On-demand property detail loading: when a property is selected, fetch full details (domains, ranges, etc.)
   useEffect(() => {
     if (!projectId || !selectedItem) return;
-    const isProperty = (selectedItem as any).type === "ObjectProperty" || (selectedItem as any).type === "DataProperty";
+    const isProperty = (selectedItem as any).type === "ObjectProperty" || (selectedItem as any).type === "DatatypeProperty";
     if (!isProperty) return;
     // Skip if details already loaded (has domains array)
     if (Array.isArray((selectedItem as any).domains) && (selectedItem as any).domains.length > 0) return;
@@ -15269,7 +15269,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         onConfirm={handlePropertySelected}
         propertyHierarchy={objectPropertyHierarchy}
-        propertyType={selectedItem?.type === "DataProperty" ? "data" : "object"}
+        propertyType={selectedItem?.type === "DatatypeProperty" ? "data" : "object"}
         title={`Select ${selectorTarget ? selectorTarget.charAt(0).toUpperCase() + selectorTarget.slice(1) : "Property"}`}
       />
       <PropertyExpressionDialog
