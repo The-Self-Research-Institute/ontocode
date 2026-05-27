@@ -411,6 +411,9 @@ public class OntologyMutationService {
                     + "}";
             }
         } else if (type.equals("deletePropertyDomain")) {
+            if (op.target() != null && op.target().contains("|||")) {
+                return buildDeletePropertyRestrictionSparql(op.iri(), "rdfs:domain", op.target());
+            }
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
                 + "}";
@@ -429,6 +432,9 @@ public class OntologyMutationService {
                     + "}";
             }
         } else if (type.equals("deletePropertyRange")) {
+            if (op.target() != null && op.target().contains("|||")) {
+                return buildDeletePropertyRestrictionSparql(op.iri(), "rdfs:range", op.target());
+            }
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> rdfs:range <" + op.target() + "> .\n"
                 + "}";
@@ -804,9 +810,58 @@ public class OntologyMutationService {
     }
 
     /**
+     * Delete a restriction blank node connected via rdfs:range or rdfs:domain.
+     * encodedTarget format: display|||restrictionType|||onPropertyIri|||fillerIri|||cardinality
+     */
+    private String buildDeletePropertyRestrictionSparql(String propertyIri, String axiomPredicate, String encodedTarget) {
+        String[] parts = encodedTarget.split("\\|\\|\\|", -1);
+        if (parts.length < 4) {
+            log.warn("[MUTATION] Invalid encoded restriction target (expected >=4 parts): {}", encodedTarget);
+            return "";
+        }
+        String restrictionType = parts[1];
+        String onPropIri = parts[2];
+        String fillerIri = parts[3];
+        String card = parts.length > 4 ? parts[4] : "";
+
+        String fillerPattern = switch (restrictionType) {
+            case "some" -> "?r owl:someValuesFrom <" + fillerIri + "> .";
+            case "only" -> "?r owl:allValuesFrom <" + fillerIri + "> .";
+            case "value" -> "?r owl:hasValue <" + fillerIri + "> .";
+            case "min" -> "?r owl:minQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n      ?r owl:onClass <" + fillerIri + "> .";
+            case "max" -> "?r owl:maxQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n      ?r owl:onClass <" + fillerIri + "> .";
+            case "exactly" -> "?r owl:qualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n      ?r owl:onClass <" + fillerIri + "> .";
+            default -> "";
+        };
+
+        if (fillerPattern.isEmpty()) {
+            log.warn("[MUTATION] Unknown restriction type in encoded target: {}", restrictionType);
+            return "";
+        }
+
+        String sparql = PREFIXES + """
+            DELETE {
+              <%s> %s ?r .
+              ?r ?p ?o .
+            }
+            WHERE {
+              <%s> %s ?r .
+              ?r a owl:Restriction .
+              ?r owl:onProperty <%s> .
+              %s
+              ?r ?p ?o .
+              FILTER(isBlank(?r))
+            }
+            """.formatted(propertyIri, axiomPredicate, propertyIri, axiomPredicate, onPropIri, fillerPattern);
+
+        log.info("[MUTATION] buildDeletePropertyRestrictionSparql: {}", sparql);
+        return sparql;
+    }
+
+    /**
      * Build SPARQL INSERT to add an OWL restriction (object or data restriction)
      * Uses OWL 2 RDF syntax with blank nodes via INSERT WHERE pattern
-     * 
+     *
      * @param op MutationOp containing restriction details
      * @param isDataRestriction true for data restrictions, false for object restrictions
      * @return SPARQL UPDATE string
