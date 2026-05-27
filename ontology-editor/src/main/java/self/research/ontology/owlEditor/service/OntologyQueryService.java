@@ -491,6 +491,62 @@ public class OntologyQueryService {
             dto.setType(localName(resource(sol, "kind")));
             dto.setDomains(splitPipe(literal(sol, "domains")));
             dto.setRanges(splitPipe(literal(sol, "ranges")));
+
+            // Fetch restriction blank nodes for range/domain and append as encoded Manchester strings.
+            // Format: "display|||restrictionType|||onPropertyIri|||fillerIri|||cardinality"
+            // The FILTER(isIRI(?range)) in the main query already excludes blank nodes, so we fetch them here.
+            String restrQuery = PREFIXES + """
+                SELECT ?axiomPred ?onProp ?onPropLabel ?filler ?fillerLabel ?restrictionType ?cardinality WHERE {
+                  {
+                    <%s> rdfs:range ?r .
+                    BIND("range" AS ?axiomPred)
+                  } UNION {
+                    <%s> rdfs:domain ?r .
+                    BIND("domain" AS ?axiomPred)
+                  }
+                  ?r a owl:Restriction ;
+                     owl:onProperty ?onProp .
+                  OPTIONAL { ?onProp rdfs:label ?onPropLabel }
+                  {
+                    { ?r owl:someValuesFrom ?filler . BIND("some" AS ?restrictionType) }
+                    UNION { ?r owl:allValuesFrom ?filler . BIND("only" AS ?restrictionType) }
+                    UNION { ?r owl:hasValue ?filler . BIND("value" AS ?restrictionType) }
+                    UNION { ?r owl:minQualifiedCardinality ?cardinality ; owl:onClass ?filler . BIND("min" AS ?restrictionType) }
+                    UNION { ?r owl:maxQualifiedCardinality ?cardinality ; owl:onClass ?filler . BIND("max" AS ?restrictionType) }
+                    UNION { ?r owl:qualifiedCardinality ?cardinality ; owl:onClass ?filler . BIND("exactly" AS ?restrictionType) }
+                  }
+                  OPTIONAL { ?filler rdfs:label ?fillerLabel }
+                  FILTER(isBlank(?r))
+                }
+                """.formatted(propertyIri, propertyIri);
+            TupleQueryResult restrRs = datasetService.execSelect(projectId, restrQuery);
+            List<String> updatedRanges = new java.util.ArrayList<>(dto.getRanges() != null ? dto.getRanges() : List.of());
+            List<String> updatedDomains = new java.util.ArrayList<>(dto.getDomains() != null ? dto.getDomains() : List.of());
+            while (restrRs.hasNext()) {
+                BindingSet rr = restrRs.next();
+                String axiomPredVal = literal(rr, "axiomPred");
+                String onProp = resource(rr, "onProp");
+                String onPropLabel = literal(rr, "onPropLabel");
+                String filler = resource(rr, "filler");
+                String fillerLabel = literal(rr, "fillerLabel");
+                String restType = literal(rr, "restrictionType");
+                String card = literal(rr, "cardinality");
+                if (onProp == null || filler == null || restType.isBlank()) continue;
+                String propDisplay = !onPropLabel.isBlank() ? onPropLabel : localName(onProp);
+                String fillerDisplay = !fillerLabel.isBlank() ? fillerLabel : localName(filler);
+                String display = !card.isBlank()
+                    ? propDisplay + " " + restType + " " + card + " " + fillerDisplay
+                    : propDisplay + " " + restType + " " + fillerDisplay;
+                String encoded = display + "|||" + restType + "|||" + onProp + "|||" + filler + "|||" + card;
+                if ("range".equals(axiomPredVal)) {
+                    updatedRanges.add(encoded);
+                } else {
+                    updatedDomains.add(encoded);
+                }
+            }
+            dto.setRanges(updatedRanges);
+            dto.setDomains(updatedDomains);
+
             dto.setSuperProperties(splitPipe(literal(sol, "superProperties")));
             dto.setInverseProperties(splitPipe(literal(sol, "inverseProperties")));
             dto.setDisjointProperties(splitPipe(literal(sol, "disjointProperties")));
