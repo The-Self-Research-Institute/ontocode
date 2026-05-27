@@ -943,7 +943,7 @@ export const MultiSelectItem: React.FC<{
         try {
             const res = await apiClient.post<any>(`/api/ontology/${projectId}/explain-axiom`, {
                 entityIri: parentEntityIri,
-                relatedIri: item,
+                relatedIri: displayItem,
                 sectionName,
                 justificationType: type,
                 maxJustifications: limit,
@@ -964,21 +964,24 @@ export const MultiSelectItem: React.FC<{
         }
     }, [showExplanation]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Strip backend-encoded IRI metadata (format: "display|||type|||propIri|||fillerIri|||card")
+    const displayItem = item.includes('|||') ? item.split('|||')[0] : item;
+
     const handleCopyIri = () => {
-        navigator.clipboard.writeText(item).then(() => {
+        navigator.clipboard.writeText(displayItem).then(() => {
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
         }).catch(() => {});
     };
     // Check if this is an inverse property expression
-    const inverseMatch = item.match(/^inverse\((.+)\)$/i);
+    const inverseMatch = displayItem.match(/^inverse\((.+)\)$/i);
     const isInverse = !!inverseMatch;
-    const propertyIri = isInverse ? inverseMatch[1] : item;
-    
+    const propertyIri = isInverse ? inverseMatch[1] : displayItem;
+
     // Check if this is a restriction expression (contains 'some', 'only', 'min', 'max', 'exactly', 'value')
     const restrictionKeywords = ['some', 'only', 'min', 'max', 'exactly', 'value', 'and', 'or', 'not'];
-    const isRestrictionExpression = restrictionKeywords.some(kw => 
-        item.includes(` ${kw} `) || item.startsWith(`${kw} `) || item.endsWith(` ${kw}`)
+    const isRestrictionExpression = restrictionKeywords.some(kw =>
+        displayItem.includes(` ${kw} `) || displayItem.startsWith(`${kw} `) || displayItem.endsWith(` ${kw}`)
     );
     
     // Format display name - keep prefix for datatypes
@@ -1092,7 +1095,7 @@ export const MultiSelectItem: React.FC<{
                             <span>)</span>
                         </span>
                     ) : isRestrictionExpression ? (
-                        <span className="text-sm font-bold">{formatRestrictionExpression(item)}</span>
+                        <span className="text-sm font-bold">{formatRestrictionExpression(displayItem)}</span>
                     ) : (
                         <span className="text-sm font-bold">'{displayName}'</span>
                     )}

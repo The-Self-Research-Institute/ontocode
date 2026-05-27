@@ -907,8 +907,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         {/* Content Area */}
         <div className="flex-1 overflow-hidden min-h-0 bg-white">
           {/* Class Hierarchy Tab */}
-          {activeTab === 'hierarchy' && (
-            <div className="h-full flex flex-col">
+          <div className={`h-full flex flex-col${activeTab !== 'hierarchy' ? ' hidden' : ''}`}>
               {/* Inline Create Form */}
               {showInlineCreate && (
                 <div className="px-3 py-2 bg-amber-50 border-b border-amber-200">
@@ -994,12 +993,10 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                   hideToolbarActions={!projectId}
                 />
               </div>
-            </div>
-          )}
+          </div>
 
           {/* Object Restriction Creator Tab */}
-          {activeTab === 'objectRestriction' && (
-            <div className="h-full flex">
+          <div className={`h-full flex${activeTab !== 'objectRestriction' ? ' hidden' : ''}`}>
               {/* LEFT: Restricted property - Uses EntityHierarchy */}
               <div className="w-1/2 border-r border-gray-300 flex flex-col">
                 <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
@@ -1085,12 +1082,10 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                   />
                 </div>
               </div>
-            </div>
-          )}
+          </div>
 
           {/* Class Expression Editor Tab */}
-          {activeTab === 'classExpression' && (
-            <div className="h-full p-6 flex flex-col">
+          <div className={`h-full p-6 flex flex-col${activeTab !== 'classExpression' ? ' hidden' : ''}`}>
               <div className="flex-1 flex flex-col min-h-0">
                 <label className="text-sm font-semibold text-gray-700 mb-2">Class Expression</label>
                 <textarea
@@ -1109,12 +1104,10 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                 </ul>
                 <p className="text-xs text-amber-700">Class names must match labels or IRIs in the class hierarchy. For restrictions (some, only, min…) use the <strong>Restriction</strong> tab instead.</p>
               </div>
-            </div>
-          )}
+          </div>
 
           {/* Data Restriction Creator Tab */}
-          {activeTab === 'dataRestriction' && (
-            <div className="h-full flex">
+          <div className={`h-full flex${activeTab !== 'dataRestriction' ? ' hidden' : ''}`}>
               {/* LEFT: Restricted property - Uses EntityHierarchy */}
               <div className="w-1/2 border-r border-gray-300 flex flex-col">
                 <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
@@ -1197,8 +1190,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                   ))}
                 </div>
               </div>
-            </div>
-          )}
+          </div>
         </div>
 
         {/* Restriction Type Controls - Bottom panel for restriction tabs */}
