@@ -1406,6 +1406,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     "domain" | "range" | "subProperty" | "inverse" | "disjoint" | "equivalent" | null
   >(null);
   const [selectorEditingItem, setSelectorEditingItem] = useState<string | null>(null);
+  const [selectorAllowedTabs, setSelectorAllowedTabs] = useState<TabType[]>(['hierarchy', 'objectRestriction', 'classExpression']);
+  const [selectorInitialTab, setSelectorInitialTab] = useState<TabType>('hierarchy');
 
   // Annotation Property Description Dialogs (Protégé-style)
   const [isAnnotationDomainDialogOpen, setIsAnnotationDomainDialogOpen] = useState(false);
@@ -12671,9 +12673,26 @@ const Dashboard: React.FC<DashboardProps> = ({
     // For Data Property ranges, show the datatype selector instead of class expression
     if (target === "range" && selectedItem?.type === "DatatypeProperty") {
       setIsDataPropertyRangeDialogOpen(true);
-    } else {
-      setIsClassExpressionDialogOpen(true);
+      return;
     }
+
+    // Restrict tabs based on what type of value is being edited
+    if (editingItem) {
+      const isPlainIri = editingItem.startsWith('http://') || editingItem.startsWith('https://') || editingItem.startsWith('urn:');
+      if (isPlainIri) {
+        setSelectorAllowedTabs(['hierarchy', 'classExpression']);
+        setSelectorInitialTab('hierarchy');
+      } else {
+        // Restriction (blank node _: or Manchester expression)
+        setSelectorAllowedTabs(['objectRestriction', 'classExpression']);
+        setSelectorInitialTab('objectRestriction');
+      }
+    } else {
+      setSelectorAllowedTabs(['hierarchy', 'objectRestriction', 'classExpression']);
+      setSelectorInitialTab('hierarchy');
+    }
+
+    setIsClassExpressionDialogOpen(true);
   };
 
   // Handler for Data Property Range selection (datatypes)
@@ -13888,6 +13907,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         objectPropertiesTree={objectPropertyHierarchy}
         dataPropertiesTree={dataPropertyHierarchy}
         title={`Add ${selectorTarget === "domain" ? "Domain" : "Range"} Class Expression`}
+        allowedTabs={selectorAllowedTabs}
+        initialTab={selectorInitialTab}
         expandedNodes={expandedNodes}
         onToggleNode={toggleNode}
         onAddClass={(type) => handleAddItem(type)}
