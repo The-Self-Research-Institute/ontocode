@@ -79,6 +79,7 @@ public class SecurityConfig {
                         .requestMatchers("/invite").permitAll() // Allow public access to web invitation redirect page
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll() // Only health endpoints are public
+                        .requestMatchers(HttpMethod.GET, "/api/downloads", "/api/downloads/**").permitAll() // Public installer downloads
                         .anyRequest().authenticated() // All other requests require authentication
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // Stateless sessions
