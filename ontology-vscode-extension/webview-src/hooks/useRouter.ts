@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { generateUrlPath, parseUrlPath } from '../config/routes';
 
 export interface RouteState {
-    view: 'deployment' | 'login' | 'signup' | 'workspace' | 'projectDashboard' | 'projectLibrary' | 'dashboard' | 'invitation' | 'subscription' | 'billing';
+    view: 'deployment' | 'login' | 'signup' | 'workspace' | 'projectDashboard' | 'projectLibrary' | 'dashboard' | 'invitation' | 'subscription' | 'billing' | 'desktopDownload';
     projectId?: string | null;
     projectName?: string;
     fileId?: string | null;
