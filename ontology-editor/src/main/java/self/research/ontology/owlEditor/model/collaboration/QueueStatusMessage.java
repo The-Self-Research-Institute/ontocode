@@ -27,6 +27,8 @@ public class QueueStatusMessage {
         private int queuedImports;
         private long averageProcessingTimeMs;
         private List<QueuedProject> queue;
+        /** Project IDs currently being actively imported (not just queued). */
+        private List<String> activeProjectIds;
     }
 
     @Data

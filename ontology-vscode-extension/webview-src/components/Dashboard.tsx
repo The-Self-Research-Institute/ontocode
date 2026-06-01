@@ -13570,8 +13570,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         onClose={() => setIsReasonerSettingsOpen(false)}
       />
 
-      {/* Mobile scroll fix: avoid h-screen/max-h-screen (100vh) which can lock scroll on mobile browsers */}
-      <div className="min-h-[100dvh] bg-gray-50 flex flex-col text-sm">
+      {/* Full-height flex column — children control their own scroll via overflow-y-auto */}
+      <div className="h-full bg-gray-50 flex flex-col text-sm overflow-hidden">
         {/* Persistent background import progress banner */}
         {backgroundImportActive && (
           <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-blue-800 text-xs z-40 shrink-0">
@@ -13799,11 +13799,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
         )}
 
-        {/* Mobile: stack hierarchy above details and allow page scrolling */}
-        <main className="flex flex-1 flex-col md:flex-row overflow-y-auto md:overflow-hidden">
+        {/* Mobile: stack hierarchy above details. Desktop: each panel scrolls independently inside itself. */}
+        <main className="flex flex-1 flex-col md:flex-row md:overflow-hidden min-h-0">
           {mainTab === "Entities" ? (
             <>
-              <div className="w-full md:w-auto md:h-full max-h-[42dvh] md:max-h-none overflow-y-auto md:overflow-visible shrink-0">
+              {/* Hierarchy panel — flex column, fixed height on desktop so inner overflow-y-auto works */}
+              <div className="w-full md:w-auto flex-shrink-0 flex flex-col max-h-[42dvh] md:max-h-none md:h-full overflow-hidden">
                 <EntityHierarchy
                   entitiesTab={entitiesTab}
                   filteredData={filteredData}
@@ -13842,8 +13843,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 />
               </div>
 
-              <section className="flex-1 min-w-0 overflow-hidden md:overflow-hidden p-2 bg-slate-200 flex flex-col">
-                <div className="flex-1 min-w-0 overflow-y-auto md:overflow-hidden flex flex-col">
+              {/* Details panel — scrolls within itself on desktop */}
+              <section className="flex-1 min-w-0 overflow-hidden p-2 bg-slate-200 flex flex-col min-h-0">
+                <div className="flex-1 min-w-0 min-h-0 overflow-y-auto flex flex-col">
                   <DetailsPanel
                     selectedItem={selectedItem}
                     entitiesTab={entitiesTab}

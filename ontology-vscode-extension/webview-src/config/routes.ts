@@ -71,15 +71,25 @@ export const routes: Record<string, RouteConfig> = {
 
 const shouldUseHashRouting = (): boolean => {
     const protocol = window.location.protocol;
-    return protocol.startsWith('vscode-webview') || protocol.startsWith('vscode-webview-resource');
+    // file:// (Electron desktop) and vscode-webview both need hash routing.
+    // Path-based routing breaks under file:// because Ctrl+R tries to load
+    // e.g. file:///login as an actual file path instead of serving index.html.
+    return protocol === 'file:' ||
+        protocol.startsWith('vscode-webview') ||
+        protocol.startsWith('vscode-webview-resource');
 };
 
 /**
  * Generate URL path from route state
  */
 export const generateUrlPath = (state: RouteState): string => {
-    const baseUrl = window.location.origin;
     const useHashRouting = shouldUseHashRouting();
+
+    // window.location.origin is the opaque string "null" for file:// URLs.
+    // Use the file path portion of href instead so hashes anchor to index.html.
+    const baseUrl = (useHashRouting && window.location.protocol === 'file:')
+        ? window.location.href.split('#')[0].split('?')[0]
+        : window.location.origin;
 
     const withRoute = (path: string): string => {
         return useHashRouting ? `${baseUrl}#${path}` : `${baseUrl}${path}`;

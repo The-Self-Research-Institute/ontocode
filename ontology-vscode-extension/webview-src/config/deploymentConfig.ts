@@ -58,6 +58,13 @@ export function getStoredDeploymentType(): DeploymentType {
 
 // ─── Gateway URL ─────────────────────────────────────────────────────────────
 export function getGatewayUrl(type?: DeploymentType): string {
+    // Desktop Electron: preload.js sets this before React initialises.
+    // We cannot rely on the Vite build-time __ONTOCODE_CONFIG__ constant here
+    // because it has empty strings when built without env vars, and
+    // window.location.hostname is "" under file:// so isLocalhost is false.
+    if (typeof window !== 'undefined' && (window as any).__DESKTOP_API_URL__) {
+        return (window as any).__DESKTOP_API_URL__;
+    }
     const deploymentType = type ?? getStoredDeploymentType();
     const config = getConfig();
     if (isLocalhost) {

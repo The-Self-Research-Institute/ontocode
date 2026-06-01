@@ -52,6 +52,9 @@ public class AuthController {
     @Value("${app.admin.email:admin@example.com}")
     private String adminEmail;
 
+    @Value("${app.email.enabled:true}")
+    private boolean emailEnabled;
+
     /**
      * Comma-separated list of allowed email domains for login/signup during restricted testing.
      * Empty = allow all. Example: "coretopia.com,example.com"
@@ -100,7 +103,7 @@ public class AuthController {
      */
     @PostConstruct
     public void createDefaultUsers() {
-        // Look up by email (the authoritative identity field) — username may differ
+        // Ensure the designated admin account has ROLE_ADMIN
         userRepository.findByEmailIgnoreCase(adminEmail).ifPresentOrElse(admin -> {
             boolean needsSave = false;
             if (admin.getRoles() == null || !admin.getRoles().contains("ROLE_ADMIN")) {
@@ -127,6 +130,19 @@ public class AuthController {
             admin.setEnabled(true);
             userRepository.save(admin);
             log.warn("✓ Default admin user created (email={})", adminEmail);
+        });
+
+        // Desktop mode: strip ROLE_ADMIN from any user who is NOT the designated admin email.
+        // This corrects accounts that were incorrectly promoted before this fix.
+        if (emailEnabled) return; // cloud mode — don't touch roles
+        userRepository.findAll().forEach(user -> {
+            if (!user.getEmail().equalsIgnoreCase(adminEmail)
+                    && user.getRoles() != null
+                    && user.getRoles().contains("ROLE_ADMIN")) {
+                user.setRoles(Set.of("ROLE_USER"));
+                userRepository.save(user);
+                log.warn("✓ Desktop: removed ROLE_ADMIN from non-admin user (email={})", user.getEmail());
+            }
         });
     }
 
@@ -185,13 +201,20 @@ public class AuthController {
             ));
         }
 
-        // Check if account is verified before password auth. Otherwise Spring Security
-        // can report disabled accounts as generic bad credentials.
+        // Check if account is verified before password auth. Skip in desktop mode (email disabled).
         if (!user.isEnabled()) {
-            auditService.logLoginFailure(loginIdentifier, clientIp, "Account not verified");
-            return ResponseEntity.badRequest().body(Map.of(
-                "error", "Account not verified. Please check your email to verify your account."
-            ));
+            if (!emailEnabled) {
+                // Desktop mode: auto-verify the account silently
+                user.setEnabled(true);
+                user.setVerificationToken(null);
+                user.setVerificationTokenExpiry(null);
+                userRepository.save(user);
+            } else {
+                auditService.logLoginFailure(loginIdentifier, clientIp, "Account not verified");
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Account not verified. Please check your email to verify your account."
+                ));
+            }
         }
 
         // Authenticate directly against the selected user's stored BCrypt hash.
@@ -362,21 +385,21 @@ public class AuthController {
         // Don't set role on signup - will be set after deployment selection
         user.setRoles(new HashSet<>());
         
-        user.setEnabled(false); // Require email verification
-
-        // Generate verification token (expires in 24 hours)
-        String verificationToken = UUID.randomUUID().toString();
-        user.setVerificationToken(verificationToken);
-        user.setVerificationTokenExpiry(LocalDateTime.now().plusHours(24));
-
-        userRepository.save(user);
-
-        // Send verification email
-        try {
-            emailService.sendVerificationEmail(user.getEmail(), verificationToken);
-        } catch (Exception e) {
-            log.error("Failed to send verification email", e);
-            // Don't fail registration if email fails
+        if (emailEnabled) {
+            user.setEnabled(false); // Require email verification
+            String verificationToken = UUID.randomUUID().toString();
+            user.setVerificationToken(verificationToken);
+            user.setVerificationTokenExpiry(LocalDateTime.now().plusHours(24));
+            userRepository.save(user);
+            try {
+                emailService.sendVerificationEmail(user.getEmail(), verificationToken);
+            } catch (Exception e) {
+                log.error("Failed to send verification email", e);
+            }
+        } else {
+            // Desktop mode: auto-verify, no email needed
+            user.setEnabled(true);
+            userRepository.save(user);
         }
 
         auditService.logSignup(username, email);
@@ -678,13 +701,13 @@ public class AuthController {
             User user = userOpt.get();
             log.info("Current user roles: {}", user.getRoles());
             
-            // Never strip ROLE_ADMIN — admins keep their role regardless of deployment type
             Set<String> currentRoles = user.getRoles() != null ? user.getRoles() : new HashSet<>();
-            if (currentRoles.contains("ROLE_ADMIN")) {
-                log.info("Skipping role update — user {} is ROLE_ADMIN, preserving admin role", username);
+            boolean isDesignatedAdmin = user.getEmail().equalsIgnoreCase(adminEmail);
+            if (isDesignatedAdmin && currentRoles.contains("ROLE_ADMIN")) {
+                log.info("Skipping role update — user {} is designated admin", username);
             } else if ("self-hosted".equalsIgnoreCase(deploymentType)) {
-                user.setRoles(Set.of("ROLE_USER", "ROLE_ADMIN"));
-                log.info("Setting self-hosted roles (ROLE_USER, ROLE_ADMIN) for user: {}", username);
+                user.setRoles(Set.of("ROLE_USER"));
+                log.info("Setting desktop roles (ROLE_USER) for user: {}", username);
             } else {
                 user.setRoles(Set.of("ROLE_USER"));
                 log.info("Setting cloud roles (ROLE_USER) for user: {}", username);

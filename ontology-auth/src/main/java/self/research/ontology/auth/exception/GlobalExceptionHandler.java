@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
  * Global exception handler for all REST controllers
  * Ensures consistent error responses across all endpoints
  */
-@ControllerAdvice
+@ControllerAdvice("authGlobalExceptionHandler")
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);

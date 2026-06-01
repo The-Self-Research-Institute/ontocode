@@ -73,9 +73,15 @@ class ApiClient {
   private static _instance: ApiClient;
   private axiosClient: AxiosInstance | null = null;
   // In web extension mode or browser bridge mode, bypass the VS Code proxy
-  // Use direct axios/fetch instead
+  // Use direct axios/fetch instead.
+  // NOTE: In Electron (contextIsolation=true), direct window assignments in preload.js
+  // are NOT visible to the renderer — only contextBridge.exposeInMainWorld properties are.
+  // window.electronAPI is exposed via contextBridge, so it reliably signals Electron desktop.
+  // window.__ONTOCODE_CONFIG__ and __ONTOCODE_BROWSER_BRIDGE__ are set in isolated preload
+  // context and are undefined here, so we cannot rely on them to detect Electron.
   private isVSCode = typeof window !== 'undefined' &&
     !!window.vscode &&
+    !(window as any).electronAPI &&
     !(window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION &&
     !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
   private listenerAttached = false;
@@ -198,18 +204,21 @@ class ApiClient {
       maxBodyLength: Infinity
     });
 
-    // Request interceptor to add auth token
+    // Request interceptor: resolve base URL and add auth token.
+    // BASE_URL is evaluated at module init — before Electron's did-finish-load
+    // sets window.__DESKTOP_API_URL__. Re-read it on every request so the first
+    // call after page load picks up the correct desktop port (18083).
     this.axiosClient.interceptors.request.use((config) => {
-      // Try to get token from localStorage (webview context shares localStorage with the page)
-      // In VS Code webview, the extension updates localStorage when the token changes
+      const desktopUrl = (window as any).__DESKTOP_API_URL__;
+      if (desktopUrl && config.baseURL !== desktopUrl) {
+        config.baseURL = desktopUrl;
+        BASE_URL = desktopUrl;
+      }
+
       const token = localStorage.getItem('authToken');
-      console.log('[ApiClient] Interceptor - URL:', config.url, '| Token present:', !!token, '| Token length:', token?.length);
+      console.log('[ApiClient] Interceptor - baseURL:', config.baseURL, '| URL:', config.url, '| Token present:', !!token);
       if (token && config.headers) {
         config.headers.Authorization = `Bearer ${token}`;
-        console.log('[ApiClient] ✓ Authorization header added');
-      } else {
-        console.warn('[ApiClient] ✗ No token found in localStorage - request will fail if authentication required');
-        console.warn('[ApiClient] localStorage keys:', Object.keys(localStorage));
       }
       return config;
     });

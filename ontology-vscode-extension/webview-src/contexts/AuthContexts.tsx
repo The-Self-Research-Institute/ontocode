@@ -116,7 +116,8 @@ const shouldRequireWorkspaceSelection = (
     workspaceId?: string
 ): boolean => {
     if (deploymentType === 'self-hosted') {
-        return false;
+        // Desktop: show workspace/projects page when user has no workspace yet
+        return !workspaceId;
     }
     if (deploymentType === 'cloud') {
         return !workspaceId;

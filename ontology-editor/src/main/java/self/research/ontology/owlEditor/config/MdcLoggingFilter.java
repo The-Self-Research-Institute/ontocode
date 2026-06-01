@@ -44,7 +44,7 @@ import java.util.Base64;
  * dashboards / grep can filter by exact id when needed
  * (e.g. {@code zgrep 'projectId=proj-abc'}).
  */
-@Component
+@Component("owlEditorMdcLoggingFilter")
 @Order(1)
 public class MdcLoggingFilter extends OncePerRequestFilter {
 
