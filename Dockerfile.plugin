@@ -28,7 +28,7 @@ RUN mkdir -p /app/storage && \
     chown -R 1000:1000 /app
 
 # Copy the built JAR (spring-boot:repackage creates executable JAR)
-COPY --from=build /build/target/*.jar app.jar
+COPY --from=build /build/target/*-exec.jar app.jar
 
 USER 1000
 
