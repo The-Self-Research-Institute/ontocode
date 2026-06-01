@@ -187,7 +187,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
           </div>
 
           <p className="text-xs text-white/30 mt-4 text-center">
-            No sign-up required · Free to use · Java 17 bundled
+            No sign-up required · Free to use · Includes Java 17
           </p>
         </div>
 
