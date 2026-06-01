@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.service.OntologyAdminService;
+import self.research.ontology.owlEditor.service.TopLevelClassCacheService;
 
 import java.util.HashMap;
 import java.util.List;
@@ -23,9 +24,30 @@ import java.util.Map;
 public class OntologyAdminController {
 
     private final OntologyAdminService adminService;
+    private final TopLevelClassCacheService topLevelCacheService;
 
-    public OntologyAdminController(OntologyAdminService adminService) {
+    public OntologyAdminController(OntologyAdminService adminService,
+                                   TopLevelClassCacheService topLevelCacheService) {
         this.adminService = adminService;
+        this.topLevelCacheService = topLevelCacheService;
+    }
+
+    /** Evict stale top-level class hierarchy cache for a project.
+     *  Call after deploying a fix to the orphan/hierarchy query.
+     *  GET /api/ontology/ontology/cache/evict/{projectId}
+     */
+    @PostMapping("/cache/evict/{projectId:.+}")
+    public ResponseEntity<?> evictHierarchyCache(@PathVariable String projectId) {
+        topLevelCacheService.evict(projectId);
+        return ResponseEntity.ok(Map.of("success", true, "message",
+            "Top-level hierarchy cache evicted for project " + projectId));
+    }
+
+    /** Evict ALL projects' top-level cache — use after a hierarchy query fix deployment. */
+    @PostMapping("/cache/evict-all")
+    public ResponseEntity<?> evictAllHierarchyCache() {
+        topLevelCacheService.evictAll();
+        return ResponseEntity.ok(Map.of("success", true, "message", "All hierarchy caches evicted"));
     }
 
     @GetMapping("/id/{projectId}")
