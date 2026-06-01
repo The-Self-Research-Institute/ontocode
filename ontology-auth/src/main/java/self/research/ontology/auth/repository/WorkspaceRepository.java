@@ -2,11 +2,13 @@ package self.research.ontology.auth.repository;
 
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.Query;
+import org.springframework.stereotype.Repository;
 import self.research.ontology.auth.model.Workspace;
 
 import java.util.List;
 import java.util.Optional;
 
+@Repository("authWorkspaceRepository")
 public interface WorkspaceRepository extends MongoRepository<Workspace, String> {
 
     Optional<Workspace> findByWorkspaceId(String workspaceId);

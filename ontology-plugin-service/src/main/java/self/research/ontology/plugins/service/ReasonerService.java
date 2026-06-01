@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
  * Service for ontology reasoning operations.
  * Supports multiple reasoners: HermiT, Pellet (Openllet), FaCT++, ELK, and Structural.
  */
-@Service
+@Service("pluginReasonerService")
 public class ReasonerService {
 
     private static final Logger log = LoggerFactory.getLogger(ReasonerService.class);

@@ -6,7 +6,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.service.DesktopHierarchyService;
 import self.research.ontology.owlEditor.service.OntologyMetadataService;
 import self.research.ontology.owlEditor.service.OntologyQueryService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
@@ -23,6 +26,13 @@ public class OntologyQueryController {
     private final ProjectMetadataService projectMetadataService;
     private final OntologyMetadataService ontologyMetadataService;
 
+    // Desktop-only — null in cloud. Injected when ontocode.desktop.mode=true.
+    @Autowired(required = false) @Nullable
+    private DesktopHierarchyService desktopHierarchyService;
+
+    @Autowired(required = false) @Nullable
+    private self.research.ontology.owlEditor.service.DesktopOntologyLoader desktopOntologyLoader;
+
     public OntologyQueryController(OntologyQueryService queryService,
                                    ProjectMetadataService projectMetadataService,
                                    OntologyMetadataService ontologyMetadataService) {
@@ -31,10 +41,25 @@ public class OntologyQueryController {
         this.ontologyMetadataService = ontologyMetadataService;
     }
 
+    /** Desktop: tells the frontend whether the OWLAPI in-memory model is ready. */
+    @GetMapping("/cache-status/{projectId:.+}")
+    public ResponseEntity<?> cacheStatus(@PathVariable String projectId) {
+        boolean ready = desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId);
+        return ResponseEntity.ok(Map.of("owlapiReady", ready, "projectId", projectId));
+    }
+
     @GetMapping("/classes/top-level/{projectId:.+}")
     public ResponseEntity<?> topLevel(@PathVariable String projectId,
                                       @RequestParam(defaultValue = "5000") int limit) {
         try {
+            // Desktop fast path: OWLAPI in-memory → instant, no network
+            if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+                return ResponseEntity.ok(Map.of("success", true, "classes",
+                        desktopHierarchyService.topLevelClasses(projectId, limit)));
+            }
+            // Trigger lazy OWLAPI load for existing projects (non-blocking — next request will be fast)
+            if (desktopOntologyLoader != null) desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
+            // Cloud / OWLAPI cache-miss: Fuseki SPARQL
             return ResponseEntity.ok(Map.of("success", true, "classes",
                     queryService.topLevelClasses(projectId, limit)));
         } catch (Exception e) {
@@ -60,6 +85,12 @@ public class OntologyQueryController {
                                       @RequestParam String parentIri,
                                       @RequestParam(defaultValue = "1000") int limit,
                                       @RequestParam(defaultValue = "0") int offset) {
+        // Desktop fast path — also fixes the duplicate union-member display bug:
+        // StructuralReasoner.getSubClasses(direct=true) returns only explicit rdfs:subClassOf,
+        // never union members, so Viruses won't appear twice.
+        if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            return ResponseEntity.ok(desktopHierarchyService.children(projectId, parentIri, limit, offset));
+        }
         return ResponseEntity.ok(queryService.children(projectId, parentIri, limit, offset));
     }
 
@@ -141,6 +172,11 @@ public class OntologyQueryController {
     @GetMapping("/classes/usage/{projectId}")
     public ResponseEntity<?> classUsage(@PathVariable String projectId,
                                        @RequestParam String classIri) {
+        // Desktop fast path: compute usage from OWLAPI in-memory model
+        if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    desktopHierarchyService.classUsage(projectId, classIri)));
+        }
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.classUsage(projectId, classIri)));
     }
@@ -168,7 +204,20 @@ public class OntologyQueryController {
 
     @GetMapping("/classes/details/{projectId}")
     public ResponseEntity<?> classDetails(@PathVariable String projectId,
-                                         @RequestParam String classIri) {
+                                         @RequestParam String classIri,
+                                         jakarta.servlet.http.HttpServletRequest httpRequest) {
+        // Desktop: OWLAPI in-memory → instant, no SPARQL, nothing to cancel
+        if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    desktopHierarchyService.classDetails(projectId, classIri)));
+        }
+        // Check if client disconnected before starting expensive SPARQL queries
+        try {
+            if (httpRequest.isAsyncStarted()) {
+                Object ctx = httpRequest.getAttribute("asyncContext");
+                if (ctx != null) return ResponseEntity.status(499).build();
+            }
+        } catch (Exception ignored) {}
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.classDetails(projectId, classIri)));
     }

@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit;
  * Service for ontology reasoning operations.
  * Supports multiple reasoners: HermiT, Pellet (Openllet), FaCT++, ELK, and Structural.
  */
-@Service
+@Service("owlEditorReasonerService")
 public class ReasonerService {
 
     private static final Logger log = LoggerFactory.getLogger(ReasonerService.class);

@@ -264,6 +264,9 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
+                    <!-- classifier=exec keeps the plain JAR as the primary artifact so
+                         ontology-desktop can depend on it; the fat JAR gets -exec suffix. -->
+                    <classifier>exec</classifier>
                     <excludes>
                         <exclude>
                             <groupId>org.projectlombok</groupId>

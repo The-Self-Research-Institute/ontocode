@@ -8,7 +8,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * CORS configuration for allowing cross-origin requests.
  * This enables the VS Code extension and other frontend clients to communicate with the backend.
  */
-@Configuration
+@Configuration("owlEditorCorsConfig")
 public class CorsConfig implements WebMvcConfigurer {
 
     @Override

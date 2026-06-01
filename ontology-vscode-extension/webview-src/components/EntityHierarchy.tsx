@@ -685,7 +685,23 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       
       {/* Tree/List View */}
       <div className="flex-1 overflow-y-auto p-1">
-        {(viewMode === 'inferred' && !isReasonerRunning) ? (
+        {/* Loading skeleton — shown while hierarchy data is being fetched */}
+        {isLoading && (!filteredData || filteredData.length === 0) ? (
+          <div className="p-2 space-y-1">
+            {[...Array(12)].map((_, i) => (
+              <div key={i} className="flex items-center gap-2 px-2 py-1 rounded animate-pulse"
+                   style={{ paddingLeft: `${(i % 3) * 16 + 8}px` }}>
+                <div className="w-3 h-3 rounded bg-gray-200 flex-shrink-0" />
+                <div className="h-3 rounded bg-gray-200 flex-shrink-0"
+                     style={{ width: `${60 + (i * 23) % 80}px` }} />
+              </div>
+            ))}
+            <div className="px-2 pt-2 text-xs text-gray-400 flex items-center gap-1">
+              <div className="w-3 h-3 border-2 border-purple-300 border-t-purple-600 rounded-full animate-spin flex-shrink-0" />
+              <span>Loading hierarchy…</span>
+            </div>
+          </div>
+        ) : (viewMode === 'inferred' && !isReasonerRunning) ? (
           <div className="p-4 text-center text-gray-600">
             <p className="mb-2 flex items-center justify-center gap-2">
               <span className="text-2xl">🔍</span>

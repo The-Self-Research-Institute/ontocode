@@ -37,7 +37,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
  * Controller for reasoning operations on ontologies.
  * Provides endpoints for consistency checking, classification, realization, and inference.
  */
-@RestController
+@RestController("owlEditorReasonerController")
 @RequestMapping("/api/ontology")
 @CrossOrigin(originPatterns = "*")
 public class ReasonerController {

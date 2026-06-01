@@ -87,6 +87,11 @@ public class ProjectLoadController {
     private final SimpMessagingTemplate messagingTemplate;
     private final GraphDBDatasetService datasetService;
     private final ProjectRepository projectRepository;
+
+    // Desktop-only shortcut — null in cloud
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.cache.ProjectOntologyCache ontologyCache;
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
     private final MongoTemplate mongoTemplate;
@@ -1035,9 +1040,33 @@ public class ProjectLoadController {
             @RequestParam String fileName,
             @RequestParam(required = false) String fileId) {
         try {
-            log.info("[CHECK-GRAPHDB-DUPLICATE] Checking GraphDB for project: {}, fileName: {}, fileId: {}", 
+            // Fast path 1: OWLAPI model cached — data is definitely in Fuseki.
+            if (ontologyCache != null && ontologyCache.has(projectId)) {
+                long classCount = ontologyCache.get(projectId)
+                    .map(c -> c.ontology().classesInSignature().count()).orElse(0L);
+                log.info("[CHECK-GRAPHDB-DUPLICATE] OWLAPI cache shortcut — {} classes", classCount);
+                return ResponseEntity.ok(Map.of("success", true, "exists", true,
+                    "projectId", projectId, "fileName", fileName,
+                    "graphSize", classCount, "ontologyIRIs", List.of(), "source", "owlapi-cache"));
+            }
+
+            // Fast path 2: desktop-only — filesystem check is only safe when Fuseki is
+            // managed exclusively by the desktop app (single user, no external Fuseki changes).
+            // On cloud, Fuseki can be cleared/migrated independently so we must always query it.
+            if (ontologyCache != null) { // ontologyCache bean only exists in desktop mode
+                Optional<java.nio.file.Path> currentFile = storageManager.findCurrentOntology(projectId);
+                if (currentFile.isPresent()) {
+                    log.info("[CHECK-GRAPHDB-DUPLICATE] Desktop file-system shortcut — ontology file exists at {}",
+                        currentFile.get().getFileName());
+                    return ResponseEntity.ok(Map.of("success", true, "exists", true,
+                        "projectId", projectId, "fileName", fileName,
+                        "graphSize", 0, "ontologyIRIs", List.of(), "source", "filesystem-check"));
+                }
+            }
+
+            log.info("[CHECK-GRAPHDB-DUPLICATE] Checking Fuseki for project: {}, fileName: {}, fileId: {}",
                 projectId, fileName, fileId);
-            
+
             // Call the GraphDB service to check if file is already loaded
             Map<String, Object> checkResult = datasetService.checkFileExistsInGraphDB(projectId, fileName, fileId);
             

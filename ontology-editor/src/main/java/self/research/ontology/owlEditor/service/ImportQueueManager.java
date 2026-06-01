@@ -338,6 +338,7 @@ public class ImportQueueManager {
                 .queuedImports(queue.size())
                 .averageProcessingTimeMs(getAverageProcessingTime())
                 .queue(queuedProjects)
+                .activeProjectIds(new java.util.ArrayList<>(activeImports.keySet()))
                 .build();
     }
 

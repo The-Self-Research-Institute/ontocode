@@ -37,7 +37,7 @@ import java.util.Base64;
  *       </pre></li>
  * </ul>
  */
-@Component
+@Component("authMdcLoggingFilter")
 @Order(1)
 public class MdcLoggingFilter extends OncePerRequestFilter {
 

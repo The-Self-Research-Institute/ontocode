@@ -21,10 +21,13 @@ public class SecurityValidationFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(SecurityValidationFilter.class);
 
     // SQL Injection patterns
+    // Note: bare "--" is NOT flagged because project IDs use double-dashes (e.g. proj-abc--uuid).
+    // Only flag "--" when followed by a space and SQL keyword (the actual SQL comment attack pattern).
     private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
         "('.*(\\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE|UNION|SCRIPT)\\b).*')|" +
         "(;\\s*(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE|UNION|SCRIPT)\\s+)|" +
-        "(--)|(/\\*.*\\*/)",
+        "(--\\s+(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE|UNION|OR|AND))|" +
+        "(/\\*.*\\*/)",
         Pattern.CASE_INSENSITIVE
     );
 

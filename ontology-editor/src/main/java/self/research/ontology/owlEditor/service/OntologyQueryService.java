@@ -220,6 +220,18 @@ public class OntologyQueryService {
                     ?c rdfs:subClassOf ?super .
                     FILTER(isIRI(?super) && ?super != <http://www.w3.org/2002/07/owl#Thing> && ?super != ?c)
                   }
+                  MINUS {
+                    # Exclude classes that are members of a union/intersection that
+                    # defines an equivalentClass of a named class.
+                    # e.g. Viruses is a union member of "cellular organisms or viruses"
+                    # but has no explicit rdfs:subClassOf to the named union IRI.
+                    ?namedParent owl:equivalentClass/owl:unionOf/rdf:rest*/rdf:first ?c .
+                    FILTER(isIRI(?namedParent) && ?namedParent != ?c)
+                  }
+                  MINUS {
+                    ?namedParent owl:equivalentClass/owl:intersectionOf/rdf:rest*/rdf:first ?c .
+                    FILTER(isIRI(?namedParent) && ?namedParent != ?c)
+                  }
                 }
                 ORDER BY ?c
                 LIMIT %d

@@ -11,7 +11,7 @@ import org.springframework.web.context.request.async.AsyncRequestNotUsableExcept
 
 import java.util.Map;
 
-@RestControllerAdvice
+@RestControllerAdvice("owlEditorGlobalExceptionHandler")
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
