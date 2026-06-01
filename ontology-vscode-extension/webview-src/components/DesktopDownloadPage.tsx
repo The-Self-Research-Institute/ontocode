@@ -14,8 +14,7 @@ const OS_OPTIONS = [
     color: "#0078d4",
     bg: "#eff6ff",
     versions: [
-      { arch: "windows-x64",   label: "Windows 64-bit (Installer)", platform: "windows-x64",   primary: true },
-      { arch: "windows-arm64", label: "Windows ARM64 (Installer)",   platform: "windows-arm64", primary: false },
+      { arch: "windows-x64", label: "Windows Installer (x64 + ARM64 universal)", platform: "windows-x64", primary: true },
     ],
     requirements: "Windows 10 or later",
   },
