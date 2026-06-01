@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:electron": "vite build --base ./",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OntoCode Production on EC2 (Docker only)</title>
+  <style>
+    body { background: #ffffff; color: #000000; font-family: system-ui, sans-serif; line-height: 1.5; margin: 0; padding: 1.5rem; max-width: 52rem; }
+    h1 { font-size: 1.5rem; margin-top: 0; }
+    h2 { font-size: 1.15rem; margin-top: 1.75rem; border-bottom: 1px solid #000000; padding-bottom: 0.25rem; }
+    h3 { font-size: 1rem; margin-top: 1.25rem; }
+    p, li { font-size: 0.95rem; }
+    ul, ol { padding-left: 1.25rem; }
+    code, pre { font-family: ui-monospace, monospace; font-size: 0.85rem; background: #ffffff; border: 1px solid #000000; }
+    pre { padding: 0.75rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+    code { padding: 0.1rem 0.25rem; border: 1px solid #000000; }
+    table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.9rem; }
+    th, td { border: 1px solid #000000; padding: 0.4rem 0.5rem; text-align: left; vertical-align: top; }
+    th { font-weight: 600; }
+    .note { border: 1px solid #000000; padding: 0.75rem; margin: 0.75rem 0; }
+    a { color: #000000; text-decoration: underline; }
+    hr { border: none; border-top: 1px solid #000000; margin: 2rem 0; }
+  </style>
+</head>
+<body>
+
+<h1>OntoCode production on Amazon EC2 (Docker Compose only)</h1>
+<p>This runbook deploys the full OntoCode stack on a single EC2 instance using <strong>Docker Compose only</strong>. It does <strong>not</strong> use Kubernetes, EKS, or ECS task definitions. For conceptual background and Stripe live versus test keys, see <a href="DEPLOYMENT_PRODUCTION.html">Production deployment guide</a>.</p>
+
+<h2>1. What you will have after this guide</h2>
+<ul>
+  <li>One EC2 host running Docker with the services defined in <code>docker-compose.production.yml</code> (MongoDB, GraphDB, auth, gateway, ontology editor, SWRL, plugin init chain, webapp).</li>
+  <li>Application logs on the host under <code>/var/log/ontocode/</code> (subfolders per service).</li>
+  <li>A single <code>.env</code> file on the server (not committed to git) holding secrets and URLs.</li>
+</ul>
+<div class="note">
+  <p><strong>Capacity:</strong> Production compose expects meaningful RAM (GraphDB alone is capped at 8g in the file; editor up to 4g; plus MongoDB, gateway, auth, SWRL, plugin). Use an instance type with at least <strong>16 GiB RAM</strong> as a practical minimum for a single-node production deployment, and more if many concurrent users or large ontologies are expected. EBS volume size should cover Docker images, MongoDB and GraphDB volumes, and logs.</p>
+</div>
+
+<h2>2. Prerequisites</h2>
+<h3>2.1 AWS account and EC2 instance</h3>
+<ul>
+  <li>An EC2 instance in a VPC with a public or private IP, depending on how users reach the app (ALB in front is common; this guide also works with a public IP on the instance).</li>
+  <li>Key pair for SSH access.</li>
+  <li>IAM role optional (for SSM Session Manager instead of SSH if you prefer).</li>
+</ul>
+
+<h3>2.2 Security group (firewall) rules</h3>
+<p>Adjust to your security policy. Typical pattern:</p>
+<table>
+  <thead><tr><th>Port</th><th>Source</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>22</td><td>Your office IP / bastion only</td><td>SSH administration.</td></tr>
+    <tr><td>80</td><td>Load balancer or <code>0.0.0.0/0</code> if no ALB</td><td>HTTP gateway (compose maps host 80 to gateway).</td></tr>
+    <tr><td>443</td><td>Same as 80</td><td>HTTPS only if you terminate TLS on the instance (install nginx or Caddy in front of Docker, not covered in minimal compose).</td></tr>
+    <tr><td>3000</td><td>Same as 80</td><td>React webapp (compose publishes <code>3000:3000</code>); restrict if you put the UI behind the same reverse proxy on 443 only.</td></tr>
+    <tr><td>8086</td><td>Restrict (admin VPN) or omit from public</td><td>Auth API; often kept internal and reached only via gateway.</td></tr>
+    <tr><td>27017, 7200, 8083, 8084, 8087</td><td><strong>Do not</strong> open to the internet</td><td>MongoDB, GraphDB, editor, SWRL, plugin — internal only.</td></tr>
+  </tbody>
+</table>
+
+<h3>2.3 Software on the instance</h3>
+<ul>
+  <li><strong>Docker Engine</strong> and the <strong>Docker Compose v2 plugin</strong> (<code>docker compose</code>, not legacy <code>docker-compose</code>).</li>
+  <li><strong>Git</strong> to clone or pull the repository.</li>
+  <li>A text editor: <strong>vim</strong>, <strong>nano</strong>, or any editor you use instead of <code>vi .env</code>.</li>
+</ul>
+<p>Example on <strong>Amazon Linux 2023</strong> (run with sudo as needed for your AMI):</p>
+<pre>sudo dnf update -y
+sudo dnf install -y git vim docker
+sudo systemctl enable --now docker
+sudo usermod -aG docker ec2-user
+# log out and back in so group docker applies</pre>
+<p>Install Compose plugin if not bundled (check with <code>docker compose version</code>). On Ubuntu, use <code>apt install docker.io docker-compose-v2 git vim</code> or Docker’s official install instructions from Docker documentation.</p>
+
+<h3>2.4 Before you SSH</h3>
+<ul>
+  <li>GraphDB <strong>license</strong> file available (see <code>.env.example</code> for <code>GDB_LICENSE_FILE</code> / how the GraphDB image expects the license).</li>
+  <li>Registry access: credentials to pull images if your <code>DOCKER_REGISTRY</code> is private.</li>
+  <li>Production <strong>Stripe live</strong> keys and live <strong>price IDs</strong> if billing is enabled.</li>
+  <li>A long random <code>JWT_SECRET</code> generated offline (for example <code>openssl rand -base64 48</code>).</li>
+</ul>
+
+<h2>3. Create the application directory</h2>
+<p>Use a fixed path so operators always know where the deployment lives. Example: <code>/opt/ontocode</code> (requires sudo to create). Alternatively use <code>/home/ec2-user/ontocode</code> without sudo for the directory itself.</p>
+<pre>sudo mkdir -p /opt/ontocode
+sudo chown ec2-user:ec2-user /opt/ontocode
+cd /opt/ontocode</pre>
+<p>Replace <code>ec2-user</code> with your SSH user (<code>ubuntu</code> on Ubuntu AMIs).</p>
+
+<h2>4. Get the application code</h2>
+<h3>4.1 First-time clone</h3>
+<pre>cd /opt/ontocode
+git clone &lt;YOUR_GIT_REPO_URL&gt; .
+# or clone into a subfolder then move files; the important part is compose and Dockerfile paths at repo root</pre>
+
+<h3>4.2 Updates (later releases)</h3>
+<pre>cd /opt/ontocode
+git fetch origin
+git checkout &lt;branch-or-tag&gt;
+git pull</pre>
+<p>After <code>git pull</code>, review <code>docker-compose.production.yml</code> and <code>.env.example</code> for new environment variables before restarting containers.</p>
+
+<h2>5. Environment file</h2>
+<h3>5.1 Create <code>.env</code></h3>
+<pre>cd /opt/ontocode
+cp .env.example .env
+vi .env</pre>
+<p>Use <code>nano .env</code> if you prefer. The file must stay on the server only; add <code>.env</code> to <code>.gitignore</code> if your fork ever removes it.</p>
+
+<h3>5.2 What to fill in <code>.env</code> (checklist)</h3>
+<p>Fill every value for production. The table below maps the main groups; cross-check <code>.env.example</code> and any new keys in compose.</p>
+<table>
+  <thead><tr><th>Group</th><th>Variables to set</th><th>Notes for EC2</th></tr></thead>
+  <tbody>
+    <tr><td>GraphDB license</td><td><code>GDB_LICENSE_FILE</code>, <code>GDB_LICENSE_PATH</code></td><td>Place the <code>.lic</code> file on the host and point paths so the GraphDB container can read it per your image layout.</td></tr>
+    <tr><td>MongoDB</td><td><code>MONGODB_DATABASE</code>; compose uses <code>MONGO_ROOT_USER</code>, <code>MONGO_ROOT_PASSWORD</code></td><td>Use a strong root password. Compose builds the internal <code>MONGODB_URI</code> for services.</td></tr>
+    <tr><td>Public URLs</td><td><code>BASE_URL</code>, <code>AUTH_SERVICE_URL</code>, <code>GATEWAY_URL</code></td><td><code>BASE_URL</code> must be the HTTPS (or HTTP) origin users use for the webapp (emails and redirects). If the instance has public DNS <code>https://app.example.com</code>, use that. <code>GATEWAY_URL</code> is often <code>http://&lt;host&gt;</code> or <code>https://&lt;host&gt;</code> on port 80/443 as exposed.</td></tr>
+    <tr><td>Timeouts</td><td><code>GATEWAY_HTTP_RESPONSE_TIMEOUT</code>, <code>ONTOLOGY_HTTP_TIMEOUT_MS</code>, <code>ONTOLOGY_HTTP_TIMEOUT_SECONDS</code></td><td>Keep large uploads working; values should match between gateway and editor (compose passes them).</td></tr>
+    <tr><td>Security</td><td><code>JWT_SECRET</code></td><td>Long random string; must match what compose injects everywhere (gateway, auth, plugin).</td></tr>
+    <tr><td>Email</td><td><code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_USERNAME</code>, <code>SMTP_PASSWORD</code>, <code>EMAIL_FROM</code></td><td>Production SMTP; set <code>EMAIL_ENABLED</code> in editor env via compose if you use editor email features.</td></tr>
+    <tr><td>Stripe (live)</td><td><code>STRIPE_SECRET_KEY</code> (<code>sk_live_...</code>), <code>STRIPE_PUBLISHABLE_KEY</code>, <code>STRIPE_WEBHOOK_SECRET</code>, all <code>STRIPE_PRICE_*</code></td><td>Webhook URL in Stripe Dashboard must hit your auth service <code>/api/billing/webhook</code> on a URL reachable from Stripe (public IP, ALB, or CloudFront origin).</td></tr>
+    <tr><td>Billing jobs</td><td><code>BILLING_REMINDER_ENABLED</code>, <code>BILLING_REMINDER_DAYS_BEFORE_LIST</code>, <code>BILLING_REMINDER_CRON</code>, expiry and autorenewal keys, <code>INVITATION_CLEANUP_CRON</code></td><td>Timezone is the EC2 instance timezone unless you set container TZ.</td></tr>
+    <tr><td>Plans and storage</td><td><code>STORAGE_LIMIT_*</code>, <code>PLAN_*</code></td><td>Align with commercial terms.</td></tr>
+    <tr><td>Admin bootstrap</td><td><code>ADMIN_EMAIL</code>, <code>ADMIN_PASSWORD</code></td><td>Change default password after first login if your process requires it.</td></tr>
+    <tr><td>Images</td><td><code>DOCKER_REGISTRY</code>, <code>VERSION</code></td><td>Point to your registry and immutable tag (for example <code>1.4.2</code>), not a moving <code>latest</code> in production if you need rollback clarity.</td></tr>
+  </tbody>
+</table>
+
+<h3>5.3 Compose-only variables</h3>
+<p>Some values are referenced only in <code>docker-compose.production.yml</code> (for example <code>MONGO_ROOT_USER</code>). Ensure every <code>${VAR:?}</code> or required substitution in that file has a value in <code>.env</code> or defaults you accept.</p>
+
+<h2>6. Host log directories and permissions</h2>
+<p><code>docker-compose.production.yml</code> bind-mounts log directories on the EC2 host. Create them before first <code>up</code> so containers do not fail creating log files.</p>
+<pre>sudo mkdir -p /var/log/ontocode/auth \
+  /var/log/ontocode/gateway \
+  /var/log/ontocode/editor \
+  /var/log/ontocode/swrl
+
+# Services run as root in the compose file; host dirs owned by root are typical:
+sudo chown -R root:root /var/log/ontocode
+sudo chmod -R 755 /var/log/ontocode</pre>
+<p>If you see permission errors in container logs when writing to these paths, verify the bind mount exists and is writable by the container user (root). As a last resort for debugging only, some teams use <code>sudo chmod -R 777 /var/log/ontocode</code>; tighten permissions once the root cause is fixed.</p>
+
+<h2>7. Start the stack</h2>
+<p>From the repository root (where <code>docker-compose.production.yml</code> lives):</p>
+<pre>cd /opt/ontocode
+docker compose -f docker-compose.production.yml --env-file .env pull
+docker compose -f docker-compose.production.yml --env-file .env up -d</pre>
+<p>Watch startup the first time:</p>
+<pre>docker compose -f docker-compose.production.yml logs -f --tail=100</pre>
+<p>Confirm all services are running:</p>
+<pre>docker compose -f docker-compose.production.yml ps</pre>
+
+<h2>8. Verification on EC2</h2>
+<ul>
+  <li><strong>Gateway:</strong> From the instance, <code>curl -sI http://127.0.0.1:80</code> (or your health path if configured).</li>
+  <li><strong>Editor liveness:</strong> <code>curl -sf http://127.0.0.1:8083/actuator/health/liveness</code></li>
+  <li><strong>GraphDB:</strong> <code>curl -sf http://127.0.0.1:7200/rest/repositories</code> (do not expose 7200 publicly).</li>
+  <li><strong>Webapp:</strong> Open <code>http://&lt;EC2_PUBLIC_DNS&gt;:3000</code> or your TLS URL in a browser; confirm API calls go to the gateway URL configured in the webapp environment (<code>ONTOCODE_API_URL</code> in compose points at <code>http://gateway:80</code> inside the Docker network, which is correct for container-to-container traffic; external users use port 80 on the host).</li>
+</ul>
+
+<h2>9. TLS on EC2 (optional but recommended)</h2>
+<p>Docker Compose alone serves HTTP on port 80. For HTTPS in front of the same host, common patterns are: install <strong>Caddy</strong> or <strong>nginx</strong> on the EC2 instance listening on 443 and proxy to <code>127.0.0.1:80</code> and <code>127.0.0.1:3000</code>, or place an <strong>Application Load Balancer</strong> in front with an ACM certificate and target groups to instance ports 80 and 3000. This guide does not replace those TLS steps; they remain outside Kubernetes.</p>
+
+<h2>10. Ongoing operations</h2>
+<ul>
+  <li><strong>Deploy new version:</strong> <code>git pull</code>, adjust <code>VERSION</code> in <code>.env</code> if needed, then <code>docker compose ... up -d</code> again.</li>
+  <li><strong>Backups:</strong> Back up Docker volumes (<code>mongo-data</code>, <code>graphdb-data</code>, <code>graphdb-import</code>) and <code>/var/log/ontocode</code> per your retention policy.</li>
+  <li><strong>Disk space:</strong> Monitor EBS with CloudWatch; prune old Docker images with <code>docker system prune</code> only when you understand what will be removed.</li>
+</ul>
+
+<h2>11. Troubleshooting</h2>
+<ul>
+  <li><strong>Compose exits with “JWT_SECRET is required”:</strong> Export or define <code>JWT_SECRET</code> in <code>.env</code> and pass <code>--env-file .env</code>.</li>
+  <li><strong>Cannot pull images:</strong> Run <code>docker login &lt;registry&gt;</code> on the instance for private registries.</li>
+  <li><strong>GraphDB OOM or slow start:</strong> Instance too small; scale instance RAM or reduce load.</li>
+</ul>
+
+<hr>
+<p>OntoCode — EC2 production with Docker Compose only. Replace example paths, users, and repository URLs with your own.</p>
+
+</body>
+</html>

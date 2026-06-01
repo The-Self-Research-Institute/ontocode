@@ -1,0 +1,288 @@
+<mxfile host="app.diagrams.net" agent="OntoCode KT" pages="3">
+  <diagram id="page1-pipeline" name="1. Pipeline &amp; Storage">
+    <mxGraphModel dx="981" dy="1635" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="t1" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=22;fontStyle=1;fontColor=#1f2937" value="OntoCode Logging Architecture &amp;mdash; Pipeline &amp; Storage" vertex="1">
+          <mxGeometry height="40" width="1200" x="300" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="p1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=center;verticalAlign=middle" value="&lt;b&gt;Application Code&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;log.info(&amp;quot;...&amp;quot;)&lt;br/&gt;log.warn(...)&lt;br/&gt;log.error(..., ex)" vertex="1">
+          <mxGeometry height="120" width="180" x="40" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="p2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=center;verticalAlign=middle" value="&lt;b&gt;SLF4J Logger&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Named by FQCN&lt;br/&gt;e.g. &lt;i&gt;StripeService&lt;/i&gt;&lt;br/&gt;Inherits level from&lt;br/&gt;&lt;tt&gt;logback-spring.xml&lt;/tt&gt;" vertex="1">
+          <mxGeometry height="120" width="170" x="260" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="p3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=center;verticalAlign=middle" value="&lt;b&gt;ThresholdFilter&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Per-appender&lt;br/&gt;ERROR_FILE: WARN+&lt;br/&gt;APP_FILE: INFO+" vertex="1">
+          <mxGeometry height="120" width="170" x="470" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="p4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=center;verticalAlign=middle" value="&lt;b&gt;AsyncAppender&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;queueSize=1024&lt;br/&gt;neverBlock=true&lt;br/&gt;discardingThreshold=0&lt;br/&gt;&lt;br/&gt;&lt;i&gt;Decouples app threads&lt;br/&gt;from disk I/O&lt;/i&gt;" vertex="1">
+          <mxGeometry height="180" width="200" x="680" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="p5a" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=center;verticalAlign=middle" value="&lt;b&gt;ConsoleAppender&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;stdout&lt;br/&gt;Collected by Docker /&lt;br/&gt;K8s log driver" vertex="1">
+          <mxGeometry height="90" width="180" x="930" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p5b" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=center;verticalAlign=middle" value="&lt;b&gt;RollingFileAppender&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;immediateFlush=true&lt;br/&gt;file=${LOG_DIR}/&lt;svc&gt;-app.log&lt;br/&gt;&lt;br/&gt;Each event flushed to OS&lt;br/&gt;buffer before returning." vertex="1">
+          <mxGeometry height="120" width="200" x="930" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="p6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;align=center;verticalAlign=middle" value="&lt;b&gt;SizeAndTimeBasedRollingPolicy&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;maxFileSize = &lt;b&gt;50MB&lt;/b&gt;&lt;br/&gt;maxHistory = &lt;b&gt;30 days&lt;/b&gt;&lt;br/&gt;totalSizeCap = &lt;b&gt;1GB&lt;/b&gt;&lt;br/&gt;cleanHistoryOnStart = true&lt;br/&gt;&lt;br/&gt;fileNamePattern:&lt;br/&gt;&lt;tt&gt;&lt;svc&gt;-app-%d{yyyy-MM-dd}.%i.log.gz&lt;/tt&gt;" vertex="1">
+          <mxGeometry height="160" width="240" x="1260" y="-20" as="geometry" />
+        </mxCell>
+        <mxCell id="p7" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;align=center;verticalAlign=middle" value="&lt;b&gt;Active log file&lt;/b&gt;&lt;br/&gt;&lt;tt&gt;&lt;svc&gt;-app.log&lt;/tt&gt;&lt;br/&gt;&lt;br/&gt;Hot, append-only&lt;br/&gt;Persistent volume" vertex="1">
+          <mxGeometry height="120" width="140" x="1480" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="p8" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;align=center;verticalAlign=middle" value="&lt;b&gt;Compressed archive&lt;/b&gt;&lt;br/&gt;&lt;tt&gt;&lt;svc&gt;-app-&lt;br/&gt;YYYY-MM-DD.N.log.gz&lt;/tt&gt;&lt;br/&gt;&lt;br/&gt;gzip on roll&lt;br/&gt;Same persistent volume" vertex="1">
+          <mxGeometry height="120" width="140" x="1710" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="a12" edge="1" parent="1" source="p1" style="endArrow=classic;html=1;rounded=0;strokeColor=#6b7280;strokeWidth=2" target="p2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a23" edge="1" parent="1" source="p2" style="endArrow=classic;html=1;rounded=0;strokeColor=#6b7280;strokeWidth=2" target="p3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a34" edge="1" parent="1" source="p3" style="endArrow=classic;html=1;rounded=0;strokeColor=#6b7280;strokeWidth=2" target="p4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a45a" edge="1" parent="1" source="p4" style="endArrow=classic;html=1;rounded=0;strokeColor=#6b7280;strokeWidth=2;fontSize=10;fontColor=#6b7280" target="p5a" value="fan-out">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a45b" edge="1" parent="1" source="p4" style="endArrow=classic;html=1;rounded=0;strokeColor=#6b7280;strokeWidth=2" target="p5b">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a5b6" edge="1" parent="1" source="p5b" style="endArrow=classic;html=1;rounded=0;strokeColor=#d79b00;strokeWidth=2;fontSize=10;fontColor=#d79b00;fontStyle=1" target="p6" value="on roll trigger">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a5b7" edge="1" parent="1" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2;fontSize=10;fontColor=#82b366;fontStyle=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" value="active writes">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1130" y="265" as="sourcePoint" />
+            <mxPoint x="1480" y="295" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a67" edge="1" parent="1" source="p6" style="endArrow=none;html=1;rounded=0;strokeColor=#9673a6;strokeWidth=1.5;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0" target="p7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a78" edge="1" parent="1" source="p7" style="endArrow=classic;html=1;rounded=0;strokeColor=#9673a6;strokeWidth=2;fontSize=10;fontColor=#9673a6;fontStyle=1" target="p8" value="gzip + rename">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="hd1" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#1f2937" value="Rollover triggers" vertex="1">
+          <mxGeometry height="30" width="400" x="40" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="tr1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;verticalAlign=top;spacing=10" value="&lt;b&gt;Size threshold&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;When the active file reaches&lt;br/&gt;&lt;b&gt;50 MB&lt;/b&gt;, Logback rolls it.&lt;br/&gt;&lt;br/&gt;The %i index in the file name&lt;br/&gt;allows multiple rolls per day&lt;br/&gt;(e.g. &lt;tt&gt;...0.log.gz&lt;/tt&gt;, &lt;tt&gt;...1.log.gz&lt;/tt&gt;)." vertex="1">
+          <mxGeometry height="160" width="380" x="40" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="tr2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;verticalAlign=top;spacing=10" value="&lt;b&gt;Date change&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;When the calendar date in the&lt;br/&gt;file-name pattern changes&lt;br/&gt;(midnight UTC), the file rolls&lt;br/&gt;regardless of size.&lt;br/&gt;&lt;br/&gt;Yesterday&#39;s log becomes&lt;br/&gt;&lt;tt&gt;...YYYY-MM-DD.0.log.gz&lt;/tt&gt;." vertex="1">
+          <mxGeometry height="160" width="380" x="450" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="tr3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;verticalAlign=top;spacing=10" value="&lt;b&gt;Service start&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;On boot, when&lt;br/&gt;&lt;tt&gt;cleanHistoryOnStart=true&lt;/tt&gt;,&lt;br/&gt;Logback walks the archive dir&lt;br/&gt;and prunes archives older than&lt;br/&gt;&lt;b&gt;maxHistory&lt;/b&gt; / over &lt;b&gt;totalSizeCap&lt;/b&gt;.&lt;br/&gt;&lt;br/&gt;Active log is preserved &amp;mdash;&lt;br/&gt;new JVM appends to it." vertex="1">
+          <mxGeometry height="160" width="380" x="860" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="tr4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;align=left;verticalAlign=top;spacing=10" value="&lt;b&gt;Why gzip on roll?&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Compression happens at the&lt;br/&gt;moment of rolling, never during&lt;br/&gt;normal writes. Live writes stay&lt;br/&gt;cheap (raw text append).&lt;br/&gt;&lt;br/&gt;The &lt;tt&gt;.gz&lt;/tt&gt; suffix in&lt;br/&gt;&lt;tt&gt;fileNamePattern&lt;/tt&gt; is what&lt;br/&gt;triggers GZIPOutputStream." vertex="1">
+          <mxGeometry height="160" width="380" x="1270" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="hd2" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#1f2937" value="On-disk layout (per service)" vertex="1">
+          <mxGeometry height="30" width="600" x="40" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="fs1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0b1020;strokeColor=#1e293b;fontSize=11;fontFamily=Courier New;fontColor=#e2e8f0;align=left;verticalAlign=top;spacing=14" value="&lt;b&gt;${LOG_DIR}/&lt;/b&gt;  &lt;span style=&quot;color:#6b7280;font-style:italic&quot;&gt;# default ./logs, override via env var&lt;/span&gt;&lt;br/&gt;├── &lt;b style=&quot;color:#82b366&quot;&gt;&amp;lt;svc&amp;gt;-app.log&lt;/b&gt;                     &lt;span style=&quot;color:#6b7280&quot;&gt;# current, hot, INFO+&lt;/span&gt;&lt;br/&gt;├── &lt;b style=&quot;color:#82b366&quot;&gt;&amp;lt;svc&amp;gt;-error.log&lt;/b&gt;                   &lt;span style=&quot;color:#6b7280&quot;&gt;# current, hot, WARN+&lt;/span&gt;&lt;br/&gt;└── archive/&lt;br/&gt;    ├── &lt;span style=&quot;color:#9673a6&quot;&gt;&amp;lt;svc&amp;gt;-app-2026-05-07.0.log.gz&lt;/span&gt;     &lt;span style=&quot;color:#6b7280&quot;&gt;# rolled today (50MB hit)&lt;/span&gt;&lt;br/&gt;    ├── &lt;span style=&quot;color:#9673a6&quot;&gt;&amp;lt;svc&amp;gt;-app-2026-05-07.1.log.gz&lt;/span&gt;     &lt;span style=&quot;color:#6b7280&quot;&gt;# 2nd roll same day&lt;/span&gt;&lt;br/&gt;    ├── &lt;span style=&quot;color:#9673a6&quot;&gt;&amp;lt;svc&amp;gt;-app-2026-05-06.0.log.gz&lt;/span&gt;     &lt;span style=&quot;color:#6b7280&quot;&gt;# yesterday&lt;/span&gt;&lt;br/&gt;    ├── &lt;span style=&quot;color:#9673a6&quot;&gt;&amp;lt;svc&amp;gt;-app-2026-05-05.0.log.gz&lt;/span&gt;&lt;br/&gt;    ├── ...&lt;br/&gt;    ├── &lt;span style=&quot;color:#9673a6&quot;&gt;&amp;lt;svc&amp;gt;-app-2026-04-08.0.log.gz&lt;/span&gt;     &lt;span style=&quot;color:#6b7280&quot;&gt;# oldest app archive (30d)&lt;/span&gt;&lt;br/&gt;    │&lt;br/&gt;    ├── &lt;span style=&quot;color:#9673a6&quot;&gt;&amp;lt;svc&amp;gt;-error-2026-05-07.0.log.gz&lt;/span&gt;   &lt;span style=&quot;color:#6b7280&quot;&gt;# WARN+ stream, separate retention&lt;/span&gt;&lt;br/&gt;    ├── ...&lt;br/&gt;    └── &lt;span style=&quot;color:#9673a6&quot;&gt;&amp;lt;svc&amp;gt;-error-2026-02-07.0.log.gz&lt;/span&gt;   &lt;span style=&quot;color:#6b7280&quot;&gt;# error retained 90 days&lt;/span&gt;" vertex="1">
+          <mxGeometry height="280" width="900" x="40" y="700" as="geometry" />
+        </mxCell>
+        <mxCell id="notes" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaeb;strokeColor=#d6b656;fontSize=11;align=left;verticalAlign=top;spacing=14" value="&lt;b&gt;Operational notes&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;&lt;b style=&quot;color:#82b366&quot;&gt;Hot files (uncompressed):&lt;/b&gt;&lt;br/&gt;Current logs are kept raw so &lt;tt&gt;tail -f&lt;/tt&gt; works without decompression.&lt;br/&gt;&lt;br/&gt;&lt;b style=&quot;color:#9673a6&quot;&gt;Rolled archives (gzipped):&lt;/b&gt;&lt;br/&gt;Use &lt;tt&gt;zcat&lt;/tt&gt;, &lt;tt&gt;zgrep&lt;/tt&gt;, or &lt;tt&gt;zless&lt;/tt&gt; to read without decompressing.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Retention enforcement:&lt;/b&gt;&lt;br/&gt;maxHistory caps days; totalSizeCap caps disk; oldest dropped first.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Tune via env / properties:&lt;/b&gt;&lt;br/&gt;&lt;tt&gt;LOG_DIR&lt;/tt&gt;, &lt;tt&gt;LOGGING_LEVEL_ROOT&lt;/tt&gt;, &lt;tt&gt;LOGGING_LEVEL_APP&lt;/tt&gt;.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Per-service overrides:&lt;/b&gt;&lt;br/&gt;See page 2 for editor / SWRL extra files." vertex="1">
+          <mxGeometry height="280" width="680" x="970" y="700" as="geometry" />
+        </mxCell>
+        <mxCell id="lg1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=center;verticalAlign=middle" value="App / runtime" vertex="1">
+          <mxGeometry height="30" width="120" x="40" y="1020" as="geometry" />
+        </mxCell>
+        <mxCell id="lg2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=center;verticalAlign=middle" value="Logback component" vertex="1">
+          <mxGeometry height="30" width="140" x="170" y="1020" as="geometry" />
+        </mxCell>
+        <mxCell id="lg3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;align=center;verticalAlign=middle" value="Rolling policy" vertex="1">
+          <mxGeometry height="30" width="120" x="320" y="1020" as="geometry" />
+        </mxCell>
+        <mxCell id="lg4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;align=center;verticalAlign=middle" value="Active log (hot)" vertex="1">
+          <mxGeometry height="30" width="130" x="450" y="1020" as="geometry" />
+        </mxCell>
+        <mxCell id="lg5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;align=center;verticalAlign=middle" value="Compressed archive (.gz)" vertex="1">
+          <mxGeometry height="30" width="180" x="590" y="1020" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="page2-services" name="2. Per-service inventory">
+    <mxGraphModel dx="1800" dy="1400" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1400" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="s_t1" value="Per-service logging configuration" style="text;html=1;align=center;verticalAlign=middle;fontSize=22;fontStyle=1;fontColor=#1f2937" vertex="1" parent="1">
+          <mxGeometry x="300" y="20" width="1200" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="s_t2" value="Every service uses the same rolling+gzip policy. Differences are in extra files (e.g. dedicated SPARQL log) and retention." style="text;html=1;align=center;verticalAlign=middle;fontSize=13;fontColor=#6b7280;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="300" y="60" width="1200" height="24" as="geometry" />
+        </mxCell>
+        <!-- Row 1: gateway, auth, plugin -->
+        <!-- Gateway card -->
+        <mxCell id="sv1_h" value="ontology-gateway  ·  :80" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="40" y="120" width="560" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sv1_b" value="&lt;b&gt;Config:&lt;/b&gt; &lt;tt&gt;ontology-gateway/src/main/resources/logback-spring.xml&lt;/tt&gt;&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Active log files:&lt;/b&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/gateway-app.log&lt;/tt&gt;       &lt;span style=&quot;color:#6b7280&quot;&gt;# INFO+&lt;/span&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/gateway-error.log&lt;/tt&gt;     &lt;span style=&quot;color:#6b7280&quot;&gt;# WARN+&lt;/span&gt;&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Rolling policy:&lt;/b&gt; 50MB · daily · gzip&lt;br/&gt;&lt;b&gt;Retention:&lt;/b&gt; app 30d / 1GB · error 90d / 1GB&lt;br/&gt;&lt;b&gt;Async wrapper:&lt;/b&gt; ASYNC_APP, ASYNC_ERROR&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Notes:&lt;/b&gt; Netty / reactor noise filtered to WARN.&lt;br/&gt;Per-request log includes upstream service id." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=left;verticalAlign=top;spacing=14" vertex="1" parent="1">
+          <mxGeometry x="40" y="160" width="560" height="280" as="geometry" />
+        </mxCell>
+        <!-- Auth card -->
+        <mxCell id="sv2_h" value="ontology-auth  ·  :8086" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="620" y="120" width="560" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sv2_b" value="&lt;b&gt;Config:&lt;/b&gt; &lt;tt&gt;ontology-auth/src/main/resources/logback-spring.xml&lt;/tt&gt;&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Active log files:&lt;/b&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/ontology-auth.log&lt;/tt&gt;     &lt;span style=&quot;color:#6b7280&quot;&gt;# INFO+ (DEBUG for own pkg)&lt;/span&gt;&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Rolling policy:&lt;/b&gt; 50MB · daily · gzip&lt;br/&gt;&lt;b&gt;Retention:&lt;/b&gt; 30d / 5GB total cap&lt;br/&gt;&lt;b&gt;Async wrapper:&lt;/b&gt; ASYNC_FILE&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Sensitive package levels:&lt;/b&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;com.stripe&lt;/tt&gt; → INFO (never log card data)&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;org.springframework.security&lt;/tt&gt; → INFO&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Notes:&lt;/b&gt; Stripe webhook events go through this service.&lt;br/&gt;Webhook signature failures land in ERROR_FILE (90d)." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=left;verticalAlign=top;spacing=14" vertex="1" parent="1">
+          <mxGeometry x="620" y="160" width="560" height="280" as="geometry" />
+        </mxCell>
+        <!-- Plugin card -->
+        <mxCell id="sv3_h" value="ontology-plugin-service  ·  :8087" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="1200" y="120" width="560" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sv3_b" value="&lt;b&gt;Config:&lt;/b&gt; default Spring Boot Logback&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Active log files:&lt;/b&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/plugin-service.log&lt;/tt&gt;&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Rolling policy:&lt;/b&gt; 50MB · daily · gzip&lt;br/&gt;&lt;b&gt;Retention:&lt;/b&gt; 30d&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Notes:&lt;/b&gt;&lt;br/&gt;Optional service. In dev it&#39;s often skipped;&lt;br/&gt;the marketplace pane gracefully degrades.&lt;br/&gt;&lt;br/&gt;Logs plugin manifest fetches and version bumps." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=left;verticalAlign=top;spacing=14" vertex="1" parent="1">
+          <mxGeometry x="1200" y="160" width="560" height="280" as="geometry" />
+        </mxCell>
+        <!-- Row 2: editor (taller, has more files) -->
+        <mxCell id="sv4_h" value="ontology-editor  ·  :8083  &amp;mdash;  most file types of any service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="40" y="470" width="1140" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sv4_b" value="&lt;b&gt;Config:&lt;/b&gt; &lt;tt&gt;ontology-editor/src/main/resources/logback-spring.xml&lt;/tt&gt;&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Active log files:&lt;/b&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/owl-editor-app.log&lt;/tt&gt;          &lt;span style=&quot;color:#6b7280&quot;&gt;# INFO+, MDC: userId, projectId&lt;/span&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/owl-editor-error.log&lt;/tt&gt;        &lt;span style=&quot;color:#6b7280&quot;&gt;# WARN+ (90 days)&lt;/span&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/owl-editor-performance.log&lt;/tt&gt;  &lt;span style=&quot;color:#6b7280&quot;&gt;# named logger PERFORMANCE (60 days, 2GB)&lt;/span&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/owl-editor-sparql.log&lt;/tt&gt;       &lt;span style=&quot;color:#6b7280&quot;&gt;# named logger SPARQL (30 days, 1GB)&lt;/span&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/owl-editor-import.log&lt;/tt&gt;       &lt;span style=&quot;color:#6b7280&quot;&gt;# named logger IMPORT (30 days, 500MB)&lt;/span&gt;&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Why split files:&lt;/b&gt; SPARQL traces are noisy &amp;mdash; isolating them keeps the app log signal-to-noise high.&lt;br/&gt;Performance traces are kept longer (60 days) so weekly latency comparisons still work.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;MDC pattern:&lt;/b&gt; &lt;tt&gt;[uid=%X{userId} usr=%X{userName} prj=%X{projectId}]&lt;/tt&gt; &amp;mdash; injected by &lt;tt&gt;MdcLoggingFilter&lt;/tt&gt;.&lt;br/&gt;Filtering in Kibana / by &lt;tt&gt;grep&lt;/tt&gt; is one-liner: &lt;tt&gt;zgrep &amp;quot;prj=PROJECT_ID&amp;quot; logs/archive/owl-editor-app-*.log.gz&lt;/tt&gt;." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=left;verticalAlign=top;spacing=14" vertex="1" parent="1">
+          <mxGeometry x="40" y="510" width="1140" height="280" as="geometry" />
+        </mxCell>
+        <!-- SWRL card -->
+        <mxCell id="sv5_h" value="ontology-swrl  ·  :8084" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="1200" y="470" width="560" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sv5_b" value="&lt;b&gt;Config:&lt;/b&gt; &lt;tt&gt;ontology-swrl/src/main/resources/logback-spring.xml&lt;/tt&gt;&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Active log files:&lt;/b&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/swrl-service-app.log&lt;/tt&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/swrl-service-error.log&lt;/tt&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/swrl-service-performance.log&lt;/tt&gt;&lt;br/&gt;&amp;nbsp;&amp;nbsp;• &lt;tt&gt;logs/swrl-service-engine.log&lt;/tt&gt; &lt;span style=&quot;color:#6b7280&quot;&gt;# named logger SWRL_ENGINE&lt;/span&gt;&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Rolling policy:&lt;/b&gt; 50MB · daily · gzip&lt;br/&gt;&lt;b&gt;Retention:&lt;/b&gt; engine 30d / 1GB; error 90d&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Notes:&lt;/b&gt; Reasoner traces (ELK / HermiT) write to&lt;br/&gt;swrl-engine.log. Noisy; isolated from app stream." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;align=left;verticalAlign=top;spacing=14" vertex="1" parent="1">
+          <mxGeometry x="1200" y="510" width="560" height="280" as="geometry" />
+        </mxCell>
+        <!-- Common config callout -->
+        <mxCell id="cc_h" value="Common to every service" style="text;html=1;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#1f2937" vertex="1" parent="1">
+          <mxGeometry x="40" y="830" width="600" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="cc1" value="&lt;b&gt;✅ Rolling policy&lt;/b&gt;&lt;br/&gt;&lt;tt&gt;SizeAndTimeBasedRollingPolicy&lt;/tt&gt;&lt;br/&gt;50MB · daily · gzip on roll&lt;br/&gt;&lt;tt&gt;cleanHistoryOnStart=true&lt;/tt&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="40" y="870" width="280" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="cc2" value="&lt;b&gt;✅ Compressed archives&lt;/b&gt;&lt;br/&gt;Rolled files end in &lt;tt&gt;.log.gz&lt;/tt&gt;.&lt;br/&gt;Hot files stay raw for &lt;tt&gt;tail -f&lt;/tt&gt;.&lt;br/&gt;Use &lt;tt&gt;zgrep&lt;/tt&gt; to search archives." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="340" y="870" width="280" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="cc3" value="&lt;b&gt;✅ Async wrapper&lt;/b&gt;&lt;br/&gt;Disk I/O off the request thread.&lt;br/&gt;queueSize=1024 · neverBlock=true&lt;br/&gt;Drops only on extreme bursts." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="640" y="870" width="280" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="cc4" value="&lt;b&gt;✅ Console + file&lt;/b&gt;&lt;br/&gt;Console for K8s log driver.&lt;br/&gt;File for offline grep / forensics.&lt;br/&gt;Both fed by the same logger." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="940" y="870" width="280" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="cc5" value="&lt;b&gt;✅ Persistent volume&lt;/b&gt;&lt;br/&gt;K8s &lt;tt&gt;PersistentVolumeClaim&lt;/tt&gt;&lt;br/&gt;mounted at &lt;tt&gt;LOG_DIR&lt;/tt&gt;.&lt;br/&gt;Survives pod / node restart." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="1240" y="870" width="280" height="120" as="geometry" />
+        </mxCell>
+        <!-- Tuning environment variables -->
+        <mxCell id="env_h" value="Environment overrides" style="text;html=1;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#1f2937" vertex="1" parent="1">
+          <mxGeometry x="40" y="1020" width="600" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="env_t" value="&lt;b&gt;LOG_DIR&lt;/b&gt; &amp;mdash; absolute or relative path. Default: &lt;tt&gt;./logs&lt;/tt&gt;.&lt;br/&gt;In K8s set to &lt;tt&gt;/var/log/ontocode&lt;/tt&gt; mounted from a PersistentVolumeClaim.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;LOGGING_LEVEL_ROOT&lt;/b&gt; &amp;mdash; root logger level. Default INFO. Set to DEBUG temporarily for triage.&lt;br/&gt;&lt;b&gt;LOGGING_LEVEL_APP&lt;/b&gt; &amp;mdash; level for &lt;tt&gt;self.research.ontology.*&lt;/tt&gt;. Default INFO (auth: DEBUG).&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Spring profile-aware:&lt;/b&gt; logback-spring.xml is picked up &lt;i&gt;after&lt;/i&gt; profile resolution, so&lt;br/&gt;&lt;tt&gt;application-prod.properties&lt;/tt&gt; can override &lt;tt&gt;LOGGING_LEVEL_ROOT&lt;/tt&gt; without a redeploy of the XML." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaeb;strokeColor=#d6b656;fontSize=11;align=left;verticalAlign=top;spacing=14" vertex="1" parent="1">
+          <mxGeometry x="40" y="1060" width="1720" height="180" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="page3-persistence" name="3. Crash &amp; boot persistence">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="c_t1" value="How logs survive pod / container / server restarts" style="text;html=1;align=center;verticalAlign=middle;fontSize=22;fontStyle=1;fontColor=#1f2937" vertex="1" parent="1">
+          <mxGeometry x="300" y="20" width="1200" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="c_t2" value="The combination of immediateFlush, AsyncAppender, and a PersistentVolume keeps every committed event safe across crashes." style="text;html=1;align=center;verticalAlign=middle;fontSize=13;fontColor=#6b7280;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="300" y="60" width="1200" height="24" as="geometry" />
+        </mxCell>
+        <!-- Timeline labels -->
+        <mxCell id="tl1" value="① Steady state" style="text;html=1;align=center;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#82b366" vertex="1" parent="1">
+          <mxGeometry x="40" y="120" width="540" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="tl2" value="② Crash event" style="text;html=1;align=center;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#b85450" vertex="1" parent="1">
+          <mxGeometry x="610" y="120" width="540" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="tl3" value="③ Recovery on next boot" style="text;html=1;align=center;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#9673a6" vertex="1" parent="1">
+          <mxGeometry x="1180" y="120" width="540" height="30" as="geometry" />
+        </mxCell>
+        <!-- Phase 1: Steady state -->
+        <mxCell id="ph1_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4faf3;strokeColor=#82b366;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="40" y="160" width="540" height="640" as="geometry" />
+        </mxCell>
+        <mxCell id="ph1_pod" value="&lt;b&gt;Running JVM (pod / container)&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Spring Boot service&lt;br/&gt;Logback runtime&lt;br/&gt;App threads emit log events" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="80" y="200" width="460" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ph1_async" value="&lt;b&gt;AsyncAppender queue (in-memory)&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Drains on a single dedicated thread.&lt;br/&gt;Hands events to the file appender." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="80" y="320" width="460" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ph1_flush" value="&lt;b&gt;immediateFlush=true (default)&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Each event is &lt;b&gt;write()&lt;/b&gt;-ed to the underlying&lt;br/&gt;FileOutputStream and &lt;b&gt;flushed&lt;/b&gt; into the&lt;br/&gt;OS page cache before the call returns.&lt;br/&gt;&lt;br/&gt;The file system journal then makes it durable&lt;br/&gt;independent of the JVM." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="80" y="420" width="460" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="ph1_disk" value="&lt;b&gt;PersistentVolume mount&lt;/b&gt;&lt;br/&gt;&lt;tt&gt;${LOG_DIR}/&lt;svc&gt;-app.log&lt;/tt&gt;&lt;br/&gt;&lt;br/&gt;Backed by:&lt;br/&gt;• Docker volume (compose)&lt;br/&gt;• PersistentVolumeClaim (K8s) → CSI / cloud disk / NFS&lt;br/&gt;&lt;br/&gt;Survives pod restart, node reschedule, container kill." style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="80" y="580" width="460" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="ph1_a1" style="endArrow=classic;html=1;rounded=0;strokeColor=#6b7280;strokeWidth=2" edge="1" parent="1" source="ph1_pod" target="ph1_async">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ph1_a2" style="endArrow=classic;html=1;rounded=0;strokeColor=#6b7280;strokeWidth=2" edge="1" parent="1" source="ph1_async" target="ph1_flush">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ph1_a3" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2" edge="1" parent="1" source="ph1_flush" target="ph1_disk">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- Phase 2: Crash -->
+        <mxCell id="ph2_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fdf2f2;strokeColor=#b85450;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="610" y="160" width="540" height="640" as="geometry" />
+        </mxCell>
+        <mxCell id="ph2_evt" value="⚡  &lt;b&gt;Crash event&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;• JVM OOM / SIGTERM&lt;br/&gt;• Pod evicted / node rebooted&lt;br/&gt;• Stripe webhook retry storm&lt;br/&gt;• &lt;tt&gt;kubectl delete pod&lt;/tt&gt; / k8s rolling update" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="650" y="200" width="460" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ph2_lost" value="&lt;b&gt;Lost: events still in AsyncAppender queue&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;In-memory queue dies with the JVM.&lt;br/&gt;Bounded by &lt;tt&gt;queueSize=1024&lt;/tt&gt; — typically &lt;1ms of traffic.&lt;br/&gt;&lt;br/&gt;&lt;i&gt;Trade-off chosen on purpose: latency over delivery.&lt;br/&gt;See &lt;tt&gt;neverBlock=true&lt;/tt&gt;.&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="650" y="340" width="460" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="ph2_safe" value="&lt;b&gt;Safe: events already on disk&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Anything &lt;tt&gt;flush()&lt;/tt&gt;-ed before the crash is in the&lt;br/&gt;page cache. The kernel writes it through to the&lt;br/&gt;underlying file system independently of the JVM.&lt;br/&gt;&lt;br/&gt;On hard power loss, file system journal recovery&lt;br/&gt;preserves committed writes." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="650" y="500" width="460" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="ph2_pv" value="&lt;b&gt;PersistentVolume is unaffected&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Detached from the dying pod automatically&lt;br/&gt;and re-attached to its replacement." style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="650" y="680" width="460" height="100" as="geometry" />
+        </mxCell>
+        <!-- Phase 3: Recovery -->
+        <mxCell id="ph3_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fbf6fc;strokeColor=#9673a6;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="1180" y="160" width="540" height="640" as="geometry" />
+        </mxCell>
+        <mxCell id="ph3_start" value="&lt;b&gt;New JVM starts&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Same pod template, same image,&lt;br/&gt;same env vars (LOG_DIR unchanged),&lt;br/&gt;same PVC re-attached." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="1220" y="200" width="460" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ph3_clean" value="&lt;b&gt;cleanHistoryOnStart = true&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Logback walks &lt;tt&gt;${LOG_DIR}/archive/&lt;/tt&gt; once at boot:&lt;br/&gt;• drops archives older than &lt;tt&gt;maxHistory&lt;/tt&gt;&lt;br/&gt;• drops oldest first if &lt;tt&gt;totalSizeCap&lt;/tt&gt; exceeded&lt;br/&gt;&lt;br/&gt;Active log file is &lt;b&gt;preserved&lt;/b&gt; — never recreated." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="1220" y="320" width="460" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="ph3_append" value="&lt;b&gt;Append to existing active log&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;FileAppender opens with &lt;tt&gt;append=true&lt;/tt&gt;&lt;br/&gt;(default). Pre-crash content stays;&lt;br/&gt;new lines arrive after.&lt;br/&gt;&lt;br/&gt;If a midnight rollover should have happened&lt;br/&gt;during downtime, the next write triggers it." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;align=center;verticalAlign=middle" vertex="1" parent="1">
+          <mxGeometry x="1220" y="500" width="460" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="ph3_done" value="✅  &lt;b&gt;Logging resumes seamlessly&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Operators see one continuous log per service&lt;br/&gt;across crashes, restarts, and rolling deploys." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;align=center;verticalAlign=middle;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1220" y="680" width="460" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ph3_a1" style="endArrow=classic;html=1;rounded=0;strokeColor=#6b7280;strokeWidth=2" edge="1" parent="1" source="ph3_start" target="ph3_clean">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ph3_a2" style="endArrow=classic;html=1;rounded=0;strokeColor=#6b7280;strokeWidth=2" edge="1" parent="1" source="ph3_clean" target="ph3_append">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ph3_a3" style="endArrow=classic;html=1;rounded=0;strokeColor=#9673a6;strokeWidth=2" edge="1" parent="1" source="ph3_append" target="ph3_done">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- Bottom callouts -->
+        <mxCell id="bot_h" value="Why this design" style="text;html=1;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#1f2937" vertex="1" parent="1">
+          <mxGeometry x="40" y="830" width="600" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="bot1" value="&lt;b&gt;Latency over delivery&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;&lt;tt&gt;neverBlock=true&lt;/tt&gt; means a slow disk never&lt;br/&gt;blocks a request thread. We pay for this with a&lt;br/&gt;tiny chance of dropping queued events on hard&lt;br/&gt;kill. Acceptable for application logs;&lt;br/&gt;not for audit / financial events." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaeb;strokeColor=#d6b656;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="40" y="870" width="540" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="bot2" value="&lt;b&gt;Audit / billing / Stripe events&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;Stored in MongoDB (history collection), not the&lt;br/&gt;log files. The log file is for &lt;i&gt;forensics&lt;/i&gt;, not&lt;br/&gt;the source of truth.&lt;br/&gt;&lt;br/&gt;If you need at-least-once guarantee, set&lt;br/&gt;&lt;tt&gt;neverBlock=false&lt;/tt&gt; for that one logger." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaeb;strokeColor=#d6b656;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="600" y="870" width="540" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="bot3" value="&lt;b&gt;Don&#39;t mount LOG_DIR on emptyDir&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;K8s emptyDir is wiped when the pod is removed.&lt;br/&gt;Use a PersistentVolumeClaim or a hostPath that&lt;br/&gt;maps to a real disk.&lt;br/&gt;&lt;br/&gt;Without that, archives disappear on every&lt;br/&gt;rolling deploy &amp;mdash; defeats the whole policy." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fdf2f2;strokeColor=#b85450;fontSize=11;align=left;verticalAlign=top;spacing=10" vertex="1" parent="1">
+          <mxGeometry x="1160" y="870" width="540" height="180" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

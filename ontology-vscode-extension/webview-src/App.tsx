@@ -312,9 +312,10 @@ const AppContent = () => {
     (workspaceBillingStatus || "").toUpperCase() === "PENDING" &&
     (user?.subscriptionPlan || "FREE").toUpperCase() !== "FREE";
 
-  // Desktop download navigation — triggered by the Monitor icon in all pages
+  // Desktop download page — independent state so it works before login too
+  const [showDesktopDownload, setShowDesktopDownload] = React.useState(false);
   useEffect(() => {
-    const handler = () => navigateTo({ view: "desktopDownload" });
+    const handler = () => setShowDesktopDownload(true);
     window.addEventListener("navigate-desktop-download", handler);
     return () => window.removeEventListener("navigate-desktop-download", handler);
   }, []);
@@ -1658,11 +1659,11 @@ const AppContent = () => {
   // endpoints, and isOwner is always true because it's the user's own
   // account. Must be checked BEFORE the workspace-selection short-circuit
   // so navigating from WorkspaceSelection actually works.
-  // Desktop download page — accessible to everyone, even without login
-  if (currentRoute.view === "desktopDownload") {
+  // Desktop download page — works before login via showDesktopDownload state
+  if (showDesktopDownload) {
     return (
       <Suspense fallback={<div className="min-h-screen bg-slate-900" />}>
-        <DesktopDownloadPage onBack={() => navigateTo({ view: user ? (selectedFileId ? "dashboard" : "projectDashboard") : "login" })} />
+        <DesktopDownloadPage onBack={() => setShowDesktopDownload(false)} />
       </Suspense>
     );
   }
