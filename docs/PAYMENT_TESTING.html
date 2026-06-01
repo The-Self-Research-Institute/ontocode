@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OntoCode — Payment Testing Guide</title>
+<style>
+:root {
+  --bg: #0f172a; --bg-2: #111827; --bg-3: #1f2937;
+  --border: #1f2937; --border-strong: #334155;
+  --text: #e2e8f0; --text-muted: #94a3b8; --text-faint: #64748b;
+  --accent: #8b5cf6; --accent-2: #6366f1;
+  --green: #10b981; --amber: #f59e0b; --red: #ef4444;
+  --code-bg: #0b1020; --code-border: #1e293b;
+  --link: #a78bfa;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.6; }
+.layout { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { position: relative !important; height: auto !important; border-right: 0 !important; border-bottom: 1px solid var(--border); }
+  .sidebar nav { max-height: 240px; overflow-y: auto; }
+}
+.sidebar { position: sticky; top: 0; height: 100vh; background: var(--bg-2);
+  border-right: 1px solid var(--border); padding: 24px 16px; overflow-y: auto; }
+.sidebar h1 { font-size: 18px; margin: 0 0 4px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.sidebar .subtitle { font-size: 11px; color: var(--text-faint); letter-spacing: 0.12em;
+  text-transform: uppercase; margin-bottom: 24px; }
+.sidebar nav { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.sidebar nav a { color: var(--text-muted); text-decoration: none; padding: 6px 10px;
+  border-radius: 6px; border-left: 2px solid transparent; transition: background 0.15s, color 0.15s; }
+.sidebar nav a:hover { color: var(--text); background: var(--bg-3); }
+.sidebar nav a.section-head { margin-top: 14px; font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--accent); font-weight: 700; padding-bottom: 2px; }
+.sidebar nav a.section-head:hover { background: transparent; color: var(--accent); }
+main { padding: 48px 56px; max-width: 1100px; }
+@media (max-width: 700px) { main { padding: 24px 16px; } }
+h1, h2, h3, h4 { color: #f8fafc; line-height: 1.25; }
+h1 { font-size: 36px; margin-top: 0; }
+h2 { font-size: 24px; margin-top: 56px; padding-bottom: 8px; border-bottom: 1px solid var(--border-strong); }
+h3 { font-size: 18px; margin-top: 28px; }
+h4 { font-size: 14px; margin-top: 20px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; }
+p, ul, ol { color: var(--text); }
+ul, ol { padding-left: 22px; }
+li { margin-bottom: 4px; }
+strong { color: #f8fafc; }
+a { color: var(--link); }
+a:hover { text-decoration: underline; }
+code, pre, kbd { font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace; font-size: 13px; }
+code:not(pre code) { background: var(--code-bg); border: 1px solid var(--code-border);
+  padding: 1px 6px; border-radius: 4px; font-size: 0.9em; color: #c4b5fd; }
+pre { background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 8px;
+  padding: 14px 16px; overflow-x: auto; margin: 14px 0; font-size: 12.5px; line-height: 1.55; }
+pre code { background: transparent; border: 0; padding: 0; color: var(--text); }
+.callout { margin: 16px 0; padding: 14px 18px; border-radius: 8px; border-left: 3px solid var(--accent);
+  background: rgba(139, 92, 246, 0.08); }
+.callout.info { border-left-color: var(--accent); background: rgba(139, 92, 246, 0.08); }
+.callout.warn { border-left-color: var(--amber); background: rgba(245, 158, 11, 0.08); }
+.callout.danger { border-left-color: var(--red); background: rgba(239, 68, 68, 0.08); }
+.callout.success { border-left-color: var(--green); background: rgba(16, 185, 129, 0.08); }
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border-strong); vertical-align: top; }
+th { background: var(--bg-2); color: var(--accent); font-size: 11px; letter-spacing: 0.08em;
+  text-transform: uppercase; font-weight: 700; }
+tr:hover td { background: rgba(139, 92, 246, 0.04); }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+  font-weight: 600; letter-spacing: 0.04em; margin: 0 2px; }
+.pill.pass { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.3); }
+.pill.fail { background: rgba(239, 68, 68, 0.15); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
+.pill.skip { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+.checklist { list-style: none; padding-left: 0; }
+.checklist li { padding-left: 28px; position: relative; margin-bottom: 8px; }
+.checklist li::before { content: "☐"; position: absolute; left: 4px; top: 0; color: var(--text-faint); font-size: 16px; }
+section { scroll-margin-top: 16px; }
+.tcase { border: 1px solid var(--border-strong); border-radius: 8px; padding: 16px 20px; margin: 20px 0; background: var(--bg-2); }
+.tcase h4 { margin-top: 0; color: #c4b5fd; }
+.tcase .meta { font-size: 12px; color: var(--text-faint); margin-bottom: 8px; letter-spacing: 0.05em; }
+@media print {
+  .sidebar { display: none; }
+  .layout { grid-template-columns: 1fr; }
+  main { padding: 0; max-width: 100%; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <h1>Payment Testing</h1>
+    <p class="subtitle">OntoCode billing &amp; emails</p>
+    <nav>
+      <a class="section-head">Setup</a>
+      <a href="#scope">Scope</a>
+      <a href="#prereqs">Prerequisites</a>
+      <a href="#test-cards">Stripe test cards</a>
+      <a href="#test-tools">Test tools</a>
+
+      <a class="section-head">Test plan</a>
+      <a href="#flow-signup">Sign up + verify</a>
+      <a href="#flow-trial-start">Trial start</a>
+      <a href="#flow-trial-reminder">Trial-ending reminder</a>
+      <a href="#flow-trial-end">Trial end → first charge</a>
+      <a href="#flow-renewal">Renewal reminder + charge</a>
+      <a href="#flow-expiry">Plan expiry</a>
+      <a href="#flow-autorenew">Auto-renewal</a>
+      <a href="#flow-payment-fail">Payment failed</a>
+      <a href="#flow-cancel">Cancel subscription</a>
+      <a href="#flow-resub">Re-subscribe (no trial)</a>
+      <a href="#flow-upgrade">Upgrade plan</a>
+      <a href="#flow-downgrade">Downgrade plan</a>
+      <a href="#flow-propagation">Workspace propagation</a>
+      <a href="#flow-roles">Owner-only buttons</a>
+
+      <a class="section-head">Emails</a>
+      <a href="#email-list">Every email + trigger</a>
+      <a href="#email-manual">Manual sending</a>
+      <a href="#email-bulk">Send all test emails</a>
+      <a href="#email-verify">Inbox verification</a>
+
+      <a class="section-head">Tools</a>
+      <a href="#mongo-cli">payment-test CLI</a>
+      <a href="#webhook-events">stripe_events inspector</a>
+      <a href="#stripe-cli">Stripe CLI</a>
+      <a href="#log-checks">Log verification</a>
+
+      <a class="section-head">Reference</a>
+      <a href="#matrix">Test matrix</a>
+      <a href="#cleanup">Cleanup</a>
+      <a href="#sign-off">Sign-off</a>
+    </nav>
+  </aside>
+
+  <main>
+<section id="top">
+<h1>OntoCode — Payment testing guide</h1>
+<p style="color: var(--text-muted); font-size: 15px; margin-top: -6px;">
+A repeatable test plan for the entire Stripe + email stack: trial,
+charge, fail, cancel, re-subscribe, upgrade, downgrade. Every step
+includes the manual click-path, the database verification query, the
+log line to look for, and the email subject expected in the inbox.
+</p>
+
+<div class="callout info">
+<strong>How to use.</strong> Run through the cases in order on the very
+first run — they share state. Subsequent runs can be cherry-picked.
+The <a href="#mongo-cli">payment-test CLI</a> and the
+<a href="#stripe-cli">Stripe CLI</a> let you skip real wall-clock time
+(e.g. trial reminders that would otherwise need to wait 14 days).
+</div>
+</section>
+
+<!-- ============================================================== -->
+<section id="scope">
+<h2>Scope</h2>
+<ul>
+  <li>Stripe SetupIntent + Subscription native flow (preferred path)</li>
+  <li>Stripe Checkout fallback path</li>
+  <li>BillingReminderService cron — trial-ending and renewal reminders</li>
+  <li>Webhook events: <code>customer.subscription.*</code>, <code>invoice.payment_*</code></li>
+  <li>Server-side trial gate — <code>hasUsedFreeTrial</code> / <code>firstSubscriptionAt</code></li>
+  <li>Workspace plan propagation via <code>syncWorkspacesToOwnerPlan</code></li>
+  <li>Frontend gates: Cancel button (owner-only), Update Card, Upgrade Plan, View Plans</li>
+  <li>All transactional emails (verification, invitation, project access)
+      and billing emails (trial start, trial ending, payment success,
+      payment failed, cancellation, renewal reminder)</li>
+</ul>
+<h3>Out of scope</h3>
+<ul>
+  <li>Live Stripe production keys — use test mode only</li>
+  <li>Real card data — never. Use Stripe's test cards.</li>
+  <li>SMS / push notifications — none are wired</li>
+</ul>
+</section>
+
+<!-- ============================================================== -->
+<section id="prereqs">
+<h2>Prerequisites</h2>
+<ol>
+  <li>All four backend services running (gateway 80, auth 8086, editor 8083, swrl 8084).</li>
+  <li>MongoDB reachable; the <code>users</code> and <code>workspaces</code> collections exist.</li>
+  <li>Frontend running (webapp on :3001 or VS Code extension dev host).</li>
+  <li>Stripe test secret + webhook secret set on <code>ontology-auth</code>:
+    <pre><code>STRIPE_API_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+stripe.trial-period-days=1     # or 14 — match what production uses</code></pre>
+  </li>
+  <li>SMTP credentials so emails actually send. For local dev,
+      <a href="https://github.com/maildev/maildev">MailDev</a> on :1025
+      catches everything without delivering, and exposes a UI on :1080.</li>
+  <li>Stripe CLI logged in to the same test account:
+      <pre><code>stripe login
+stripe listen --forward-to http://localhost/api/billing/webhook</code></pre>
+  </li>
+  <li><code>email.test-endpoints.enabled=true</code> on auth so the
+      admin <code>/api/admin/test-emails/*</code> routes work.</li>
+  <li>The <a href="#mongo-cli">payment-test CLI</a> installed:
+      <pre><code>cd scripts/payment-test
+npm install
+export MONGODB_URI="mongodb://admin:changeme123@localhost:27017/ontocode?authSource=admin"
+node payment-test.js help</code></pre>
+  </li>
+</ol>
+</section>
+
+<!-- ============================================================== -->
+<section id="test-cards">
+<h2>Stripe test cards</h2>
+<p>Use these in test mode only. Expiry can be any future date, CVC any 3 digits, ZIP any 5.</p>
+<table>
+<thead><tr><th>Card</th><th>Number</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td>Success</td><td><code>4242 4242 4242 4242</code></td><td>Charges always succeed</td></tr>
+<tr><td>Always declined</td><td><code>4000 0000 0000 0002</code></td><td>Generic decline at SetupIntent confirm</td></tr>
+<tr><td>Requires authentication</td><td><code>4000 0025 0000 3155</code></td><td>Triggers 3DS challenge</td></tr>
+<tr><td>Insufficient funds at charge</td><td><code>4000 0000 0000 9995</code></td><td>SetupIntent succeeds; first invoice fails</td></tr>
+<tr><td>Cancels at first renewal</td><td><code>4000 0000 0000 0341</code></td><td>SetupIntent succeeds; subsequent charge fails</td></tr>
+<tr><td>Disputed (chargeback)</td><td><code>4000 0000 0000 0259</code></td><td>For testing dispute webhooks</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ============================================================== -->
+<section id="test-tools">
+<h2>Test tools</h2>
+<ul>
+  <li><strong>Stripe CLI</strong> — trigger webhook events, inspect events, replay logs. See <a href="#stripe-cli">below</a>.</li>
+  <li><strong>payment-test CLI</strong> — manipulate Mongo state for time-travel testing. See <a href="#mongo-cli">below</a>.</li>
+  <li><strong>EmailTestController</strong> — admin endpoint to send any email manually:
+      <code>POST /api/admin/test-emails/&lt;type&gt;</code> with <code>{ "to": "you@example.com" }</code>.</li>
+  <li><strong>MailDev</strong> (or Mailtrap) — local SMTP sink so emails don't actually leave the network.</li>
+  <li><strong>Browser devtools / Network tab</strong> — every <code>/api/billing/*</code> call is visible.</li>
+</ul>
+</section>
+
+<!-- ============================================================== -->
+<h2>Test plan</h2>
+
+<section id="flow-signup">
+<h3>1. Sign up + email verification</h3>
+<div class="tcase">
+  <div class="meta">PRIORITY · HAPPY PATH</div>
+  <h4>1.1 Fresh signup with verification email</h4>
+  <p><strong>Steps</strong></p>
+  <ol>
+    <li>Open the app at <code>/signup</code>.</li>
+    <li>Submit a fresh email + password.</li>
+    <li>Wait for <em>"Welcome to OntoCode!"</em> email; click <strong>Verify Email</strong>.</li>
+  </ol>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li>Mongo: <code>users.findOne({email}).emailVerified === true</code></li>
+    <li>Auth log:
+      <pre><code>[REQ] POST /api/auth/signup ... -> 200
+Sending verification email to: you@example.com
+Verification email sent successfully to: you@example.com</code></pre>
+    </li>
+    <li>Inbox: subject <em>"OntoCode: Please Verify Your Email Address"</em></li>
+  </ul>
+  <p><strong>Negative cases</strong></p>
+  <ul>
+    <li>Submit existing email → 409 / "user already exists"</li>
+    <li>Click verify with stale token → "Verification token has expired" page</li>
+    <li>Skip verification, try to log in → blocked with "verify your email"</li>
+  </ul>
+</div>
+</section>
+
+<section id="flow-trial-start">
+<h3>2. Trial start (Pro / Enterprise selection)</h3>
+<div class="tcase">
+  <div class="meta">PRIORITY · HAPPY PATH</div>
+  <h4>2.1 First-ever subscription receives a trial</h4>
+  <p><strong>Steps</strong></p>
+  <ol>
+    <li>Log in. Land on <em>SubscriptionPlanSelection</em> (workspace-less first-time flow).</li>
+    <li>Pick <strong>Professional</strong> → <strong>Continue</strong>.</li>
+    <li>Stripe Elements appears. Use <code>4242 4242 4242 4242</code>.</li>
+    <li>Click <strong>Start Trial</strong>.</li>
+  </ol>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li>Mongo:
+      <pre><code>users.findOne({email}) → {
+  subscriptionStatus: "trialing",
+  subscriptionPlanName: "PRO",
+  hasUsedFreeTrial: true,            // set atomically with create
+  firstSubscriptionAt: ISODate(...), // set atomically
+  stripeSubscriptionId: "sub_..."
+}</code></pre>
+    </li>
+    <li>Auth log:
+      <pre><code>Granting 1-day trial to user you@example.com (first ever subscription)
+Subscription sub_... (trialing) created for user you@... / workspace ws_...</code></pre>
+    </li>
+    <li>Inbox: <em>"Your OntoCode Professional trial has started — 1-day free"</em></li>
+    <li>BillingManagement page renders <strong>Trial active</strong> badge.</li>
+  </ul>
+</div>
+
+<div class="tcase">
+  <div class="meta">EDGE</div>
+  <h4>2.2 Enterprise = no trial</h4>
+  <ol>
+    <li>From a fresh user, pick <strong>Enterprise</strong>.</li>
+    <li>UI shows: <em>"Enterprise plans are charged immediately. No trial period is available."</em></li>
+    <li>After confirm, Mongo shows <code>subscriptionStatus: "active"</code> directly. <code>hasUsedFreeTrial</code> still set to <code>true</code>.</li>
+  </ol>
+</div>
+</section>
+
+<section id="flow-trial-reminder">
+<h3>3. Trial-ending reminder</h3>
+<div class="tcase">
+  <div class="meta">CRON</div>
+  <h4>3.1 Reminder fires at 15/7/1 days before trial end</h4>
+  <p>The cron is <code>0 0 9 * * *</code> by default. To test without
+  waiting, jump the user's period-end forward and either trigger the cron
+  manually or temporarily change the cron expression.</p>
+
+  <p><strong>Setup</strong></p>
+  <pre><code># move the trial to end in 1 day
+node payment-test.js expire-trial you@example.com 1
+
+# (optional) temporarily run the cron every minute
+# in ontology-auth/application.properties:
+billing.reminder.cron=0 * * * * *
+# restart auth</code></pre>
+
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li>Auth log within 60s:
+      <pre><code>[BillingReminder] Trial ending reminder sent to alice (1 days before)
+[BillingReminder] Sent 1 trial + 0 renewal reminders</code></pre>
+    </li>
+    <li>Inbox: <em>"Your OntoCode trial ends in 1 day — &lt;date&gt;"</em></li>
+    <li>Mongo unchanged (reminders don't mutate state).</li>
+  </ul>
+  <p><strong>Window edge cases</strong></p>
+  <ul>
+    <li><code>expire-trial &lt;email&gt; 7</code> → 7-day reminder fires</li>
+    <li><code>expire-trial &lt;email&gt; 15</code> → 15-day reminder fires</li>
+    <li><code>expire-trial &lt;email&gt; 8</code> → no reminder (8 isn't in the configured days)</li>
+  </ul>
+</div>
+</section>
+
+<section id="flow-trial-end">
+<h3>4. Trial end → first charge</h3>
+<div class="tcase">
+  <div class="meta">WEBHOOK</div>
+  <h4>4.1 Stripe charges on day N+1, sends invoice.payment_succeeded</h4>
+  <p>Skip waiting by triggering the webhook directly:</p>
+  <pre><code>stripe trigger invoice.payment_succeeded</code></pre>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li>Auth log:
+      <pre><code>StripeWebhookController received: invoice.payment_succeeded
+Invoice payment recovered for user ... — status set back to active
+Sent 'Payment confirmed — OntoCode Professional' to ...</code></pre>
+    </li>
+    <li>Mongo: <code>subscriptionStatus: "active"</code></li>
+    <li>Inbox: <em>"Payment confirmed — OntoCode Professional"</em></li>
+    <li>BillingManagement page → <em>Active</em> badge, payment history shows the new invoice.</li>
+  </ul>
+</div>
+</section>
+
+<section id="flow-renewal">
+<h3>5. Renewal reminder + charge</h3>
+<div class="tcase">
+  <div class="meta">CRON · WEBHOOK</div>
+  <h4>5.1 Reminder fires N days before period end</h4>
+  <pre><code>node payment-test.js schedule-reminder you@example.com 7 active
+node payment-test.js preview-reminders</code></pre>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li><code>preview-reminders</code> lists the user before the cron runs.</li>
+    <li>After <code>billing.reminder.cron</code> (default 09:00): renewal reminder subject
+      <em>"OntoCode PRO renews in 7 days on &lt;date&gt; — $59/month"</em></li>
+    <li>For a 1-day reminder:
+      <pre><code>node payment-test.js schedule-reminder you@example.com 1 active</code></pre>
+    </li>
+    <li>To smoke-test SMTP without waiting for cron, use
+      <a href="#email-bulk">billing-email-test.js</a> or
+      <code>POST /api/admin/test-emails/renewal-reminder</code>.</li>
+  </ul>
+</div>
+
+<div class="tcase">
+  <div class="meta">WEBHOOK</div>
+  <h4>5.2 Renewal charge succeeds</h4>
+  <pre><code>stripe trigger invoice.payment_succeeded</code></pre>
+  <p>→ <em>"Payment confirmed"</em> email; <code>currentPeriodEnd</code> moves forward by one month.</p>
+</div>
+</section>
+
+<section id="flow-expiry">
+<h3>6. Plan expiry</h3>
+<div class="tcase">
+  <div class="meta">CRON · MONGO</div>
+  <h4>6.1 Period end in the past</h4>
+  <pre><code>node payment-test.js expire-plan you@example.com
+node payment-test.js show you@example.com</code></pre>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li><code>subscriptionCurrentPeriodEnd</code> is before now on the user and owned workspaces.</li>
+    <li>After <code>billing.expiry-check.interval-ms</code> (default every 6 hours), owned paid workspaces move to <code>EXPIRED</code>.</li>
+    <li>To force the UI state immediately without waiting for the job:
+      <pre><code>node payment-test.js mark-expired-workspace you@example.com</code></pre>
+    </li>
+  </ul>
+</div>
+</section>
+
+<section id="flow-autorenew">
+<h3>7. Auto-renewal</h3>
+<div class="tcase">
+  <div class="meta">CRON · MONGO</div>
+  <h4>7.1 Auto-renew enabled, period ends within 24h</h4>
+  <pre><code>node payment-test.js set-autorenew you@example.com on
+node payment-test.js schedule-autorenew you@example.com</code></pre>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li>User keeps <code>autoRenewEnabled=true</code> and a Stripe subscription id in Mongo.</li>
+    <li>After <code>billing.autorenewal.cron</code> (default 02:00), workspace period end rolls forward when auto-renew is enabled.</li>
+    <li>With auto-renew off, the same window should end in expiry instead of renewal:
+      <pre><code>node payment-test.js set-autorenew you@example.com off
+node payment-test.js schedule-autorenew you@example.com</code></pre>
+    </li>
+  </ul>
+</div>
+</section>
+
+<section id="flow-payment-fail">
+<h3>8. Payment failed</h3>
+<div class="tcase">
+  <div class="meta">WEBHOOK · ERROR PATH</div>
+  <h4>6.1 Failed renewal email + status flip</h4>
+  <pre><code>stripe trigger invoice.payment_failed</code></pre>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li>Auth log:
+      <pre><code>StripeWebhookController received: invoice.payment_failed
+Invoice payment failed for user ... — status set to past_due
+Sent 'Action required: OntoCode payment failed — update your card' to ...</code></pre>
+    </li>
+    <li>Mongo: <code>subscriptionStatus: "past_due"</code></li>
+    <li>Inbox: <em>"Action required: OntoCode payment failed — update your card"</em></li>
+    <li>BillingManagement page → <em>Payment failed</em> red badge; <strong>Update Payment</strong> CTA.</li>
+  </ul>
+</div>
+
+<div class="tcase">
+  <div class="meta">RECOVERY</div>
+  <h4>6.2 Update card → next charge succeeds</h4>
+  <ol>
+    <li>Click <strong>Update Payment</strong>; enter <code>4242 4242 4242 4242</code>.</li>
+    <li><code>stripe trigger invoice.payment_succeeded</code></li>
+  </ol>
+  <p>→ Mongo flips back to <code>active</code>; <em>"Payment confirmed"</em> email.</p>
+</div>
+</section>
+
+<section id="flow-cancel">
+<h3>7. Cancel subscription</h3>
+<div class="tcase">
+  <div class="meta">PRIORITY · HAPPY PATH</div>
+  <h4>7.1 Owner cancels their own account subscription</h4>
+  <ol>
+    <li>BillingManagement → <strong>Cancel Plan</strong> → <strong>Confirm Cancellation</strong>.</li>
+  </ol>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li>Mongo:
+      <pre><code>users.findOne({email}) → {
+  subscriptionStatus: "canceled",
+  subscriptionCanceledAt: ISODate(...),
+  autoRenewEnabled: false,
+  hasUsedFreeTrial: true   // never reset
+}</code></pre>
+    </li>
+    <li>Workspaces:
+      <pre><code>workspaces.find({ownerId}).forEach: {
+  billingStatus: "CANCELED",
+  collaborationEnabled: false
+}</code></pre>
+    </li>
+    <li>Inbox: <em>"Your OntoCode Professional subscription has been cancelled"</em></li>
+    <li>BillingManagement → <strong>Done</strong> screen with <em>"All Set!"</em></li>
+  </ul>
+  <p><strong>Body sent to backend</strong></p>
+  <pre><code>POST /api/billing/cancel-workspace
+{ "workspaceId": "" }     // empty = account-level (Model B)</code></pre>
+</div>
+
+<div class="tcase">
+  <div class="meta">SECURITY</div>
+  <h4>7.2 Member cannot cancel</h4>
+  <ol>
+    <li>Log in as a workspace member (not the owner).</li>
+    <li>Manage Billing page should NOT show the Cancel Plan button.</li>
+    <li>Even if you POST manually to <code>/api/billing/cancel-workspace</code> with the owner's workspaceId, expect <strong>403</strong>.</li>
+  </ol>
+  <p><strong>Auth log</strong></p>
+  <pre><code>[REQ] POST /api/billing/cancel-workspace ... -> 403
+Only the workspace owner can cancel the subscription.</code></pre>
+</div>
+</section>
+
+<section id="flow-resub">
+<h3>8. Re-subscribe after cancellation (no trial)</h3>
+<div class="tcase">
+  <div class="meta">PRIORITY · TRIAL GATE</div>
+  <h4>8.1 Stripe is asked to skip trial on second create</h4>
+  <ol>
+    <li>From the canceled state in test 7.1, click <strong>Renew Plan</strong>.</li>
+    <li>Pick the same plan; confirm with the test card.</li>
+  </ol>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li>Auth log:
+      <pre><code>Skipping trial for user you@example.com (hasUsedFreeTrial=true, firstSubscriptionAt=2026-05-04T...). Card will be charged immediately.</code></pre>
+    </li>
+    <li>Mongo: <code>subscriptionStatus: "active"</code> (NOT <code>trialing</code>).</li>
+    <li>Inbox: <em>"Payment confirmed"</em> straight away (no <em>"trial started"</em>).</li>
+    <li>Stripe Dashboard → Subscriptions → trial_end is null on this new sub.</li>
+  </ul>
+</div>
+
+<div class="tcase">
+  <div class="meta">REGRESSION GUARD</div>
+  <h4>8.2 Reset the trial flag and confirm trial returns</h4>
+  <p>Only useful for tests; never do this in production.</p>
+  <pre><code>node payment-test.js reset-trial you@example.com
+# now re-subscribe through the UI</code></pre>
+  <p>→ Auth log shows <em>"Granting 1-day trial"</em> again; Mongo flips <code>hasUsedFreeTrial</code> back to true.</p>
+</div>
+</section>
+
+<section id="flow-upgrade">
+<h3>9. Upgrade plan (Pro → Enterprise)</h3>
+<div class="tcase">
+  <div class="meta">PRORATION</div>
+  <h4>9.1 Mid-cycle upgrade</h4>
+  <ol>
+    <li>BillingManagement → <strong>Upgrade Plan</strong> → pick <strong>Enterprise</strong>.</li>
+  </ol>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li>Mongo: <code>subscriptionPlanName: "ENTERPRISE"</code>; <code>stripeSubscriptionId</code> unchanged (it's an UPDATE, not CREATE).</li>
+    <li>Workspaces: <code>subscriptionPlan</code> propagates via <code>syncWorkspacesToOwnerPlan</code>.</li>
+    <li>Stripe Dashboard → Subscription updated; proration line items appear on next invoice.</li>
+    <li>BillingManagement → price card now shows Enterprise pricing.</li>
+  </ul>
+</div>
+</section>
+
+<section id="flow-downgrade">
+<h3>10. Downgrade plan</h3>
+<div class="tcase">
+  <div class="meta">EDGE</div>
+  <h4>10.1 Pro → Free at end of cycle</h4>
+  <ol>
+    <li>From a Pro user, BillingManagement → <strong>Cancel Plan</strong> (treats as downgrade-to-free).</li>
+    <li>After period end, status → <code>canceled</code>; workspace falls back to FREE limits.</li>
+  </ol>
+</div>
+<div class="tcase">
+  <div class="meta">EDGE</div>
+  <h4>10.2 Enterprise → Pro</h4>
+  <ol>
+    <li>From an Enterprise user, View Plans → pick Professional.</li>
+    <li>Verify proration credit on next invoice.</li>
+    <li>Members beyond the Pro cap of 10 should remain accessible until period end.</li>
+  </ol>
+</div>
+</section>
+
+<section id="flow-propagation">
+<h3>11. Workspace plan propagation to members</h3>
+<div class="tcase">
+  <div class="meta">FRONTEND POLLING</div>
+  <h4>11.1 Owner upgrades — member sees Pro within 15s</h4>
+  <ol>
+    <li>Sign in as a member of a workspace whose owner is on Free.</li>
+    <li>Owner upgrades to Pro in another browser.</li>
+    <li>Wait up to 15 seconds — the member's ProjectDashboard polls
+        <code>/api/workspaces/{id}</code>, detects the plan change, and
+        calls <code>refreshPermissions()</code>.</li>
+    <li>Member's <code>useSubscription</code> hook now returns Pro;
+        gated UI (export, collaboration) becomes enabled.</li>
+  </ol>
+  <p><strong>Verify</strong></p>
+  <ul>
+    <li>Browser console (member): <code>[ProjectDashboard] Subscription state changed (FREE/ACTIVE -&gt; PRO/ACTIVE) — refreshing permissions</code></li>
+    <li>Re-issued JWT in localStorage carries new <code>plan</code> claim.</li>
+  </ul>
+</div>
+</section>
+
+<section id="flow-roles">
+<h3>12. Owner-only billing actions</h3>
+<div class="tcase">
+  <div class="meta">SECURITY</div>
+  <h4>12.1 Cancel / Update Card / Upgrade visible only to owner</h4>
+  <p>BillingManagement renders Update Payment, Upgrade Plan, and Cancel
+  Plan only when <code>isOwner === true</code>. From App.tsx the page
+  always treats the logged-in user as the owner of their own account
+  (Model B), so a non-account-holder shouldn't even reach the page from
+  ProjectDashboard.</p>
+  <ul>
+    <li>Workspace member navigates to billing → no destructive buttons.</li>
+    <li>Owner sees all three.</li>
+    <li>Direct POST as a member: 403.</li>
+  </ul>
+</div>
+</section>
+
+<!-- ============================================================== -->
+<section id="email-list">
+<h2>Every email + how to trigger it</h2>
+<table>
+<thead><tr><th>Email</th><th>Trigger</th><th>Subject</th></tr></thead>
+<tbody>
+<tr><td>Verification</td><td>signup</td><td>OntoCode: Please Verify Your Email Address</td></tr>
+<tr><td>Password reset</td><td>forgot-password</td><td>OntoCode: Password Reset Request</td></tr>
+<tr><td>Password changed</td><td>reset password / change password</td><td>OntoCode: Password Changed Successfully</td></tr>
+<tr><td>Workspace invitation</td><td>invite a member</td><td>You're invited to join &lt;workspace&gt; on OntoCode</td></tr>
+<tr><td>Project access granted</td><td>add user to a project</td><td>OntoCode: You have been added to "&lt;project&gt;"</td></tr>
+<tr><td>Trial started</td><td>first paid subscription</td><td>Your OntoCode &lt;plan&gt; trial has started — &lt;N&gt;-day free</td></tr>
+<tr><td>Trial ending</td><td>cron at 15 / 7 / 1 days before trial end</td><td>Your OntoCode trial ends in &lt;N&gt; day(s) — &lt;date&gt;</td></tr>
+<tr><td>Renewal reminder</td><td>cron at 15 / 7 / 1 days before period end</td><td>OntoCode &lt;plan&gt; renews in &lt;N&gt; days on &lt;date&gt; - &lt;amount&gt;</td></tr>
+<tr><td>Payment succeeded</td><td>webhook invoice.payment_succeeded</td><td>Payment confirmed — OntoCode &lt;plan&gt;</td></tr>
+<tr><td>Payment failed</td><td>webhook invoice.payment_failed</td><td>Action required: OntoCode payment failed — update your card</td></tr>
+<tr><td>Subscription cancelled</td><td>cancel via UI / webhook customer.subscription.deleted</td><td>Your OntoCode &lt;plan&gt; subscription has been cancelled</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="email-manual">
+<h2>Manual email triggering</h2>
+<p>Admin-gated endpoints under <code>/api/admin/test-emails/</code> let
+you fire any email without going through the full flow. Useful for
+template / inbox / SMTP smoke tests.</p>
+<pre><code>JWT="&lt;your-admin-jwt&gt;"
+GW="http://localhost"
+
+curl -X POST "$GW/api/admin/test-emails/payment-failed" \
+     -H "Authorization: Bearer $JWT" \
+     -H "Content-Type: application/json" \
+     -d '{"to":"you@example.com","planName":"PRO","amount":"$59.00 USD"}'
+
+# index of every endpoint + body schema
+curl -s "$GW/api/admin/test-emails" -H "Authorization: Bearer $JWT" | jq</code></pre>
+<p>The endpoint requires <code>email.test-endpoints.enabled=true</code>
+on the auth service AND a JWT with <code>ROLE_ADMIN</code>. Returns 404
+in production where the flag is off.</p>
+</section>
+
+<section id="email-bulk">
+<h2>Send all test emails at once</h2>
+<p><code>scripts/payment-test/billing-email-test.js</code> posts to every
+<code>/api/admin/test-emails/*</code> route exposed by
+<code>EmailTestController</code>. Use it for SMTP/template smoke tests
+without running signup, webhooks, or cron.</p>
+<pre><code>cd scripts/payment-test
+export AUTH_BASE_URL=http://localhost:8086
+export EMAIL_TEST_ENDPOINTS_ENABLED=true   # on ontology-auth
+
+node billing-email-test.js --to you@example.com --jwt "&lt;admin-jwt&gt;"</code></pre>
+<p>Covers verification, password reset/changed, trial started/ending,
+payment succeeded/failed, subscription cancelled, renewal reminder, and
+project access. Workspace invitation is still UI-only.</p>
+</section>
+
+<section id="email-verify">
+<h2>Verifying delivery</h2>
+<ol>
+  <li>Auth log line:
+    <pre><code>Sent '&lt;subject&gt;' to &lt;recipient&gt;</code></pre>
+    Means JavaMail handed the message to SMTP without throwing.</li>
+  <li>SMTP provider dashboard (SES / SendGrid / Mailgun) — confirms delivery and any bounces.</li>
+  <li>If using MailDev locally → http://localhost:1080 to inspect rendered HTML.</li>
+  <li>For real Gmail SMTP, check the Sent folder of the <code>SMTP_USERNAME</code> account.</li>
+</ol>
+<p>If step 1 shows up but the inbox is empty, the issue is deliverability
+(SPF / DKIM / from-domain), not code. If step 1 doesn't appear, the
+trigger never fired — go back upstream (cron didn't run, webhook
+didn't arrive, etc.).</p>
+</section>
+
+<!-- ============================================================== -->
+<section id="mongo-cli">
+<h2>payment-test CLI (Mongo time-travel)</h2>
+<p>Located at <code>scripts/payment-test/</code>. Manipulates the
+<code>users</code> and <code>workspaces</code> collections so reminder /
+cancel / re-subscribe paths can be tested without waiting real time.</p>
+
+<h3>Install</h3>
+<pre><code>cd scripts/payment-test
+npm install
+export MONGODB_URI="mongodb://admin:changeme123@localhost:27017/ontocode?authSource=admin"</code></pre>
+
+<h3>Commands</h3>
+<table>
+<thead><tr><th>Command</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>list</code></td><td>Tabular view of every user with billing state</td></tr>
+<tr><td><code>show &lt;email&gt;</code></td><td>Detailed billing state + owned workspaces</td></tr>
+<tr><td><code>reset-trial &lt;email&gt;</code></td><td>Clear trial flags so the next subscribe can grant a trial</td></tr>
+<tr><td><code>expire-trial &lt;email&gt; [N=1]</code></td><td><code>trialing</code>, periodEnd = now + N days</td></tr>
+<tr><td><code>expire-renewal &lt;email&gt; [N=1]</code></td><td><code>active</code>, periodEnd = now + N days</td></tr>
+<tr><td><code>schedule-reminder &lt;email&gt; &lt;days&gt; [active|trialing]</code></td><td>Place periodEnd inside the reminder cron window</td></tr>
+<tr><td><code>preview-reminders</code></td><td>List users that match a reminder window now</td></tr>
+<tr><td><code>expire-plan &lt;email&gt;</code></td><td>Move periodEnd into the past for expiry testing</td></tr>
+<tr><td><code>mark-expired-workspace &lt;email&gt;</code></td><td>Force owned workspace(s) to <code>EXPIRED</code></td></tr>
+<tr><td><code>set-autorenew &lt;email&gt; on|off</code></td><td>Toggle <code>autoRenewEnabled</code></td></tr>
+<tr><td><code>schedule-autorenew &lt;email&gt;</code></td><td>Period end within the next 24h for the auto-renew job</td></tr>
+<tr><td><code>mark-canceled &lt;email&gt;</code></td><td><code>canceled</code>, autoRenew=false</td></tr>
+<tr><td><code>mark-active &lt;email&gt;</code></td><td><code>active</code></td></tr>
+<tr><td><code>mark-past-due &lt;email&gt;</code></td><td><code>past_due</code></td></tr>
+<tr><td><code>set-plan &lt;email&gt; &lt;FREE|PRO|ENTERPRISE&gt;</code></td><td>Change plan and sync workspaces</td></tr>
+<tr><td><code>reset-plan &lt;email&gt;</code></td><td>Wipe Stripe fields and set FREE</td></tr>
+<tr><td><code>trial-eligible</code></td><td>List users who can still receive a trial</td></tr>
+</tbody>
+</table>
+
+<h3>Example sessions</h3>
+<pre><code># view current state
+node payment-test.js show alice@example.com
+
+# fire a renewal reminder window without guessing dates
+node payment-test.js schedule-reminder alice@example.com 7 active
+node payment-test.js preview-reminders
+
+# force expiry / auto-renew windows
+node payment-test.js expire-plan alice@example.com
+node payment-test.js schedule-autorenew alice@example.com
+
+# simulate the cancel-then-resubscribe loop
+node payment-test.js mark-canceled alice@example.com
+# now go through the UI to renew
+# afterwards verify the user did NOT get a new trial:
+node payment-test.js show alice@example.com  # status should be 'active', not 'trialing'
+
+# back to a clean slate for a fresh trial test
+node payment-test.js reset-plan alice@example.com
+node payment-test.js reset-trial alice@example.com</code></pre>
+
+<div class="callout warn">
+<strong>Use only in dev / staging.</strong> The script makes direct Mongo
+writes that bypass Stripe entirely. The Stripe-side state will drift if
+you run these against a database that's connected to a live Stripe
+account — only your local DB will reflect the change, and the next
+real webhook will overwrite your manipulation.
+</div>
+</section>
+
+<section id="webhook-events">
+<h2>stripe_events inspector</h2>
+<p><code>scripts/payment-test/webhook-events.js</code> reads MongoDB
+<code>stripe_events</code> rows written by the auth webhook receiver.</p>
+<pre><code>cd scripts/payment-test
+export MONGODB_URI="mongodb://admin:changeme123@localhost:27017/ontocode?authSource=admin"
+node webhook-events.js list
+node webhook-events.js summary
+node webhook-events.js show evt_1234567890</code></pre>
+<p>If MongoDB returns <code>command find requires authentication</code>,
+use the same authenticated URI as the auth service / Docker stack.</p>
+</section>
+
+<!-- ============================================================== -->
+<section id="stripe-cli">
+<h2>Stripe CLI</h2>
+<h3>Install + log in</h3>
+<pre><code>brew install stripe/stripe-cli/stripe   # macOS
+# or download from https://github.com/stripe/stripe-cli/releases
+stripe login</code></pre>
+
+<h3>Forward webhooks to local</h3>
+<pre><code>stripe listen --forward-to http://localhost/api/billing/webhook
+# copy the printed `whsec_...` into ontology-auth's STRIPE_WEBHOOK_SECRET</code></pre>
+
+<h3>Trigger events</h3>
+<pre><code>stripe trigger customer.subscription.created
+stripe trigger customer.subscription.updated
+stripe trigger customer.subscription.deleted
+stripe trigger invoice.payment_succeeded
+stripe trigger invoice.payment_failed
+stripe trigger customer.subscription.trial_will_end</code></pre>
+
+<h3>Inspect events</h3>
+<pre><code>stripe events list --limit 10
+stripe events resend evt_...
+stripe logs tail</code></pre>
+</section>
+
+<!-- ============================================================== -->
+<section id="log-checks">
+<h2>Log verification — what to look for</h2>
+<table>
+<thead><tr><th>Step</th><th>Expected log line (auth)</th></tr></thead>
+<tbody>
+<tr><td>Signup</td><td><code>[REQ] POST /api/auth/signup ... -&gt; 200 ...</code></td></tr>
+<tr><td>Verification email sent</td><td><code>Verification email sent successfully to: ...</code></td></tr>
+<tr><td>Trial subscription created</td><td><code>Granting N-day trial to user ... (first ever subscription)</code></td></tr>
+<tr><td>Re-subscribe after cancel</td><td><code>Skipping trial for user ... (hasUsedFreeTrial=true, ...)</code></td></tr>
+<tr><td>Webhook received</td><td><code>StripeWebhookController received: invoice.payment_succeeded</code></td></tr>
+<tr><td>Plan propagation</td><td><code>Workspace ws_... was out of sync — updated to match owner plan PRO (active)</code></td></tr>
+<tr><td>Cancel</td><td><code>Account subscription sub_... canceled for user ...</code></td></tr>
+<tr><td>Cron tick</td><td><code>[BillingReminder] Sent N trial + M renewal reminders</code></td></tr>
+<tr><td>Email send (any)</td><td><code>Sent '&lt;subject&gt;' to &lt;recipient&gt;</code></td></tr>
+<tr><td>Email failure</td><td><code>Failed to send '&lt;subject&gt;' to ...: &lt;reason&gt;</code></td></tr>
+</tbody>
+</table>
+
+<h3>Per-user grep recipe</h3>
+<pre><code>USER=alice@example.com
+sudo zgrep "email=$USER" /var/log/ontocode/auth/*.log /var/log/ontocode/auth/archive/*.log.gz \
+  | grep -E '\[REQ\]|Stripe|Sent|Failed' \
+  | tail -50</code></pre>
+</section>
+
+<!-- ============================================================== -->
+<section id="matrix">
+<h2>Test matrix (printable checklist)</h2>
+<ul class="checklist">
+  <li>1.1 Signup + verification email arrives</li>
+  <li>1.2 Verify link works; expired token rejected</li>
+  <li>2.1 First-ever Pro subscription grants trial</li>
+  <li>2.2 Enterprise charges immediately, no trial</li>
+  <li>2.3 Saved card succeeds with 4242…</li>
+  <li>2.4 Declined card surfaces error in UI</li>
+  <li>3.1 Trial-ending reminder at 1 day fires</li>
+  <li>3.2 Reminder at 7 days fires</li>
+  <li>3.3 Reminder at 15 days fires</li>
+  <li>3.4 Reminder at 8 days does NOT fire (not in window)</li>
+  <li>4.1 Trial → first charge succeeds; status flips to active</li>
+  <li>5.1 Renewal reminder N days before period end</li>
+  <li>5.2 Renewal charge succeeds; period end advances</li>
+  <li>6.1 Failed payment flips status to past_due, sends email</li>
+  <li>6.2 Updated card recovers status to active</li>
+  <li>7.1 Owner cancel — status=canceled, workspaces propagate, email sent</li>
+  <li>7.2 Member cannot cancel (UI hides, backend 403)</li>
+  <li>8.1 Re-subscribe after cancel does NOT grant trial</li>
+  <li>8.2 reset-trial restores eligibility (sanity)</li>
+  <li>9.1 Pro → Enterprise upgrade, propagation</li>
+  <li>10.1 Pro → Free at period end</li>
+  <li>10.2 Enterprise → Pro proration</li>
+  <li>11.1 Member sees plan change within 15s polling</li>
+  <li>12.1 BillingManagement hides destructive buttons for non-owner</li>
+  <li>E1 Verification email rendered correctly</li>
+  <li>E2 Password-reset email + token works once</li>
+  <li>E3 Password-change confirmation email arrives</li>
+  <li>E4 Trial-started email content correct</li>
+  <li>E5 Trial-ending content correct</li>
+  <li>E6 Payment-succeeded shows correct amount + invoice link</li>
+  <li>E7 Payment-failed shows update-card CTA</li>
+  <li>E8 Renewal reminder shows correct amount &amp; date</li>
+  <li>E9 Cancellation email shows accurate cancelled date</li>
+  <li>E10 Workspace invitation token + link both work</li>
+  <li>E11 Project access email arrives when role granted</li>
+  <li>L1 No sensitive query values in any log line (token, email, secret)</li>
+  <li>L2 Auth log includes <code>email=...</code> ctx for every request</li>
+  <li>L3 Logs survive container restart (PV mount confirmed)</li>
+  <li>L4 Archive directory grows, oldest archives pruned at 30 days</li>
+</ul>
+</section>
+
+<!-- ============================================================== -->
+<section id="cleanup">
+<h2>Cleanup after testing</h2>
+<ol>
+  <li>Revert any temp <code>billing.reminder.cron</code> override.</li>
+  <li>Revert <code>email.test-endpoints.enabled</code> to <code>false</code> if you flipped it on.</li>
+  <li>Delete the test users / workspaces created (Mongo Compass or
+      <code>db.users.deleteMany({email: /test\+.*@example\.com/})</code>).</li>
+  <li>In the Stripe Dashboard → Test mode → Subscriptions, cancel any
+      lingering test subscriptions (they otherwise generate phantom
+      renewal events forever).</li>
+  <li>Stripe CLI: <kbd>Ctrl+C</kbd> the <code>stripe listen</code> session.</li>
+</ol>
+</section>
+
+<!-- ============================================================== -->
+<section id="sign-off">
+<h2>Sign-off</h2>
+<table>
+<thead><tr><th>Reviewer</th><th>Role</th><th>Date</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>&nbsp;</td><td>QA</td><td>&nbsp;</td><td><span class="pill pass">PASS</span> / <span class="pill fail">FAIL</span> / <span class="pill skip">SKIP</span></td></tr>
+<tr><td>&nbsp;</td><td>Engineering</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>&nbsp;</td><td>Ops</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+<p style="color: var(--text-faint); font-size: 12px; margin-top: 24px;">
+Once every box in the test matrix is ticked and one full run is signed
+off, the billing stack is ready for prod release. Re-run the whole
+matrix on every Stripe SDK upgrade or change to <code>StripeService</code>
+/ <code>BillingReminderService</code> / <code>EmailService</code>.
+</p>
+</section>
+
+  </main>
+</div>
+</body>
+</html>

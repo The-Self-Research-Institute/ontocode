@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OntoCode — EC2 Production Deployment Guide</title>
+<style>
+  html, body {
+    background: #ffffff;
+    color: #000000;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 32px 80px 32px;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    color: #000000;
+    line-height: 1.25;
+    margin-top: 2em;
+    margin-bottom: 0.6em;
+    font-weight: 700;
+  }
+  h1 { font-size: 1.9em; border-bottom: 1px solid #000; padding-bottom: 0.3em; margin-top: 0; }
+  h2 { font-size: 1.5em; border-bottom: 1px solid #000; padding-bottom: 0.2em; }
+  h3 { font-size: 1.2em; }
+  h4 { font-size: 1.05em; }
+  p, ul, ol, table { margin: 0.7em 0; }
+  ul, ol { padding-left: 1.8em; }
+  li { margin: 0.25em 0; }
+  a { color: #000000; text-decoration: underline; }
+  a:hover { text-decoration: none; }
+  hr { border: none; border-top: 1px solid #000; margin: 2em 0; }
+  blockquote {
+    margin: 1em 0;
+    padding: 0.5em 1em;
+    border-left: 3px solid #000;
+    background: #ffffff;
+  }
+  blockquote p { margin: 0.3em 0; }
+  code, pre, kbd, samp {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.92em;
+  }
+  code {
+    background: #ffffff;
+    border: 1px solid #000;
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+  pre {
+    background: #ffffff;
+    color: #000000;
+    border: 1px solid #000;
+    border-radius: 2px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    line-height: 1.45;
+    white-space: pre;
+  }
+  pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: #000;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+  }
+  th, td {
+    border: 1px solid #000;
+    padding: 6px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { font-weight: 700; background: #ffffff; }
+  .toc { border: 1px solid #000; padding: 16px 22px; margin: 1.5em 0 2em 0; }
+  .toc h2 { margin-top: 0; border: none; font-size: 1.1em; }
+  .toc ol { margin: 0; padding-left: 1.5em; }
+  .callout {
+    border: 1px solid #000;
+    padding: 10px 14px;
+    margin: 1em 0;
+  }
+  .callout strong:first-child { display: inline-block; margin-right: 6px; }
+  .checklist li { list-style-type: none; margin-left: -1em; }
+  .checklist li::before {
+    content: "[ ] ";
+    font-family: monospace;
+  }
+  @media print {
+    body { padding: 20px; max-width: 100%; font-size: 11pt; }
+    pre, code { font-size: 10pt; }
+    a { color: #000; text-decoration: none; }
+    h1, h2 { page-break-after: avoid; }
+    pre, blockquote, table { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>OntoCode — EC2 Production Deployment Guide</h1>
+
+<blockquote><p><strong>Audience:</strong> anyone setting up prod from scratch. Reading time ~20 min, hands-on time ~2–3 h on a clean Ubuntu 22.04 EC2 instance.</p></blockquote>
+
+<div class="toc">
+<h2>Contents</h2>
+<ol>
+  <li><a href="#sec1">Architecture &amp; service inventory</a></li>
+  <li><a href="#sec2">EC2 instance sizing</a></li>
+  <li><a href="#sec3">Prerequisites — install on the EC2 box</a></li>
+  <li><a href="#sec4">Pull images from the registry</a></li>
+  <li><a href="#sec5">Deployment layout</a></li>
+  <li><a href="#sec6">Environment configuration (.env)</a></li>
+  <li><a href="#sec7">Start services</a></li>
+  <li><a href="#sec8">nginx + Let's Encrypt TLS</a></li>
+  <li><a href="#sec9">Logging</a></li>
+  <li><a href="#sec10">Stripe setup — using only the production API key</a></li>
+  <li><a href="#sec11">First-run verification</a></li>
+  <li><a href="#sec12">Operations &amp; backup / restore</a></li>
+  <li><a href="#sec13">Security checklist before going live</a></li>
+  <li><a href="#sec14">Cheat sheet</a></li>
+</ol>
+</div>
+
+<hr>
+
+<h2 id="sec1">1. Architecture &amp; service inventory</h2>
+
+<p>The platform is a Maven multi-module project. Seven Java modules, five of which are runnable Spring Boot services — each shipped as a container image:</p>
+
+<table>
+<thead><tr><th>Service</th><th>Container</th><th>Port</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td>Gateway</td><td><code>ontocode-gateway</code></td><td>80</td><td>Spring Cloud Gateway; routes <code>/api/*</code> to backends; handles CORS</td></tr>
+<tr><td>Auth &amp; billing</td><td><code>ontocode-auth</code></td><td>8086</td><td>Users, workspaces, JWT, Stripe webhooks, transactional email, scheduling</td></tr>
+<tr><td>OWL editor</td><td><code>ontocode-editor</code></td><td>8083</td><td>Ontology mutations, GraphDB integration, in-memory SPARQL cache</td></tr>
+<tr><td>SWRL service</td><td><code>ontocode-swrl</code></td><td>8084</td><td>SWRL rule evaluation, reasoner integration</td></tr>
+<tr><td>Plugin service</td><td><code>ontocode-plugin</code></td><td>8087</td><td>Plugin marketplace, manifest/binary downloads</td></tr>
+<tr><td>Web app</td><td><code>ontocode-web</code></td><td>3000</td><td>React frontend</td></tr>
+</tbody>
+</table>
+
+<p>Infrastructure containers:</p>
+<table>
+<thead><tr><th>Container</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>ontocode-mongo</code></td><td>MongoDB 6 — primary database, single DB named <code>ontocode</code></td></tr>
+<tr><td><code>ontocode-graphdb</code></td><td>Ontotext GraphDB — RDF triplestore (port 7200)</td></tr>
+<tr><td><code>ontocode-graphdb-init</code></td><td>One-shot init container; creates the <code>ontocode</code> repository if it doesn't exist</td></tr>
+<tr><td><code>ontocode-plugin-init</code></td><td>One-shot init container; seeds plugin catalogue</td></tr>
+</tbody>
+</table>
+
+<p>External dependencies you provision separately:</p>
+<ul>
+<li><strong>SMTP relay</strong> — Gmail App Password works for low volume; AWS SES recommended for prod (&gt;500 emails/day).</li>
+<li><strong>Stripe</strong> — live mode account (only key you have is <code>sk_live_*</code>).</li>
+<li><strong>Domain + TLS cert</strong> — Let's Encrypt via certbot on the host.</li>
+<li><strong>(Optional) S3 bucket</strong> — for backup snapshots.</li>
+</ul>
+
+<p>The VS Code extension and webview frontend (<code>ontology-vscode-extension/</code>) is <em>not</em> deployed to EC2; it ships through the VS Code Marketplace and runs on the user's machine, calling the gateway at the public URL you set up here.</p>
+
+<hr>
+
+<h2 id="sec2">2. EC2 instance sizing</h2>
+
+<p>Choose an instance tier and apply the matching Compose override file (§7). All tiers run the same services — only JVM heaps, GraphDB heap, and container memory limits change.</p>
+
+<table>
+<thead>
+<tr>
+  <th>Tier</th>
+  <th>Instance</th>
+  <th>RAM</th>
+  <th>Container limits total</th>
+  <th>Compose override</th>
+  <th>Use when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>1 — Minimal</strong></td>
+  <td><code>t3.large</code></td>
+  <td>8 GB</td>
+  <td>≈ 6.8 GB</td>
+  <td><code>docker-compose.t3-large.yml</code></td>
+  <td>Dev/UAT, small team (&lt; 20 users), budget-constrained. Editor capped at 1.5 GB heap — large ontologies may be slow.</td>
+</tr>
+<tr>
+  <td><strong>2 — Standard</strong></td>
+  <td><code>t3.xlarge</code></td>
+  <td>16 GB</td>
+  <td>≈ 13.5 GB</td>
+  <td><em>(no override — base file)</em></td>
+  <td>Recommended starting point for production. Up to ~500 active users.</td>
+</tr>
+<tr>
+  <td><strong>3 — Comfortable</strong></td>
+  <td><code>t3.2xlarge</code></td>
+  <td>32 GB</td>
+  <td>≈ 23 GB</td>
+  <td><code>docker-compose.t3-2xlarge.yml</code></td>
+  <td>Large ontologies (&gt; 1 M triples), concurrent heavy imports, 500–2 000 users.</td>
+</tr>
+<tr>
+  <td><strong>4 — High-volume</strong></td>
+  <td><code>r5.2xlarge</code></td>
+  <td>64 GB</td>
+  <td>≈ 45 GB</td>
+  <td><code>docker-compose.r5-2xlarge.yml</code></td>
+  <td>Multiple concurrent enterprise ontology workloads, &gt; 2 000 users, 3 parallel imports.</td>
+</tr>
+</tbody>
+</table>
+
+<p>Per-service breakdown across tiers:</p>
+
+<table>
+<thead>
+<tr>
+  <th>Service</th>
+  <th>t3.large (8 GB)</th>
+  <th>t3.xlarge (16 GB)</th>
+  <th>t3.2xlarge (32 GB)</th>
+  <th>r5.2xlarge (64 GB)</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>mongo</td><td>512 m / WT 0.15g</td><td>768 m / WT 0.3g</td><td>1 g / WT 0.5g</td><td>3 g / WT 1.5g</td></tr>
+<tr><td>graphdb (heap)</td><td>2 g / 1 500 m</td><td>5 g / 4 g</td><td>10 g / 8 g</td><td>20 g / 16 g</td></tr>
+<tr><td>auth</td><td>512 m / Xmx 384m</td><td>640 m / Xmx 512m</td><td>768 m / Xmx 640m</td><td>1 g / Xmx 768m</td></tr>
+<tr><td>gateway</td><td>768 m / Xmx 512m</td><td>1 500 m / Xmx 768m</td><td>2 g / Xmx 1g</td><td>3 g / Xmx 2g</td></tr>
+<tr><td>owl-editor (heap)</td><td>2 g / Xmx 1 500m</td><td>4 g / Xmx 3g</td><td>7 g / Xmx 6g</td><td>14 g / Xmx 12g</td></tr>
+<tr><td>swrl-service (heap)</td><td>640 m / Xmx 480m</td><td>1 024 m / Xmx 768m</td><td>1 536 m / Xmx 1g</td><td>3 g / Xmx 2g</td></tr>
+<tr><td>plugin-service</td><td>256 m</td><td>320 m</td><td>512 m</td><td>768 m</td></tr>
+<tr><td>webapp</td><td>192 m</td><td>256 m</td><td>256 m</td><td>256 m</td></tr>
+<tr><td>import concurrency</td><td>1</td><td>2</td><td>2</td><td>3</td></tr>
+</tbody>
+</table>
+
+<p>All tiers: Ubuntu 22.04 LTS, 100 GB gp3 root volume, Elastic IP, Security Group ports 22 (SSH, your IP only), 80 (HTTP), 443 (HTTPS). Lock port 7200 (GraphDB) to your office IP — GraphDB Free has no auth.</p>
+
+<hr>
+
+<h2 id="sec3">3. Prerequisites — install on the EC2 box</h2>
+
+<p>SSH in as <code>ubuntu</code> and run as <code>sudo</code> where indicated.</p>
+
+<h3>3.1 Base OS</h3>
+<pre><code>sudo apt update &amp;&amp; sudo apt upgrade -y
+sudo apt install -y curl wget gnupg lsb-release ca-certificates \
+                    software-properties-common unzip jq
+sudo timedatectl set-timezone UTC</code></pre>
+
+<blockquote><p>Always run servers in UTC. Every timestamp in logs and cron expressions assumes this.</p></blockquote>
+
+<h3>3.2 Container runtime</h3>
+<pre><code># Add the official apt repository
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Allow ubuntu user to run containers without sudo
+sudo usermod -aG docker ubuntu
+newgrp docker   # apply without logout
+
+# Verify
+docker version
+docker compose version</code></pre>
+
+<h3>3.3 Node.js 20 (only needed for the ops scripts in <code>scripts/</code>)</h3>
+<pre><code>curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v   # v20.x</code></pre>
+
+<h3>3.4 nginx + certbot (TLS)</h3>
+<pre><code>sudo apt install -y nginx certbot python3-certbot-nginx</code></pre>
+
+<p>Configuration is in §8. TLS issuance is also in §8.</p>
+
+<hr>
+
+<h2 id="sec4">4. Pull images from the registry</h2>
+
+<p>All service images are pre-built and pushed to the registry. On the EC2 box you only pull — no build tooling required.</p>
+
+<pre><code>docker login   # authenticate with your registry credentials
+
+# Compose will pull automatically on first up (see §7),
+# but you can pre-pull to confirm access and cache images now:
+docker compose -f docker-compose.production.yml pull</code></pre>
+
+<p>Images pulled by Compose:</p>
+<table>
+<thead><tr><th>Image</th><th>Built from</th></tr></thead>
+<tbody>
+<tr><td><code>ontocode-graphdb</code></td><td><code>Dockerfile.graphdb</code></td></tr>
+<tr><td><code>ontocode-auth</code></td><td><code>Dockerfile.auth</code></td></tr>
+<tr><td><code>ontocode-gateway</code></td><td><code>Dockerfile.gateway</code></td></tr>
+<tr><td><code>ontocode-editor</code></td><td><code>Dockerfile.editor</code></td></tr>
+<tr><td><code>ontocode-swrl</code></td><td><code>Dockerfile.swrl</code></td></tr>
+<tr><td><code>ontocode-plugin</code></td><td><code>Dockerfile.plugin</code></td></tr>
+<tr><td><code>ontocode-plugin-init</code></td><td><code>Dockerfile.plugin-init</code></td></tr>
+<tr><td><code>ontocode-web</code></td><td><code>Dockerfile.webapp</code></td></tr>
+</tbody>
+</table>
+
+<blockquote><p><strong>Building images (dev machine only):</strong> each Dockerfile has a corresponding entry in <code>build-and-push.bat</code>. Run the script on your dev machine to build for <code>linux/amd64</code> + <code>linux/arm64</code> and push to the registry. On the server, always deploy by pulling — never build on the server.</p></blockquote>
+
+<hr>
+
+<h2 id="sec5">5. Deployment layout</h2>
+
+<pre><code>/opt/ontocode/
+├── docker-compose.production.yml   # the Compose file you'll run
+├── .env                            # secrets + config (mode 0600, NOT in git)
+└── scripts/                        # ops and payment-setup scripts</code></pre>
+
+<p>Set this up:</p>
+<pre><code>sudo mkdir -p /opt/ontocode
+sudo chown ubuntu:ubuntu /opt/ontocode
+cd /opt/ontocode
+
+# Clone the repo (or scp just the compose file and scripts folder)
+git clone https://github.com/The-Self-Research-Institute/ontocode.git .
+
+# Create log directories that containers will mount into
+sudo mkdir -p /var/log/ontocode/{gateway,auth,editor,swrl,plugin}
+sudo chown -R ubuntu:ubuntu /var/log/ontocode</code></pre>
+
+<hr>
+
+<h2 id="sec6">6. Environment configuration (.env)</h2>
+
+<p>Copy the example and fill in real values. This file is read by Compose at startup — secrets never live in the repo or in image layers.</p>
+
+<pre><code>cp .env.example .env
+chmod 0600 .env
+nano .env   # or your preferred editor</code></pre>
+
+<p>Required values to set before first boot:</p>
+
+<pre><code># --- Database ---
+MONGO_ROOT_USER=admin
+MONGO_ROOT_PASSWORD=&lt;CHOOSE-STRONG-PASSWORD&gt;
+MONGODB_DATABASE=ontocode
+
+# --- JWT (generate once, share across auth + gateway + plugin services) ---
+# Generate: openssl rand -base64 64 | tr -d '\n'
+JWT_SECRET=&lt;paste openssl rand value here&gt;
+
+# --- Public URLs ---
+# BASE_URL: the frontend origin — used in invitation links + reset-password emails
+BASE_URL=https://ontocode.selfresearch.org
+# Gateway API origin (used internally and by the webapp)
+GATEWAY_URL=https://ontocodeapi.selfresearch.org
+
+# --- Admin bootstrap (used once at startup if no admin exists) ---
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=&lt;STRONG_PASSWORD&gt;
+
+# --- Mail ---
+EMAIL_FROM=noreply@example.com
+SMTP_HOST=email-smtp.us-east-1.amazonaws.com
+SMTP_PORT=587
+SMTP_USERNAME=&lt;AWS_SES_SMTP_USER&gt;
+SMTP_PASSWORD=&lt;AWS_SES_SMTP_PASS&gt;
+
+# --- Stripe (LIVE keys — no test mode in prod) ---
+STRIPE_SECRET_KEY=sk_live_xxxxxxxxxxxxxxxxxxxxxxxx
+STRIPE_PUBLISHABLE_KEY=pk_live_xxxxxxxxxxxxxxxxxxxxxxxx
+STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxxxxxx   # set after §10 webhook setup
+STRIPE_TRIAL_PERIOD_DAYS=14
+STRIPE_PRICE_PRO_MONTHLY=price_xxx          # set after §10 price setup
+STRIPE_PRICE_PRO_YEARLY=price_xxx
+STRIPE_PRICE_ENTERPRISE_MONTHLY=price_xxx
+STRIPE_PRICE_ENTERPRISE_YEARLY=price_xxx
+
+# --- Registry ---
+DOCKER_REGISTRY=sindhujacoretopia
+VERSION=latest
+
+# --- GraphDB ---
+GRAPHDB_REPOSITORY=ontocode</code></pre>
+
+<p>Defaults for scheduling and storage limits are already sane in <code>.env.example</code>; override only if you need to.</p>
+
+<hr>
+
+<h2 id="sec7">7. Start services</h2>
+
+<h3>7.1 First boot</h3>
+
+<p>Pick the command matching your instance tier (§2). The first file is always <code>docker-compose.production.yml</code>; the second file overrides only the memory limits and JVM heap sizes for that tier.</p>
+
+<pre><code>cd /opt/ontocode
+
+# Pull latest images first
+docker compose -f docker-compose.production.yml pull
+
+# --- t3.large (Tier 1 — 8 GB) ---
+docker compose -f docker-compose.production.yml -f docker-compose.t3-large.yml up -d
+
+# --- t3.xlarge (Tier 2 — 16 GB, default recommended) ---
+docker compose -f docker-compose.production.yml up -d
+
+# --- t3.2xlarge (Tier 3 — 32 GB) ---
+docker compose -f docker-compose.production.yml -f docker-compose.t3-2xlarge.yml up -d
+
+# --- r5.2xlarge (Tier 4 — 64 GB) ---
+docker compose -f docker-compose.production.yml -f docker-compose.r5-2xlarge.yml up -d</code></pre>
+
+<p>Compose starts services in dependency order:</p>
+<ol>
+  <li><code>mongo</code> — waits until healthcheck passes</li>
+  <li><code>graphdb</code> — waits until healthcheck passes (up to ~3 min on first boot)</li>
+  <li><code>graphdb-init</code> — one-shot: creates the <code>ontocode</code> repository if missing, then exits</li>
+  <li><code>auth</code>, <code>owl-editor</code>, <code>swrl-service</code> — start in parallel once their dependencies are healthy</li>
+  <li><code>gateway</code>, <code>plugin-service</code> — start after auth / editor are up</li>
+  <li><code>plugin-init</code>, <code>webapp</code> — start last</li>
+</ol>
+
+<h3>7.2 Check status</h3>
+<pre><code>docker compose -f docker-compose.production.yml ps
+docker compose -f docker-compose.production.yml logs -f auth
+docker compose -f docker-compose.production.yml logs -f owl-editor</code></pre>
+
+<h3>7.3 Auto-start on reboot (systemd unit)</h3>
+
+<p>Create <code>/etc/systemd/system/ontocode.service</code>:</p>
+<pre><code>[Unit]
+Description=OntoCode Platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=ubuntu
+WorkingDirectory=/opt/ontocode
+ExecStart=/usr/bin/docker compose -f docker-compose.production.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.production.yml down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+
+<pre><code>sudo systemctl daemon-reload
+sudo systemctl enable ontocode</code></pre>
+
+<hr>
+
+<h2 id="sec8">8. nginx + Let's Encrypt TLS</h2>
+
+<p>nginx runs natively on the host and terminates TLS. It proxies HTTPS traffic to the gateway container on port 80 and serves the webapp on port 3000.</p>
+
+<h3>8.1 nginx site config</h3>
+
+<p><code>/etc/nginx/sites-available/ontocode</code>:</p>
+
+<pre><code>server {
+    listen 80;
+    listen [::]:80;
+    server_name ontocodeapi.selfresearch.org ontocode.selfresearch.org;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# API gateway
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ontocodeapi.selfresearch.org;
+
+    # TLS config injected by certbot
+
+    client_max_body_size 1G;
+
+    proxy_buffering on;
+    proxy_buffer_size 16k;
+    proxy_busy_buffers_size 32k;
+    proxy_read_timeout 30m;
+
+    # Webhook signature verification needs the raw, untransformed body.
+    location /api/billing/webhook {
+        proxy_pass http://127.0.0.1:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket support for STOMP collab + cursor channels
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+# React webapp
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ontocode.selfresearch.org;
+
+    # TLS config injected by certbot
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}</code></pre>
+
+<p>Enable + test:</p>
+<pre><code>sudo ln -s /etc/nginx/sites-available/ontocode /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx</code></pre>
+
+<h3>8.2 Let's Encrypt cert</h3>
+<pre><code>sudo certbot --nginx -d ontocodeapi.selfresearch.org -d ontocode.selfresearch.org \
+             --non-interactive --agree-tos -m ops@selfresearch.org --redirect
+sudo systemctl status snap.certbot.renew.timer</code></pre>
+
+<p>Certbot auto-installs a systemd timer that renews every 60 days.</p>
+
+<hr>
+
+<h2 id="sec9">9. Logging</h2>
+
+<p>Each service container mounts <code>/app/logs</code> into a host directory under <code>/var/log/ontocode/&lt;service&gt;/</code>. Logback inside the container writes structured, size-rotated log files there. Container stdout is also captured by the container runtime's logging driver.</p>
+
+<h3>9.1 Useful tail patterns</h3>
+<pre><code># All containers, streaming
+docker compose -f docker-compose.production.yml logs -f
+
+# One service only
+docker compose -f docker-compose.production.yml logs -f auth
+
+# Errors across all services (host-side log files)
+grep -i "error\|exception" /var/log/ontocode/auth/app.log
+
+# Application log file (more detail than container stdout)
+tail -f /var/log/ontocode/auth/app.log
+
+# Find a specific user's activity
+grep "user@example.com" /var/log/ontocode/auth/app.log
+
+# Webhook events received
+docker compose -f docker-compose.production.yml logs auth \
+  --since 1h | grep -i webhook</code></pre>
+
+<h3>9.2 Log rotation</h3>
+<p>Logback is configured for size-and-time-based rotation (<code>100 MB</code> per file, 30-day history, 5 GB total cap). No additional host-level logrotate config is needed — the containers manage their own log files in the mounted volume.</p>
+
+<hr>
+
+<h2 id="sec10">10. Stripe setup</h2>
+
+<h3>10.0 How pricing works — read this first</h3>
+
+<p>There are <strong>two independent layers</strong> of pricing that must always stay in sync:</p>
+
+<table>
+<thead><tr><th>Layer</th><th>Env vars</th><th>What it controls</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>Stripe charge</strong></td>
+  <td><code>STRIPE_PRICE_PRO_MONTHLY</code>, <code>STRIPE_PRICE_PRO_YEARLY</code>, <code>STRIPE_PRICE_ENTERPRISE_MONTHLY</code>, <code>STRIPE_PRICE_ENTERPRISE_YEARLY</code></td>
+  <td>Stripe Price IDs (<code>price_xxx</code>). The actual dollar amount a customer is charged. Defined inside Stripe when the price was created. <strong>This is real money.</strong></td>
+</tr>
+<tr>
+  <td><strong>Display price</strong></td>
+  <td><code>PLAN_PRO_MONTHLY_PRICE</code>, <code>PLAN_PRO_ANNUAL_DISCOUNT_PERCENT</code>, <code>PLAN_ENTERPRISE_MONTHLY_PRICE</code>, <code>PLAN_ENTERPRISE_ANNUAL_DISCOUNT_PERCENT</code></td>
+  <td>Numbers shown on the pricing page. Read from <code>.env</code> on every auth container startup and written into the <code>plan_feature_configs</code> MongoDB collection. Does not affect what Stripe charges.</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Rule:</strong> whenever you change prices, always update both layers together. The <code>setup-stripe-prices.js</code> script does this — it creates the Stripe prices and prints the complete <code>.env</code> block covering both layers.</p>
+
+<blockquote>
+<p><strong>Stripe prices are immutable.</strong> You cannot change a price's amount once created. Running the script with a new amount creates a new price (with a new ID). Archive old prices in the Stripe Dashboard once all subscribers have migrated.</p>
+</blockquote>
+
+<h3>10.1 Install the Stripe node SDK</h3>
+<pre><code>cd /opt/ontocode/scripts/payment-setup
+npm install</code></pre>
+
+<h3>10.2 Script — register the webhook endpoint</h3>
+
+<p><code>scripts/payment-setup/setup-stripe-webhook.js</code> does the following:</p>
+<ol>
+<li>Connects to Stripe with <code>sk_live_*</code>.</li>
+<li>Lists existing webhook endpoints; if one already points at your URL it prints the existing metadata and adds any missing event types (idempotent).</li>
+<li>Otherwise creates a new endpoint with the exact event types <code>StripeWebhookController</code> handles.</li>
+<li>Prints the <code>whsec_*</code> signing secret.</li>
+</ol>
+
+<p>Run once (idempotent):</p>
+<pre><code>cd /opt/ontocode/scripts/payment-setup
+STRIPE_SECRET_KEY=sk_live_xxx node setup-stripe-webhook.js \
+  https://ontocodeapi.selfresearch.org/api/billing/webhook</code></pre>
+
+<p>Copy the printed <code>whsec_*</code> into <code>STRIPE_WEBHOOK_SECRET</code> in <code>.env</code>.</p>
+
+<h3>10.3 Script — create products and prices</h3>
+
+<p><code>scripts/payment-setup/setup-stripe-prices.js</code> accepts your pricing inputs and does everything:</p>
+<ul>
+<li>Creates Pro and Enterprise products in Stripe if they don't exist (idempotent, keyed by metadata).</li>
+<li>Creates the 4 prices (monthly + yearly for each plan). Yearly = monthly × 12 × (1 − discount/100), rounded to the nearest dollar.</li>
+<li>Prices are keyed by amount — running with a <em>different</em> amount creates a new price instead of reusing the old immutable one.</li>
+<li>Prints a complete <code>.env</code> block with both the Stripe price IDs and the matching display pricing vars.</li>
+</ul>
+
+<p><strong>Run it with your pricing:</strong></p>
+<pre><code>cd /opt/ontocode/scripts/payment-setup
+STRIPE_SECRET_KEY=sk_live_xxx node setup-stripe-prices.js \
+  --pro-monthly 29 \
+  --enterprise-monthly 99 \
+  --annual-discount 17</code></pre>
+
+<p>Example output (your actual price IDs will differ):</p>
+<pre><code>Pricing summary:
+  Pro        $29/month   |  $289/year  (saves $59.00, 17% off)
+  Enterprise $99/month   |  $985/year  (saves $203.00, 17% off)
+
+✓ Product exists:  prod_ABC123  "OntoCode Professional"
+  + Price created  [pro_monthly_2900]:      price_111  $29.00/month
+  + Price created  [pro_yearly_28900]:      price_222  $289.00/year
+✓ Product exists:  prod_DEF456  "OntoCode Enterprise"
+  + Price created  [enterprise_monthly_9900]: price_333  $99.00/month
+  + Price created  [enterprise_yearly_98500]: price_444  $985.00/year
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  COPY THIS ENTIRE BLOCK INTO .env:
+
+  # Stripe Price IDs
+  STRIPE_PRICE_PRO_MONTHLY=price_111
+  STRIPE_PRICE_PRO_YEARLY=price_222
+  STRIPE_PRICE_ENTERPRISE_MONTHLY=price_333
+  STRIPE_PRICE_ENTERPRISE_YEARLY=price_444
+
+  # Display pricing (shown on the pricing page — must match the amounts above)
+  PLAN_PRO_MONTHLY_PRICE=29
+  PLAN_PRO_ANNUAL_DISCOUNT_PERCENT=17
+  PLAN_ENTERPRISE_MONTHLY_PRICE=99
+  PLAN_ENTERPRISE_ANNUAL_DISCOUNT_PERCENT=17
+
+  Then restart the auth container:
+  docker compose -f docker-compose.production.yml up -d --no-deps auth
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code></pre>
+
+<p>Paste the entire block into <code>.env</code>, then restart:</p>
+<pre><code>docker compose -f docker-compose.production.yml up -d --no-deps auth</code></pre>
+
+<h3>10.4 Changing prices later</h3>
+
+<p>Run the script again with the new amounts — it will create new Stripe prices and print a new <code>.env</code> block:</p>
+<pre><code>STRIPE_SECRET_KEY=sk_live_xxx node setup-stripe-prices.js \
+  --pro-monthly 39 \
+  --enterprise-monthly 129 \
+  --annual-discount 20</code></pre>
+
+<ol>
+<li>Paste the new <code>.env</code> block (both price IDs and display vars) into <code>.env</code>.</li>
+<li>Restart auth: <code>docker compose -f docker-compose.production.yml up -d --no-deps auth</code></li>
+<li>Existing subscribers keep their old prices automatically (Stripe does not change existing subscriptions).</li>
+<li>When no active subscribers remain on the old prices, archive them in <strong>Stripe Dashboard → Products → [plan] → [old price] → Archive</strong>.</li>
+</ol>
+
+<h3>10.5 Verify the wiring</h3>
+<pre><code># 1. Send a test webhook from Stripe Dashboard &gt; Webhooks &gt; Send test webhook
+#    Pick "customer.subscription.created" — your endpoint should respond 200.
+
+# 2. Confirm the event landed in MongoDB.
+node /opt/ontocode/scripts/payment-test/webhook-events.js list --limit 5
+
+# 3. Confirm Stripe sees the signature verification succeeding.
+#    Stripe Dashboard &gt; Webhooks &gt; &lt;your endpoint&gt; &gt; Recent deliveries</code></pre>
+
+<hr>
+
+<h2 id="sec11">11. First-run verification</h2>
+
+<pre><code># 1. All containers are running
+docker compose -f docker-compose.production.yml ps
+
+# 2. Health checks
+curl -fsS https://ontocodeapi.selfresearch.org/actuator/health   # gateway (via nginx)
+curl -fsS http://localhost:8086/actuator/health                  # auth direct
+curl -fsS http://localhost:8083/actuator/health/liveness         # editor direct
+curl -fsS http://localhost:7200/rest/repositories                # GraphDB
+
+# 3. Verify the bootstrap admin user was created
+docker exec ontocode-mongo mongosh \
+  "mongodb://admin:&lt;MONGO_PASSWORD&gt;@localhost:27017/admin" \
+  --eval "db.getSiblingDB('ontocode').users.findOne({email: '&lt;ADMIN_EMAIL&gt;'})"
+
+# 4. Confirm GraphDB repository is ready
+docker logs ontocode-graphdb-init | tail -20
+# Should end with "[OK] Active Repository: ontocode"
+
+# 5. Send a real test email (enable test endpoints temporarily)
+# Add to .env: EMAIL_TEST_ENDPOINTS_ENABLED=true
+docker compose -f docker-compose.production.yml up -d --no-deps auth
+# Then with an admin JWT:
+node /opt/ontocode/scripts/payment-test/billing-email-test.js \
+  --to ops@selfresearch.org --jwt "&lt;admin-jwt&gt;"
+# Remove EMAIL_TEST_ENDPOINTS_ENABLED from .env and restart auth again</code></pre>
+
+<hr>
+
+<h2 id="sec12">12. Operations</h2>
+
+<h3>12.1 Restart one service</h3>
+<pre><code>docker compose -f docker-compose.production.yml restart auth
+docker compose -f docker-compose.production.yml logs -f auth</code></pre>
+
+<h3>12.2 Deploy a new version</h3>
+<pre><code># 1. On your dev machine — build and push the updated image(s):
+#    build-and-push.bat sindhujacoretopia 1.2.0
+
+# 2. On EC2 — pull and restart (substitute your tier override if not t3.xlarge):
+cd /opt/ontocode
+# If you tagged a specific version, update VERSION in .env first
+docker compose -f docker-compose.production.yml pull
+docker compose -f docker-compose.production.yml up -d
+# or with override: docker compose -f docker-compose.production.yml -f docker-compose.t3-2xlarge.yml up -d</code></pre>
+
+<p>Compose recreates only containers whose image digest changed. Mongo and GraphDB data volumes are never touched.</p>
+
+<blockquote><p>To deploy a single service without touching the rest: <code>docker compose -f docker-compose.production.yml up -d --no-deps auth</code></p></blockquote>
+
+<h3>12.3 Rollback</h3>
+<pre><code># Pin the previous version in .env: VERSION=1.1.0
+docker compose -f docker-compose.production.yml pull
+docker compose -f docker-compose.production.yml up -d</code></pre>
+
+<h3>12.4 What to back up</h3>
+
+<table>
+<thead><tr><th>What</th><th>Where</th><th>Contains</th><th>Must back up?</th></tr></thead>
+<tbody>
+<tr><td>MongoDB data</td><td><code>mongo-data</code> Docker volume</td><td>Users, workspaces, projects, billing, email logs, Stripe events</td><td>Yes — primary database</td></tr>
+<tr><td>GraphDB data</td><td><code>graphdb-data</code> Docker volume</td><td>All ontology RDF triples, named graphs, versions</td><td>Yes — ontology store</td></tr>
+<tr><td><code>.env</code> file</td><td><code>/opt/ontocode/.env</code></td><td>All secrets, Stripe keys, JWT secret</td><td>Yes — unrecoverable if lost</td></tr>
+<tr><td>nginx config</td><td><code>/etc/nginx/sites-available/ontocode</code></td><td>Virtual host, TLS config</td><td>Recommended</td></tr>
+<tr><td>Docker images</td><td>Registry (<code>sindhujacoretopia/*</code>)</td><td>Application binaries</td><td>No — always rebuildable from source</td></tr>
+<tr><td>Log files</td><td><code>/var/log/ontocode/</code></td><td>Application logs</td><td>Optional — useful for audit</td></tr>
+</tbody>
+</table>
+
+<blockquote><p><strong>Do not back up Docker images.</strong> They are reproducible artifacts — rebuild from source and push to the registry. Saving image tarballs wastes storage and goes stale. The registry is the source of truth for images.</p></blockquote>
+
+<h3>12.5 MongoDB backup &amp; restore</h3>
+
+<p><strong>Backup</strong> — add to <code>crontab -e</code> as <code>ubuntu</code>:</p>
+<pre><code># Nightly at 03:00 UTC
+0 3 * * * docker exec ontocode-mongo mongodump \
+  --uri="mongodb://admin:MONGO_PASSWORD@localhost:27017/ontocode?authSource=admin" \
+  --out=/tmp/mongo-backup --gzip \
+  && docker cp ontocode-mongo:/tmp/mongo-backup /var/backups/mongo/$(date +\%F) \
+  && docker exec ontocode-mongo rm -rf /tmp/mongo-backup \
+  && aws s3 sync /var/backups/mongo/ s3://ontocode-prod-backups/mongo/ \
+  && find /var/backups/mongo/ -maxdepth 1 -type d -mtime +14 -exec rm -rf {} +</code></pre>
+
+<p><strong>Restore</strong>:</p>
+<pre><code># 1. Stop services that write to Mongo
+docker compose -f docker-compose.production.yml stop auth owl-editor plugin-service
+
+# 2. Copy backup into the container
+docker cp /var/backups/mongo/2026-05-14 ontocode-mongo:/tmp/mongo-restore
+
+# 3. Restore (--drop replaces existing collections)
+docker exec ontocode-mongo mongorestore \
+  --uri="mongodb://admin:MONGO_PASSWORD@localhost:27017/ontocode?authSource=admin" \
+  --drop --gzip /tmp/mongo-restore/ontocode
+
+# 4. Clean up and restart
+docker exec ontocode-mongo rm -rf /tmp/mongo-restore
+docker compose -f docker-compose.production.yml start auth owl-editor plugin-service</code></pre>
+
+<h3>12.6 GraphDB backup &amp; restore</h3>
+
+<p><strong>Backup via REST API</strong> (no downtime needed):</p>
+<pre><code># Trigger a backup snapshot via GraphDB REST API
+curl -X POST http://localhost:7200/rest/repositories/ontocode/export \
+  -H "Accept: application/zip" \
+  --output /var/backups/graphdb/ontocode-$(date +%F).zip
+
+# Sync to S3
+aws s3 sync /var/backups/graphdb/ s3://ontocode-prod-backups/graphdb/
+
+# Keep 14 days locally
+find /var/backups/graphdb/ -name "*.zip" -mtime +14 -delete</code></pre>
+
+<p><strong>Backup via volume snapshot</strong> (simpler, requires brief stop):</p>
+<pre><code># Stop GraphDB cleanly so all WAL pages flush
+docker compose -f docker-compose.production.yml stop graphdb
+
+# Archive the volume contents
+sudo tar -czf /var/backups/graphdb/ontocode-$(date +%F).tar.gz \
+  -C /var/lib/docker/volumes/ontocode_graphdb-data/_data .
+
+# Restart
+docker compose -f docker-compose.production.yml start graphdb</code></pre>
+
+<p><strong>Restore</strong>:</p>
+<pre><code># 1. Stop GraphDB
+docker compose -f docker-compose.production.yml stop graphdb owl-editor swrl-service
+
+# 2. Clear the existing volume and restore from archive
+sudo rm -rf /var/lib/docker/volumes/ontocode_graphdb-data/_data/*
+sudo tar -xzf /var/backups/graphdb/ontocode-2026-05-14.tar.gz \
+  -C /var/lib/docker/volumes/ontocode_graphdb-data/_data/
+
+# 3. Restart
+docker compose -f docker-compose.production.yml start graphdb owl-editor swrl-service
+
+# 4. Verify repository is accessible
+curl -sf http://localhost:7200/rest/repositories/ontocode/size</code></pre>
+
+<h3>12.7 .env backup</h3>
+<pre><code># Encrypt and push to S3 (never store secrets in plaintext)
+openssl enc -aes-256-cbc -pbkdf2 -in /opt/ontocode/.env \
+  -out /tmp/env-encrypted.bin -k "CHOOSE_STRONG_PASSPHRASE"
+aws s3 cp /tmp/env-encrypted.bin s3://ontocode-prod-backups/config/env-$(date +%F).bin
+rm /tmp/env-encrypted.bin
+
+# Restore
+aws s3 cp s3://ontocode-prod-backups/config/env-2026-05-14.bin /tmp/env-encrypted.bin
+openssl enc -d -aes-256-cbc -pbkdf2 -in /tmp/env-encrypted.bin \
+  -out /opt/ontocode/.env -k "CHOOSE_STRONG_PASSPHRASE"
+chmod 0600 /opt/ontocode/.env
+rm /tmp/env-encrypted.bin</code></pre>
+
+<h3>12.8 Verify backups (run weekly)</h3>
+<pre><code># MongoDB — count documents in a key collection
+docker exec ontocode-mongo mongosh \
+  "mongodb://admin:MONGO_PASSWORD@localhost:27017/ontocode?authSource=admin" \
+  --eval "db.users.countDocuments()"
+
+# GraphDB — count total triples
+curl -s "http://localhost:7200/repositories/ontocode/size"
+
+# Confirm S3 backups exist and are recent
+aws s3 ls s3://ontocode-prod-backups/mongo/ | tail -5
+aws s3 ls s3://ontocode-prod-backups/graphdb/ | tail -5</code></pre>
+
+<blockquote><p>Test a full restore into a staging environment at least once before going live, and again after any major data migration.</p></blockquote>
+
+<h3>12.6 Monitoring</h3>
+<p>The Spring services expose <code>/actuator/health</code> and <code>/actuator/metrics</code> on each backend port:</p>
+<pre><code># Simple uptime check (add to crontab as ubuntu):
+*/5 * * * * curl -fsS http://localhost:8086/actuator/health &gt; /dev/null || \
+   curl -X POST -d "auth container down" https://alerts.example.com/</code></pre>
+
+<h3>12.7 Troubleshooting matrix</h3>
+<table>
+<thead><tr><th>Symptom</th><th>First check</th></tr></thead>
+<tbody>
+<tr><td>Webhook events show <code>status: failed</code> in Mongo</td><td><code>docker compose logs auth | grep "Could not deserialize"</code> — usually a Stripe API version mismatch; bump <code>stripe-java</code> and rebuild the auth image</td></tr>
+<tr><td>Users report missing payment-receipt emails</td><td><code>node scripts/payment-test/backfill-payment-emails.js --jwt &lt;admin&gt;</code> (dry-run first)</td></tr>
+<tr><td>Duplicate renewal-reminder emails</td><td>Check logs for <code>email_logs.key index is missing or non-unique — rebuilding</code>. If it logged, restart fixed it</td></tr>
+<tr><td>502 from gateway</td><td>One of the backend containers is down. <code>docker compose ps</code></td></tr>
+<tr><td>Slow ontology queries</td><td>Editor in-memory cache cold or evicted; bump <code>ONTOCODE_MEMCACHE_MAX_PROJECTS</code> in <code>.env</code> and restart editor</td></tr>
+<tr><td>TLS cert expired</td><td><code>sudo certbot renew --dry-run</code> then <code>sudo certbot renew</code></td></tr>
+<tr><td>MongoDB connection refused</td><td><code>docker compose ps mongo</code>; <code>docker compose logs mongo</code></td></tr>
+<tr><td>GraphDB not ready</td><td><code>docker compose logs graphdb</code> — it can take 2–3 min on first boot. Check <code>docker compose logs graphdb-init</code> to confirm repository was created</td></tr>
+<tr><td>Container exits immediately</td><td><code>docker compose logs &lt;service&gt;</code> — usually a missing required env var (e.g. <code>JWT_SECRET</code>) or a failed <code>.env</code> substitution</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2 id="sec13">13. Security checklist before going live</h2>
+
+<ul class="checklist">
+<li><code>MONGO_ROOT_PASSWORD</code> in <code>.env</code> is a strong unique password — not the <code>changeme123</code> default.</li>
+<li><code>JWT_SECRET</code> is 64+ bytes from <code>openssl rand -base64 64</code>. Same value used across auth, gateway, and plugin services.</li>
+<li><code>.env</code> is mode 0600 and not committed to git — confirm with <code>git status</code>.</li>
+<li>Stripe is in <strong>live mode</strong> (keys start with <code>sk_live_</code> / <code>pk_live_</code> / <code>whsec_</code>).</li>
+<li>Webhook signing secret matches what Stripe shows in the Dashboard.</li>
+<li>Domain has valid TLS via certbot; auto-renew timer is enabled.</li>
+<li>Security Group allows only 22 (your IP), 80, 443 to the public; 7200 (GraphDB) only to your office IP.</li>
+<li>Admin bootstrap user (<code>ADMIN_EMAIL</code>) password rotated after first login.</li>
+<li><code>BASE_URL</code> in <code>.env</code> points to the public webapp URL, not localhost.</li>
+<li>Stripe Dashboard webhook shows recent successful deliveries.</li>
+<li>Backups are running (Mongo + GraphDB) and have been test-restored at least once.</li>
+</ul>
+
+<hr>
+
+<h2 id="sec14">14. Cheat sheet</h2>
+
+<pre><code># Status
+docker compose -f docker-compose.production.yml ps
+
+# Logs (all services)
+docker compose -f docker-compose.production.yml logs -f
+
+# Logs (one service)
+docker compose -f docker-compose.production.yml logs -f auth
+
+# Restart one service
+docker compose -f docker-compose.production.yml restart auth
+
+# Deploy new images
+docker compose -f docker-compose.production.yml pull
+docker compose -f docker-compose.production.yml up -d
+
+# Full stop
+docker compose -f docker-compose.production.yml down
+
+# Application log files (from volume mounts)
+tail -f /var/log/ontocode/auth/app.log
+tail -f /var/log/ontocode/editor/app.log
+
+# Inspect webhook events
+node /opt/ontocode/scripts/payment-test/webhook-events.js list --limit 20
+node /opt/ontocode/scripts/payment-test/webhook-events.js summary
+
+# Backfill missed payment-success emails
+node /opt/ontocode/scripts/payment-test/backfill-payment-emails.js --jwt &lt;admin&gt;           # dry-run
+node /opt/ontocode/scripts/payment-test/backfill-payment-emails.js --jwt &lt;admin&gt; --apply
+
+# Stripe: register webhook (one-time, idempotent)
+cd /opt/ontocode/scripts/payment-setup
+STRIPE_SECRET_KEY=sk_live_xxx node setup-stripe-webhook.js https://ontocodeapi.selfresearch.org/api/billing/webhook
+
+# Stripe: create/update prices (run whenever pricing changes)
+STRIPE_SECRET_KEY=sk_live_xxx node setup-stripe-prices.js \
+  --pro-monthly 29 \
+  --enterprise-monthly 99 \
+  --annual-discount 17
+# Paste the printed .env block into .env, then:
+docker compose -f docker-compose.production.yml up -d --no-deps auth</code></pre>
+
+<hr>
+
+<p>If a step fails, the answer is almost always in <code>docker compose logs &lt;service&gt;</code> or <code>/var/log/ontocode/&lt;service&gt;/app.log</code>. Log files are kept for 30 days by default.</p>
+
+</body>
+</html>

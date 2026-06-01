@@ -11,7 +11,7 @@
 #   ./build-and-push.sh ontocode latest gateway web  # build gateway + web
 #
 # Available service names:
-#   graphdb  auth  gateway  editor  swrl  plugin  plugin-init  web
+#   fuseki  graphdb  auth  gateway  editor  swrl  plugin  plugin-init  web
 #
 # On EC2 (pull & restart after pushing):
 #   ./build-and-push.sh ontocode latest editor && \
@@ -94,6 +94,11 @@ echo ""
 
 trap fail ERR
 
+should_build fuseki     && docker buildx build \
+    --platform linux/amd64 \
+    -t "$REGISTRY/ontocode-fuseki:6.1.0" \
+    -f fuseki-docker/Dockerfile \
+    --push fuseki-docker && echo "✓ ontocode-fuseki:6.1.0 pushed"
 should_build graphdb    && build "[1/8] graphdb"     ontocode-graphdb     Dockerfile.graphdb
 should_build auth       && build "[2/8] auth"        ontocode-auth        Dockerfile.auth
 should_build gateway    && build "[3/8] gateway"     ontocode-gateway     Dockerfile.gateway
