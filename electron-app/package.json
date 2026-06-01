@@ -2,6 +2,12 @@
   "name": "ontocode-desktop",
   "version": "1.0.0",
   "description": "OntoCode Ontology Editor – Desktop (Electron + bundled backend)",
+  "homepage": "https://ontocode.selfresearch.org",
+  "author": {
+    "name": "Coretopia",
+    "email": "support@selfresearch.org",
+    "url": "https://ontocode.selfresearch.org"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
