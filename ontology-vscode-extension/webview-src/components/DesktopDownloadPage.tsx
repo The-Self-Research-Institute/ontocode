@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { Download, Monitor, Apple, Terminal, CheckCircle, ArrowLeft, ExternalLink, Cpu } from "lucide-react";
 
-const RELEASE_BASE = "https://github.com/kkpranesh/ontocode/releases/latest/download";
-const RELEASES_PAGE = "https://github.com/kkpranesh/ontocode/releases";
+// Files served from GridFS via the auth service
+const RELEASE_BASE = "https://ontocodeapi.selfresearch.org/api/downloads";
+const RELEASES_PAGE = "https://ontocodeapi.selfresearch.org/api/downloads";
 
+// platform keys must match what was uploaded via POST /api/downloads/upload?platform=...
 const OS_OPTIONS = [
   {
     id: "windows",
@@ -12,8 +14,8 @@ const OS_OPTIONS = [
     color: "#0078d4",
     bg: "#eff6ff",
     versions: [
-      { arch: "x64", label: "Windows 64-bit (Installer)", file: "OntoCode-Setup-1.0.0-x64.exe", primary: true },
-      { arch: "arm64", label: "Windows ARM64 (Installer)", file: "OntoCode-Setup-1.0.0-arm64.exe", primary: false },
+      { arch: "windows-x64",   label: "Windows 64-bit (Installer)", platform: "windows-x64",   primary: true },
+      { arch: "windows-arm64", label: "Windows ARM64 (Installer)",   platform: "windows-arm64", primary: false },
     ],
     requirements: "Windows 10 or later",
   },
@@ -24,8 +26,8 @@ const OS_OPTIONS = [
     color: "#555",
     bg: "#f5f5f7",
     versions: [
-      { arch: "arm64", label: "macOS Apple Silicon (M1/M2/M3)", file: "OntoCode-1.0.0-arm64.dmg", primary: true },
-      { arch: "x64", label: "macOS Intel", file: "OntoCode-1.0.0-x64.dmg", primary: false },
+      { arch: "mac-arm64", label: "macOS Apple Silicon (M1/M2/M3)", platform: "mac-arm64", primary: true },
+      { arch: "mac-x64",   label: "macOS Intel",                    platform: "mac-x64",   primary: false },
     ],
     requirements: "macOS 12 (Monterey) or later",
   },
@@ -36,8 +38,8 @@ const OS_OPTIONS = [
     color: "#e95420",
     bg: "#fff5f0",
     versions: [
-      { arch: "x64", label: "Linux AppImage (x86_64)", file: "OntoCode-1.0.0-x86_64.AppImage", primary: true },
-      { arch: "x64-deb", label: "Debian / Ubuntu (.deb)", file: "ontocode_1.0.0_amd64.deb", primary: false },
+      { arch: "linux-x64",  label: "Linux AppImage (x86_64)",   platform: "linux-x64",  primary: true },
+      { arch: "linux-deb",  label: "Debian / Ubuntu (.deb)",    platform: "linux-deb",  primary: false },
     ],
     requirements: "Ubuntu 20.04+ or compatible",
   },
@@ -161,7 +163,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             {activeOption.versions.map((v) => (
               <a
                 key={v.arch}
-                href={`${RELEASE_BASE}/${v.file}`}
+                href={`${RELEASE_BASE}/${(v as any).platform}`}
                 className={`flex items-center justify-between p-4 rounded-xl transition-all group ${
                   v.primary
                     ? "bg-purple-600 hover:bg-purple-500 border border-purple-500"
@@ -174,7 +176,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
                     <div className={`text-sm font-medium ${v.primary ? "text-white" : "text-white/70 group-hover:text-white"}`}>
                       {v.label}
                     </div>
-                    <div className="text-xs text-white/40">{v.file}</div>
+                    <div className="text-xs text-white/40">Request via email</div>
                   </div>
                 </div>
                 {v.primary && (
