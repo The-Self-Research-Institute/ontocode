@@ -23,7 +23,7 @@ import java.nio.file.Path;
 import java.io.IOException;
 import java.util.Comparator;
 
-@RestController
+@RestController("owlEditorProjectController")
 @RequestMapping({"/api/projects", "/api/ontology/projects"})
 @CrossOrigin
 public class ProjectController {

@@ -654,7 +654,7 @@ export const AxiomSubsection: React.FC<{
         </div>
       )}
       <div
-        className={`border overflow-hidden shadow-sm ${theme ? 'border-t-0 rounded-b-sm' : 'rounded-md'}`}
+        className={`border shadow-sm ${theme ? 'border-t-0 rounded-b-sm' : 'rounded-md'} ${allAxioms.length > 5 ? 'overflow-y-auto max-h-48' : 'overflow-hidden'}`}
         style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}
       >
         {hasContent ? (

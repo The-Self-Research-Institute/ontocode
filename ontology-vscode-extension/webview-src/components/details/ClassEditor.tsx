@@ -366,6 +366,12 @@ const ClassEditor: React.FC<{
 
     let alive = true;
 
+    // AbortController cancels in-flight HTTP requests when the user clicks a
+    // different class. Without this, the previous 40-second SPARQL query keeps
+    // running on the server even after the user has moved on.
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
     // Reset visible state immediately so we never paint with the previous
     // entity's data while the new request is in flight.
     setClassDetails(null);
@@ -409,6 +415,8 @@ const ClassEditor: React.FC<{
       try {
         const annResp = await apiClient.get<any>(
           `/api/ontology/classes/annotations/${projectId}?classIri=${encodeURIComponent(currentId)}`,
+          undefined,
+          { signal },
         );
         const t1Net = performance.now();
         console.log(
@@ -447,10 +455,14 @@ const ClassEditor: React.FC<{
         // perceived latency in Inferred view mode.
         const detailsPromise = apiClient.get<any>(
           `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(currentId)}`,
+          undefined,
+          { signal },
         );
         const inferredPromise = currentViewMode === "inferred"
           ? apiClient.get<any>(
               `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(currentId)}`,
+              undefined,
+              { signal },
             ).catch((err) => {
               console.warn("[ClassEditor] Failed to load inferred details:", err);
               return null;
@@ -511,6 +523,8 @@ const ClassEditor: React.FC<{
       try {
         const response = await apiClient.get<any>(
           `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(currentId)}`,
+          undefined,
+          { signal },
         );
         console.log(
           `[perf][ClassEditor] ✓ instances network=${(performance.now() - t3).toFixed(0)}ms total=${(performance.now() - tStart).toFixed(0)}ms`,
@@ -534,6 +548,7 @@ const ClassEditor: React.FC<{
 
     return () => {
       alive = false;
+      abortController.abort(); // cancels in-flight HTTP requests immediately
       clearTimeout(watchdog);
       clearTimeout(debounceTimer);
     };

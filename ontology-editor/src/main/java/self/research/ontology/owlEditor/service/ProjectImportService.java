@@ -11,6 +11,8 @@ import self.research.ontology.owlEditor.model.ImportQueueItem;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.model.collaboration.ImportStatusMessage;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 
 import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQueryResult;
@@ -62,6 +64,10 @@ public class ProjectImportService {
     private final SimpMessagingTemplate messagingTemplate;
     private final ImportQueueManager queueManager;
     private final ImportTimeEstimator timeEstimator;
+
+    // Desktop-only — null in cloud deployments (optional injection)
+    @Autowired(required = false) @Nullable
+    private DesktopOntologyLoader desktopOntologyLoader;
 
     public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
                                 GraphDBDatasetService datasetService,
@@ -245,6 +251,13 @@ public class ProjectImportService {
         String filename = metadataService.readStatus(projectId)
                 .map(ProjectStatus::filename)
                 .orElse(owlFile.getFileName().toString());
+
+        // Desktop: start OWLAPI parsing in parallel with Fuseki import.
+        // OWLAPI reads the ORIGINAL file (OFN/TTL) — much faster than RDF/XML.
+        // By the time Fuseki import finishes, OWLAPI model is usually already cached.
+        if (desktopOntologyLoader != null) {
+            desktopOntologyLoader.loadAndCacheAsync(projectId, owlFile);
+        }
 
         // Track whether import was marked as COMPLETED (prevents overwriting to ERROR in catch block)
         AtomicBoolean importMarkedCompleted = new AtomicBoolean(false);
@@ -509,6 +522,13 @@ public class ProjectImportService {
             Files.createDirectories(current.getParent());
             Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
             log.info("[Import {}] [TIMING] File copy to current: {} ms", projectId, elapsedMillis(stageStart));
+
+            // Desktop: asynchronously build OWLAPI in-memory model for instant hierarchy navigation.
+            // Runs in parallel with metadata indexing — non-blocking, non-fatal if it fails.
+            if (desktopOntologyLoader != null) {
+                final Path cachedFile = current;
+                desktopOntologyLoader.loadAndCacheAsync(projectId, cachedFile);
+            }
 
             // ⚡ PERFORMANCE OPTIMIZATION: Mark import as COMPLETED immediately after GraphDB load
             // This allows frontend to start using the ontology without waiting for metadata indexing

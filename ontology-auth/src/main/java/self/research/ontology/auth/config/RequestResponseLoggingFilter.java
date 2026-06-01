@@ -29,7 +29,7 @@ import java.util.Set;
  * <p>Order(2) so it runs after {@link MdcLoggingFilter} populates the
  * cascading {@code [%X{ctx}]} block.
  */
-@Component
+@Component("authRequestResponseLoggingFilter")
 @Order(2)
 public class RequestResponseLoggingFilter extends OncePerRequestFilter {
 

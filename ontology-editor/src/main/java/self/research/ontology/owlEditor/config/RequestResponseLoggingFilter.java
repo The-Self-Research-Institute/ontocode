@@ -41,7 +41,7 @@ import java.util.Set;
  * — the log line is then automatically tagged with the cascading
  * {@code [%X{ctx}]} block populated by that filter.
  */
-@Component
+@Component("owlEditorRequestResponseLoggingFilter")
 @Order(2)
 public class RequestResponseLoggingFilter extends OncePerRequestFilter {
 

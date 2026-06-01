@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
  * Controller for reasoning operations on ontologies.
  * Provides endpoints for consistency checking, classification, realization, and inference.
  */
-@RestController
+@RestController("pluginReasonerController")
 @RequestMapping("/api/reasoner")
 @CrossOrigin(originPatterns = "*")
 public class ReasonerController {
