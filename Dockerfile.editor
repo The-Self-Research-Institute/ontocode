@@ -37,12 +37,14 @@ RUN if ! getent group 1000 >/dev/null; then groupadd -g 1000 appuser; else echo 
 # Install wget for health checks
 RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
 
-# Create directories for data and logs
+# Create writable directories for data and logs
 RUN mkdir -p /app/data /app/logs && \
-    chown -R 1000:1000 /app
+    chown 1000:1000 /app/data /app/logs
 
 # Copy the built JAR (spring-boot:repackage creates executable JAR)
-COPY --from=build /build/ontology-editor/target/*.jar app.jar
+# classifier=exec produces owlEditor-1.0.0-exec.jar (fat JAR) + owlEditor-1.0.0.jar (plain)
+# Copy the exec JAR explicitly to avoid picking up the plain non-executable JAR
+COPY --from=build --chown=1000:1000 /build/ontology-editor/target/*-exec.jar app.jar
 
 USER 1000
 

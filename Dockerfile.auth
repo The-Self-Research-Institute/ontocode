@@ -56,7 +56,8 @@ RUN mkdir -p /app/logs && \
     chown -R 1000:1000 /app
 
 # Copy the built JAR (spring-boot:repackage creates executable JAR)
-COPY --from=build /build/ontology-auth/target/*.jar app.jar
+# classifier=exec produces auth-1.0.0-exec.jar (fat JAR) + auth-1.0.0.jar (plain)
+COPY --from=build /build/ontology-auth/target/*-exec.jar app.jar
 
 USER 1000
 
