@@ -202,6 +202,16 @@ const LoginForm = ({
               Back to Welcome
             </button>
           )}
+          {/* Desktop download link */}
+          <div className="pt-2 border-t border-white/10">
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('navigate-desktop-download'))}
+              className="flex items-center justify-center gap-2 w-full text-purple-400 hover:text-purple-300 text-sm py-1"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              Download Desktop App (Windows / macOS / Linux)
+            </button>
+          </div>
         </div>
       </div>
 

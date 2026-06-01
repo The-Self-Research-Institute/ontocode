@@ -23,6 +23,7 @@ import { useRouter, RouteState } from "./hooks/useRouter";
 import { clearLastOpenedProjectState, SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "./utils/sessionCleanup";
 import AdminSettingsModal from "./components/AdminSettingsModal";
 const BillingManagement = lazy(() => import("./components/BillingManagement"));
+const DesktopDownloadPage = lazy(() => import("./components/DesktopDownloadPage"));
 const PaymentSetupModal = lazy(() => import("./components/PaymentSetupModal"));
 
 const getInitialInvitationFromLocation = (): { token: string | null; email: string | null } => {
@@ -310,6 +311,13 @@ const AppContent = () => {
     !!user?.workspaceId &&
     (workspaceBillingStatus || "").toUpperCase() === "PENDING" &&
     (user?.subscriptionPlan || "FREE").toUpperCase() !== "FREE";
+
+  // Desktop download navigation — triggered by the Monitor icon in all pages
+  useEffect(() => {
+    const handler = () => navigateTo({ view: "desktopDownload" });
+    window.addEventListener("navigate-desktop-download", handler);
+    return () => window.removeEventListener("navigate-desktop-download", handler);
+  }, []);
 
   const clearLastOpenedSelection = useCallback(() => {
     clearLastOpenedProjectState();
@@ -1650,6 +1658,15 @@ const AppContent = () => {
   // endpoints, and isOwner is always true because it's the user's own
   // account. Must be checked BEFORE the workspace-selection short-circuit
   // so navigating from WorkspaceSelection actually works.
+  // Desktop download page — accessible to everyone, even without login
+  if (currentRoute.view === "desktopDownload") {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-900" />}>
+        <DesktopDownloadPage onBack={() => navigateTo({ view: user ? (selectedFileId ? "dashboard" : "projectDashboard") : "login" })} />
+      </Suspense>
+    );
+  }
+
   if (user && showBillingPage) {
     console.log("[App] 🎨 Rendering BillingManagement page (account-level)");
     return (
