@@ -7,6 +7,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -22,6 +23,12 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class RateLimitingFilter extends OncePerRequestFilter {
 
+    @Value("${security.rate-limit.enabled:true}")
+    private boolean rateLimitEnabled;
+
+    @Value("${security.rate-limit.requests-per-minute:100}")
+    private int requestsPerMinute;
+
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
 
     // Default: 100 requests per minute per IP
@@ -36,9 +43,15 @@ public class RateLimitingFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         
+        // Desktop mode / disabled: skip rate limiting entirely
+        if (!rateLimitEnabled) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String clientIp = getClientIP(request);
         String requestUri = request.getRequestURI();
-        
+
         // Determine rate limit based on endpoint
         Bucket bucket;
         if (isAuthEndpoint(requestUri)) {

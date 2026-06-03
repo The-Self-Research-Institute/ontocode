@@ -27,7 +27,11 @@ import java.util.Optional;
 public class ProjectOntologyCache {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectOntologyCache.class);
-    private static final int MAX_PROJECTS = 2;
+    // Configurable via -Dontocode.desktop.cache.maxProjects=N (default 4).
+    // Holds parsed model + reasoner per project; revisiting within this window
+    // is instant instead of triggering a multi-second re-parse.
+    private static final int MAX_PROJECTS =
+        Math.max(1, Integer.getInteger("ontocode.desktop.cache.maxProjects", 4));
 
     public record CachedOntology(OWLOntology ontology, OWLReasoner reasoner, OWLOntologyManager manager) {
         void dispose() {

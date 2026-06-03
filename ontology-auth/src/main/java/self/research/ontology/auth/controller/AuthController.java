@@ -55,6 +55,12 @@ public class AuthController {
     @Value("${app.email.enabled:true}")
     private boolean emailEnabled;
 
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
+    @Value("${ontocode.desktop.user.email:local@ontocode.desktop}")
+    private String desktopUserEmail;
+
     /**
      * Comma-separated list of allowed email domains for login/signup during restricted testing.
      * Empty = allow all. Example: "coretopia.com,example.com"
@@ -763,12 +769,16 @@ public class AuthController {
     @GetMapping("/last-opened")
     public ResponseEntity<?> getLastOpened(HttpServletRequest request) {
         try {
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-                return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+            String email;
+            if (desktopMode) {
+                email = desktopUserEmail;
+            } else {
+                String authHeader = request.getHeader("Authorization");
+                if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                    return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+                }
+                email = jwtUtil.extractEmail(authHeader.substring(7));
             }
-            String token = authHeader.substring(7);
-            String email = jwtUtil.extractEmail(token);
             Optional<User> userOpt = userRepository.findByEmail(email);
             if (userOpt.isEmpty()) return ResponseEntity.notFound().build();
             User user = userOpt.get();
@@ -790,12 +800,16 @@ public class AuthController {
     @PutMapping("/last-opened")
     public ResponseEntity<?> saveLastOpened(@RequestBody Map<String, String> body, HttpServletRequest request) {
         try {
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-                return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+            String email;
+            if (desktopMode) {
+                email = desktopUserEmail;
+            } else {
+                String authHeader = request.getHeader("Authorization");
+                if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                    return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+                }
+                email = jwtUtil.extractEmail(authHeader.substring(7));
             }
-            String token = authHeader.substring(7);
-            String email = jwtUtil.extractEmail(token);
             Optional<User> userOpt = userRepository.findByEmail(email);
             if (userOpt.isEmpty()) return ResponseEntity.notFound().build();
             User user = userOpt.get();

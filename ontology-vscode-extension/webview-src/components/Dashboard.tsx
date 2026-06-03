@@ -1,5 +1,5 @@
 // src/Dashboard.tsx
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   ChevronRight,
   ChevronDown,
@@ -70,6 +70,8 @@ import type {
   Datatype,
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
+import { isDesktop, warmOntologyInMemory } from "../utils/desktop";
+import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
 import { normalizeRole, parseWorkspaceRole, isWorkspaceViewerRole } from "../utils/roles";
 import { useCollaboration } from "../contexts/CollaborationContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -119,6 +121,8 @@ import {
   PrefixDialog,
 } from "./dialogs";
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from "../hooks/useKeyboardShortcuts";
+import { useDebouncedVisible } from "../hooks/useDebouncedVisible";
+import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter } from "./CodeHighlighter";
 import { PluginMarketplace } from "./PluginMarketplace";
@@ -129,6 +133,7 @@ import CitationPickerDialog from "./CitationPickerDialog";
 import ManualCitationDialog from "./ManualCitationDialog";
 import {
   LoadingDialog,
+  SectionLoadingBar,
   ReasonerExplanationModal,
   ReasonerSettingsDialog,
   PluginPlaceholder,
@@ -366,6 +371,21 @@ const TopMenuBar = ({
                     )}
                     {(onGoToProjectDashboard || onGoToWorkspace) && (
                       <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                    )}
+                    {isDesktop() && (
+                      <>
+                        <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                        <button
+                          onClick={() => {
+                            window.vscode?.postMessage({ type: 'toggleDevTools' });
+                            setOpenMenu(null);
+                          }}
+                          className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                        >
+                          <Code size={14} />
+                          Toggle Developer Tools
+                        </button>
+                      </>
                     )}
                     <div className="px-3 py-1 text-gray-400 text-xs">Appearance</div>
                   </div>
@@ -1036,6 +1056,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const isCloudDeployment = deploymentType === "cloud";
 
   useEffect(() => {
+    // Desktop has no billing — plan/expiry is governed by the license file.
+    if (isDesktop()) return;
     apiClient.get("/api/billing/subscription")
       .then((res: any) => {
         const d = res?.data || res;
@@ -1053,6 +1075,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // If the current workspace's owner has an expired paid plan, redirect back to workspace selection.
   useEffect(() => {
+    if (isDesktop()) return;
     const wid = user?.workspaceId;
     if (!wid) return;
     apiClient.get(`/api/billing/workspace-owner-status/${wid}`)
@@ -1139,6 +1162,26 @@ const Dashboard: React.FC<DashboardProps> = ({
   const storedProjectId = isNonWorkspaceMode ? localStorage.getItem("ontocode_lastProjectId") : null;
 
   const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || null);
+  const prevProjectIdRef = useRef<string | null>(null);
+
+  // Switching ontology files: keep the previous tree visible (dimmed) until new data arrives.
+  useEffect(() => {
+    if (!projectId || projectId === prevProjectIdRef.current) return;
+    prevProjectIdRef.current = projectId;
+    fetchDataGenerationRef.current += 1;
+    if (fetchAbortControllerRef.current) {
+      fetchAbortControllerRef.current.abort();
+    }
+    setSelectedItem(null);
+    setMetadata(null);
+    setIsHierarchyLoading(true);
+    setIsMetadataLoading(true);
+    setIsPropertiesLoading(true);
+    setIsIndividualsLoading(true);
+    setIsAnnotationPropertiesLoading(true);
+    setIsDatatypesLoading(true);
+    setLoadingStatusMessage("Loading ontology…");
+  }, [projectId]);
 
   const setProjectId = useCallback(
     (value: string | null | ((prev: string | null) => string | null)) => {
@@ -1508,6 +1551,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
   const [isHierarchyLoading, setIsHierarchyLoading] = useState(false);
+  // Per-section loaders — classes can appear while metadata/properties/etc. still load.
+  const [isMetadataLoading, setIsMetadataLoading] = useState(false);
+  const [isPropertiesLoading, setIsPropertiesLoading] = useState(false);
+  const [isIndividualsLoading, setIsIndividualsLoading] = useState(false);
+  const [isAnnotationPropertiesLoading, setIsAnnotationPropertiesLoading] = useState(false);
+  const [isDatatypesLoading, setIsDatatypesLoading] = useState(false);
   const [inferredClassHierarchy, setInferredClassHierarchy] = useState<TreeNode[]>([]);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
@@ -1598,6 +1647,81 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || "asserted";
 
+  const isEntitiesSectionLoading = useMemo(() => {
+    switch (entitiesTab) {
+      case "Classes":
+        return isHierarchyLoading;
+      case "ObjectProperties":
+      case "DataProperties":
+        return isPropertiesLoading;
+      case "Individuals":
+        return isIndividualsLoading;
+      case "AnnotationProperties":
+        return isAnnotationPropertiesLoading;
+      case "Datatypes":
+        return isDatatypesLoading;
+      default:
+        return false;
+    }
+  }, [
+    entitiesTab,
+    isHierarchyLoading,
+    isPropertiesLoading,
+    isIndividualsLoading,
+    isAnnotationPropertiesLoading,
+    isDatatypesLoading,
+  ]);
+
+  const backgroundLoadingSections = useMemo(() => {
+    const parts: string[] = [];
+    if (isHierarchyLoading) parts.push("classes");
+    if (isMetadataLoading) parts.push("ontology metadata");
+    if (isPropertiesLoading) parts.push("properties");
+    if (isIndividualsLoading) parts.push("individuals");
+    if (isAnnotationPropertiesLoading) parts.push("annotation properties");
+    if (isDatatypesLoading) parts.push("datatypes");
+    return parts;
+  }, [
+    isHierarchyLoading,
+    isMetadataLoading,
+    isPropertiesLoading,
+    isIndividualsLoading,
+    isAnnotationPropertiesLoading,
+    isDatatypesLoading,
+  ]);
+
+  const sectionBarSections = useMemo(() => {
+    if (isInitialLoading || showLoadingChoice) return [];
+    const list =
+      mainTab === "Entities"
+        ? backgroundLoadingSections.filter((s) => s !== "ontology metadata")
+        : backgroundLoadingSections;
+    return list;
+  }, [isInitialLoading, showLoadingChoice, mainTab, backgroundLoadingSections]);
+
+  const showSectionLoadingBar = useDebouncedVisible(sectionBarSections.length > 0, {
+    showDelayMs: 180,
+    minVisibleMs: 400,
+  });
+
+  const lastSectionBarLabelsRef = useRef<string[]>([]);
+  if (sectionBarSections.length > 0) {
+    lastSectionBarLabelsRef.current = sectionBarSections;
+  }
+  const sectionBarLabels =
+    sectionBarSections.length > 0 ? sectionBarSections : lastSectionBarLabelsRef.current;
+  const [sectionBarMounted, setSectionBarMounted] = useState(false);
+  useEffect(() => {
+    if (showSectionLoadingBar && sectionBarLabels.length > 0) {
+      setSectionBarMounted(true);
+      return;
+    }
+    if (!showSectionLoadingBar) {
+      const t = setTimeout(() => setSectionBarMounted(false), 320);
+      return () => clearTimeout(t);
+    }
+  }, [showSectionLoadingBar, sectionBarLabels.length]);
+
   const entitiesTabs = [
     {
       id: "Classes",
@@ -1614,7 +1738,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                     ? reasonerResults.classHierarchy
                     : [],
             )
-          : (metadata as any)?.classCount || 0,
+          : (() => {
+              const metaCount = Number((metadata as any)?.classCount) || 0;
+              const treeCount =
+                !isHierarchyLoading && classHierarchy.length > 0 ? countNodes(classHierarchy) : 0;
+              // Top-level tree is capped (default 5000); total class count comes from OWLAPI metadata.
+              return Math.max(metaCount, treeCount);
+            })(),
       theme: "bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]",
     },
     {
@@ -1630,7 +1760,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                   ? reasonerResults.objectPropertyHierarchy
                   : [],
             )
-          : (metadata as any)?.objectPropertyCount || 0,
+          : (() => {
+              const metaCount = Number((metadata as any)?.objectPropertyCount) || 0;
+              const treeCount =
+                !isPropertiesLoading && objectPropertyHierarchy.length > 0
+                  ? countNodes(objectPropertyHierarchy)
+                  : 0;
+              return Math.max(metaCount, treeCount);
+            })(),
       theme: "bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600",
     },
     {
@@ -1646,28 +1783,41 @@ const Dashboard: React.FC<DashboardProps> = ({
                   ? reasonerResults.dataPropertyHierarchy
                   : [],
             )
-          : (metadata as any)?.dataPropertyCount || 0,
+          : (() => {
+              const metaCount = Number((metadata as any)?.dataPropertyCount) || 0;
+              const treeCount =
+                !isPropertiesLoading && dataPropertyHierarchy.length > 0
+                  ? countNodes(dataPropertyHierarchy)
+                  : 0;
+              return Math.max(metaCount, treeCount);
+            })(),
       theme: "bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600",
     },
     {
       id: "AnnotationProperties",
       label: "Annotation properties",
       icon: Tag,
-      count: annotationProperties.length,
+      count: !isAnnotationPropertiesLoading
+        ? annotationProperties.length || (metadata as any)?.annotationPropertyCount || 0
+        : (metadata as any)?.annotationPropertyCount ?? undefined,
       theme: "bg-gradient-to-b from-orange-300 to-orange-500 text-white border-orange-600",
     },
     {
       id: "Datatypes",
       label: "Datatypes",
       icon: Settings,
-      count: datatypes.length || 0,
+      count: !isDatatypesLoading
+        ? datatypes.length || (metadata as any)?.datatypeCount || 0
+        : (metadata as any)?.datatypeCount || 0,
       theme: "bg-gradient-to-b from-red-300 to-red-500 text-white border-red-600",
     },
     {
       id: "Individuals",
       label: "Individuals",
       icon: Eye,
-      count: (metadata as any)?.individualCount || 0,
+      count: !isIndividualsLoading
+        ? individuals.length || (metadata as any)?.individualCount || 0
+        : (metadata as any)?.individualCount ?? undefined,
       theme: "bg-gradient-to-b from-purple-300 to-purple-500 text-white border-purple-600",
     },
   ];
@@ -2493,6 +2643,13 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (!forceRefresh && currentProjectId === projectId && classHierarchy.length > 0 && metadata) {
         console.log("[Dashboard] ⚡ Project already loaded, skipping re-fetch:", currentProjectId);
         setIsInitialLoading(false);
+        setIsHierarchyLoading(false);
+        setIsMetadataLoading(false);
+        setIsPropertiesLoading(false);
+        setIsIndividualsLoading(false);
+        setIsAnnotationPropertiesLoading(false);
+        setIsDatatypesLoading(false);
+        setLoadingStatusMessage("");
         return null;
       }
 
@@ -2523,6 +2680,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (window.vscode) {
         window.vscode.postMessage({ type: "requestCollaborationStatus" });
       }
+
+      let loadGeneration = 0;
 
       try {
         // Skip status check for files being reopened (not fresh uploads)
@@ -2559,140 +2718,215 @@ const Dashboard: React.FC<DashboardProps> = ({
         const cacheBuster = forceRefresh ? `?_t=${Date.now()}` : "";
 
         // Abort any previous in-flight fetch and create a fresh controller for this load
+        loadGeneration = ++fetchDataGenerationRef.current;
         if (fetchAbortControllerRef.current) {
           fetchAbortControllerRef.current.abort();
         }
+        if (isDesktop()) {
+          desktopDeferredSectionsLoadedRef.current.clear();
+        }
         setIsHierarchyLoading(true);
-        setLoadingStatusMessage("Loading ontology metadata...");
+        setIsMetadataLoading(true);
+        setIsPropertiesLoading(true);
+        setIsIndividualsLoading(true);
+        setIsAnnotationPropertiesLoading(true);
+        setIsDatatypesLoading(true);
+        setLoadingStatusMessage(
+          isDesktop() ? "Loading ontology into memory…" : "Loading classes...",
+        );
         const abortController = new AbortController();
         fetchAbortControllerRef.current = abortController;
         const signal = abortController.signal;
+        const isStaleLoad = () => signal.aborted || fetchDataGenerationRef.current !== loadGeneration;
 
-        const instanceCountsPromise = apiClient
-          .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
-          .catch((e: any) => {
-            console.warn("[Dashboard] Instance counts fetch failed (non-blocking):", e?.message);
-            return null;
-          });
-
-        // Fetch data in parallel to improve performance (GraphDB can handle concurrent queries)
-        // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
-        // Top-level classes are loaded eagerly now for instant display
-        // Instance counts are loaded in background (non-blocking) to not delay initial render
-        // Allow UI to be responsive immediately if not waiting
-        if (!waitForCompletion) {
-          setTimeout(() => {
-            setIsInitialLoading(false);
-          }, 500);
-        }
-
-        const apiFetchStart = Date.now();
-        const metadataRes = await apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal });
-        setLoadingStatusMessage("Building class hierarchy...");
-        const [topLevelClassesRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] =
-          await Promise.all([
-            apiClient
-              .get<any>(
-                `/api/ontology/classes/top-level/${encodedProjectId}?limit=200${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
-                undefined,
-                { signal },
-              )
-              .catch((e: any) => {
-                if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") throw e;
-                return null;
-              }),
-            apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-            apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-            apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, {
-              signal,
-            }),
-            apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          ]);
-
-        console.log("[Dashboard] ✅ Data loaded from GraphDB database successfully!");
-        console.log("[Dashboard] 📊 This data includes all saved changes from the database");
-
-        // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
-        console.log("Metadata response:", metadataRes);
-
-        const metadataData = metadataRes?.data || metadataRes;
-        const annotationsData = metadataData?.annotations || [];
-        const imports = metadataData?.imports || [];
-        const gciAxioms = metadataData?.axioms || [];
-
-        if (metadataData?.filename) {
-          setActiveFileName(metadataData.filename);
-        }
-
-        console.log("Extracted annotations data:", annotationsData);
-        console.log("Extracted imports:", imports);
-        console.log("Extracted GCI axioms:", gciAxioms);
-
-        // Keep all metadata fields from backend (axiom counts, ontologyIRI, etc.)
-        const transformedMetadata = {
-          ...metadataData,
-          annotations: annotationsData,
-          // Also add flat structure for backward compatibility
-          classCount: metadataData?.classCount || metadataData?.counts?.classes || 0,
-          objectPropertyCount: metadataData?.objectPropertyCount || metadataData?.counts?.objectProperties || 0,
-          dataPropertyCount: metadataData?.dataPropertyCount || metadataData?.counts?.dataProperties || 0,
-          individualCount: metadataData?.individualCount || metadataData?.counts?.individuals || 0,
-          annotationPropertyCount:
-            metadataData?.annotationPropertyCount || metadataData?.counts?.annotationProperties || 0,
-          prefixes: metadataData?.prefixes || [],
+        const applyDeclarationCounts = (countsRes: any) => {
+          const patch = extractDeclarationCountsPatch(countsRes);
+          if (!patch) return;
+          setMetadata((prev) => ({
+            ...(prev || {}),
+            ...patch,
+          }) as OntologyMetadata);
         };
-        console.log("Transformed metadata:", transformedMetadata);
-        setMetadata(transformedMetadata);
 
-        // Instance counts load in background - set empty initially, update when ready
+        const applyMetadataResponse = (metadataRes: any) => {
+          if (!metadataRes) return;
+          const metadataData = metadataRes?.data || metadataRes;
+          if (!metadataData || typeof metadataData !== "object") return;
+          const annotationsData = metadataData?.annotations || [];
+          const imports = metadataData?.imports || [];
+          const gciAxioms = metadataData?.axioms || [];
+          if (metadataData?.filename) setActiveFileName(metadataData.filename);
+          setMetadata({
+            ...metadataData,
+            annotations: annotationsData,
+            classCount: metadataData?.classCount || metadataData?.counts?.classes || 0,
+            objectPropertyCount: metadataData?.objectPropertyCount || metadataData?.counts?.objectProperties || 0,
+            dataPropertyCount: metadataData?.dataPropertyCount || metadataData?.counts?.dataProperties || 0,
+            individualCount: metadataData?.individualCount || metadataData?.counts?.individuals || 0,
+            annotationPropertyCount:
+              metadataData?.annotationPropertyCount || metadataData?.counts?.annotationProperties || 0,
+            prefixes: metadataData?.prefixes || [],
+          });
+          setOntologyImports(Array.isArray(imports) ? imports : []);
+          setGeneralClassAxioms(
+            Array.isArray(gciAxioms)
+              ? gciAxioms.map((axiom: any) => ({
+                  value: axiom.value,
+                  subClass: axiom.subClass || "",
+                  superClass: axiom.superClass || "",
+                  definition: axiom.subClass || axiom.definition || "",
+                  superClassIri: axiom.superClass || axiom.superClassIri || "",
+                  subExpression: axiom.subClass || axiom.subExpression || "",
+                }))
+              : [],
+          );
+          setOntologyAnnotations(normalizeOntologyAnnotations(annotationsData));
+          setPrefixMappings(normalizePrefixMappings(metadataData?.prefixes));
+          applyDeclarationCounts(metadataData);
+        };
+
+        const applyPropertiesResponse = (propertiesRes: any) => {
+          if (!propertiesRes) return;
+          const allProps = Array.isArray(propertiesRes?.data)
+            ? propertiesRes.data
+            : Array.isArray(propertiesRes?.properties)
+              ? propertiesRes.properties
+              : Array.isArray(propertiesRes)
+                ? propertiesRes
+                : [];
+          const opList = allProps.filter((p: Property) => p.type === "ObjectProperty");
+          setObjectProperties(opList);
+          const opMap = new Map<string, any>();
+          opList.forEach((p: Property) => opMap.set(p.id, { ...p, children: [], hasChildren: false }));
+          const topObjectProperty: any = {
+            id: "http://www.w3.org/2002/07/owl#topObjectProperty",
+            label: "owl:topObjectProperty",
+            type: "ObjectProperty" as const,
+            children: [] as any[],
+            hasChildren: false,
+            annotations: {},
+          };
+          opList.forEach((p: Property) => {
+            const node = opMap.get(p.id);
+            if (p.superProperties && p.superProperties.length > 0) {
+              let added = false;
+              p.superProperties.forEach((superId) => {
+                if (superId === topObjectProperty.id) {
+                  topObjectProperty.children.push(node);
+                  topObjectProperty.hasChildren = true;
+                  added = true;
+                } else if (opMap.has(superId)) {
+                  const parent = opMap.get(superId);
+                  parent.children.push(node);
+                  parent.hasChildren = true;
+                  added = true;
+                }
+              });
+              if (!added) {
+                topObjectProperty.children.push(node);
+                topObjectProperty.hasChildren = true;
+              }
+            } else {
+              topObjectProperty.children.push(node);
+              topObjectProperty.hasChildren = true;
+            }
+          });
+          setObjectPropertyHierarchy([topObjectProperty]);
+          const dpList = allProps.filter((p: Property) => p.type === "DatatypeProperty");
+          setDataProperties(dpList);
+          const dpMap = new Map<string, any>();
+          dpList.forEach((p: Property) => dpMap.set(p.id, { ...p, children: [], hasChildren: false }));
+          const topDataProperty: any = {
+            id: "http://www.w3.org/2002/07/owl#topDataProperty",
+            label: "owl:topDataProperty",
+            type: "DatatypeProperty",
+            children: [] as any[],
+            hasChildren: false,
+            annotations: {},
+          };
+          dpList.forEach((p: Property) => {
+            const node = dpMap.get(p.id);
+            if (p.superProperties && p.superProperties.length > 0) {
+              let added = false;
+              p.superProperties.forEach((superId) => {
+                if (superId === topDataProperty.id) {
+                  topDataProperty.children.push(node);
+                  topDataProperty.hasChildren = true;
+                  added = true;
+                } else if (dpMap.has(superId)) {
+                  const parent = dpMap.get(superId);
+                  parent.children.push(node);
+                  parent.hasChildren = true;
+                  added = true;
+                }
+              });
+              if (!added) {
+                topDataProperty.children.push(node);
+                topDataProperty.hasChildren = true;
+              }
+            } else {
+              topDataProperty.children.push(node);
+              topDataProperty.hasChildren = true;
+            }
+          });
+          setDataPropertyHierarchy([topDataProperty]);
+        };
+
+        let desktopOwlapiReady = false;
+        if (isDesktop()) {
+          const warm = await warmOntologyInMemory(currentProjectId, {
+            timeoutMs: 300_000,
+            onStatus: (msg) => {
+              if (!isStaleLoad()) setLoadingStatusMessage(msg);
+            },
+          });
+          if (isStaleLoad()) return null;
+          desktopOwlapiReady = warm.ready;
+          if (warm.ready) {
+            console.log("[Dashboard] Desktop OWLAPI warm — using in-memory engine (Protégé-style)");
+            applyDeclarationCounts(warm);
+            setLoadingStatusMessage("Loading classes…");
+            desktopDeferredSectionsLoadedRef.current.clear();
+          } else {
+            console.warn("[Dashboard] Desktop OWLAPI warm missed — SPARQL fallback (slower on large files)");
+          }
+        }
+
+        // Large graphs: instance-counts is a full-graph SPARQL scan — skip when OWLAPI serves the tree.
+        const instanceCountsPromise = desktopOwlapiReady
+          ? Promise.resolve(null)
+          : apiClient
+              .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
+              .catch((e: any) => {
+                console.warn("[Dashboard] Instance counts fetch failed (non-blocking):", e?.message);
+                return null;
+              });
+
+        // Phase 1: classes first — unblock the editor immediately
         let instanceCountsData: any = {};
         setClassInstanceCounts({});
-
-        // When instance counts arrive (async), update state
         instanceCountsPromise.then((instanceCountsRes: any) => {
-          if (instanceCountsRes) {
-            const payload = instanceCountsRes?.data || instanceCountsRes;
-            const data = payload?.data || payload || {};
-            if (data && typeof data === "object") {
-              setClassInstanceCounts(data);
-              instanceCountsData = data;
-            }
-          }
+          if (isStaleLoad()) return;
+          if (!instanceCountsRes) return;
+          const payload = instanceCountsRes?.data || instanceCountsRes;
+          const data = payload?.data || payload || {};
+          if (!data || typeof data !== "object") return;
+          setClassInstanceCounts(data);
+          setClassHierarchy((prev) => (prev.length > 0 ? applyInstanceCountsToTree(prev, data) : prev));
         });
 
-        // Use imports from metadata response (already extracted above)
-        const validImportsData = Array.isArray(imports) ? imports : [];
-        console.log("[Dashboard] 📥 Initial imports loaded:", validImportsData);
-        console.log(
-          "[Dashboard] Local imports found:",
-          validImportsData.filter((imp: string) => !imp.startsWith("http://") && !imp.startsWith("https://")),
-        );
-        setOntologyImports(validImportsData);
-
-        // Use GCI axioms from metadata response (already extracted above)
-        // Map backend fields to frontend expected structure
-        const mappedGciData = Array.isArray(gciAxioms)
-          ? gciAxioms.map((axiom: any) => ({
-              value: axiom.value,
-              subClass: axiom.subClass || "",
-              superClass: axiom.superClass || "",
-              // Keep legacy field names for compatibility
-              definition: axiom.subClass || axiom.definition || "",
-              superClassIri: axiom.superClass || axiom.superClassIri || "",
-              subExpression: axiom.subClass || axiom.subExpression || "",
-            }))
-          : [];
-        setGeneralClassAxioms(mappedGciData);
-
-        // Use annotations from metadata response (already extracted above as annotationsData)
-        // Filter out invalid annotations and ensure all have required fields
-        const validAnnotations = normalizeOntologyAnnotations(annotationsData);
-        setOntologyAnnotations(validAnnotations);
-
-        setPrefixMappings(normalizePrefixMappings(metadataData?.prefixes));
-
-        // ⚡ Load top-level classes eagerly so the user sees classes immediately
-        console.log("[Dashboard] ⚡ Loading top-level classes for instant display");
+        const topLevelClassesRes = await apiClient
+          .get<any>(
+            `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+            undefined,
+            { signal },
+          )
+          .catch((e: any) => {
+            if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") throw e;
+            console.error("[Dashboard] Top-level class fetch failed:", e?.message || e);
+            setLoadingStatusMessage("Could not load the class hierarchy. Retrying may help.");
+            return null;
+          });
 
         let topLevelClasses: any[] = [];
         if (topLevelClassesRes) {
@@ -2706,20 +2940,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                   ? topLevelClassesRes
                   : [];
         }
-        console.log("[Dashboard] 📊 Got", topLevelClasses.length, "top-level classes");
-
         const topLevelNodes: TreeNode[] = topLevelClasses.map((c: TopLevelClass) => ({
           ...c,
           children: [],
-          hasChildren: c.hasChildren !== false, // default true for lazy loading
+          hasChildren: c.hasChildren !== false,
           subClassOfAxioms: [
             { id: "http://www.w3.org/2002/07/owl#Thing", type: "SubClassOf", definition: "owl:Thing" },
           ],
         }));
-
         const resolvedCounts = instanceCountsData && typeof instanceCountsData === "object" ? instanceCountsData : {};
-
-        // Build hierarchy with owl:Thing as root and top-level classes as children
         const owlThingNode: TreeNode = {
           id: "http://www.w3.org/2002/07/owl#Thing",
           label: "owl:Thing",
@@ -2727,161 +2956,154 @@ const Dashboard: React.FC<DashboardProps> = ({
           hasChildren: topLevelNodes.length > 0,
           annotations: {},
         };
-
-        const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
-        console.log("[Dashboard] 📊 Class hierarchy loaded with", topLevelNodes.length, "top-level classes");
-        setClassHierarchy(hierarchyWithCounts);
+        setClassHierarchy(applyInstanceCountsToTree([owlThingNode], resolvedCounts));
+        applyDeclarationCounts(topLevelClassesRes);
+        if (isDesktop() && !isStaleLoad()) {
+          try {
+            const cs = await apiClient.get<any>(
+              `/api/ontology/cache-status/${encodedProjectId}${cacheBuster}`,
+              undefined,
+              { signal },
+            );
+            if (cs?.owlapiReady ?? cs?.data?.owlapiReady) {
+              desktopOwlapiReady = true;
+            }
+            applyDeclarationCounts(cs);
+          } catch (e) {
+            console.debug("[Dashboard] cache-status after top-level:", e);
+          }
+        }
         setLoadingStatusMessage("");
         setIsHierarchyLoading(false);
 
-        // Handle properties response
-        console.log("=== PROPERTIES RESPONSE DEBUG ===");
-        console.log("Properties response:", propertiesRes);
-        const allProps = Array.isArray(propertiesRes?.data)
-          ? propertiesRes.data
-          : Array.isArray(propertiesRes?.properties)
-            ? propertiesRes.properties
-            : Array.isArray(propertiesRes)
-              ? propertiesRes
-              : [];
-        console.log("All props after extraction:", allProps);
-        console.log("All props length:", allProps.length);
-        const opList = allProps.filter((p: Property) => p.type === "ObjectProperty");
-        console.log("Object Properties filtered (opList):", opList);
-        console.log("Object Properties count:", opList.length);
-        setObjectProperties(opList);
-        console.log("=== END PROPERTIES DEBUG ===");
+        // Phase 2: load other entity sections in background (tab spinners + bottom bar).
+        if (!isStaleLoad()) {
+          setIsMetadataLoading(true);
+          setIsPropertiesLoading(true);
+          setIsIndividualsLoading(true);
+          setIsAnnotationPropertiesLoading(true);
+          setIsDatatypesLoading(true);
+        }
 
-        // Build Object Property Hierarchy
-        const opMap = new Map<string, any>();
-        // Create nodes
-        opList.forEach((p: Property) => {
-          opMap.set(p.id, { ...p, children: [], hasChildren: false });
-        });
-
-        const topObjectProperty: any = {
-          id: "http://www.w3.org/2002/07/owl#topObjectProperty",
-          label: "owl:topObjectProperty",
-          type: "ObjectProperty" as const,
-          children: [] as any[],
-          hasChildren: false,
-          annotations: {},
-        };
-
-        // If topObjectProperty is not in the list (it usually isn't), we use our created one.
-        // If it IS in the list, we should use that one but ensure it's the root.
-        // Typically backend doesn't return built-in top properties in the list of user properties.
-
-        opList.forEach((p: Property) => {
-          const node = opMap.get(p.id);
-          if (p.superProperties && p.superProperties.length > 0) {
-            let added = false;
-            p.superProperties.forEach((superId) => {
-              if (superId === topObjectProperty.id) {
-                topObjectProperty.children.push(node);
-                topObjectProperty.hasChildren = true;
-                added = true;
-              } else if (opMap.has(superId)) {
-                const parent = opMap.get(superId);
-                parent.children.push(node);
-                parent.hasChildren = true;
-                added = true;
+        void (async () => {
+          try {
+            if (isDesktop()) {
+              try {
+                const cs = await apiClient.get<any>(
+                  `/api/ontology/cache-status/${encodedProjectId}${cacheBuster}`,
+                  undefined,
+                  { signal },
+                );
+                if (!isStaleLoad()) applyDeclarationCounts(cs);
+              } catch (e) {
+                console.debug("[Dashboard] cache-status counts:", e);
               }
-            });
-            // If has super properties but none found in map (e.g. external), add to top?
-            // Or if it has super properties, it shouldn't be at top level unless explicitly under top.
-            // If we didn't add it to any parent, and it's not explicitly under top, what to do?
-            // For now, if not added to any known parent, add to topObjectProperty as fallback
-            if (!added) {
-              topObjectProperty.children.push(node);
-              topObjectProperty.hasChildren = true;
             }
-          } else {
-            // No super properties -> child of topObjectProperty
-            topObjectProperty.children.push(node);
-            topObjectProperty.hasChildren = true;
-          }
-        });
-
-        setObjectPropertyHierarchy([topObjectProperty]);
-
-        const dpList = allProps.filter((p: Property) => p.type === "DatatypeProperty");
-        console.log("Data Properties filtered (dpList):", dpList);
-        console.log("Data Properties count:", dpList.length);
-        console.log(
-          "All property types:",
-          allProps.map((p: Property) => ({ id: p.id, type: p.type })),
-        );
-        setDataProperties(dpList);
-
-        // Build Data Property Hierarchy
-        const dpMap = new Map<string, any>();
-        dpList.forEach((p: Property) => {
-          dpMap.set(p.id, { ...p, children: [], hasChildren: false });
-        });
-
-        const topDataProperty: any = {
-          id: "http://www.w3.org/2002/07/owl#topDataProperty",
-          label: "owl:topDataProperty",
-          type: "DatatypeProperty",
-          children: [] as any[],
-          hasChildren: false,
-          annotations: {},
-        };
-
-        dpList.forEach((p: Property) => {
-          const node = dpMap.get(p.id);
-          if (p.superProperties && p.superProperties.length > 0) {
-            let added = false;
-            p.superProperties.forEach((superId) => {
-              if (superId === topDataProperty.id) {
-                topDataProperty.children.push(node);
-                topDataProperty.hasChildren = true;
-                added = true;
-              } else if (dpMap.has(superId)) {
-                const parent = dpMap.get(superId);
-                parent.children.push(node);
-                parent.hasChildren = true;
-                added = true;
-              }
-            });
-            if (!added) {
-              topDataProperty.children.push(node);
-              topDataProperty.hasChildren = true;
+            const res = await apiClient.get<any>(
+              `/api/ontology/metadata/${encodedProjectId}${cacheBuster}`,
+              undefined,
+              { signal },
+            );
+            if (!isStaleLoad()) applyMetadataResponse(res);
+          } catch (e: any) {
+            if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
+              console.error("[Dashboard] Metadata/counts load failed:", e?.message || e);
             }
-          } else {
-            topDataProperty.children.push(node);
-            topDataProperty.hasChildren = true;
+          } finally {
+            if (!isStaleLoad()) setIsMetadataLoading(false);
           }
-        });
+        })();
 
-        setDataPropertyHierarchy([topDataProperty]);
+        void (async () => {
+          try {
+            const res = await apiClient.get<any>(
+              `/api/ontology/properties/${encodedProjectId}${cacheBuster}`,
+              undefined,
+              { signal },
+            );
+            if (!isStaleLoad()) applyPropertiesResponse(res);
+          } catch (e: any) {
+            if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
+              console.error("[Dashboard] Properties load failed:", e?.message || e);
+            }
+          } finally {
+            if (!isStaleLoad()) setIsPropertiesLoading(false);
+          }
+        })();
 
-        // Handle other responses with fallbacks
-        setIndividuals(
-          Array.isArray(individualsRes?.data)
-            ? individualsRes.data
-            : Array.isArray(individualsRes?.individuals)
-              ? individualsRes.individuals
-              : [],
-        );
-        setAnnotationProperties(
-          mergeAnnotationProperties(
-            (Array.isArray(annotationPropsRes?.data)
-              ? annotationPropsRes.data
-              : Array.isArray(annotationPropsRes?.annotationProperties)
-                ? annotationPropsRes.annotationProperties
-                : []
-            ).map(mapAnnotationProperty),
-          ),
-        );
-        setDatatypes(
-          Array.isArray(datatypesRes?.data)
-            ? datatypesRes.data
-            : Array.isArray(datatypesRes?.datatypes)
-              ? datatypesRes.datatypes
-              : [],
-        );
+        void (async () => {
+          try {
+            const res = await apiClient.get<any>(
+              `/api/ontology/individuals/${encodedProjectId}${cacheBuster}`,
+              undefined,
+              { signal },
+            );
+            if (!isStaleLoad()) {
+              setIndividuals(
+                Array.isArray(res?.data)
+                  ? res.data
+                  : Array.isArray(res?.individuals)
+                    ? res.individuals
+                    : [],
+              );
+            }
+          } catch (e: any) {
+            if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
+              console.error("[Dashboard] Individuals load failed:", e?.message || e);
+            }
+          } finally {
+            if (!isStaleLoad()) setIsIndividualsLoading(false);
+          }
+        })();
+
+        void (async () => {
+          try {
+            const res = await apiClient.get<any>(
+              `/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`,
+              undefined,
+              { signal },
+            );
+            if (!isStaleLoad()) {
+              setAnnotationProperties(
+                mergeAnnotationProperties(
+                  (Array.isArray(res?.data)
+                    ? res.data
+                    : Array.isArray(res?.annotationProperties)
+                      ? res.annotationProperties
+                      : []
+                  ).map(mapAnnotationProperty),
+                ),
+              );
+            }
+          } catch (e: any) {
+            if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
+              console.error("[Dashboard] Annotation properties load failed:", e?.message || e);
+            }
+          } finally {
+            if (!isStaleLoad()) setIsAnnotationPropertiesLoading(false);
+          }
+        })();
+
+        void (async () => {
+          try {
+            const res = await apiClient.get<any>(
+              `/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`,
+              undefined,
+              { signal },
+            );
+            if (!isStaleLoad()) {
+              setDatatypes(
+                Array.isArray(res?.data) ? res.data : Array.isArray(res?.datatypes) ? res.datatypes : [],
+              );
+            }
+          } catch (e: any) {
+            if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
+              console.error("[Dashboard] Datatypes load failed:", e?.message || e);
+            }
+          } finally {
+            if (!isStaleLoad()) setIsDatatypesLoading(false);
+          }
+        })();
 
         // Fetch files list separately (not in parallel to avoid blocking main data load)
         // Admin flow will fetch project-specific files later, regular users fetch all their files here
@@ -3016,26 +3238,43 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] ℹ️ Regular user flow - files already loaded from user email query");
         }
 
-        // Notify user that ontology is fully loaded
-        notificationService.success(
-          "Ontology Loaded",
-          `"${currentProjectId}" is ready! Found ${allProps.length} properties.`,
-        );
+        // Classes are ready; other sections finish in background with their own tab spinners.
+        notificationService.success("Ontology Loaded", `"${currentProjectId}" is ready.`);
       } catch (error: any) {
         // Ignore cancellations – these happen when the user switches files mid-load
         if (error?.name === "AbortError" || error?.code === "ERR_CANCELED" || error?.message?.includes("aborted")) {
           console.log("[Dashboard] fetchData cancelled (user switched files)");
-          setIsInitialLoading(false);
+          if (fetchDataGenerationRef.current === loadGeneration) {
+            setIsInitialLoading(false);
+            setIsHierarchyLoading(false);
+            setIsMetadataLoading(false);
+            setIsPropertiesLoading(false);
+            setIsIndividualsLoading(false);
+            setIsAnnotationPropertiesLoading(false);
+            setIsDatatypesLoading(false);
+            setLoadingStatusMessage("");
+          }
           return null;
         }
         console.error("Failed to fetch data:", error);
 
         // Notify user of the error
         notificationService.error("Loading Failed", `Failed to load ontology "${currentProjectId}". Please try again.`);
+        if (fetchDataGenerationRef.current === loadGeneration) {
+          setIsHierarchyLoading(false);
+          setIsMetadataLoading(false);
+          setIsPropertiesLoading(false);
+          setIsIndividualsLoading(false);
+          setIsAnnotationPropertiesLoading(false);
+          setIsDatatypesLoading(false);
+        }
       } finally {
-        setIsInitialLoading(false);
-        setIsHierarchyLoading(false);
-        setLoadingStatusMessage("");
+        // Only clear the modal spinner here — section loaders are owned by each background fetch.
+        // Guard with loadGeneration so a stale fetch cannot wipe a newer load's spinners.
+        if (fetchDataGenerationRef.current === loadGeneration) {
+          setIsInitialLoading(false);
+          setLoadingStatusMessage("");
+        }
       }
     },
     [waitForProcessingComplete, applyInstanceCountsToTree, user, fetchProjectFiles, resolveUserEmail],
@@ -4249,6 +4488,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       const childCount = classHierarchy[0].children?.length || 0;
       console.log("[Dashboard] Class hierarchy loaded, owl:Thing has", childCount, "top-level children");
 
+      // Classes are usable once the hierarchy fetch completes — close the import modal.
+      // Section loaders (tab spinners + SectionLoadingBar) cover metadata/properties/etc.
+      if (!isHierarchyLoading) {
+        setIsInitialLoading(false);
+      }
+
       // Auto-expand owl:Thing when it has children (preserve other expanded nodes)
       if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
         console.log("[Dashboard] Auto-expanding owl:Thing (preserving existing expanded nodes)");
@@ -4257,6 +4502,61 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     }
   }, [classHierarchy]);
+
+  // ── Bulletproof anti-hang watchdog ─────────────────────────────────────────
+  // The loading modal is opened by many code paths (file upload, fileReady
+  // WebSocket message, project switch, browser mode…). On desktop the WebSocket
+  // "completed" signal is unreliable, so any of those paths can leave the
+  // spinner stuck forever. This watchdog makes that impossible: while the modal
+  // is open it polls the backend import status and force-closes the spinner as
+  // soon as the backend reports the project is ready (or errored), and in any
+  // case after a hard time cap. It NEVER blocks legitimate work — it only ever
+  // closes a spinner, and the data continues loading via the normal effects.
+  useEffect(() => {
+    const open = isInitialLoading || showLoadingChoice;
+    if (!open || !projectId) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = Date.now();
+    const HARD_CAP_MS = 120000; // 2 min absolute backstop — never spin longer
+
+    const closeSpinner = (reason: string) => {
+      if (cancelled) return;
+      console.warn("[Dashboard] Loading watchdog closing modal spinner:", reason);
+      setIsInitialLoading(false);
+      setShowLoadingChoice(false);
+      setLoadingStatusMessage("");
+      // Release the in-flight load lock so a previous/stuck load can't make the
+      // next open silently skip with "Already loading, skipping duplicate".
+      loadingPromiseRef.current = null;
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
+      if (Date.now() - startedAt > HARD_CAP_MS) {
+        closeSpinner("hard timeout (2m) — backend never signalled completion");
+        return;
+      }
+      try {
+        const res = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(projectId)}`);
+        const status = res?.data?.status || res?.status;
+        if (status === "COMPLETED" || status === "ERROR") {
+          closeSpinner(`backend status=${status}`);
+          return;
+        }
+      } catch {
+        // Status endpoint unavailable — keep waiting until the hard cap.
+      }
+      if (!cancelled) timer = setTimeout(tick, 3000);
+    };
+
+    timer = setTimeout(tick, 3000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [isInitialLoading, showLoadingChoice, projectId]);
 
   useEffect(() => {
     if (inferredClassHierarchy.length > 0 && inferredClassHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
@@ -4348,6 +4648,10 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // AbortController for cancelling in-flight fetchData requests when the user switches files
   const fetchAbortControllerRef = useRef<AbortController | null>(null);
+  // Bumped on each fetchData call so stale finally/handlers cannot clear a newer load's spinners.
+  const fetchDataGenerationRef = useRef(0);
+  /** Desktop: Fuseki sections deferred until the user opens each Entities tab. */
+  const desktopDeferredSectionsLoadedRef = useRef<Set<string>>(new Set());
 
   // Auto-load selected file from Project Library (admin flow)
   useEffect(() => {
@@ -5166,6 +5470,19 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
     window.addEventListener("importStatusUpdate", handleImportStatusCustomEvent);
 
+    // Force-close the loading dialog when the preload signals import is done
+    // but the normal condition (isCurrentProject || isPendingImport) didn't fire.
+    const handleForceClose = () => {
+      console.log("[Dashboard] forceCloseLoadingDialog received — clearing spinner");
+      setIsInitialLoading(false);
+      setShowLoadingChoice(false);
+      setShowQueueStatus(false);
+      setBackgroundImportActive(false);
+      setBackgroundImportProgress(undefined);
+      pendingImportProjectIdRef.current = null;
+    };
+    window.addEventListener("forceCloseLoadingDialog", handleForceClose);
+
     // CRITICAL: Send webviewReady AFTER listener is attached, but ONLY ONCE
     // This ensures we receive any immediate messages (like showLoading) from the extension
     if (window.vscode && !webviewReadySentRef.current) {
@@ -5178,6 +5495,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.log("[Dashboard] 📢 Removing message listener");
       window.removeEventListener("message", handleMessage);
       window.removeEventListener("importStatusUpdate", handleImportStatusCustomEvent);
+      window.removeEventListener("forceCloseLoadingDialog", handleForceClose);
     };
   }, [projectId, initialProjectId, isExpectingFileReady]); // Remove fetchData to prevent infinite loop - it's captured in the closure
 
@@ -5472,6 +5790,61 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.log("[Dashboard] Refreshing asserted hierarchy...");
       refreshClassHierarchy();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode]);
+
+  // Desktop: the in-memory OWLAPI model loads asynchronously after a project
+  // opens. Until it is warm, the hierarchy is served by the Fuseki SPARQL engine,
+  // which computes top-level classes slightly differently (orphan handling, union
+  // members). Poll readiness and, once the fast engine is ready, rebuild the tree
+  // ONCE from it so the user never sees a half-SPARQL / half-OWLAPI mix.
+  const owlapiReadyHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isDesktop() || !projectId) return;
+    if (owlapiReadyHandledRef.current === projectId) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 40; // ~60s at 1.5s interval
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async () => {
+      if (cancelled) return;
+      attempts += 1;
+      try {
+        const res = await apiClient.get<any>(`/api/ontology/cache-status/${encodeProjectId(projectId)}`);
+        const ready = res?.owlapiReady ?? res?.data?.owlapiReady;
+        if (ready) {
+          owlapiReadyHandledRef.current = projectId;
+          if (!cancelled) {
+            console.log("[Dashboard] OWLAPI model ready — updating counts");
+            const patch = extractDeclarationCountsPatch(res);
+            if (patch) {
+              setMetadata((prev) => ({ ...(prev || {}), ...patch }) as OntologyMetadata);
+            }
+            // Only rebuild hierarchy when user is on Classes tab in asserted mode —
+            // calling refreshClassHierarchy on other tabs interrupts their loading flow.
+            if (mainTab === "Entities" && entitiesTab === "Classes" && currentHierarchyViewMode === "asserted") {
+              refreshClassHierarchy();
+            }
+          }
+          return;
+        }
+      } catch (e) {
+        // cache-status is desktop-only; stop quietly if it is unavailable.
+        owlapiReadyHandledRef.current = projectId;
+        return;
+      }
+      if (!cancelled && attempts < maxAttempts) {
+        timer = setTimeout(poll, 1500);
+      }
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode]);
 
@@ -6122,6 +6495,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     const loadInstalledPlugins = async () => {
       try {
         pluginLoader.loadFromStorage();
+        if (isDesktop()) {
+          pluginLoader.ensureDefaultBuiltInPlugins();
+        }
         const installed = pluginLoader.getInstalledPlugins();
 
         // Update state with installed plugin IDs
@@ -6663,6 +7039,17 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.log(
           `[Dashboard] [PERF] Server-side import dispatched: ${Date.now() - loadFilePerfStart}ms`,
         );
+
+        // Desktop fast-path: backend skipped re-import (Fuseki already has data).
+        // No WebSocket IMPORT_COMPLETED will fire — fetch data directly instead.
+        if ((importResult as any)?.status === "ALREADY_LOADED") {
+          console.log("[Dashboard] ✅ Desktop cache hit (ALREADY_LOADED) — fetching data directly");
+          pendingImportProjectIdRef.current = null;
+          setIsInitialLoading(false);
+          await fetchData(ontologyProjectId, fileName, fileId, user?.email || "");
+          return;
+        }
+
         console.log("[Dashboard] ✅ Server-side import triggered via uploadByFileRef");
         console.log("[Dashboard] Pending import project:", ontologyProjectId);
 
@@ -7279,6 +7666,93 @@ const Dashboard: React.FC<DashboardProps> = ({
     hierarchyViewModes.DataProperties,
     loadInferredDataPropertyHierarchy,
     refreshProperties,
+  ]);
+
+  // Desktop: Phase-2 Fuseki sections are skipped on open; load them when the user opens each tab.
+  useEffect(() => {
+    if (!isDesktop() || !projectId || mainTab !== "Entities") return;
+    const sectionKey = entitiesTab;
+    if (desktopDeferredSectionsLoadedRef.current.has(sectionKey)) return;
+
+    const encodedProjectId = encodeURIComponent(projectId);
+    const markLoaded = () => desktopDeferredSectionsLoadedRef.current.add(sectionKey);
+
+    if (sectionKey === "ObjectProperties" || sectionKey === "DataProperties") {
+      if (objectPropertyHierarchy.length > 0 || dataPropertyHierarchy.length > 0) {
+        markLoaded();
+        return;
+      }
+      setIsPropertiesLoading(true);
+      refreshProperties()
+        .finally(() => {
+          markLoaded();
+          setIsPropertiesLoading(false);
+        });
+      return;
+    }
+
+    if (sectionKey === "Individuals") {
+      if (individuals.length > 0) {
+        markLoaded();
+        return;
+      }
+      setIsIndividualsLoading(true);
+      apiClient
+        .get<any>(`/api/ontology/individuals/${encodedProjectId}`)
+        .then((res) => {
+          setIndividuals(
+            Array.isArray(res?.data) ? res.data : Array.isArray(res?.individuals) ? res.individuals : [],
+          );
+        })
+        .catch((e) => console.error("[Dashboard] Desktop individuals load failed:", e))
+        .finally(() => {
+          markLoaded();
+          setIsIndividualsLoading(false);
+        });
+      return;
+    }
+
+    if (sectionKey === "AnnotationProperties") {
+      if (annotationProperties.length > 0) {
+        markLoaded();
+        return;
+      }
+      setIsAnnotationPropertiesLoading(true);
+      handleRefreshAnnotationProperties().finally(() => {
+        markLoaded();
+        setIsAnnotationPropertiesLoading(false);
+      });
+      return;
+    }
+
+    if (sectionKey === "Datatypes") {
+      if (datatypes.length > 0) {
+        markLoaded();
+        return;
+      }
+      setIsDatatypesLoading(true);
+      apiClient
+        .get<any>(`/api/ontology/datatypes/${encodedProjectId}`)
+        .then((res) => {
+          setDatatypes(Array.isArray(res?.data) ? res.data : Array.isArray(res?.datatypes) ? res.datatypes : []);
+        })
+        .catch((e) => console.error("[Dashboard] Desktop datatypes load failed:", e))
+        .finally(() => {
+          markLoaded();
+          setIsDatatypesLoading(false);
+        });
+    }
+  }, [
+    projectId,
+    mainTab,
+    entitiesTab,
+    individuals.length,
+    annotationProperties.length,
+    datatypes.length,
+    objectPropertyHierarchy.length,
+    dataPropertyHierarchy.length,
+    refreshProperties,
+    handleRefreshAnnotationProperties,
   ]);
 
   // Handler for creating object properties with name parameter
@@ -11314,6 +11788,15 @@ const Dashboard: React.FC<DashboardProps> = ({
               className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-hidden"
               style={{ backgroundColor: "var(--bg)", borderColor: "var(--border)" }}
             >
+              {isMetadataLoading && (
+                <div
+                  className="flex items-center gap-2 px-4 py-2 text-xs border-b shrink-0"
+                  style={{ borderColor: "var(--border)", color: "var(--accent)" }}
+                >
+                  <Loader2 size={14} className="animate-spin flex-shrink-0" />
+                  <span>Loading ontology metadata (IRI, annotations, imports)…</span>
+                </div>
+              )}
               {/* Ontology Header Section */}
               <div
                 className="p-4 border-b"
@@ -12078,7 +12561,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   loadingNodes={loadingNodes}
                   isViewOnly={isViewOnlyMember}
                   onViewOnlyAction={handleViewOnlyAction}
-                  isLoading={isHierarchyLoading}
+                  isLoading={isEntitiesSectionLoading}
                 />
               </div>
             </aside>
@@ -13028,7 +13511,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   return (
     <>
       <LoadingDialog
-        isOpen={isInitialLoading || isHierarchyLoading || showLoadingChoice}
+        isOpen={isInitialLoading || showLoadingChoice}
         projectName={loadingProjectName || undefined}
         loadingStatusMessage={loadingStatusMessage || undefined}
         progress={backgroundImportProgress}
@@ -13767,23 +14250,27 @@ const Dashboard: React.FC<DashboardProps> = ({
                   Projects
                 </button>
               )}
-              {/* Desktop download icon — always visible */}
-              <a
-                href="/desktop"
-                onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent('navigate-desktop-download')); }}
-                className="flex items-center gap-1.5 text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-50 p-2 rounded-md cursor-pointer"
-                title="Download OntoCode Desktop"
-              >
-                <Monitor size={14} />
-                <span className="hidden sm:inline">Desktop</span>
-              </a>
-              <button
-                onClick={logout}
-                className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer"
-              >
-                <LogOut size={14} />
-                Logout
-              </button>
+              {/* Desktop download icon — hidden when already in the desktop app */}
+              {!isDesktop() && (
+                <a
+                  href="/desktop"
+                  onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent('navigate-desktop-download')); }}
+                  className="flex items-center gap-1.5 text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-50 p-2 rounded-md cursor-pointer"
+                  title="Download OntoCode Desktop"
+                >
+                  <Monitor size={14} />
+                  <span className="hidden sm:inline">Desktop</span>
+                </a>
+              )}
+              {!isDesktop() && (
+                <button
+                  onClick={logout}
+                  className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer"
+                >
+                  <LogOut size={14} />
+                  Logout
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -13803,11 +14290,28 @@ const Dashboard: React.FC<DashboardProps> = ({
                 >
                   <tab.icon size={14} />
                   <span>{tab.label}</span>
-                  <span className="bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded-sm font-bold">{tab.count || 0}</span>
+                  <TabCountBadge
+                    loading={
+                      (tab.id === "Classes" && isHierarchyLoading) ||
+                      ((tab.id === "ObjectProperties" || tab.id === "DataProperties") &&
+                        isPropertiesLoading) ||
+                      (tab.id === "Individuals" && isIndividualsLoading) ||
+                      (tab.id === "AnnotationProperties" && isAnnotationPropertiesLoading) ||
+                      (tab.id === "Datatypes" && isDatatypesLoading)
+                    }
+                    count={tab.count || 0}
+                  />
                 </button>
               ))}
             </div>
           </div>
+        )}
+
+        {sectionBarMounted && sectionBarLabels.length > 0 && (
+          <SectionLoadingBar
+            sections={sectionBarLabels}
+            open={showSectionLoadingBar && sectionBarSections.length > 0}
+          />
         )}
 
         {/* Mobile: stack hierarchy above details. Desktop: each panel scrolls independently inside itself. */}
@@ -13850,7 +14354,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   loadingNodes={loadingNodes}
                   isViewOnly={isViewOnlyMember}
                   onViewOnlyAction={handleViewOnlyAction}
-                  isLoading={isHierarchyLoading}
+                  isLoading={isEntitiesSectionLoading}
                 />
               </div>
 

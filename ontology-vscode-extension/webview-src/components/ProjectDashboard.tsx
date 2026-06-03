@@ -37,6 +37,7 @@ import {
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
+import { isDesktop } from "../utils/desktop";
 import { clearSessionCache } from "../utils/sessionCleanup";
 import InviteMemberModal from "./InviteMemberModal";
 import SettingsModal from "./SettingsModal";
@@ -212,7 +213,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const canManageOpenProject = projectSettingsModal
     ? canManageProjectSettings(projectRoleForUser(projectSettingsModal), effectiveWorkspaceRole)
     : false;
-  const currentWorkspaceName = workspaceDisplayName || user?.workspaceName || "Workspace";
+  const currentWorkspaceName = isDesktop()
+    ? "My projects"
+    : workspaceDisplayName || user?.workspaceName || "Workspace";
 
   const canManageProjectRow = (project: Project) =>
     canManageProjectSettings(projectRoleForUser(project), effectiveWorkspaceRole);
@@ -917,16 +920,18 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 py-3 sm:py-4">
             <div className="flex items-center gap-3 min-w-0">
-              <button
-                onClick={() => {
-                  console.log("[ProjectDashboard] 🔙 Back to workspace clicked");
-                  switchWorkspace();
-                }}
-                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Back to Workspace"
-              >
-                <ArrowLeft size={20} />
-              </button>
+              {!isDesktop() && (
+                <button
+                  onClick={() => {
+                    console.log("[ProjectDashboard] 🔙 Back to workspace clicked");
+                    switchWorkspace();
+                  }}
+                  className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Back to Workspace"
+                >
+                  <ArrowLeft size={20} />
+                </button>
+              )}
               <div className="min-w-0">
                 <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate flex items-center gap-2">
                   <Building2 size={22} className="text-purple-600 flex-shrink-0" />
@@ -934,7 +939,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 </h1>
                 <p className="text-xs sm:text-sm text-gray-500 truncate">
                   OntoCode Project Dashboard · Welcome, {user?.username}
-                  {currentWorkspaceName && (
+                  {!isDesktop() && currentWorkspaceName && (
                     <button
                       onClick={() => {
                         console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (inline)");
@@ -951,8 +956,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap justify-start sm:justify-end w-full sm:w-auto">
-              {/* Workspace Subscription Plan Badge */}
-              {isWorkspaceOwner ? (
+              {/* Workspace Subscription Plan Badge — hidden in desktop (no plans/pricing) */}
+              {!isDesktop() && (isWorkspaceOwner ? (
                 <button
                   onClick={() => setShowPlanDetails(true)}
                   className={`h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer ${
@@ -981,7 +986,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   <Shield size={12} className="text-slate-400" />
                   Plan: {subscription.plan.toUpperCase()}
                 </span>
-              )}
+              ))}
               {isWorkspaceOwner && onOpenSubscriptionPlans && !subscription.isEnterprise && (
                 <button
                   onClick={onOpenSubscriptionPlans}
@@ -1027,13 +1032,15 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               >
                 <Bug size={20} />
               </button>
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('navigate-desktop-download'))}
-                className="h-9 w-9 inline-flex items-center justify-center text-purple-600 hover:bg-purple-50 rounded-lg"
-                title="Download Desktop App"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-              </button>
+              {!isDesktop() && (
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent('navigate-desktop-download'))}
+                  className="h-9 w-9 inline-flex items-center justify-center text-purple-600 hover:bg-purple-50 rounded-lg"
+                  title="Download Desktop App"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                </button>
+              )}
               {isOwner && onManageSubscription && !user?.enterpriseDomainBypass && (
                 <button
                   onClick={onManageSubscription}
@@ -1059,13 +1066,15 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               >
                 <Settings size={20} />
               </button>
-              <button
-                onClick={logout}
-                className="h-9 inline-flex items-center justify-center gap-2 px-3 sm:px-4 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-              >
-                <LogOut size={20} />
-                Logout
-              </button>
+              {!isDesktop() && (
+                <button
+                  onClick={logout}
+                  className="h-9 inline-flex items-center justify-center gap-2 px-3 sm:px-4 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                >
+                  <LogOut size={20} />
+                  Logout
+                </button>
+              )}
             </div>
           </div>
         </div>

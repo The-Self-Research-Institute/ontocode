@@ -45,7 +45,30 @@ public class OntologyQueryController {
     @GetMapping("/cache-status/{projectId:.+}")
     public ResponseEntity<?> cacheStatus(@PathVariable String projectId) {
         boolean ready = desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId);
-        return ResponseEntity.ok(Map.of("owlapiReady", ready, "projectId", projectId));
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("owlapiReady", ready);
+        body.put("projectId", projectId);
+        if (ready && desktopHierarchyService != null) {
+            body.putAll(desktopHierarchyService.declarationCounts(projectId));
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * Desktop: load the ontology into OWLAPI memory (Protégé-style) before the UI
+     * runs heavy Fuseki SPARQL. Blocks up to timeoutMs (default 5 min).
+     */
+    @org.springframework.web.bind.annotation.PostMapping("/warm/{projectId:.+}")
+    public ResponseEntity<?> warmOntology(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "300000") long timeoutMs) {
+        if (desktopOntologyLoader == null) {
+            return ResponseEntity.ok(Map.of("ready", false, "sparqlFallback", true, "message", "Not desktop mode"));
+        }
+        Map<String, Object> result = new HashMap<>(desktopOntologyLoader.warmProject(projectId, timeoutMs));
+        result.put("success", true);
+        result.put("projectId", projectId);
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/classes/top-level/{projectId:.+}")
@@ -54,11 +77,43 @@ public class OntologyQueryController {
         try {
             // Desktop fast path: OWLAPI in-memory → instant, no network
             if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
-                return ResponseEntity.ok(Map.of("success", true, "classes",
-                        desktopHierarchyService.topLevelClasses(projectId, limit)));
+                var classes = desktopHierarchyService.topLevelClasses(projectId, limit);
+                int topLevelTotal = desktopHierarchyService.topLevelClassTotal(projectId);
+                Map<String, Object> body = new java.util.LinkedHashMap<>();
+                body.put("success", true);
+                body.put("classes", classes);
+                body.put("topLevelReturned", classes.size());
+                body.put("topLevelTotal", topLevelTotal);
+                body.put("topLevelLimit", limit);
+                body.put("truncated", topLevelTotal > limit);
+                body.putAll(desktopHierarchyService.declarationCounts(projectId));
+                return ResponseEntity.ok(body);
             }
-            // Trigger lazy OWLAPI load for existing projects (non-blocking — next request will be fast)
-            if (desktopOntologyLoader != null) desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
+            // Trigger lazy OWLAPI load; brief wait so first open gets in-memory counts + tree when possible.
+            if (desktopOntologyLoader != null) {
+                desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
+                for (int i = 0; i < 80 && desktopHierarchyService != null; i++) {
+                    if (desktopHierarchyService.hasOntology(projectId)) {
+                        var classes = desktopHierarchyService.topLevelClasses(projectId, limit);
+                        int topLevelTotal = desktopHierarchyService.topLevelClassTotal(projectId);
+                        Map<String, Object> body = new java.util.LinkedHashMap<>();
+                        body.put("success", true);
+                        body.put("classes", classes);
+                        body.put("topLevelReturned", classes.size());
+                        body.put("topLevelTotal", topLevelTotal);
+                        body.put("topLevelLimit", limit);
+                        body.put("truncated", topLevelTotal > limit);
+                        body.putAll(desktopHierarchyService.declarationCounts(projectId));
+                        return ResponseEntity.ok(body);
+                    }
+                    try {
+                        Thread.sleep(150);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
             // Cloud / OWLAPI cache-miss: Fuseki SPARQL
             return ResponseEntity.ok(Map.of("success", true, "classes",
                     queryService.topLevelClasses(projectId, limit)));

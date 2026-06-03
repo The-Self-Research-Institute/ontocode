@@ -66,6 +66,32 @@
   --color-info: var(--info);
 }
 
+@keyframes ontocodeFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ontocodeLoadingShimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.ontocode-fade-in {
+  animation: ontocodeFadeIn var(--transition-base) ease-out;
+}
+
+.ontocode-loading-shimmer {
+  animation: ontocodeLoadingShimmer 1.5s ease-in-out infinite;
+}
+
 /* Dark mode semantic tokens */
 .dark {
   /* Surfaces (get lighter with elevation) */

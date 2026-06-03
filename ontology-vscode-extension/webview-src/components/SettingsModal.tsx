@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2 } from 'lucide-react';
+import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2, KeyRound, Upload } from 'lucide-react';
 import apiClient from '../services/apiClient';
+import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from '../utils/desktop';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -39,6 +40,39 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         newPassword: false,
         confirmPassword: false
     });
+    const desktop = isDesktop();
+    const [license, setLicense] = useState<DesktopLicense | null>(null);
+    const [licenseImporting, setLicenseImporting] = useState(false);
+    const [licenseMessage, setLicenseMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+    useEffect(() => {
+        if (!desktop || !isOpen) return;
+        getDesktopLicense().then(setLicense).catch(() => setLicense(null));
+    }, [desktop, isOpen]);
+
+    const handleLicenseFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) return;
+        setLicenseMessage(null);
+        setLicenseImporting(true);
+        try {
+            const text = await file.text();
+            const api = (window as any).electronAPI;
+            const result = await api?.importLicense?.(text);
+            if (result?.ok) {
+                setLicense(result.license || null);
+                setLicenseMessage({ type: 'success', text: 'License imported. Restart the app to fully apply the new plan.' });
+                window.dispatchEvent(new CustomEvent(DESKTOP_LICENSE_UPDATED_EVENT));
+            } else {
+                setLicenseMessage({ type: 'error', text: result?.error || 'Could not import this license file.' });
+            }
+        } catch (e: any) {
+            setLicenseMessage({ type: 'error', text: e?.message || 'Could not read the license file.' });
+        } finally {
+            setLicenseImporting(false);
+        }
+    };
 
     // Reset settings when user changes or modal opens
     useEffect(() => {
@@ -85,9 +119,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
 
     const tabs = [
         { id: 'profile', label: 'Profile', icon: User },
-        { id: 'workspace', label: 'Workspace', icon: Building2 },
+        // Desktop: no shared workspace settings / password — show License instead.
+        ...(desktop
+            ? [{ id: 'license', label: 'License', icon: KeyRound }]
+            : [
+                { id: 'workspace', label: 'Workspace', icon: Building2 },
+                { id: 'security', label: 'Security', icon: Lock },
+              ]),
         // { id: 'notifications', label: 'Notifications', icon: Bell },
-        { id: 'security', label: 'Security', icon: Lock },
         // { id: 'appearance', label: 'Appearance', icon: Palette },
         // { id: 'preferences', label: 'Preferences', icon: Globe }
     ];
@@ -288,6 +327,67 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                         <p className="text-xs text-gray-500 mt-1">Email address cannot be changed</p>
                       </div>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === "license" && (
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-1">License</h4>
+                    <p className="text-sm text-gray-500 mb-4">
+                      Your plan and account details come from your license file. Get a license from the web app
+                      (Billing → Desktop License), then import it here. The free tier needs no file.
+                    </p>
+
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Name</span>
+                        <span className="font-medium text-gray-900">{license?.name || 'Desktop User'}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Email</span>
+                        <span className="font-medium text-gray-900">{license?.email || 'local@ontocode.desktop'}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Plan</span>
+                        <span className="font-semibold text-purple-700">{licensePlan(license)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Expires</span>
+                        <span className={`font-medium ${isLicenseExpired(license) ? 'text-red-600' : 'text-gray-900'}`}>
+                          {license?.expiresAt
+                            ? new Date(license.expiresAt).toLocaleDateString() + (isLicenseExpired(license) ? ' (expired)' : '')
+                            : 'Never'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium cursor-pointer transition-colors">
+                        {licenseImporting ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                        Import license file
+                        <input
+                          type="file"
+                          accept=".lic,application/json,application/octet-stream"
+                          onChange={handleLicenseFile}
+                          disabled={licenseImporting}
+                          className="hidden"
+                        />
+                      </label>
+                      <button
+                        onClick={() => (window as any).electronAPI?.openPurchase?.(licensePlan(license).toLowerCase())}
+                        className="ml-3 px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-100 transition-colors"
+                      >
+                        Get a license on the web
+                      </button>
+                    </div>
+
+                    {licenseMessage && (
+                      <p className={`text-sm mt-3 ${licenseMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                        {licenseMessage.text}
+                      </p>
+                    )}
                   </div>
                 </div>
               )}

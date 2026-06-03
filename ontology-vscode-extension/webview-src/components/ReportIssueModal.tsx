@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { useAuth } from "../custom-hook/useAuth";
 import { getEditorUrl } from "../config/deploymentConfig";
+import { isAppOnline, subscribeOnlineStatus } from "../utils/connectivity";
+import { isDesktop } from "../utils/desktop";
 
 interface ReportIssueModalProps {
   projectName?: string;
@@ -44,12 +46,18 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   const [filePreviews, setFilePreviews] = useState<Map<string, string>>(new Map());
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [online, setOnline] = useState(isAppOnline);
   const [submitResult, setSubmitResult] = useState<{
     success: boolean;
     message: string;
     jiraUrl?: string;
     jiraFailureReason?: string;
   } | null>(null);
+
+  useEffect(() => {
+    setOnline(isAppOnline());
+    return subscribeOnlineStatus(setOnline);
+  }, []);
 
   // Get system info
   const getSystemInfo = () => {
@@ -216,6 +224,16 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   };
 
   const handleSubmit = async () => {
+    if (!online) {
+      setSubmitResult({
+        success: false,
+        message: isDesktop()
+          ? "You are offline. Connect to the internet to send a report to our team."
+          : "You are offline. Reconnect to the internet before submitting an issue report.",
+      });
+      return;
+    }
+
     if (!title.trim()) {
       alert("Please enter a title");
       return;
@@ -383,6 +401,16 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             <X size={24} />
           </button>
         </div>
+
+        {!online && (
+          <div className="mx-6 mt-4 px-4 py-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm flex items-start gap-2">
+            <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+            <span>
+              <strong>Offline.</strong> Issue reports are sent to our servers when you are online.
+              {isDesktop() ? " Your ontology work continues locally." : " Reconnect, then submit."}
+            </span>
+          </div>
+        )}
 
         {/* Success/Error Message */}
         {submitResult && (
@@ -712,7 +740,8 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             </button>
             <button
               onClick={handleSubmit}
-              disabled={submitting || !title.trim() || !description.trim()}
+              disabled={submitting || !online || !title.trim() || !description.trim()}
+              title={!online ? "Connect to the internet to submit a report" : undefined}
               className="px-6 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg hover:shadow-xl transition-all"
             >
               {submitting ? (

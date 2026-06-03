@@ -23,7 +23,12 @@ import self.research.ontology.plugins.service.PluginInstallTrackingService;
 import self.research.ontology.plugins.service.PluginRatingService;
 import self.research.ontology.plugins.service.PluginService;
 
+import org.springframework.beans.factory.annotation.Value;
+import java.io.FileInputStream;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 
@@ -33,6 +38,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class PluginController {
+
+    @Value("${ontocode.desktop.plugins.bundled-dir:}")
+    private String desktopPluginsDir;
 
     private final PluginService pluginService;
     private final PluginRatingService ratingService;
@@ -81,6 +89,28 @@ public class PluginController {
             @RequestParam(required = false) String version) {
 
         log.info("Download plugin - pluginId: {}, version: {}", pluginId, version);
+
+        // Desktop mode: serve from local plugin-bundles directory (no DB needed)
+        if (desktopPluginsDir != null && !desktopPluginsDir.isEmpty()) {
+            Path bundle = Paths.get(desktopPluginsDir, pluginId, "index.js");
+            if (Files.exists(bundle)) {
+                try {
+                    log.info("[Desktop] Serving plugin {} from local bundle: {}", pluginId, bundle);
+                    InputStream localStream = new FileInputStream(bundle.toFile());
+                    HttpHeaders h = new HttpHeaders();
+                    h.add(HttpHeaders.CONTENT_TYPE, "application/javascript");
+                    h.add(HttpHeaders.CACHE_CONTROL, "public, max-age=86400");
+                    h.add(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
+                    return ResponseEntity.ok().headers(h)
+                        .contentType(MediaType.valueOf("application/javascript"))
+                        .body(new InputStreamResource(localStream));
+                } catch (Exception e) {
+                    log.warn("[Desktop] Failed to read local plugin bundle {}: {}", bundle, e.getMessage());
+                }
+            }
+            log.warn("[Desktop] Plugin bundle not found locally for {}", pluginId);
+            return ResponseEntity.notFound().build();
+        }
 
         // If version not specified, use latest
         if (version == null || version.isEmpty()) {

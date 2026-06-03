@@ -48,11 +48,28 @@ public class DesktopHierarchyService {
         return ontologyCache.has(projectId);
     }
 
+    /**
+     * Fast OWLAPI declaration counts for tab badges (no SPARQL).
+     * Keys: classCount, objectPropertyCount, dataPropertyCount, individualCount, annotationPropertyCount.
+     */
+    public Map<String, Object> declarationCounts(String projectId) {
+        return ontologyCache.get(projectId)
+            .map(c -> buildDeclarationCounts(c.ontology()))
+            .orElse(Collections.emptyMap());
+    }
+
     /** Direct subclasses of owl:Thing (top-level class hierarchy). */
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
         return ontologyCache.get(projectId)
             .map(c -> buildTopLevel(c.ontology(), c.reasoner(), limit))
             .orElse(Collections.emptyList());
+    }
+
+    /** Number of direct owl:Thing subclasses returned by {@link #topLevelClasses} before the limit is applied. */
+    public int topLevelClassTotal(String projectId) {
+        return ontologyCache.get(projectId)
+            .map(c -> countTopLevelCandidates(c.ontology(), c.reasoner()))
+            .orElse(0);
     }
 
     /**
@@ -240,6 +257,32 @@ public class DesktopHierarchyService {
     }
 
     // ── Implementation ────────────────────────────────────────────────────────
+
+    private Map<String, Object> buildDeclarationCounts(OWLOntology ont) {
+        Imports imp = Imports.INCLUDED;
+        long classCount = ont.classesInSignature(imp).filter(c -> !c.isBuiltIn()).count();
+        long objectPropertyCount = ont.objectPropertiesInSignature(imp).filter(p -> !p.isBuiltIn()).count();
+        long dataPropertyCount = ont.dataPropertiesInSignature(imp).filter(p -> !p.isBuiltIn()).count();
+        long individualCount = ont.individualsInSignature(imp).filter(i -> !i.isBuiltIn()).count();
+        long annotationPropertyCount = ont.annotationPropertiesInSignature(imp).filter(p -> !p.isBuiltIn()).count();
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("classCount", classCount);
+        counts.put("objectPropertyCount", objectPropertyCount);
+        counts.put("dataPropertyCount", dataPropertyCount);
+        counts.put("individualCount", individualCount);
+        counts.put("annotationPropertyCount", annotationPropertyCount);
+        return counts;
+    }
+
+    private int countTopLevelCandidates(OWLOntology ont, OWLReasoner reasoner) {
+        OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
+        return (int) reasoner
+            .getSubClasses(df.getOWLThing(), true)
+            .entities()
+            .filter(c -> !c.isOWLNothing() && !c.isAnonymous())
+            .filter(c -> !hasNamedSuperclassViaReasoner(reasoner, df, c))
+            .count();
+    }
 
     private List<OntologyDto.TreeNode> buildTopLevel(OWLOntology ont, OWLReasoner reasoner, int limit) {
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
