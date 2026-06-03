@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
-import { X, Loader2, CreditCard, XCircle, CheckCircle, Shield, AlertTriangle, Crown, ChevronLeft, Calendar, RefreshCw, History } from 'lucide-react';
+import { X, Loader2, CreditCard, XCircle, CheckCircle, Shield, AlertTriangle, Crown, ChevronLeft, Calendar, RefreshCw, History, Download, Monitor } from 'lucide-react';
 import { getGatewayUrl } from '../config/deploymentConfig';
 import { usePlanPricing } from '../hooks/usePlanPricing';
+import { isDesktop } from '../utils/desktop';
 
 function safeGetStorage(key: string): string | null { try { return localStorage.getItem(key); } catch { return null; } }
 
@@ -203,7 +204,44 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     const [setupPublishableKey, setSetupPublishableKey] = useState<string>('');
     const [cardUpdated, setCardUpdated] = useState(false);
     const [enablingAutoRenew, setEnablingAutoRenew] = useState(false);
+    const [downloadingLicense, setDownloadingLicense] = useState(false);
+    const [licenseError, setLicenseError] = useState<string | null>(null);
     const { getDisplayPrice } = usePlanPricing();
+
+    // Download a signed desktop-license file for the user's current plan.
+    const downloadLicense = async () => {
+        setLicenseError(null);
+        setDownloadingLicense(true);
+        try {
+            const headers = { Authorization: `Bearer ${safeGetStorage('authToken') ?? ''}` };
+            let res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/license/download`, { method: 'GET', headers });
+            if (!res.ok && res.status !== 401) {
+                res = await fetchWithTimeout(`${window.location.origin}/api/billing/license/download`, { method: 'GET', headers });
+            }
+            if (!res.ok) {
+                const msg = res.status === 503
+                    ? 'License downloads are not enabled on this server yet.'
+                    : `Could not download license (HTTP ${res.status}).`;
+                throw new Error(msg);
+            }
+            const blob = await res.blob();
+            const disposition = res.headers.get('Content-Disposition') || '';
+            const match = disposition.match(/filename="?([^"]+)"?/);
+            const fileName = match ? match[1] : `ontocode-${(workspace.subscriptionPlan || 'free').toLowerCase()}.lic`;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e: any) {
+            setLicenseError(e?.message || 'Failed to download license file.');
+        } finally {
+            setDownloadingLicense(false);
+        }
+    };
 
     const stripePromise = useMemo(
         () => (setupPublishableKey ? loadStripe(setupPublishableKey) : null),
@@ -552,6 +590,28 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                                 ? 'Stop your subscription at the end of the cycle.'
                                                 : 'Keep your plan active and renew automatically.'}
                                         </p>
+                                    </div>
+                                </button>
+                            )}
+
+                            {/* Download License File — for activating OntoCode Desktop.
+                                Hidden when already running inside the desktop app. */}
+                            {!isDesktop() && (
+                                <button onClick={downloadLicense} disabled={downloadingLicense}
+                                    className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-emerald-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed">
+                                    <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                                        {downloadingLicense ? <Loader2 size={24} className="animate-spin" /> : <Monitor size={24} />}
+                                    </div>
+                                    <div className="text-left">
+                                        <p className="font-bold text-lg flex items-center gap-1.5">
+                                            <Download size={16} /> Desktop License
+                                        </p>
+                                        <p className="text-sm text-slate-400 mt-1 text-balance">
+                                            Download a license file to activate OntoCode Desktop on your computer.
+                                        </p>
+                                        {licenseError && (
+                                            <p className="text-xs text-red-400 mt-2">{licenseError}</p>
+                                        )}
                                     </div>
                                 </button>
                             )}

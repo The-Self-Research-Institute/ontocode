@@ -199,6 +199,12 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
         case 'subscription':
             return { view: 'subscription', showSubscriptionPlan: true };
 
+        // Landing target for the desktop app's "Renew/Buy on the web" links
+        // (electronAPI.openPurchase → /desktop-pricing?plan=&device=). Lands the
+        // user on plan selection; after checkout they download a license file.
+        case 'desktop-pricing':
+            return { view: 'subscription', showSubscriptionPlan: true };
+
         case 'billing':
             return { view: 'billing' };
 

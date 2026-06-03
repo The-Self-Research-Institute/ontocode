@@ -21,6 +21,7 @@ import ResetPasswordForm from "./components/ResetPasswordForm";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
 import { clearLastOpenedProjectState, SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "./utils/sessionCleanup";
+import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from "./utils/desktop";
 import AdminSettingsModal from "./components/AdminSettingsModal";
 const BillingManagement = lazy(() => import("./components/BillingManagement"));
 const DesktopDownloadPage = lazy(() => import("./components/DesktopDownloadPage"));
@@ -127,6 +128,11 @@ const AppContent = () => {
   const [showAuthForInvitation, setShowAuthForInvitation] = useState(false); // Show login/signup form while keeping invite token
   const [needsDeploymentSelection, setNeedsDeploymentSelection] = useState(false);
   const [deploymentType, setDeploymentType] = useState<"self-hosted" | "cloud" | null>(() => {
+    // Desktop build: always self-hosted — never show the deployment selector.
+    if (isDesktop()) {
+      try { localStorage.setItem("deploymentType", "self-hosted"); } catch { /* ignore */ }
+      return "self-hosted";
+    }
     // Auto-detect cloud mode when accessing from the cloud domain
     if (typeof window !== "undefined") {
       const hostname = window.location.hostname;
@@ -176,6 +182,11 @@ const AppContent = () => {
 
   // Helper to check if workspace selection is required
   const shouldShowWorkspaceSelection = useCallback((): boolean => {
+    // Desktop: single-user local app — projects only, no workspace picker or billing gate.
+    if (isDesktop()) {
+      return false;
+    }
+
     console.log("[App] shouldShowWorkspaceSelection check:", {
       hasUser: !!user,
       userWorkspaceId: user?.workspaceId,
@@ -234,6 +245,12 @@ const AppContent = () => {
   useEffect(() => {
     let cancelled = false;
 
+    // Desktop has no billing — never fetch workspace billing status.
+    if (isDesktop()) {
+      setWorkspaceBillingStatus(null);
+      return;
+    }
+
     if (!user?.workspaceId) {
       setWorkspaceBillingStatus(null);
       return;
@@ -258,6 +275,15 @@ const AppContent = () => {
   }, [user?.workspaceId]);
 
   const refreshAccountSubscription = useCallback(async () => {
+    // Desktop has no billing account — the plan comes from the license file.
+    if (isDesktop()) {
+      setTrialEligible(false);
+      setAccountPlanName((user?.subscriptionPlan || "FREE").toUpperCase());
+      setAccountSubscriptionStatus("ACTIVE");
+      setAccountBillingInterval("annual");
+      return null;
+    }
+
     if (!user) {
       setTrialEligible(true);
       setAccountPlanName(null);
@@ -320,6 +346,24 @@ const AppContent = () => {
     return () => window.removeEventListener("navigate-desktop-download", handler);
   }, []);
 
+  // Desktop license — drives the "License expired" block screen.
+  const [desktopLicense, setDesktopLicense] = React.useState<DesktopLicense | null>(null);
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let cancelled = false;
+    const load = async () => {
+      const lic = await getDesktopLicense();
+      if (!cancelled) setDesktopLicense(lic);
+    };
+    load();
+    const onUpdated = () => load();
+    window.addEventListener(DESKTOP_LICENSE_UPDATED_EVENT, onUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(DESKTOP_LICENSE_UPDATED_EVENT, onUpdated);
+    };
+  }, []);
+
   const clearLastOpenedSelection = useCallback(() => {
     clearLastOpenedProjectState();
     apiClient.put("/api/auth/last-opened", { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
@@ -339,6 +383,11 @@ const AppContent = () => {
   // Auto-restore last project + file when workspace becomes available (e.g. after login with auto-select)
   const autoRestoredRef = useRef(false);
   useEffect(() => {
+    // Desktop: always land on My projects first; session restore is web/cloud UX.
+    if (isDesktop()) {
+      autoRestoredRef.current = true;
+      return;
+    }
     if (!user?.workspaceId || autoRestoredRef.current || selectedProjectId || selectedFileId) return;
     autoRestoredRef.current = true;
 
@@ -438,7 +487,7 @@ const AppContent = () => {
     if (user && showSubscriptionPlan) {
       return { view: "subscription", showSubscriptionPlan };
     }
-    if (user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending)) {
+    if (!isDesktop() && user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending)) {
       return { view: "workspace" };
     }
     if (user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile)) {
@@ -917,10 +966,62 @@ const AppContent = () => {
   const handleOpenLocalFile = useCallback(async () => {
     const fileData = await openOntologyFile();
     if (fileData) {
-      console.log("[App] 📂 File picked in browser mode:", fileData.fileName);
+      console.log("[App] 📂 File picked:", fileData.fileName);
       setPendingFile(fileData);
+      setSelectedProjectId(null);
+      setSelectedFileId(null);
+      setSelectedFileName("");
+      navigateTo({
+        view: "projectDashboard",
+        projectId: null,
+        projectName: "",
+        fileId: null,
+        fileName: "",
+      });
     }
-  }, []);
+  }, [navigateTo]);
+
+  // Windows / macOS menu: File → Open Ontology File…
+  useEffect(() => {
+    if (!isDesktop()) return;
+    const api = (window as any).electronAPI;
+    if (!api?.onMenuOpenFile) return;
+    const applyMenuFile = (data: { fileName: string; fileContent: string; fileSize: number }) => {
+      if (!data?.fileName || data.fileContent == null) return;
+      setPendingFile({
+        fileName: data.fileName,
+        fileContent: data.fileContent,
+        fileSize: data.fileSize ?? 0,
+      });
+      setSelectedProjectId(null);
+      setSelectedFileId(null);
+      setSelectedFileName("");
+      navigateTo({
+        view: "projectDashboard",
+        projectId: null,
+        projectName: "",
+        fileId: null,
+        fileName: "",
+      });
+    };
+    api.onMenuOpenFile(applyMenuFile);
+  }, [navigateTo]);
+
+  // Desktop startup: ensure My projects is the home screen (hash routing may restore a stale editor route).
+  const desktopHomeRoutedRef = useRef(false);
+  useEffect(() => {
+    if (!isDesktop() || !user || loading || desktopHomeRoutedRef.current) return;
+    desktopHomeRoutedRef.current = true;
+    if (!selectedProjectId && !selectedFileId && !pendingFile) {
+      navigateTo({
+        view: "projectDashboard",
+        projectId: null,
+        projectName: "",
+        fileId: null,
+        fileName: "",
+      });
+    }
+  }, [user, loading, selectedProjectId, selectedFileId, pendingFile, navigateTo]);
 
   // Auto-upload for self-hosted users (no workspace)
   useEffect(() => {
@@ -1380,7 +1481,13 @@ const AppContent = () => {
 
   const handleBackToProjectDashboard = () => {
     clearLastOpenedSelection();
-    // Use deterministic route navigation so back works regardless of browser history state.
+    // Reset state directly so showProjectDashboard condition passes immediately.
+    // Without this, currentRoute can fall to the "login" branch when selectedFileId
+    // is "__editor__", causing navigateTo to spread isLoginView:true into the route.
+    setSelectedProjectId(null);
+    setSelectedProjectName("");
+    setSelectedFileId(null);
+    setSelectedFileName("");
     navigateTo({
       view: "projectDashboard",
       projectId: null,
@@ -1610,6 +1717,43 @@ const AppContent = () => {
     );
   }
 
+  // Desktop: block the app when the imported (paid) license has expired.
+  // The user must renew on the web. FREE/perpetual licenses never expire.
+  if (isDesktop() && isLicenseExpired(desktopLicense)) {
+    const expiredPlan = licensePlan(desktopLicense);
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center p-4"
+        style={{ backgroundColor: "var(--color-background)" }}
+      >
+        <div
+          className="max-w-md w-full rounded-2xl shadow-xl p-8 text-center"
+          style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}
+        >
+          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6 bg-amber-500/15">
+            <RefreshCw size={32} className="text-amber-500" />
+          </div>
+          <h2 className="text-2xl font-bold mb-2" style={{ color: "var(--color-text)" }}>
+            License expired
+          </h2>
+          <p className="text-sm mb-6" style={{ color: "var(--color-text-secondary)" }}>
+            Your {expiredPlan} license has expired. Renew it on the web to continue using OntoCode Desktop,
+            then import the updated license file.
+          </p>
+          <button
+            onClick={() => {
+              const api = (window as any).electronAPI;
+              if (api?.openPurchase) api.openPurchase((expiredPlan || "pro").toLowerCase());
+            }}
+            className="w-full py-3 px-4 rounded-lg text-sm font-medium text-white bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transition-all"
+          >
+            Renew on the web
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Show invitation acceptance page if there's an invite token (whether logged in or not)
   // But if user clicked login/signup, show auth form first
   if (inviteToken && !showAuthForInvitation) {
@@ -1659,8 +1803,9 @@ const AppContent = () => {
   // endpoints, and isOwner is always true because it's the user's own
   // account. Must be checked BEFORE the workspace-selection short-circuit
   // so navigating from WorkspaceSelection actually works.
-  // Desktop download page — works before login via showDesktopDownload state
-  if (showDesktopDownload) {
+  // Desktop download page — works before login via showDesktopDownload state.
+  // Never shown inside the desktop app itself.
+  if (showDesktopDownload && !isDesktop()) {
     return (
       <Suspense fallback={<div className="min-h-screen bg-slate-900" />}>
         <DesktopDownloadPage onBack={() => setShowDesktopDownload(false)} />
@@ -1668,7 +1813,7 @@ const AppContent = () => {
     );
   }
 
-  if (user && showBillingPage) {
+  if (user && showBillingPage && !isDesktop()) {
     console.log("[App] 🎨 Rendering BillingManagement page (account-level)");
     return (
       <Suspense fallback={
@@ -1697,7 +1842,7 @@ const AppContent = () => {
 
   // Show subscription plan selection before workspace selection. Billing is
   // account-level, so a selected workspace is not required to buy or renew.
-  if (user && showSubscriptionPlan) {
+  if (user && showSubscriptionPlan && !isDesktop()) {
     const status = (accountSubscriptionStatus || "").toLowerCase();
     // Use plan name from billing API (authoritative); fall back to JWT value only if API hasn't loaded yet.
     const resolvedPlanId = accountPlanName || (user.subscriptionPlan ? user.subscriptionPlan.toUpperCase() : "FREE");
@@ -1767,7 +1912,8 @@ const AppContent = () => {
   }
 
   // Show workspace selection if user is logged in but hasn't selected a workspace
-  const showWorkspaceSelectionScreen = user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending);
+  const showWorkspaceSelectionScreen =
+    !isDesktop() && user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending);
   console.log("[App] Render decision - showWorkspaceSelectionScreen:", showWorkspaceSelectionScreen);
 
   if (showWorkspaceSelectionScreen) {
@@ -1785,8 +1931,8 @@ const AppContent = () => {
           // BillingManagement page in account-level mode instead of the
           // legacy in-place modal. The page treats an empty workspaceId as
           // "your account" and the backend's billing endpoints accept it.
-          onManageAccountBilling={user.enterpriseDomainBypass ? undefined : () => navigateTo({ view: 'billing' })}
-          onUpgradeAccountPlan={user.enterpriseDomainBypass ? undefined : openAccountSubscription}
+          onManageAccountBilling={(isDesktop() || user.enterpriseDomainBypass) ? undefined : () => navigateTo({ view: 'billing' })}
+          onUpgradeAccountPlan={(isDesktop() || user.enterpriseDomainBypass) ? undefined : openAccountSubscription}
           onWorkspaceSelected={handleWorkspaceSelected}
           onSkipWorkspace={() => {
             console.log("[App] 🚀 User chose to continue without workspace");
@@ -1849,9 +1995,13 @@ const AppContent = () => {
         <ProjectDashboard
           onSelectProject={handleProjectSelected}
           pendingFile={pendingFile}
-          onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined}
-          onManageSubscription={hasPaidPlan ? () => navigateTo({ view: 'billing' }) : undefined}
-          onOpenSubscriptionPlans={isEnterpriseDomainBypass ? undefined : openAccountSubscription}
+          onOpenLocalFile={
+            isDesktop() || (window as any).__ONTOCODE_BROWSER_BRIDGE__
+              ? handleOpenLocalFile
+              : undefined
+          }
+          onManageSubscription={(isDesktop() || !hasPaidPlan) ? undefined : () => navigateTo({ view: 'billing' })}
+          onOpenSubscriptionPlans={(isDesktop() || isEnterpriseDomainBypass) ? undefined : openAccountSubscription}
         />
       </>
     );
@@ -1895,18 +2045,36 @@ const AppContent = () => {
     );
     return (
       <Dashboard
-        onBackToProjects={user.workspaceId ? handleBackToProjectLibrary : () => { clearLastOpenedSelection(); setForceShowWorkspace(true); }}
-        onGoToProjectDashboard={user.workspaceId ? handleBackToProjectDashboard : () => { clearLastOpenedSelection(); setForceShowWorkspace(true); }}
-        onGoToWorkspace={() => {
-          clearLastOpenedSelection();
-          try {
-            localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true");
-          } catch {
-            // ignore
-          }
-          setForceShowWorkspace(true);
-          setRestoredRoute(null);
-        }}
+        onBackToProjects={
+          isDesktop() || user.workspaceId
+            ? handleBackToProjectLibrary
+            : () => {
+                clearLastOpenedSelection();
+                setForceShowWorkspace(true);
+              }
+        }
+        onGoToProjectDashboard={
+          isDesktop() || user.workspaceId
+            ? handleBackToProjectDashboard
+            : () => {
+                clearLastOpenedSelection();
+                setForceShowWorkspace(true);
+              }
+        }
+        onGoToWorkspace={
+          isDesktop()
+            ? undefined
+            : () => {
+                clearLastOpenedSelection();
+                try {
+                  localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true");
+                } catch {
+                  // ignore
+                }
+                setForceShowWorkspace(true);
+                setRestoredRoute(null);
+              }
+        }
         onFileSelected={handleFileSelected}
         selectedFileId={selectedFileId || undefined}
         selectedFileName={selectedFileName || undefined}

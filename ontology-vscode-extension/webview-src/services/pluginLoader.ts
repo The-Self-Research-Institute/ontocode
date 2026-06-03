@@ -1,6 +1,25 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import apiClient from './apiClient';
 import { getApiBaseUrl } from '../config/deploymentConfig';
+import { isDesktop } from '../utils/desktop';
+
+const BUILTIN_PLUGIN_IDS = [
+  'swrl-editor-plugin',
+  'graph-view-plugin',
+  'fuzzy-ontology-plugin',
+  'change-assistant-plugin',
+  'sparql-query-plugin',
+  'reasoner-plugin',
+] as const;
+
+const PLUGIN_LIBRARY_NAMES: Record<string, string> = {
+  'fuzzy-ontology-plugin': 'FuzzyOntologyPlugin',
+  'swrl-editor-plugin': 'SWRLEditorPlugin',
+  'graph-view-plugin': 'GraphViewPlugin',
+  'change-assistant-plugin': 'ChangeAssistantPlugin',
+  'sparql-query-plugin': 'SparqlQueryPlugin',
+  'reasoner-plugin': 'ReasonerPlugin',
+};
 
 /**
  * Resolve the API base URL for plugin service calls.
@@ -52,6 +71,49 @@ class PluginLoaderService {
     return localStorage.getItem('authToken');
   }
 
+  private defaultBuiltinManifest(pluginId: string): PluginManifest {
+    return {
+      name: pluginId,
+      displayName: pluginId.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      version: '1.0.0',
+      description: 'Built-in plugin',
+      main: './index.js',
+      category: 'Built-in',
+      author: 'OntoCode',
+    };
+  }
+
+  /** Desktop / first run: register built-in plugins locally without a marketplace call. */
+  ensureDefaultBuiltInPlugins(): void {
+    let added = false;
+    for (const pluginId of BUILTIN_PLUGIN_IDS) {
+      if (!this.installedPlugins.has(pluginId)) {
+        this.installedPlugins.set(pluginId, {
+          id: pluginId,
+          manifest: this.defaultBuiltinManifest(pluginId),
+          component: null,
+          loaded: false,
+        });
+        added = true;
+      }
+    }
+    if (added) {
+      this.saveToStorage();
+      this.notifyListeners();
+    }
+  }
+
+  private loadScriptFromUrl(url: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = url;
+      script.type = 'text/javascript';
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
+      document.head.appendChild(script);
+    });
+  }
+
   /**
    * Install plugin from backend service
    * @param pluginId plugin identifier
@@ -61,8 +123,7 @@ class PluginLoaderService {
     try {
       // Check if this is a built-in plugin (already registered in pluginManager)
       // Built-in plugins don't have .vsix files - they're compiled into the extension
-      const builtInPlugins = ['swrl-editor-plugin', 'graph-view-plugin', 'fuzzy-ontology-plugin', 'change-assistant-plugin', 'sparql-query-plugin', 'reasoner-plugin'];
-      const isBuiltIn = builtInPlugins.includes(pluginId);
+      const isBuiltIn = (BUILTIN_PLUGIN_IDS as readonly string[]).includes(pluginId);
 
       let manifest: PluginManifest;
 
@@ -243,43 +304,44 @@ class PluginLoaderService {
     }
 
     try {
-      // Download and dynamically load the plugin bundle
-      const bundleUrl = `${getPluginApiBaseUrl()}/api/plugins/${pluginId}/download`;
+      const baseUrl = `${getPluginApiBaseUrl()}/api/plugins/${pluginId}/download`;
+      // Desktop: plugins are not in the local DB — probe once and skip immediately on 404.
+      // Cloud:   retry up to 2 times (backend might be cold-starting).
+      const maxAttempts = isDesktop() ? 1 : 2;
+      const retryDelayMs = 1500;
+      let loaded = false;
+      let lastErr: unknown;
 
-      console.log(`[PluginLoader] 📥 Loading plugin bundle from ${bundleUrl}`);
+      for (let attempt = 0; attempt < maxAttempts && !loaded; attempt++) {
+        const bundleUrl = attempt > 0 ? `${baseUrl}?_t=${Date.now()}` : baseUrl;
+        console.log(`[PluginLoader] 📥 Loading ${pluginId} (attempt ${attempt + 1}/${maxAttempts}) from ${bundleUrl}`);
+        try {
+          // Desktop: check availability before injecting a <script> tag (avoids noisy 404 errors).
+          if (isDesktop()) {
+            const token = this.getAuthToken();
+            const headers: HeadersInit = {};
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            const probe = await fetch(bundleUrl, { method: 'HEAD', headers }).catch(() => ({ ok: false, status: 0 }));
+            if (!probe.ok) {
+              console.log(`[PluginLoader] ℹ️ ${pluginId} not available on desktop backend (${probe.status}) — skipping`);
+              return null;
+            }
+          }
+          await this.loadScriptFromUrl(bundleUrl);
+          loaded = true;
+        } catch (err) {
+          lastErr = err;
+          if (attempt < maxAttempts - 1) {
+            await new Promise((r) => setTimeout(r, retryDelayMs));
+          }
+        }
+      }
 
-      // Create a script element that loads directly from URL
-      // This avoids CSP issues with inline scripts and blob URLs
-      const script = document.createElement('script');
-      script.src = bundleUrl;
-      script.type = 'text/javascript';
-      // Note: Don't set crossOrigin when using wildcard CORS (*)
+      if (!loaded) {
+        throw lastErr instanceof Error ? lastErr : new Error('Failed to load plugin script');
+      }
 
-      // Wait for script to load
-      await new Promise<void>((resolve, reject) => {
-        script.onload = () => {
-          console.log(`[PluginLoader] ✅ Script loaded for ${pluginId}`);
-          resolve();
-        };
-        script.onerror = (error) => {
-          console.error(`[PluginLoader] ❌ Script load error for ${pluginId}:`, error);
-          reject(new Error('Failed to load plugin script'));
-        };
-        document.head.appendChild(script);
-      });
-
-      // The UMD bundle should expose itself on window with the library name
-      // e.g., window.FuzzyOntologyPlugin, window.SWRLEditorPlugin, window.GraphViewPlugin
-      const libraryNames: Record<string, string> = {
-        'fuzzy-ontology-plugin': 'FuzzyOntologyPlugin',
-        'swrl-editor-plugin': 'SWRLEditorPlugin',
-        'graph-view-plugin': 'GraphViewPlugin',
-        'change-assistant-plugin': 'ChangeAssistantPlugin',
-        'sparql-query-plugin': 'SparqlQueryPlugin',
-        'reasoner-plugin': 'ReasonerPlugin'
-      };
-
-      const libraryName = libraryNames[pluginId];
+      const libraryName = PLUGIN_LIBRARY_NAMES[pluginId];
       if (!libraryName) {
         throw new Error(`Unknown plugin library name for ${pluginId}`);
       }
@@ -376,8 +438,15 @@ class PluginLoaderService {
         });
         this.notifyListeners();
       }
+      // Desktop: always have core plugins available (backend may still be starting).
+      if (isDesktop()) {
+        this.ensureDefaultBuiltInPlugins();
+      }
     } catch (error) {
       console.error('[PluginLoader] Failed to load plugins from storage:', error);
+      if (isDesktop()) {
+        this.ensureDefaultBuiltInPlugins();
+      }
     }
   }
 

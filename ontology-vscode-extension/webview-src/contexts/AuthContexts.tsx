@@ -6,6 +6,12 @@ import {
     clearSessionCache,
     SUPPRESS_WORKSPACE_AUTO_OPEN_KEY,
 } from '../utils/sessionCleanup';
+import {
+    isDesktop,
+    getDesktopLicense,
+    DesktopLicense,
+    DESKTOP_LICENSE_UPDATED_EVENT,
+} from '../utils/desktop';
 
 interface User {
     token: string;
@@ -98,6 +104,24 @@ const getStoredEnterpriseDomainBypass = (): boolean => {
     try { return localStorage.getItem('enterpriseDomainBypass') === 'true'; } catch { return false; }
 };
 
+// Desktop build: the entire user identity is derived from the signed license
+// file (name, email, plan). There is no login. FREE/no-license falls back to a
+// generic anonymous local user. The fixed workspace id matches the one seeded by
+// the desktop backend (DesktopBootstrap).
+const buildDesktopUser = (license: DesktopLicense | null): User => ({
+    token: '',
+    userId: 'desktop-user-local',
+    username: license?.name || 'Desktop User',
+    email: license?.email || 'local@ontocode.desktop',
+    roles: ['ROLE_USER'],
+    isAdmin: false,
+    workspaceId: 'desktop-workspace-local',
+    workspaceName: 'My projects',
+    workspaceRole: 'OWNER',
+    subscriptionPlan: (license?.plan || 'FREE'),
+    enterpriseDomainBypass: false,
+});
+
 const getStoredDeploymentType = (): DeploymentType | null => {
     try {
         const value = localStorage.getItem('deploymentType');
@@ -155,6 +179,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Register unauthorized callback with apiClient
     useEffect(() => {
         apiClient.setUnauthorizedCallback(() => {
+            // Desktop runs a permit-all local backend with no real session — never
+            // log the user out on a stray 401.
+            if (isDesktop()) return;
             const token = localStorage.getItem('authToken');
             if (!token || isTokenExpired(token)) {
                 // Token is genuinely expired — show "Session expired" and log out
@@ -225,6 +252,31 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, [logout]);
 
     useEffect(() => {
+        // ── Desktop build: no login — derive the user from the signed license ──
+        if (isDesktop()) {
+            let cancelled = false;
+            const applyLicense = async () => {
+                let license: DesktopLicense | null = null;
+                try {
+                    license = await getDesktopLicense();
+                } catch {
+                    license = null;
+                }
+                if (cancelled) return;
+                setUser(buildDesktopUser(license));
+                setNeedsWorkspaceSelection(false);
+                setSessionExpiredMessage(null);
+                setLoading(false);
+            };
+            applyLicense();
+            const onLicenseUpdated = () => applyLicense();
+            window.addEventListener(DESKTOP_LICENSE_UPDATED_EVENT, onLicenseUpdated);
+            return () => {
+                cancelled = true;
+                window.removeEventListener(DESKTOP_LICENSE_UPDATED_EVENT, onLicenseUpdated);
+            };
+        }
+
         requestTokenFromVSCode();
 
         const handleMessage = (event: MessageEvent) => {

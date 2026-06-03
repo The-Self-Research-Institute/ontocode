@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
+import { isDesktop } from "../utils/desktop";
+import { isAppOnline } from "../utils/connectivity";
 import ReportIssueModal from "./ReportIssueModal";
 
 interface ProjectLibraryProps {
@@ -346,8 +348,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       console.error("Error status:", error.status);
       console.error("Error data:", error.data);
 
-      // Free plan restriction — show the styled dialog instead of a toast
-      if (error.status === 403 && error.data?.requiresUpgrade) {
+      // Free plan restriction (cloud workspaces only)
+      if (!isDesktop() && error.status === 403 && error.data?.requiresUpgrade) {
         setShowFreePlanDialog(true);
         return;
       }
@@ -454,26 +456,31 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const handleFileClick = async (file: FileItem) => {
     setSelectedFile(file.id);
 
-    const effectivePlan = (workspacePlan || user?.subscriptionPlan || "FREE").toUpperCase();
-    const isWorkspaceOwner =
-      !!workspaceOwnerId &&
-      !!user?.userId &&
-      workspaceOwnerId === user.userId;
+    // Cloud-only: on FREE plan, non-owners must wait until the workspace owner
+    // has opened/imported the file into GraphDB. Desktop is single-user local —
+    // no teams, no owner/member distinction (see buildDesktopUser vs Mongo owner id).
+    if (!isDesktop()) {
+      const effectivePlan = (workspacePlan || user?.subscriptionPlan || "FREE").toUpperCase();
+      const isWorkspaceOwner =
+        !!workspaceOwnerId &&
+        !!user?.userId &&
+        workspaceOwnerId === user.userId;
 
-    if (effectivePlan === "FREE" && !isWorkspaceOwner) {
-      try {
-        const ontologyProjectId = `${projectId}--${file.id}`;
-        const graphCheck: any = await apiClient.get(
-          `/api/ontology/${encodeURIComponent(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(file.name)}&fileId=${encodeURIComponent(file.id)}`,
-        );
-        const graphData = graphCheck?.data || graphCheck;
-        if (!graphData?.exists || (graphData.graphSize ?? 0) <= 0) {
+      if (effectivePlan === "FREE" && !isWorkspaceOwner) {
+        try {
+          const ontologyProjectId = `${projectId}--${file.id}`;
+          const graphCheck: any = await apiClient.get(
+            `/api/ontology/${encodeURIComponent(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(file.name)}&fileId=${encodeURIComponent(file.id)}`,
+          );
+          const graphData = graphCheck?.data || graphCheck;
+          if (!graphData?.exists || (graphData.graphSize ?? 0) <= 0) {
+            setShowOwnerMustImportDialog(true);
+            return;
+          }
+        } catch {
           setShowOwnerMustImportDialog(true);
           return;
         }
-      } catch {
-        setShowOwnerMustImportDialog(true);
-        return;
       }
     }
 
@@ -589,7 +596,13 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 </button>
               )}
               <button
-                onClick={() => setIsReportIssueModalOpen(true)}
+                onClick={() => {
+                  if (!isAppOnline()) {
+                    showToast("Connect to the internet to report an issue.", "error");
+                    return;
+                  }
+                  setIsReportIssueModalOpen(true);
+                }}
                 className="px-2.5 py-1.5 text-xs text-gray-600 border border-gray-300 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5 font-medium"
                 title="Report Issue"
               >
@@ -683,9 +696,19 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       {/* Content */}
       <div className="max-w-7xl mx-auto px-6 py-6 overflow-y-auto" style={{ maxHeight: "calc(100vh - 280px)" }}>
         {loading ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-purple-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading files...</p>
+          <div className="py-4">
+            <div className="flex items-center gap-2 mb-4 text-sm text-purple-600">
+              <div className="animate-spin rounded-full h-4 w-4 border-2 border-purple-600 border-t-transparent" />
+              <span>Loading project files…</span>
+            </div>
+            <div className={viewMode === "grid" ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" : "space-y-2"}>
+              {[...Array(viewMode === "grid" ? 6 : 4)].map((_, i) => (
+                <div
+                  key={i}
+                  className={`animate-pulse bg-gray-100 border border-gray-200 rounded-lg ${viewMode === "grid" ? "h-28" : "h-14"}`}
+                />
+              ))}
+            </div>
           </div>
         ) : filteredFiles.length === 0 ? (
           <div className="text-center py-12">

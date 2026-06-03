@@ -188,6 +188,16 @@ public class ProjectRepoCache {
         return knownLargeProjects.contains(projectId);
     }
 
+    /**
+     * Mark a project as large (e.g. after GraphDB reports triple count on open).
+     * Enables fast-path skips and reduced SPARQL parallelism for GO-scale files.
+     */
+    public void markKnownLarge(String projectId) {
+        if (projectId != null && !projectId.isBlank()) {
+            knownLargeProjects.add(projectId);
+        }
+    }
+
     public void evictAll() {
         for (String id : new ArrayList<>(cache.keySet())) {
             evict(id);

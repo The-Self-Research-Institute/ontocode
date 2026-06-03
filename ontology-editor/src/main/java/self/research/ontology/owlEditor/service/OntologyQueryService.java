@@ -22,6 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -42,6 +43,13 @@ public class OntologyQueryService {
      * Note: real ceiling is GraphDB, not threads — threads just feed it.
      */
     private static final ExecutorService QUERY_POOL = Executors.newFixedThreadPool(64);
+
+    /** Fewer concurrent SPARQL calls for GO-scale graphs — avoids 45s+ query pile-ups. */
+    private static final ExecutorService LARGE_QUERY_POOL = Executors.newFixedThreadPool(4);
+
+    private Executor queryExecutorFor(String projectId) {
+        return datasetService.isKnownLargeProject(projectId) ? LARGE_QUERY_POOL : QUERY_POOL;
+    }
 
     private static final String PREFIXES = """
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -1865,6 +1873,10 @@ public class OntologyQueryService {
         long startTime = System.currentTimeMillis();
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("id", classIri);
+        final Executor queryPool = queryExecutorFor(projectId);
+        if (datasetService.isKnownLargeProject(projectId)) {
+            log.info("[PERF] classDetails using reduced SPARQL parallelism for large project {}", projectId);
+        }
         
         // ===== PARALLEL EXECUTION: Run all independent SPARQL queries concurrently =====
         // Each query is independent (read-only), so they can all run in parallel.
@@ -1888,7 +1900,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, annQuery);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- SubClassOf named superclasses ---
         CompletableFuture<TupleQueryResult> subClassFuture = CompletableFuture.supplyAsync(() -> {
@@ -1906,7 +1918,7 @@ public class OntologyQueryService {
                 ORDER BY ?label
                 """.formatted(classIri, classIri, classIri);
             return datasetService.execSelect(projectId, subClassQuery);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- SubClassOf restrictions ---
         CompletableFuture<TupleQueryResult> subClassRestrictionFuture = CompletableFuture.supplyAsync(() -> {
@@ -1960,7 +1972,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, subClassRestrictionQuery);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- SubClassOf intersection ---
         CompletableFuture<TupleQueryResult> intersectionFuture = CompletableFuture.supplyAsync(() -> {
@@ -1974,7 +1986,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- SubClassOf union ---
         CompletableFuture<TupleQueryResult> unionFuture = CompletableFuture.supplyAsync(() -> {
@@ -1988,7 +2000,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- SubClassOf complement ---
         CompletableFuture<TupleQueryResult> complementFuture = CompletableFuture.supplyAsync(() -> {
@@ -2001,7 +2013,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- EquivalentClass simple ---
         // owl:equivalentClass is symmetric, but we store only one direction.
@@ -2020,7 +2032,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri, classIri, classIri, classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- EquivalentClass restrictions ---
         CompletableFuture<TupleQueryResult> equivRestrictionFuture = CompletableFuture.supplyAsync(() -> {
@@ -2073,7 +2085,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- EquivalentClass intersection ---
         CompletableFuture<TupleQueryResult> equivIntersectionFuture = CompletableFuture.supplyAsync(() -> {
@@ -2087,7 +2099,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- EquivalentClass union ---
         CompletableFuture<TupleQueryResult> equivUnionFuture = CompletableFuture.supplyAsync(() -> {
@@ -2101,7 +2113,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- EquivalentClass complement ---
         CompletableFuture<TupleQueryResult> equivComplementFuture = CompletableFuture.supplyAsync(() -> {
@@ -2114,7 +2126,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- EquivalentClass oneOf ---
         CompletableFuture<TupleQueryResult> equivOneOfFuture = CompletableFuture.supplyAsync(() -> {
@@ -2127,7 +2139,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- DisjointWith ---
         CompletableFuture<TupleQueryResult> disjointFuture = CompletableFuture.supplyAsync(() -> {
@@ -2150,7 +2162,7 @@ public class OntologyQueryService {
                 ORDER BY ?label
                 """.formatted(classIri, classIri, classIri, classIri, classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- DisjointUnionOf ---
         CompletableFuture<TupleQueryResult> disjointUnionFuture = CompletableFuture.supplyAsync(() -> {
@@ -2161,7 +2173,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- HasKey ---
         CompletableFuture<TupleQueryResult> hasKeyFuture = CompletableFuture.supplyAsync(() -> {
@@ -2172,7 +2184,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- Inferred equivalent classes ---
         CompletableFuture<TupleQueryResult> inferredEquivFuture = CompletableFuture.supplyAsync(() -> {
@@ -2191,7 +2203,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri, classIri, classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- Inferred superclasses ---
         CompletableFuture<TupleQueryResult> inferredSuperFuture = CompletableFuture.supplyAsync(() -> {
@@ -2210,7 +2222,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri, classIri, classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- Inferred disjoint classes ---
         CompletableFuture<TupleQueryResult> inferredDisjointFuture = CompletableFuture.supplyAsync(() -> {
@@ -2237,7 +2249,7 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri, classIri, classIri, classIri, classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- GCI axioms ---
         // OPTIMIZED: The previous query did a `?subExpr ?p ?o` cross-product with
@@ -2261,7 +2273,7 @@ public class OntologyQueryService {
                 LIMIT 200
                 """.formatted(classIri, classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // --- Anonymous ancestor superclasses ---
         // OPTIMIZED: Added explicit LIMIT to prevent runaway transitive path
@@ -2278,7 +2290,7 @@ public class OntologyQueryService {
                 LIMIT 500
                 """.formatted(classIri, classIri);
             return datasetService.execSelect(projectId, q);
-        }, QUERY_POOL);
+        }, queryPool);
         
         // ===== Wait for all queries to complete =====
         CompletableFuture.allOf(

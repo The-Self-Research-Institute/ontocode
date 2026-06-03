@@ -1,6 +1,7 @@
 // services/apiClient.ts
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 import { getGatewayUrl, getStoredDeploymentType, type DeploymentType } from '../config/deploymentConfig';
+import { isDesktop } from '../utils/desktop';
 
 // Get initial base URL from centralized config
 let BASE_URL = getGatewayUrl();
@@ -177,8 +178,9 @@ class ApiClient {
 
       pending.set(requestId, { resolve, reject, timeout });
 
-      // Get auth token from localStorage (managed by useAuth hook)
-      const token = localStorage.getItem('authToken');
+      // Get auth token from localStorage (managed by useAuth hook).
+      // Desktop runs a permit-all local backend — never attach a token.
+      const token = isDesktop() ? null : localStorage.getItem('authToken');
       window.vscode.postMessage({
         ...payload,
         requestId,
@@ -215,10 +217,14 @@ class ApiClient {
         BASE_URL = desktopUrl;
       }
 
-      const token = localStorage.getItem('authToken');
-      console.log('[ApiClient] Interceptor - baseURL:', config.baseURL, '| URL:', config.url, '| Token present:', !!token);
-      if (token && config.headers) {
-        config.headers.Authorization = `Bearer ${token}`;
+      // Desktop runs a permit-all local backend with no real session — never send
+      // an Authorization header (avoids leaking any stale web token).
+      if (!isDesktop()) {
+        const token = localStorage.getItem('authToken');
+        console.log('[ApiClient] Interceptor - baseURL:', config.baseURL, '| URL:', config.url, '| Token present:', !!token);
+        if (token && config.headers) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
       }
       return config;
     });

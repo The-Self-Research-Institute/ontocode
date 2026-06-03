@@ -3,6 +3,7 @@ package self.research.ontology.auth.config; // Adjust package as per your projec
 import self.research.ontology.auth.security.RateLimitingFilter;
 import self.research.ontology.auth.security.SecurityValidationFilter;
 import self.research.ontology.auth.service.CustomUserDetailsService; // Adjust package
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -36,6 +37,14 @@ public class SecurityConfig {
     private final SecurityValidationFilter securityValidationFilter;
     private final RateLimitingFilter rateLimitingFilter;
 
+    // Desktop build: bypass auth entirely (localhost only) and authenticate every
+    // request as the seeded local user. See DesktopLocalUserFilter / DesktopBootstrap.
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
+    @Value("${ontocode.desktop.user.email:local@ontocode.desktop}")
+    private String desktopUserEmail;
+
     public SecurityConfig(CustomUserDetailsService customUserDetailsService, 
                          JwtAuthenticationFilter jwtAuthenticationFilter,
                          SecurityValidationFilter securityValidationFilter,
@@ -66,6 +75,19 @@ public class SecurityConfig {
 
     @Bean("authSecurityFilterChain")
     public SecurityFilterChain authSecurityFilterChain(HttpSecurity http) throws Exception {
+        // ── Desktop build: no real accounts — permit-all + synthetic local user ──
+        // Runs on localhost only; the React app sends no Authorization header.
+        if (desktopMode) {
+            http
+                    .csrf(AbstractHttpConfigurer::disable)
+                    .cors(AbstractHttpConfigurer::disable)
+                    .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
+                    .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                    .addFilterBefore(new DesktopLocalUserFilter(desktopUserEmail),
+                            UsernamePasswordAuthenticationFilter.class);
+            return http.build();
+        }
+
         http
                 .csrf(AbstractHttpConfigurer::disable) // Disable CSRF for stateless API
                 .cors(AbstractHttpConfigurer::disable) // Disable CORS - handled by gateway

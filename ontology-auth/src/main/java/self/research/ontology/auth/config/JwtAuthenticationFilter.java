@@ -36,9 +36,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Value("${jwt.secret}")
     private String jwtSecret;
 
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
+
+        // Desktop mode: all requests run as the local synthetic user — skip JWT entirely.
+        if (desktopMode) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         String authHeader = request.getHeader("Authorization");
         

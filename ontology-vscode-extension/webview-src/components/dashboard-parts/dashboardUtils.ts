@@ -49,6 +49,34 @@ export const REASONER_OPTIONS = Object.keys(REASONER_ID_MAP);
 
 export const normalizeReasonerType = (label: string): string => REASONER_ID_MAP[label] || "HERMIT";
 
+/** Parse entity declaration counts from warm, cache-status, top-level, or metadata API payloads. */
+export function extractDeclarationCountsPatch(countsRes: any): Record<string, number> | null {
+  const data = countsRes?.data ?? countsRes;
+  if (!data || typeof data !== "object") return null;
+  const num = (v: unknown) => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+    }
+    return undefined;
+  };
+  const nested = data.counts && typeof data.counts === "object" ? data.counts : {};
+  const patch: Record<string, number> = {};
+  const classCount = num(data.classCount) ?? num(nested.classes);
+  const objectPropertyCount = num(data.objectPropertyCount) ?? num(nested.objectProperties);
+  const dataPropertyCount = num(data.dataPropertyCount) ?? num(nested.dataProperties);
+  const individualCount = num(data.individualCount) ?? num(nested.individuals);
+  const annotationPropertyCount =
+    num(data.annotationPropertyCount) ?? num(nested.annotationProperties);
+  if (classCount !== undefined) patch.classCount = classCount;
+  if (objectPropertyCount !== undefined) patch.objectPropertyCount = objectPropertyCount;
+  if (dataPropertyCount !== undefined) patch.dataPropertyCount = dataPropertyCount;
+  if (individualCount !== undefined) patch.individualCount = individualCount;
+  if (annotationPropertyCount !== undefined) patch.annotationPropertyCount = annotationPropertyCount;
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
 export const buildHierarchyTree = (nodes: any[]): any[] => {
   if (!Array.isArray(nodes)) return [];
 
