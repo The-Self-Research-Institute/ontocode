@@ -339,6 +339,24 @@ public class GraphDBDatasetService {
      * @param fileId Optional file ID to check for specific file metadata
      * @return Map with "exists" boolean and "details" with information about the existing file
      */
+
+    /**
+     * Quick check: does the Fuseki graph for this project already have any triples?
+     * Used by upload-by-file-ref to skip re-import when data is already loaded.
+     */
+    public boolean hasGraphData(String projectId) {
+        try {
+            Repository repo = getRepository();
+            String graphUri = getGraphUri(projectId);
+            try (RepositoryConnection conn = repo.getConnection()) {
+                return countGraphTriplesSparql(conn, graphUri) > 0;
+            }
+        } catch (Exception e) {
+            log.warn("[hasGraphData] Could not check graph for project {}: {}", projectId, e.getMessage());
+            return false;
+        }
+    }
+
     public Map<String, Object> checkFileExistsInGraphDB(String projectId, String fileName, String fileId) {
         Map<String, Object> result = new HashMap<>();
         result.put("exists", false);
@@ -408,6 +426,13 @@ public class GraphDBDatasetService {
                     
                     log.info("[GraphDB Duplicate Check] Project {} graph contains {} triples. File: {}, FileId: {}",
                         projectId, graphSize, fileName, fileId);
+
+                    // GO-plus (~1.2M triples) sits below the 3M mem-cache default but still
+                    // needs large-ontology query limits (see OntologyQueryService.classDetails).
+                    if (projectRepoCache != null && graphSize >= 1_000_000L) {
+                        projectRepoCache.markKnownLarge(projectId);
+                        log.info("[GraphDB] Marked project {} as large ontology ({} triples)", projectId, graphSize);
+                    }
                     
                     return result;
                 }
@@ -1782,19 +1807,16 @@ public class GraphDBDatasetService {
                 }
 
                 for (String g : graphs) {
-                    // CLEAR GRAPH operates at index level — does not read node table values.
-                    // DELETE WHERE { GRAPH <g> { ?s ?p ?o } } iterates node table entries and
-                    // throws NodeTableTRDF/Read on corrupt TDB2 data written by older Jena versions.
-                    String clearQuery = String.format("CLEAR GRAPH <%s>", g);
+                    // DROP SILENT GRAPH is O(1) on TDB2 — it removes the named graph
+                    // entry from the dataset index without iterating over individual triples.
+                    // CLEAR GRAPH iterates and deletes triples one-by-one: 139s for 2.8M triples.
+                    // DROP is semantically equivalent for our use case (full graph replacement).
+                    long dropStart = System.nanoTime();
                     try {
-                        long clearStart = System.nanoTime();
-                        conn.prepareUpdate(clearQuery).execute();
-                        log.info("[TIMING] clearDataset CLEAR GRAPH for project {} graph {}: {} ms", projectId, g, elapsedMillis(clearStart));
-                    } catch (Exception e) {
-                        log.warn("SPARQL CLEAR GRAPH failed for graph {}: {}. Falling back to DROP SILENT GRAPH", g, e.getMessage());
-                        long dropStart = System.nanoTime();
                         conn.prepareUpdate(String.format("DROP SILENT GRAPH <%s>", g)).execute();
                         log.info("[TIMING] clearDataset DROP GRAPH for project {} graph {}: {} ms", projectId, g, elapsedMillis(dropStart));
+                    } catch (Exception e) {
+                        log.warn("DROP SILENT GRAPH failed for graph {}: {}", g, e.getMessage());
                     }
                 }
             }

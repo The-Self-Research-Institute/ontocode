@@ -14,18 +14,23 @@ import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Loads an OWL file into OWLAPI after Fuseki import completes and stores the
  * parsed model + structural reasoner in ProjectOntologyCache.
  *
  * Desktop-only — never active in cloud deployments.
- * Runs asynchronously on the owlParsingExecutor thread pool so it doesn't
- * block the import response.
+ * This is the Protégé-style fast path: one in-memory parse, then instant hierarchy
+ * and class details without Fuseki SPARQL.
  */
 @Service
 @ConditionalOnProperty(name = "ontocode.desktop.mode", havingValue = "true")
@@ -39,28 +44,87 @@ public class DesktopOntologyLoader {
     @Autowired
     private StorageManager storageManager;
 
-    // Tracks projects currently being loaded to prevent duplicate async loads
+    @Autowired(required = false)
+    private DesktopHierarchyService desktopHierarchyService;
+
     private final Set<String> loadingInProgress = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<String, CompletableFuture<Boolean>> warmWaiters = new ConcurrentHashMap<>();
 
     /**
-     * Trigger async load if the project isn't already cached or loading.
-     * Call this on first hierarchy access so existing projects benefit from
-     * OWLAPI without needing a re-import.
+     * Block until the OWLAPI model is cached (or timeout). Used by the desktop UI
+     * so the first screen uses in-memory APIs like Protégé instead of slow SPARQL.
      */
-    public void triggerLazyLoadIfNeeded(String projectId) {
-        if (cache.has(projectId) || loadingInProgress.contains(projectId)) return;
-        // Prefer original file (OFN/TTL) — 3-5x faster for OWLAPI than converted RDF/XML
-        Optional<Path> source = findFastestParseSource(projectId);
-        source.ifPresent(path -> {
-            loadingInProgress.add(projectId);
-            loadAndCacheAsync(projectId, path);
-        });
+    public Map<String, Object> warmProject(String projectId, long timeoutMs) {
+        if (cache.has(projectId)) {
+            Map<String, Object> warm = new java.util.LinkedHashMap<>();
+            warm.put("ready", true);
+            warm.put("sparqlFallback", false);
+            warm.put("elapsedMs", 0L);
+            warm.putAll(declarationCountsFromCache(projectId));
+            return warm;
+        }
+
+        long start = System.currentTimeMillis();
+        CompletableFuture<Boolean> waiter = warmWaiters.computeIfAbsent(projectId, id -> new CompletableFuture<>());
+        triggerLazyLoadIfNeeded(projectId);
+
+        if (!loadingInProgress.contains(projectId) && !cache.has(projectId)) {
+            // No file or heap guard rejected load before async started
+            completeWarmWaiters(projectId, false);
+            return Map.of(
+                "ready", false,
+                "sparqlFallback", true,
+                "elapsedMs", System.currentTimeMillis() - start,
+                "message", "OWLAPI load not started (missing file or insufficient heap)"
+            );
+        }
+
+        try {
+            boolean ready = waiter.get(timeoutMs, TimeUnit.MILLISECONDS);
+            Map<String, Object> warm = new java.util.LinkedHashMap<>();
+            warm.put("ready", ready);
+            warm.put("sparqlFallback", !ready);
+            warm.put("elapsedMs", System.currentTimeMillis() - start);
+            if (ready) {
+                warm.putAll(declarationCountsFromCache(projectId));
+            }
+            return warm;
+        } catch (TimeoutException e) {
+            return Map.of(
+                "ready", cache.has(projectId),
+                "pending", true,
+                "sparqlFallback", !cache.has(projectId),
+                "elapsedMs", System.currentTimeMillis() - start
+            );
+        } catch (Exception e) {
+            log.warn("[Desktop] warmProject failed for {}: {}", projectId, e.getMessage());
+            return Map.of(
+                "ready", cache.has(projectId),
+                "sparqlFallback", !cache.has(projectId),
+                "elapsedMs", System.currentTimeMillis() - start,
+                "error", e.getMessage() != null ? e.getMessage() : "warm failed"
+            );
+        } finally {
+            warmWaiters.remove(projectId);
+        }
     }
 
-    /**
-     * Returns the ontology file that OWLAPI can parse fastest.
-     * Priority: .ofn > .ttl > .owl (RDF/XML) — OFN is the native OWLAPI format.
-     */
+    public void triggerLazyLoadIfNeeded(String projectId) {
+        if (cache.has(projectId) || loadingInProgress.contains(projectId)) {
+            if (cache.has(projectId)) {
+                completeWarmWaiters(projectId, true);
+            }
+            return;
+        }
+        findFastestParseSource(projectId).ifPresentOrElse(
+            path -> {
+                loadingInProgress.add(projectId);
+                loadAndCacheAsync(projectId, path);
+            },
+            () -> completeWarmWaiters(projectId, false)
+        );
+    }
+
     private Optional<Path> findFastestParseSource(String projectId) {
         Path dir = storageManager.projectDir(projectId);
         List<String> fastFirst = List.of(
@@ -81,41 +145,40 @@ public class DesktopOntologyLoader {
         return storageManager.findCurrentOntology(projectId);
     }
 
-    /**
-     * Asynchronously loads the OWL file at owlFilePath into OWLAPI and caches
-     * the model + structural reasoner for instant hierarchy navigation.
-     *
-     * Called after Fuseki bulk-load completes (phase 5 persist-copy).
-     */
-    @Async("owlParsingExecutor")
+    @Async("desktopModelExecutor")
     public void loadAndCacheAsync(String projectId, Path owlFilePath) {
+        boolean success = false;
+        try {
+            success = loadIntoCache(projectId, owlFilePath);
+        } finally {
+            loadingInProgress.remove(projectId);
+            completeWarmWaiters(projectId, success);
+        }
+    }
+
+    private boolean loadIntoCache(String projectId, Path owlFilePath) {
         if (!owlFilePath.toFile().exists()) {
             log.warn("[Desktop] OWL file not found, skipping OWLAPI cache: {}", owlFilePath);
-            return;
+            return false;
         }
 
         long fileSizeMb = owlFilePath.toFile().length() / (1024 * 1024);
-
-        // Check if JVM has enough free heap to load this file into OWLAPI.
-        // OWLAPI typically needs 3-4x the file size in heap.
-        // Leave at least 400MB headroom for Spring Boot + Fuseki queries.
         Runtime rt = Runtime.getRuntime();
-        long freeHeapMb = (rt.maxMemory() - rt.totalMemory() + rt.freeMemory()) / (1024 * 1024);
-        long requiredMb = fileSizeMb * 4 + 400;
-        if (freeHeapMb < requiredMb) {
-            log.info("[Desktop] Skipping OWLAPI cache — file {} MB needs ~{} MB free heap, only {} MB available",
-                fileSizeMb, requiredMb, freeHeapMb);
-            return;
+        long maxHeapMb = rt.maxMemory() / (1024 * 1024);
+        long estimatedModelMb = Math.max(64, fileSizeMb * 3);
+        long heapReserveMb = 384;
+        if (estimatedModelMb > maxHeapMb - heapReserveMb) {
+            log.info("[Desktop] File {} MB (~{} MB model) exceeds heap budget ({} MB heap) — using Fuseki SPARQL for project {}",
+                fileSizeMb, estimatedModelMb, maxHeapMb, projectId);
+            return false;
         }
 
         long start = System.currentTimeMillis();
-        log.info("[Desktop] Loading OWLAPI model for project {} from {} ({} MB)", projectId, owlFilePath, fileSizeMb);
+        log.info("[Desktop] Loading OWLAPI model for project {} from {} ({} MB, heap {} MB)",
+            projectId, owlFilePath, fileSizeMb, maxHeapMb);
 
         try {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-
-            // Silent imports — we load only what's in the file.
-            // Desktop import dialog (future) will handle explicit import resolution.
             manager.setOntologyLoaderConfiguration(
                 new OWLOntologyLoaderConfiguration()
                     .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
@@ -127,19 +190,35 @@ public class DesktopOntologyLoader {
             log.info("[Desktop] OWLAPI parsed {} classes in {}ms", classCount,
                 System.currentTimeMillis() - start);
 
-            // Structural reasoner: no inference, just asserted hierarchy traversal.
-            // getSubClasses() on StructuralReasoner is O(1) — pure pointer lookup.
             OWLReasoner reasoner = new StructuralReasonerFactory().createNonBufferingReasoner(ontology);
-            reasoner.precomputeInferences(); // pre-index asserted hierarchy
+            reasoner.precomputeInferences();
 
             cache.put(projectId, ontology, reasoner, manager);
-            loadingInProgress.remove(projectId);
             log.info("[Desktop] OWLAPI model + reasoner cached for project {} in {}ms total",
                 projectId, System.currentTimeMillis() - start);
+            return true;
 
+        } catch (OutOfMemoryError oom) {
+            cache.evict(projectId);
+            log.warn("[Desktop] Out of memory loading OWLAPI model for project {} — falling back to Fuseki SPARQL", projectId);
+            return false;
         } catch (Exception e) {
             log.warn("[Desktop] Failed to cache OWLAPI model for project {}: {}", projectId, e.getMessage());
-            // Non-fatal: hierarchy falls back to Fuseki SPARQL
+            return false;
+        }
+    }
+
+    private Map<String, Object> declarationCountsFromCache(String projectId) {
+        if (desktopHierarchyService != null) {
+            return desktopHierarchyService.declarationCounts(projectId);
+        }
+        return Map.of();
+    }
+
+    private void completeWarmWaiters(String projectId, boolean success) {
+        CompletableFuture<Boolean> waiter = warmWaiters.remove(projectId);
+        if (waiter != null && !waiter.isDone()) {
+            waiter.complete(success || cache.has(projectId));
         }
     }
 }

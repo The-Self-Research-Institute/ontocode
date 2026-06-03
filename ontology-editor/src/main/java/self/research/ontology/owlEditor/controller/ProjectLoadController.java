@@ -41,6 +41,7 @@ import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.ProjectShareService;
+import self.research.ontology.owlEditor.service.DesktopOntologyLoader;
 import self.research.ontology.owlEditor.service.StorageManager;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
 
@@ -76,6 +77,13 @@ public class ProjectLoadController {
     // Project-level locks to prevent concurrent saves
     private final ConcurrentHashMap<String, Object> projectSaveLocks = new ConcurrentHashMap<>();
 
+    // Tracks projects with an active uploadByFileRef in progress.
+    // Prevents a second call from triggering a full re-import while the first
+    // is still running the Fuseki PUT (Fuseki appears empty during the PUT,
+    // so hasGraphData() returns false and the skip guard doesn't fire).
+    private final java.util.Set<String> importInFlight =
+        java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
     private final ProjectImportService importService;
@@ -88,10 +96,15 @@ public class ProjectLoadController {
     private final GraphDBDatasetService datasetService;
     private final ProjectRepository projectRepository;
 
-    // Desktop-only shortcut — null in cloud
+    // Desktop-only — null in cloud
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     @org.springframework.lang.Nullable
     private self.research.ontology.owlEditor.cache.ProjectOntologyCache ontologyCache;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private DesktopOntologyLoader desktopOntologyLoader;
+
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
     private final MongoTemplate mongoTemplate;
@@ -401,7 +414,57 @@ public class ProjectLoadController {
         long startTime = System.nanoTime();
         log.info("[ProjectLoadController] ═══ UploadByFileRef STARTED - projectId: {}, fileId: {}, ownerEmail: {}",
                 projectId, fileId, ownerEmail);
+        // Guard: if an import is already running for this project, return immediately.
+        // Without this, a second frontend call while the Fuseki PUT is in flight (Fuseki
+        // still shows 0 triples) bypasses the hasGraphData skip and starts a full re-import.
+        if (!importInFlight.add(projectId)) {
+            log.info("[ProjectLoadController] Import already in flight for project {}, returning ALREADY_LOADING", projectId);
+            return ResponseEntity.ok(Map.of(
+                "success", true, "projectId", projectId,
+                "status", "ALREADY_LOADING", "source", "in-flight-guard"
+            ));
+        }
         try {
+            // Desktop fast path: skip re-import if data already exists.
+            // Priority: OWLAPI cached → MongoDB status COMPLETED → Fuseki SPARQL count.
+            // MongoDB check is most reliable (always fast, doesn't require Fuseki connection).
+            if (ontologyCache != null) {
+                boolean owlapiReady = ontologyCache.has(projectId);
+
+                boolean mongoCompleted = metadataService.readStatus(projectId)
+                    .map(s -> "COMPLETED".equals(s.status()) || "UPDATED".equals(s.status()))
+                    .orElse(false);
+
+                boolean fileExists = storageManager.findCurrentOntology(projectId).isPresent();
+
+                // Extra Fuseki check only if MongoDB says completed but file is missing
+                // (handles case where data was manually cleared)
+                boolean fusekiHasData = false;
+                if (mongoCompleted && !fileExists) {
+                    // File missing → someone cleared data, allow re-import
+                    mongoCompleted = false;
+                    log.info("[ProjectLoadController] MongoDB says COMPLETED but file missing — forcing re-import for {}", projectId);
+                } else if (!mongoCompleted && fileExists) {
+                    // MongoDB not completed but file exists → check Fuseki as fallback
+                    fusekiHasData = datasetService.hasGraphData(projectId);
+                }
+
+                boolean shouldSkip = owlapiReady || mongoCompleted || fusekiHasData;
+                log.info("[ProjectLoadController] Desktop skip check: owlapi={} mongoDone={} fileExists={} fuseki={} → skip={}",
+                    owlapiReady, mongoCompleted, fileExists, fusekiHasData, shouldSkip);
+
+                if (shouldSkip) {
+                    log.info("[ProjectLoadController] Desktop shortcut — skipping re-import for {}", projectId);
+                    if (!owlapiReady && desktopOntologyLoader != null) {
+                        desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
+                    }
+                    return ResponseEntity.ok(Map.of(
+                        "success", true, "projectId", projectId,
+                        "status", "ALREADY_LOADED", "source", "desktop-cache-skip"
+                    ));
+                }
+            }
+
             // 1. Look up file_metadata by UUID fileId to resolve gridfsId and fileName
             Document fileMeta = mongoTemplate.getDb()
                     .getCollection("file_metadata")
@@ -485,6 +548,8 @@ public class ProjectLoadController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error",
                             e.getMessage() != null ? e.getMessage() : "Unexpected error"));
+        } finally {
+            importInFlight.remove(projectId);
         }
     }
 

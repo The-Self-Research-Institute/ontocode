@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Loader2, Clock, Users } from "lucide-react";
 
+const MODAL_FADE_MS = 220;
+
 export const LoadingDialog = ({
   isOpen,
   message,
@@ -20,16 +22,31 @@ export const LoadingDialog = ({
   totalInQueue?: number;
   estimatedWaitTimeMs?: number;
 }) => {
-  // Elapsed time counter — shows the import is actively working, not stuck
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [mounted, setMounted] = useState(isOpen);
+  const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (!isOpen) { setElapsedSeconds(0); return; }
-    const t = setInterval(() => setElapsedSeconds(s => s + 1), 1000);
-    return () => clearInterval(t);
+    if (isOpen) {
+      setMounted(true);
+      const frame = requestAnimationFrame(() => setVisible(true));
+      return () => cancelAnimationFrame(frame);
+    }
+    setVisible(false);
+    const t = setTimeout(() => setMounted(false), MODAL_FADE_MS);
+    return () => clearTimeout(t);
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (!mounted) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const t = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [mounted]);
+
+  if (!mounted) return null;
 
   const formatElapsed = (s: number) => {
     if (s < 60) return `${s}s`;
@@ -39,7 +56,6 @@ export const LoadingDialog = ({
   const hasProgress = progress !== undefined && progress > 0;
   const hasQueue = queuePosition !== undefined && queuePosition > 0;
 
-  // Derive a human-readable phase from the status message
   const phaseLabel = (() => {
     const msg = (loadingStatusMessage || "").toLowerCase();
     if (msg.includes("detect") || msg.includes("format")) return "Detecting format…";
@@ -55,35 +71,48 @@ export const LoadingDialog = ({
   })();
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60]">
+    <div
+      className={`fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity ease-out ${
+        visible ? "opacity-100" : "opacity-0 pointer-events-none"
+      }`}
+      style={{ transitionDuration: `${MODAL_FADE_MS}ms` }}
+      role="dialog"
+      aria-modal="true"
+      aria-busy="true"
+      aria-label={message || "Loading ontology"}
+    >
       <div
-        className="rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden border"
-        style={{ backgroundColor: "var(--color-surface, #1e1e2e)", borderColor: "var(--color-border, #3b3b5c)" }}
+        className={`mx-4 w-full max-w-sm overflow-hidden rounded-2xl border shadow-2xl transition-all ease-out ${
+          visible ? "scale-100 opacity-100" : "scale-[0.98] opacity-0"
+        }`}
+        style={{
+          transitionDuration: `${MODAL_FADE_MS}ms`,
+          backgroundColor: "var(--color-surface, #1e1e2e)",
+          borderColor: "var(--color-border, #3b3b5c)",
+        }}
       >
-        {/* Progress bar at top */}
-        <div className="h-1.5 bg-gray-700 relative overflow-hidden">
+        <div className="relative h-1.5 overflow-hidden bg-gray-700">
           {hasProgress ? (
             <div
               className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 transition-all duration-500"
               style={{ width: `${progress}%` }}
             />
           ) : (
-            /* Indeterminate shimmer when no progress data */
-            <div className="h-full w-1/3 bg-gradient-to-r from-transparent via-purple-500 to-transparent animate-[shimmer_1.5s_infinite]"
-                 style={{ animation: "shimmer 1.5s ease-in-out infinite" }} />
+            <div
+              className="ontocode-loading-shimmer h-full w-1/3 bg-gradient-to-r from-transparent via-purple-500 to-transparent"
+            />
           )}
         </div>
 
         <div className="p-6">
-          {/* Icon + title */}
-          <div className="flex flex-col items-center text-center mb-4">
+          <div className="mb-4 flex flex-col items-center text-center">
             <div className="relative mb-3">
-              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-900 to-indigo-900 flex items-center justify-center">
-                <Loader2 size={22} className="text-purple-400 animate-spin" />
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-purple-900 to-indigo-900">
+                <Loader2 size={22} className="animate-spin text-purple-400" />
               </div>
               {hasProgress && (
-                <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-purple-600 text-white text-[9px] font-bold flex items-center justify-center shadow">
-                  {Math.round(progress)}%
+                <div className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-purple-600 text-[9px] font-bold text-white shadow">
+                  {Math.round(progress!)}%
                 </div>
               )}
             </div>
@@ -92,20 +121,24 @@ export const LoadingDialog = ({
               {message || "Loading Ontology"}
             </h3>
             {projectName && (
-              <p className="text-xs mt-0.5 truncate w-full" style={{ color: "var(--color-text-secondary, #94a3b8)" }}>
+              <p
+                className="mt-0.5 w-full truncate text-xs"
+                style={{ color: "var(--color-text-secondary, #94a3b8)" }}
+              >
                 {projectName}
               </p>
             )}
           </div>
 
-          {/* Progress bar (detailed) */}
           {hasProgress && (
             <div className="mb-3">
-              <div className="flex justify-between mb-1">
-                <span className="text-xs" style={{ color: "var(--color-text-secondary, #94a3b8)" }}>Progress</span>
-                <span className="text-xs font-bold text-purple-400">{Math.round(progress)}%</span>
+              <div className="mb-1 flex justify-between">
+                <span className="text-xs" style={{ color: "var(--color-text-secondary, #94a3b8)" }}>
+                  Progress
+                </span>
+                <span className="text-xs font-bold text-purple-400">{Math.round(progress!)}%</span>
               </div>
-              <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-700">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-purple-500 to-indigo-400 transition-all duration-500"
                   style={{ width: `${progress}%` }}
@@ -114,54 +147,59 @@ export const LoadingDialog = ({
             </div>
           )}
 
-          {/* Current phase */}
-          <div className="text-xs text-center mb-3 px-3 py-2 rounded-lg"
-               style={{ backgroundColor: "rgba(99,102,241,0.1)", color: "rgb(167,139,250)" }}>
+          <div
+            className="mb-3 rounded-lg px-3 py-2 text-center text-xs"
+            style={{ backgroundColor: "rgba(99,102,241,0.1)", color: "rgb(167,139,250)" }}
+          >
             {phaseLabel}
           </div>
 
-          {/* Elapsed time + note */}
-          <div className="flex items-center justify-between text-xs"
-               style={{ color: "var(--color-text-secondary, #64748b)" }}>
+          <div
+            className="flex items-center justify-between text-xs"
+            style={{ color: "var(--color-text-secondary, #64748b)" }}
+          >
             <div className="flex items-center gap-1">
               <Clock size={11} />
-              <span>Running: <span className="font-mono font-semibold text-purple-400">{formatElapsed(elapsedSeconds)}</span></span>
+              <span>
+                Running:{" "}
+                <span className="font-mono font-semibold text-purple-400">
+                  {formatElapsed(elapsedSeconds)}
+                </span>
+              </span>
             </div>
-            {!hasQueue && (
-              <span className="text-[10px] opacity-60">Large files may take 1–3 min</span>
-            )}
+            {!hasQueue && <span className="text-[10px] opacity-60">Large files may take 1–3 min</span>}
           </div>
 
-          {/* Queue info */}
           {hasQueue && (
-            <div className="mt-3 rounded-lg px-3 py-2 border text-xs"
-                 style={{ backgroundColor: "rgba(147,51,234,0.05)", borderColor: "rgba(147,51,234,0.15)" }}>
-              <div className="flex items-center justify-between text-purple-400 font-medium mb-1">
-                <span className="flex items-center gap-1"><Clock size={11} /> Queue #{queuePosition}</span>
+            <div
+              className="mt-3 rounded-lg border px-3 py-2 text-xs"
+              style={{
+                backgroundColor: "rgba(147,51,234,0.05)",
+                borderColor: "rgba(147,51,234,0.15)",
+              }}
+            >
+              <div className="mb-1 flex items-center justify-between font-medium text-purple-400">
+                <span className="flex items-center gap-1">
+                  <Clock size={11} /> Queue #{queuePosition}
+                </span>
                 {totalInQueue !== undefined && totalInQueue > 0 && (
-                  <span className="text-[10px] bg-purple-900 text-purple-300 px-1.5 py-0.5 rounded-full">
+                  <span className="rounded-full bg-purple-900 px-1.5 py-0.5 text-[10px] text-purple-300">
                     {totalInQueue} in queue
                   </span>
                 )}
               </div>
-              {queuePosition > 1 && (
+              {queuePosition! > 1 && (
                 <div className="flex items-center gap-1 text-purple-500">
                   <Users size={10} />
-                  <span>{queuePosition - 1} file{queuePosition - 1 !== 1 ? "s" : ""} ahead</span>
+                  <span>
+                    {queuePosition! - 1} file{queuePosition! - 1 !== 1 ? "s" : ""} ahead
+                  </span>
                 </div>
               )}
             </div>
           )}
         </div>
       </div>
-
-      {/* Shimmer keyframe */}
-      <style>{`
-        @keyframes shimmer {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(400%); }
-        }
-      `}</style>
     </div>
   );
 };

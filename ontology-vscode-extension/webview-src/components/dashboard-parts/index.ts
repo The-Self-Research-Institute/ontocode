@@ -1,4 +1,5 @@
 export { LoadingDialog } from "./LoadingDialogs";
+export { SectionLoadingBar } from "./SectionLoadingBar";
 export { ReasonerExplanationModal } from "./ReasonerExplanationModal";
 export { ReasonerSettingsDialog } from "./ReasonerSettingsDialog";
 export { PluginPlaceholder } from "./PluginPlaceholder";

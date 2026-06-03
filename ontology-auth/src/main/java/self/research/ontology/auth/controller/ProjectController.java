@@ -47,6 +47,9 @@ public class ProjectController {
             .connectTimeout(java.time.Duration.ofSeconds(10))
             .build();
 
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
     @Value("${storage.limit.free.gb:10}")
     private double storageLimitFreeGb;
 
@@ -147,11 +150,17 @@ public class ProjectController {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
             try {
-                return jwtUtil.extractClaim(token, claims -> claims.get("workspaceId", String.class));
+                String workspaceId = jwtUtil.extractClaim(token, claims -> claims.get("workspaceId", String.class));
+                if (workspaceId != null && !workspaceId.isEmpty()) {
+                    return workspaceId;
+                }
             } catch (Exception e) {
                 log.error("Error extracting workspaceId from token", e);
-                return null;
             }
+        }
+        // Desktop build sends no JWT — scope everything to the single local workspace.
+        if (desktopMode) {
+            return "desktop-workspace-local";
         }
         return null;
     }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   ChevronRight,
   ChevronDown,
@@ -100,6 +100,26 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   const [renamingItemId, setRenamingItemId] = useState<string | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const { state: collaborationState, publishCursor } = useCollaboration();
+
+  // ── Virtualized rendering ─────────────────────────────────────────────────
+  // Keep render cost O(visible rows) instead of O(total nodes) so the tree stays
+  // smooth on large ontologies with tens of thousands of expanded entities —
+  // the same windowing technique Monaco/VS Code use to keep huge files fast.
+  const ROW_HEIGHT = 24;            // px; virtual rows are clipped to this height
+  const OVERSCAN = 12;              // extra rows rendered above/below the viewport
+  const VIRTUALIZE_THRESHOLD = 200; // below this, render normally (no windowing)
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(600);
+
+  const handleTreeScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+    if (e.currentTarget.clientHeight !== viewportH) setViewportH(e.currentTarget.clientHeight);
+  }, [viewportH]);
+
+  useEffect(() => {
+    if (scrollRef.current) setViewportH(scrollRef.current.clientHeight);
+  }, [filteredData, entitiesTab]);
   
   // Get active users as array and filter by current project
   const allUsers = Array.from(collaborationState.activeUsers.values());
@@ -207,7 +227,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
     setRenamingItemId(item.id);
   };
 
-  const renderItem = (item: SelectableItem, level = 0): React.JSX.Element => {
+  const renderRow = (item: SelectableItem, level = 0): React.JSX.Element => {
     const isSelected = selectedItem?.id === item.id;
     // An item is a "TreeNode" if it's in the Classes, ObjectProperties, DataProperties, or AnnotationProperties tab.
     // We check 'hasChildren' to know if it's expandable.
@@ -248,8 +268,8 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
     }
 
     return (
-      <div key={item.id}>
-        <div 
+        <div
+          key={item.id}
           data-class-id={item.id}
           draggable={canDrag}
           onDragStart={(e) => handleDragStart(e, item)}
@@ -391,8 +411,62 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           )}
         </div>
         
-        {/* Render Children Recursively */}
-        {isTreeNode && isExpanded && 'children' in item && Array.isArray((item as TreeNode).children) && (item as TreeNode).children!.map((child: TreeNode) => renderItem(child, level + 1))}
+    );
+  };
+
+  // Recursive wrapper used by the non-virtualized path: a row plus its expanded
+  // descendants. The virtualized path renders flattened rows directly instead.
+  const renderItem = (item: SelectableItem, level = 0): React.JSX.Element => {
+    const isTreeNodeTab = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties';
+    const nodeHasChildren = 'hasChildren' in item && (item as TreeNode).hasChildren;
+    const nodeExpanded = isTreeNodeTab && !!nodeHasChildren && expandedNodes.includes(item.id);
+    return (
+      <div key={item.id}>
+        {renderRow(item, level)}
+        {isTreeNodeTab && nodeExpanded && 'children' in item && Array.isArray((item as TreeNode).children) && (item as TreeNode).children!.map((child: TreeNode) => renderItem(child, level + 1))}
+      </div>
+    );
+  };
+
+  // Flatten the currently-visible tree (respecting expanded state) into a
+  // positional list. This is the data the virtualizer slices into a window.
+  const flatNodes = useMemo(() => {
+    const isTreeNodeTab = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties';
+    const out: { item: SelectableItem; level: number }[] = [];
+    const walk = (items: SelectableItem[], level: number) => {
+      for (const item of items) {
+        out.push({ item, level });
+        const hasKids = 'hasChildren' in item && (item as TreeNode).hasChildren;
+        const expanded = isTreeNodeTab && !!hasKids && expandedNodes.includes(item.id);
+        if (expanded && 'children' in item && Array.isArray((item as TreeNode).children)) {
+          walk((item as TreeNode).children as SelectableItem[], level + 1);
+        }
+      }
+    };
+    walk(filteredData || [], 0);
+    return out;
+  }, [filteredData, expandedNodes, entitiesTab]);
+
+  // Render the hierarchy body. Large asserted trees are windowed; small lists and
+  // inferred mode (which can have variable-height rows) render normally.
+  const renderHierarchyBody = (): React.ReactNode => {
+    if (viewMode !== 'asserted' || flatNodes.length <= VIRTUALIZE_THRESHOLD) {
+      return (filteredData || []).map(node => renderItem(node));
+    }
+    const total = flatNodes.length;
+    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+    const visibleCount = Math.ceil(viewportH / ROW_HEIGHT) + OVERSCAN * 2;
+    const end = Math.min(total, start + visibleCount);
+    const slice = flatNodes.slice(start, end);
+    return (
+      <div style={{ height: total * ROW_HEIGHT, position: 'relative' }}>
+        <div style={{ position: 'absolute', top: start * ROW_HEIGHT, left: 0, right: 0 }}>
+          {slice.map(({ item, level }) => (
+            <div key={item.id} style={{ height: ROW_HEIGHT, overflow: 'hidden' }}>
+              {renderRow(item, level)}
+            </div>
+          ))}
+        </div>
       </div>
     );
   };
@@ -684,21 +758,26 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       </div>
       
       {/* Tree/List View */}
-      <div className="flex-1 overflow-y-auto p-1">
-        {/* Loading skeleton — shown while hierarchy data is being fetched */}
-        {isLoading && (!filteredData || filteredData.length === 0) ? (
-          <div className="p-2 space-y-1">
+      <div ref={scrollRef} onScroll={handleTreeScroll} className="flex-1 overflow-y-auto p-1">
+        {/* Skeleton + footer status (preferred over dimmed tree / "Refreshing…" overlay) */}
+        {isLoading ? (
+          <div className="p-2 space-y-1" role="status" aria-live="polite">
             {[...Array(12)].map((_, i) => (
-              <div key={i} className="flex items-center gap-2 px-2 py-1 rounded animate-pulse"
-                   style={{ paddingLeft: `${(i % 3) * 16 + 8}px` }}>
-                <div className="w-3 h-3 rounded bg-gray-200 flex-shrink-0" />
-                <div className="h-3 rounded bg-gray-200 flex-shrink-0"
-                     style={{ width: `${60 + (i * 23) % 80}px` }} />
+              <div
+                key={i}
+                className="flex items-center gap-2 rounded px-2 py-1 animate-pulse"
+                style={{ paddingLeft: `${(i % 3) * 16 + 8}px` }}
+              >
+                <div className="h-3 w-3 flex-shrink-0 rounded bg-gray-200" />
+                <div
+                  className="h-3 flex-shrink-0 rounded bg-gray-200"
+                  style={{ width: `${60 + ((i * 23) % 80)}px` }}
+                />
               </div>
             ))}
-            <div className="px-2 pt-2 text-xs text-gray-400 flex items-center gap-1">
-              <div className="w-3 h-3 border-2 border-purple-300 border-t-purple-600 rounded-full animate-spin flex-shrink-0" />
-              <span>Loading hierarchy…</span>
+            <div className="flex items-center gap-1 px-2 pt-2 text-xs text-purple-500">
+              <div className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-purple-300 border-t-purple-600" />
+              <span>Loading {currentLabel.toLowerCase()}…</span>
             </div>
           </div>
         ) : (viewMode === 'inferred' && !isReasonerRunning) ? (
@@ -710,7 +789,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             <p className="text-xs text-gray-500 mb-3">Run the reasoner to generate the inferred hierarchy</p>
             <p className="text-xs text-gray-400">Go to the <strong>Reasoner</strong> tab and click <strong>Start</strong></p>
           </div>
-        ) : filteredData && filteredData.length > 0 ? filteredData.map(node => renderItem(node)) :
+          ) : filteredData && filteredData.length > 0 ? (
+            <div className="ontocode-fade-in">{renderHierarchyBody()}</div>
+          ) :
           (searchQuery ? (
              <div className="p-4 text-center text-gray-600">No items found for "{searchQuery}".</div>
           ) : viewMode === 'inferred' ? (
