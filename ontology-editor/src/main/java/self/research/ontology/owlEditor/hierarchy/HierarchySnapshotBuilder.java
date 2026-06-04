@@ -27,7 +27,7 @@ public class HierarchySnapshotBuilder {
                 .count();
     }
 
-    public List<OntologyDto.TreeNode> buildTopLevel(OWLOntology ont, OWLReasoner reasoner, int limit) {
+    public List<OntologyDto.TreeNode> buildTopLevel(OWLOntology ont, OWLReasoner reasoner, int limit, int offset) {
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
         return reasoner
                 .getSubClasses(df.getOWLThing(), true)
@@ -35,6 +35,7 @@ public class HierarchySnapshotBuilder {
                 .filter(c -> !c.isOWLNothing() && !c.isAnonymous())
                 .filter(c -> !hasNamedSuperclassViaReasoner(reasoner, df, c))
                 .sorted(Comparator.comparing(c -> getLabel(ont, c).toLowerCase(Locale.ROOT)))
+                .skip(Math.max(0, offset))
                 .limit(Math.max(1, limit))
                 .map(c -> toTreeNode(ont, reasoner, c, null))
                 .collect(Collectors.toList());
