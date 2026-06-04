@@ -2001,8 +2001,9 @@ public class ProjectController {
     public ResponseEntity<?> getStorageUsage(@RequestParam(required = false) String workspaceId) {
         try {
             String email = getCurrentUserEmail();
-            Optional<User> userOpt = userRepository.findByEmail(email);
+            Optional<User> userOpt = userRepository.findByEmailIgnoreCase(email);
             if (userOpt.isEmpty()) {
+                log.warn("storage-usage: no user for principal email={}", email);
                 return ResponseEntity.status(404).body(Map.of("error", "User not found"));
             }
             User user = userOpt.get();

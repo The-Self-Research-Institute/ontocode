@@ -69,11 +69,15 @@ export function extractDeclarationCountsPatch(countsRes: any): Record<string, nu
   const individualCount = num(data.individualCount) ?? num(nested.individuals);
   const annotationPropertyCount =
     num(data.annotationPropertyCount) ?? num(nested.annotationProperties);
+  const gciCount = num(data.gciCount);
+  const hiddenGciCount = num(data.hiddenGciCount);
   if (classCount !== undefined) patch.classCount = classCount;
   if (objectPropertyCount !== undefined) patch.objectPropertyCount = objectPropertyCount;
   if (dataPropertyCount !== undefined) patch.dataPropertyCount = dataPropertyCount;
   if (individualCount !== undefined) patch.individualCount = individualCount;
   if (annotationPropertyCount !== undefined) patch.annotationPropertyCount = annotationPropertyCount;
+  if (gciCount !== undefined) patch.gciCount = gciCount;
+  if (hiddenGciCount !== undefined) patch.hiddenGciCount = hiddenGciCount;
   return Object.keys(patch).length > 0 ? patch : null;
 }
 

@@ -101,8 +101,13 @@ public class GraphDBDatasetService {
     @Autowired(required = false)
     private TopLevelClassCacheService topLevelCacheService;
 
-    // Shared repository connection
+    // Shared repository connection (legacy / fallback for existing data)
     private Repository repository;
+
+    // Per-file repository cache: projectId → dedicated SPARQLRepository for that file's TDB2 dataset.
+    // Gives each file its own Fuseki dataset so buffer-pool / GC pressure from large ontologies
+    // (GO-plus, NCBITaxon) cannot degrade queries against smaller co-resident files.
+    private final Map<String, Repository> perFileRepositories = new ConcurrentHashMap<>();
 
     // Shared Java HttpClient — reused for GSP batch POSTs and direct file uploads.
     // HttpClient is expensive to construct (thread pools); one instance per service is correct.
@@ -322,7 +327,101 @@ public class GraphDBDatasetService {
         }
         return repository;
     }
-    
+
+    /**
+     * Return a dedicated per-file SPARQLRepository for the given projectId.
+     *
+     * On first call for a projectId:
+     *  1. Derive the Fuseki base URL from fusekiQueryEndpoint (strip the path suffix).
+     *  2. Create a new TDB2 dataset on that Fuseki server via the admin REST API
+     *     (POST /$/datasets), if it doesn't already exist.
+     *  3. Build a SPARQLRepository pointing at /proj-{id}/query and /proj-{id}/update.
+     *  4. Cache and return it.
+     *
+     * Falls back to the shared repository if dataset creation fails, so existing behaviour
+     * is preserved for any error path.
+     */
+    public Repository getRepository(String projectId) {
+        if (projectId == null || projectId.isBlank()) return getRepository();
+        return perFileRepositories.computeIfAbsent(projectId, pid -> {
+            try {
+                // Derive base URL: "http://host:port/ontocode/query" → "http://host:port"
+                java.net.URI endpointUri = java.net.URI.create(fusekiQueryEndpoint);
+                String base = endpointUri.getScheme() + "://" + endpointUri.getHost()
+                    + (endpointUri.getPort() != -1 ? ":" + endpointUri.getPort() : "");
+                // Dataset name must be URL-safe; projectId uses [a-zA-Z0-9-] so it's fine.
+                String dsName = toDatasetName(pid);
+
+                // Create dataset via Fuseki admin API (idempotent — 409 = already exists, OK)
+                ensureFusekiDataset(base, dsName);
+
+                String queryUrl  = base + "/" + dsName + "/query";
+                String updateUrl = base + "/" + dsName + "/update";
+
+                SPARQLRepository repo = new SPARQLRepository(queryUrl, updateUrl);
+                if (fusekiAdminUser != null && !fusekiAdminUser.isBlank()) {
+                    BasicCredentialsProvider creds = new BasicCredentialsProvider();
+                    creds.setCredentials(AuthScope.ANY,
+                        new UsernamePasswordCredentials(fusekiAdminUser, fusekiAdminPassword));
+                    CloseableHttpClient httpClient = HttpClients.custom()
+                        .setDefaultCredentialsProvider(creds).build();
+                    SharedHttpClientSessionManager sm = new SharedHttpClientSessionManager();
+                    sm.setHttpClient(httpClient);
+                    repo.setHttpClientSessionManager(sm);
+                }
+                repo.init();
+                log.info("[PerFileDS] Created/reused Fuseki dataset '{}' for project {}", dsName, pid);
+                return repo;
+            } catch (Exception e) {
+                log.warn("[PerFileDS] Could not create per-file dataset for {} — falling back to shared: {}", pid, e.getMessage());
+                return getRepository(); // graceful fallback
+            }
+        });
+    }
+
+    /** Convert a projectId to a Fuseki-safe dataset name (max 64 chars, alphanumeric + hyphens). */
+    private String toDatasetName(String projectId) {
+        // projectId format: "proj-abc--uuid" — already URL-safe, just cap length.
+        String safe = projectId.replaceAll("[^a-zA-Z0-9\\-]", "-");
+        return safe.length() > 64 ? safe.substring(0, 64) : safe;
+    }
+
+    /** Create a TDB2 dataset on the Fuseki server if it does not already exist. */
+    private void ensureFusekiDataset(String fusekiBase, String datasetName) throws Exception {
+        // Use URLConnection to avoid Java HttpClient issues with the '$' character in the path
+        String adminUrl = fusekiBase + "/$/datasets";
+        String body = "dbName=" + URLEncoder.encode(datasetName, StandardCharsets.UTF_8)
+                    + "&dbType=tdb2";
+        String auth = "Basic " + java.util.Base64.getEncoder()
+            .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword).getBytes(StandardCharsets.UTF_8));
+
+        java.net.URL url = new java.net.URL(adminUrl);
+        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        conn.setRequestProperty("Authorization", auth);
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(60000); // Fuseki TDB2 dataset creation can take 30-60s under load
+        conn.setDoOutput(true);
+        try (java.io.OutputStream os = conn.getOutputStream()) {
+            os.write(body.getBytes(StandardCharsets.UTF_8));
+        }
+        int status = conn.getResponseCode();
+        conn.disconnect();
+        if (status == 200 || status == 201 || status == 409) {
+            return;
+        }
+        throw new RuntimeException("Fuseki dataset creation returned HTTP " + status);
+    }
+
+    /** Get the GSP (Graph Store Protocol) endpoint URL for a per-file dataset. */
+    public String getPerFileGspEndpoint(String projectId) {
+        java.net.URI endpointUri = java.net.URI.create(fusekiQueryEndpoint);
+        String base = endpointUri.getScheme() + "://" + endpointUri.getHost()
+            + (endpointUri.getPort() != -1 ? ":" + endpointUri.getPort() : "");
+        return base + "/" + toDatasetName(projectId) + "/data";
+    }
+
     /**
      * Get graph URI for a project
      */
@@ -346,10 +445,14 @@ public class GraphDBDatasetService {
      */
     public boolean hasGraphData(String projectId) {
         try {
-            Repository repo = getRepository();
+            // Use per-file dataset if it exists; otherwise fall back to shared named graph.
+            boolean hasPerFile = perFileRepositories.containsKey(projectId);
+            Repository repo = hasPerFile ? perFileRepositories.get(projectId) : getRepository();
             String graphUri = getGraphUri(projectId);
             try (RepositoryConnection conn = repo.getConnection()) {
-                return countGraphTriplesSparql(conn, graphUri) > 0;
+                return hasPerFile
+                    ? conn.hasStatement(null, null, null, false)  // per-file: any triple in default graph
+                    : countGraphTriplesSparql(conn, graphUri) > 0;
             }
         } catch (Exception e) {
             log.warn("[hasGraphData] Could not check graph for project {}: {}", projectId, e.getMessage());
@@ -592,7 +695,9 @@ public class GraphDBDatasetService {
      * in-memory cache.
      */
     private TupleQueryResult execSelectGraphDB(String projectId, String sparqlQuery, boolean includeInferred) {
-        Repository repo = getRepository();
+        // Use per-file dataset if available, else fall back to shared dataset + named graph.
+        boolean hasPerFile = perFileRepositories.containsKey(projectId);
+        Repository repo = hasPerFile ? perFileRepositories.get(projectId) : getRepository();
         String graphUri = getGraphUri(projectId);
         long totalStart = System.nanoTime();
 
@@ -744,7 +849,8 @@ public class GraphDBDatasetService {
      * Execute a SPARQL ASK query
      */
     public boolean execAsk(String projectId, String sparqlQuery) {
-        Repository repo = getRepository();
+        boolean hasPerFile = perFileRepositories.containsKey(projectId);
+        Repository repo = hasPerFile ? perFileRepositories.get(projectId) : getRepository();
         String graphUri = getGraphUri(projectId);
         
         try (RepositoryConnection conn = repo.getConnection()) {
@@ -780,7 +886,8 @@ public class GraphDBDatasetService {
      * Execute a SPARQL UPDATE operation
      */
     public void execUpdate(String projectId, String sparqlUpdate) {
-        Repository repo = getRepository();
+        boolean hasPerFile = perFileRepositories.containsKey(projectId);
+        Repository repo = hasPerFile ? perFileRepositories.get(projectId) : getRepository();
         String graphUri = getGraphUri(projectId);
         long totalStart = System.nanoTime();
         
@@ -1290,6 +1397,10 @@ public class GraphDBDatasetService {
                                      ImportOptions options,
                                      ProgressListener progressListener) {
         long start = System.nanoTime();
+        // Ensure per-file dataset exists before any upload; this is the authoritative trigger
+        // that creates the isolated TDB2 dataset for this file project.
+        getRepository(projectId);
+
         ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
         ImportOptions.ImportMode mode = resolvedOptions.getMode() != null
                 ? resolvedOptions.getMode()
@@ -1329,9 +1440,14 @@ public class GraphDBDatasetService {
                 }
             }
 
-            // Step 2: PUT entire file to Fuseki Graph Store Protocol endpoint
-            // Fuseki GSP: PUT {gspEndpoint}?graph={graphUri} — atomically replaces named graph
-            String url = fusekiGspEndpoint + "?graph=" + URLEncoder.encode(graphUri, StandardCharsets.UTF_8);
+            // Step 2: PUT entire file to Fuseki Graph Store Protocol endpoint.
+            // For per-file datasets, use the dedicated dataset's GSP endpoint (default graph).
+            // For the shared dataset, use the named graph URL.
+            boolean hasPerFileDs = perFileRepositories.containsKey(projectId);
+            String gspBase = hasPerFileDs ? getPerFileGspEndpoint(projectId) : fusekiGspEndpoint;
+            String url = hasPerFileDs
+                ? gspBase  // per-file dataset: PUT to default graph
+                : gspBase + "?graph=" + URLEncoder.encode(graphUri, StandardCharsets.UTF_8);
 
             log.info("[DirectUpload] PUTting to Fuseki GSP: {}", url);
 
@@ -1774,10 +1890,11 @@ public class GraphDBDatasetService {
      */
     public void clearDataset(String projectId) {
         try {
-            Repository repo = getRepository();
+            boolean hasPerFile = perFileRepositories.containsKey(projectId);
+            Repository repo = hasPerFile ? perFileRepositories.get(projectId) : getRepository();
             String graphUri = getGraphUri(projectId);
 
-            log.info("Clearing dataset for project: {} (graph: {})", projectId, graphUri);
+            log.info("Clearing dataset for project: {} (graph: {}, perFile: {})", projectId, graphUri, hasPerFile);
 
             try (RepositoryConnection conn = repo.getConnection()) {
                 List<String> graphs = getAllGraphUris(conn, projectId);

@@ -178,10 +178,17 @@ public class OntologyQueryService {
         // Also skip when Phase 1 itself was slow (>5s): cold TDB2 after a Fuseki restart.
         // In that scenario the COUNT timed out so the project isn't in knownLargeProjects yet,
         // but the MINUS-based orphan scan would add another 7-40 s and breach the ALB 60 s limit.
+        // Phase 2 (orphan supplement) skip logic:
+        // For large ontologies, the full MINUS-based orphan scan can take 7-40s and exceed
+        // the ALB 60s timeout. However completely skipping Phase 2 means union members that
+        // have no explicit subClassOf wrongly appear at root (or disappear entirely).
+        // With per-file datasets, each project has its own isolated TDB2 so the orphan
+        // scan no longer causes cross-project interference. Skip only when Fuseki is cold
+        // (p1 took >10s = first query after restart) to avoid 60s timeout breaches.
         boolean knownLarge = datasetService.isKnownLargeProject(projectId);
-        if (knownLarge || p1Duration > 5000) {
-            log.info("[PERF] Skipping orphan ASK for project={} (p1Duration={}ms, knownLarge={})",
-                     projectId, p1Duration, knownLarge);
+        if (p1Duration > 10000) {
+            log.info("[PERF] Skipping orphan ASK for project={} (p1Duration={}ms, cold Fuseki)",
+                     projectId, p1Duration);
             List<OntologyDto.TreeNode> merged = new java.util.ArrayList<>(phase1);
             merged.sort(java.util.Comparator.comparing(n -> n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
             List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
@@ -229,16 +236,26 @@ public class OntologyQueryService {
                     FILTER(isIRI(?super) && ?super != <http://www.w3.org/2002/07/owl#Thing> && ?super != ?c)
                   }
                   MINUS {
-                    # Exclude classes that are members of a union/intersection that
-                    # defines an equivalentClass of a named class.
-                    # e.g. Viruses is a union member of "cellular organisms or viruses"
-                    # but has no explicit rdfs:subClassOf to the named union IRI.
-                    ?namedParent owl:equivalentClass/owl:unionOf/rdf:rest*/rdf:first ?c .
+                    # Exclude union/intersection members where the containing class is named.
+                    # Uses explicit blank-node traversal rather than property paths to handle
+                    # all RDF serialisations (OWL/XML, RDF/XML, Turtle) consistently.
+                    ?namedParent owl:equivalentClass ?ec .
+                    { ?ec owl:unionOf/rdf:rest*/rdf:first ?c . }
+                    UNION
+                    { ?ec owl:intersectionOf/rdf:rest*/rdf:first ?c . }
                     FILTER(isIRI(?namedParent) && ?namedParent != ?c)
                   }
                   MINUS {
-                    ?namedParent owl:equivalentClass/owl:intersectionOf/rdf:rest*/rdf:first ?c .
+                    # Direct union/intersection member (no equivalentClass wrapper)
+                    ?namedParent owl:unionOf/rdf:rest*/rdf:first ?c .
                     FILTER(isIRI(?namedParent) && ?namedParent != ?c)
+                  }
+                  MINUS {
+                    # Also exclude members of anonymous unions that are the range
+                    # of a subClassOf axiom (covers GCI-style union parents)
+                    ?namedParent rdfs:subClassOf ?anon .
+                    ?anon owl:unionOf/rdf:rest*/rdf:first ?c .
+                    FILTER(isIRI(?namedParent) && isBlank(?anon) && ?namedParent != ?c)
                   }
                 }
                 ORDER BY ?c
@@ -375,17 +392,33 @@ public class OntologyQueryService {
         // No ORDER BY: Fuseki can apply LIMIT early (stream-stop) instead of materializing
         // all children, sorting, then cutting — critical for large taxonomy nodes.
         // Sorting is done in Java after the fact; @Cacheable means cost is paid only once.
+        // DISTINCT prevents duplicate children when the ontology has redundant
+        // rdfs:subClassOf triples for the same (child, parent) pair — common in
+        // OWL/RDF serialisations that materialise inferred triples alongside asserted ones.
+        // FILTER isIRI excludes anonymous blank-node expressions that can appear as
+        // spurious children when complex restrictions are serialised.
+        // Exclude union members from asserted children.
+        // GO-plus uses: ParentClass owl:equivalentClass [ owl:unionOf (A B C) ]
+        // A, B, C may have explicit rdfs:subClassOf ParentClass triples (serialised inferences).
+        // In the ASSERTED hierarchy these should NOT appear as children of ParentClass —
+        // Protégé only shows them as children of their explicit named parents.
         String query = PREFIXES + """
-            SELECT ?child ?label ?description ?hasChildren
+            SELECT DISTINCT ?child ?label ?description ?hasChildren
             WHERE {
               ?child rdfs:subClassOf <%s> .
-              FILTER(?child != <%s>)
+              FILTER(isIRI(?child) && ?child != <%s>)
+              # Exclude union members: <%s> owl:equivalentClass/owl:unionOf/.../child
+              FILTER NOT EXISTS {
+                { <%s> owl:unionOf/rdf:rest*/rdf:first ?child . }
+                UNION
+                { <%s> owl:equivalentClass/owl:unionOf/rdf:rest*/rdf:first ?child . }
+              }
               OPTIONAL { ?child rdfs:label ?label }
               OPTIONAL { ?child rdfs:comment ?description }
-              BIND(EXISTS { ?grandchild rdfs:subClassOf ?child . FILTER(?grandchild != ?child) } AS ?hasChildren)
+              BIND(EXISTS { ?grandchild rdfs:subClassOf ?child . FILTER(?grandchild != ?child && isIRI(?grandchild)) } AS ?hasChildren)
             }
             LIMIT %d OFFSET %d
-            """.formatted(parentIri, parentIri, Math.max(1, limit), Math.max(0, offset));
+            """.formatted(parentIri, parentIri, parentIri, parentIri, parentIri, Math.max(1, limit), Math.max(0, offset));
 
         List<OntologyDto.TreeNode> result = mapTreeNodes(projectId, query, parentIri);
         result.sort(Comparator.comparing(n -> n.getLabel() == null ? "" : n.getLabel().toLowerCase(java.util.Locale.ROOT)));

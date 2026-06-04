@@ -264,7 +264,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   //      and force-refresh the JWT so members pick up the new plan
   //      without having to switch workspaces and back.
   useEffect(() => {
-    if (!user?.workspaceId) return;
+    if (isDesktop() || !user?.workspaceId) return;
 
     let lastSeenPlan = (user.subscriptionPlan || "").toUpperCase();
     let lastSeenStatus = "";
@@ -375,8 +375,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         console.log("[ProjectDashboard] No projects returned from API");
       }
 
-      // Load workspace members from workspace (includes both active and pending members)
-      if (user?.workspaceId) {
+      // Workspace members / invites are cloud-only — desktop is single-user local.
+      if (!isDesktop() && user?.workspaceId) {
         try {
           const workspaceResponse = await apiClient.get(`/api/workspaces/${user.workspaceId}`);
           const workspaceData = workspaceResponse?.data || workspaceResponse;
@@ -987,7 +987,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   Plan: {subscription.plan.toUpperCase()}
                 </span>
               ))}
-              {isWorkspaceOwner && onOpenSubscriptionPlans && !subscription.isEnterprise && (
+              {!isDesktop() && isWorkspaceOwner && onOpenSubscriptionPlans && !subscription.isEnterprise && (
                 <button
                   onClick={onOpenSubscriptionPlans}
                   className="h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600"
@@ -997,17 +997,19 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   Upgrade Plan
                 </button>
               )}
-              <button
-                onClick={() => {
-                  console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (main button)");
-                  switchWorkspace();
-                }}
-                className="h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600"
-                title="Switch Workspace"
-              >
-                <Building2 size={14} />
-                <span className="hidden sm:inline">Switch Workspace</span>
-              </button>
+              {!isDesktop() && (
+                <button
+                  onClick={() => {
+                    console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (main button)");
+                    switchWorkspace();
+                  }}
+                  className="h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600"
+                  title="Switch Workspace"
+                >
+                  <Building2 size={14} />
+                  <span className="hidden sm:inline">Switch Workspace</span>
+                </button>
+              )}
               {canCreateProjects && (
                 <button
                   onClick={() => setShowCreateProject(true)}
@@ -1173,10 +1175,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                           {project.description || "No description"}
                         </p>
                         <div className="flex items-center gap-4 text-xs text-gray-500">
-                          <span className="flex items-center gap-1">
-                            <Users size={14} />
-                            {project.memberCount} members
-                          </span>
+                          {!isDesktop() && (
+                            <span className="flex items-center gap-1">
+                              <Users size={14} />
+                              {project.memberCount} members
+                            </span>
+                          )}
                           <span className="flex items-center gap-1">
                             <FolderOpen size={14} />
                             {project.fileCount} files
@@ -1251,7 +1255,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
             </div>
           </div>
 
-          {/* Workspace Members Section */}
+          {/* Workspace Members — cloud collaboration only */}
+          {!isDesktop() && (
           <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
@@ -1393,6 +1398,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               )}
             </div>
           </div>
+          )}
         </div>
       </main>
 
@@ -1441,27 +1447,29 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         </div>
       )}
 
-      {/* Invite Member Modal */}
-      <InviteMemberModal
-        isOpen={showInviteMember}
-        onClose={() => setShowInviteMember(false)}
-        workspaceId={user?.workspaceId || "default"}
-        workspaceName={user?.workspaceName || "Workspace"}
-        subscriptionPlan={user?.subscriptionPlan || "FREE"}
-        currentMemberCount={teamMembers.length}
-        maxMembers={subscription.limits.maxTeamMembers}
-        existingMemberEmails={teamMembers.map((m) => m.email)}
-        isWorkspaceOwner={isWorkspaceOwner}
-        onUpgradePlan={() => {
-          setShowInviteMember(false);
-          if (onOpenSubscriptionPlans) {
-            onOpenSubscriptionPlans();
-          } else {
-            window.vscode?.postMessage({ type: "showSubscriptionPlans" });
-          }
-        }}
-        onInvite={handleInviteMember}
-      />
+      {/* Invite Member Modal — cloud only */}
+      {!isDesktop() && (
+        <InviteMemberModal
+          isOpen={showInviteMember}
+          onClose={() => setShowInviteMember(false)}
+          workspaceId={user?.workspaceId || "default"}
+          workspaceName={user?.workspaceName || "Workspace"}
+          subscriptionPlan={user?.subscriptionPlan || "FREE"}
+          currentMemberCount={teamMembers.length}
+          maxMembers={subscription.limits.maxTeamMembers}
+          existingMemberEmails={teamMembers.map((m) => m.email)}
+          isWorkspaceOwner={isWorkspaceOwner}
+          onUpgradePlan={() => {
+            setShowInviteMember(false);
+            if (onOpenSubscriptionPlans) {
+              onOpenSubscriptionPlans();
+            } else {
+              window.vscode?.postMessage({ type: "showSubscriptionPlans" });
+            }
+          }}
+          onInvite={handleInviteMember}
+        />
+      )}
 
       {/* Confirmation Modal */}
       {confirmModal && (
@@ -1537,17 +1545,19 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <FileText size={16} />
                 General
               </button>
-              <button
-                onClick={() => setProjectSettingsTab("members")}
-                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                  projectSettingsTab === "members"
-                    ? "text-purple-600 border-b-2 border-purple-600 bg-purple-50"
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                }`}
-              >
-                <Users size={16} />
-                Members ({projectSettingsModal.members?.length || 0})
-              </button>
+              {!isDesktop() && (
+                <button
+                  onClick={() => setProjectSettingsTab("members")}
+                  className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    projectSettingsTab === "members"
+                      ? "text-purple-600 border-b-2 border-purple-600 bg-purple-50"
+                      : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                  }`}
+                >
+                  <Users size={16} />
+                  Members ({projectSettingsModal.members?.length || 0})
+                </button>
+              )}
               {canManageOpenProject && (
                 <button
                   onClick={() => setProjectSettingsTab("danger")}
@@ -1609,17 +1619,19 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                         <span className="text-gray-500">Files:</span>
                         <span className="ml-2 text-gray-900">{projectSettingsModal.fileCount}</span>
                       </div>
-                      <div>
-                        <span className="text-gray-500">Members:</span>
-                        <span className="ml-2 text-gray-900">{projectSettingsModal.memberCount}</span>
-                      </div>
+                      {!isDesktop() && (
+                        <div>
+                          <span className="text-gray-500">Members:</span>
+                          <span className="ml-2 text-gray-900">{projectSettingsModal.memberCount}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Members Tab */}
-              {projectSettingsTab === "members" && (
+              {/* Members Tab — cloud collaboration only */}
+              {!isDesktop() && projectSettingsTab === "members" && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <p className="text-sm text-gray-600">
@@ -1851,6 +1863,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       )}
     </div>
   );
-};;
+}
 
 export default ProjectDashboard;

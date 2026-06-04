@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.ImportOptions;
+import self.research.ontology.owlEditor.service.TopLevelClassCacheService;
 import self.research.ontology.owlEditor.model.ImportQueueItem;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.model.collaboration.ImportStatusMessage;
@@ -68,6 +69,16 @@ public class ProjectImportService {
     // Desktop-only — null in cloud deployments (optional injection)
     @Autowired(required = false) @Nullable
     private DesktopOntologyLoader desktopOntologyLoader;
+
+    // Evict stale top-level and children caches after import so next open gets fresh SPARQL results
+    @Autowired(required = false) @Nullable
+    private TopLevelClassCacheService topLevelClassCacheService;
+
+    @Autowired(required = false) @Nullable
+    private org.springframework.cache.CacheManager cacheManager;
+
+    @Autowired(required = false) @Nullable
+    private HierarchyIndexService hierarchyIndexService;
 
     public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
                                 GraphDBDatasetService datasetService,
@@ -544,7 +555,46 @@ public class ProjectImportService {
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_COMPLETED,
                     "COMPLETED", "Ontology loaded successfully", filename, completionMeta);
             
-            log.info("✅ [Import {}] Marked as COMPLETED after {} ms. Metadata indexing continues in background.", 
+            // Evict stale Caffeine + Mongo top-level/children caches so the next
+            // hierarchy request recomputes from fresh Fuseki data (not a cached wrong tree).
+            try {
+                if (topLevelClassCacheService != null) topLevelClassCacheService.evict(projectId);
+                // Evict only this project's entries — cache.clear() would drop other
+                // projects' warm trees and cause unnecessary Fuseki round-trips for them.
+                // Key format mirrors @Cacheable(key="#projectId+'_'+#limit") and
+                // @Cacheable(key="#projectId+'_'+#parentIri+'_'+#limit+'_'+#offset").
+                if (cacheManager != null) {
+                    org.springframework.cache.Cache tlCache = cacheManager.getCache("topLevelClasses");
+                    if (tlCache != null) {
+                        for (int lim : new int[]{100, 200, 500, 1000, 2000, 5000}) {
+                            tlCache.evict(projectId + "_" + lim);
+                        }
+                    }
+                    org.springframework.cache.Cache chCache = cacheManager.getCache("classChildren");
+                    if (chCache != null) {
+                        // Children keys include parentIri — clear the whole cache for this project
+                        // by iterating is not supported by Caffeine's Cache abstraction; use
+                        // a project-prefixed eviction via the native cache if available,
+                        // otherwise accept the broader clear only for children (much smaller than top-level).
+                        chCache.clear();
+                    }
+                }
+                log.info("[Import {}] Evicted hierarchy caches (topLevelClasses, classChildren, Mongo)", projectId);
+            } catch (Exception cacheEx) {
+                log.warn("[Import {}] Cache eviction failed (non-fatal): {}", projectId, cacheEx.getMessage());
+            }
+
+            if (hierarchyIndexService != null) {
+                try {
+                    hierarchyIndexService.evict(projectId);
+                    hierarchyIndexService.scheduleBuild(projectId);
+                    log.info("[Import {}] Scheduled Protégé-parity hierarchy snapshot build", projectId);
+                } catch (Exception hx) {
+                    log.warn("[Import {}] Hierarchy snapshot schedule failed (non-fatal): {}", projectId, hx.getMessage());
+                }
+            }
+
+            log.info("✅ [Import {}] Marked as COMPLETED after {} ms. Metadata indexing continues in background.",
                     projectId, durationMs);
             importLog.info("[COMPLETED] project={} duration={}ms file={}", projectId, durationMs, filename);
             perfLog.info("[IMPORT] project={} duration={}ms file={}", projectId, durationMs, filename);

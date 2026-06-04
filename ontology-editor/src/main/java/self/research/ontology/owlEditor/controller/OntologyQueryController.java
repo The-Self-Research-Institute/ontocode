@@ -10,12 +10,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.service.DesktopHierarchyService;
+import self.research.ontology.owlEditor.service.HierarchyIndexService;
 import self.research.ontology.owlEditor.service.OntologyMetadataService;
 import self.research.ontology.owlEditor.service.OntologyQueryService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/ontology")
@@ -25,6 +28,7 @@ public class OntologyQueryController {
     private final OntologyQueryService queryService;
     private final ProjectMetadataService projectMetadataService;
     private final OntologyMetadataService ontologyMetadataService;
+    private final HierarchyIndexService hierarchyIndexService;
 
     // Desktop-only — null in cloud. Injected when ontocode.desktop.mode=true.
     @Autowired(required = false) @Nullable
@@ -35,21 +39,25 @@ public class OntologyQueryController {
 
     public OntologyQueryController(OntologyQueryService queryService,
                                    ProjectMetadataService projectMetadataService,
-                                   OntologyMetadataService ontologyMetadataService) {
+                                   OntologyMetadataService ontologyMetadataService,
+                                   HierarchyIndexService hierarchyIndexService) {
         this.queryService = queryService;
         this.projectMetadataService = projectMetadataService;
         this.ontologyMetadataService = ontologyMetadataService;
+        this.hierarchyIndexService = hierarchyIndexService;
     }
 
     /** Desktop: tells the frontend whether the OWLAPI in-memory model is ready. */
     @GetMapping("/cache-status/{projectId:.+}")
     public ResponseEntity<?> cacheStatus(@PathVariable String projectId) {
-        boolean ready = desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId);
-        Map<String, Object> body = new java.util.LinkedHashMap<>();
-        body.put("owlapiReady", ready);
+        Map<String, Object> body = new java.util.LinkedHashMap<>(hierarchyIndexService.statusPayload(projectId));
+        boolean owlapiReady = desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId);
+        body.put("owlapiReady", owlapiReady);
         body.put("projectId", projectId);
-        if (ready && desktopHierarchyService != null) {
+        if (owlapiReady && desktopHierarchyService != null) {
             body.putAll(desktopHierarchyService.declarationCounts(projectId));
+            body.put("hierarchyEngine", "owlapi");
+            body.put("hierarchyReady", true);
         }
         return ResponseEntity.ok(body);
     }
@@ -114,9 +122,23 @@ public class OntologyQueryController {
                     }
                 }
             }
-            // Cloud / OWLAPI cache-miss: Fuseki SPARQL
+            // Cloud: precomputed OWLAPI snapshot (Protégé-parity)
+            Optional<Map<String, Object>> snapshot = hierarchyIndexService.topLevelResponse(projectId, limit);
+            if (snapshot.isPresent()) {
+                return ResponseEntity.ok(snapshot.get());
+            }
+            if (hierarchyIndexService.isEnabled() && !hierarchyIndexService.allowsLegacySparqlFallback()) {
+                Map<String, Object> pending = new java.util.LinkedHashMap<>();
+                pending.put("success", false);
+                pending.put("hierarchyReady", false);
+                pending.putAll(hierarchyIndexService.statusPayload(projectId));
+                pending.put("message", "Class hierarchy index is building. Please wait and refresh.");
+                return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
+            }
+            // Legacy fallback (disabled by default)
             return ResponseEntity.ok(Map.of("success", true, "classes",
-                    queryService.topLevelClasses(projectId, limit)));
+                    queryService.topLevelClasses(projectId, limit),
+                    "hierarchyEngine", "sparql"));
         } catch (Exception e) {
             return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
@@ -145,6 +167,15 @@ public class OntologyQueryController {
         // never union members, so Viruses won't appear twice.
         if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(desktopHierarchyService.children(projectId, parentIri, limit, offset));
+        }
+        Optional<List<self.research.ontology.owlEditor.dto.OntologyDto.TreeNode>> snapChildren =
+                hierarchyIndexService.children(projectId, parentIri, limit, offset);
+        if (snapChildren.isPresent()) {
+            return ResponseEntity.ok(snapChildren.get());
+        }
+        if (hierarchyIndexService.isEnabled() && !hierarchyIndexService.allowsLegacySparqlFallback()) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED)
+                    .body(List.of());
         }
         return ResponseEntity.ok(queryService.children(projectId, parentIri, limit, offset));
     }
