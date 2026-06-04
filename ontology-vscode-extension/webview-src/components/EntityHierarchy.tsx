@@ -63,6 +63,9 @@ interface EntityHierarchyProps {
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
   isLoading?: boolean;
+  onLoadMoreTopLevel?: () => void;
+  isLoadingMoreTopLevel?: boolean;
+  topLevelTotal?: number;
 }
 
 const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
@@ -94,6 +97,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   isViewOnly = false,
   onViewOnlyAction,
   isLoading = false,
+  onLoadMoreTopLevel,
+  isLoadingMoreTopLevel = false,
+  topLevelTotal = 0,
 }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: SelectableItem } | null>(null);
   const [draggedItem, setDraggedItem] = useState<SelectableItem | null>(null);
@@ -228,6 +234,50 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   };
 
   const renderRow = (item: SelectableItem, level = 0): React.JSX.Element => {
+    // Sentinel node injected into owl:Thing's children when top-level is truncated.
+    // Always intercept — never fall through to normal class rendering.
+    // Dialogs/secondary trees that don't pass onLoadMoreTopLevel get an empty fragment.
+    if (item.id === "__load_more_top_level__") {
+      if (!onLoadMoreTopLevel) return <React.Fragment key="__load_more_top_level__" />;
+      const loaded = (filteredData[0] as any)?.children?.filter(
+        (c: any) => c.id !== "__load_more_top_level__"
+      ).length ?? 0;
+      const remaining = topLevelTotal > 0 ? topLevelTotal - loaded : 0;
+      return (
+        <div
+          key="__load_more_top_level__"
+          style={{ paddingLeft: `${level * 16 + 4}px` }}
+          className="py-1"
+        >
+          <button
+            onClick={onLoadMoreTopLevel}
+            disabled={isLoadingMoreTopLevel}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium
+              bg-gradient-to-r from-indigo-50 to-purple-50
+              border border-dashed border-indigo-200
+              text-indigo-600 hover:from-indigo-100 hover:to-purple-100 hover:border-indigo-400
+              disabled:opacity-60 disabled:cursor-not-allowed
+              transition-all w-full"
+          >
+            {isLoadingMoreTopLevel ? (
+              <>
+                <Loader2 size={12} className="animate-spin flex-shrink-0" />
+                <span>Loading more classes…</span>
+              </>
+            ) : (
+              <>
+                <ChevronDown size={12} className="flex-shrink-0" />
+                <span>
+                  {remaining > 0
+                    ? `Load ${remaining.toLocaleString()} more classes`
+                    : "Load more classes"}
+                </span>
+              </>
+            )}
+          </button>
+        </div>
+      );
+    }
     const isSelected = selectedItem?.id === item.id;
     // An item is a "TreeNode" if it's in the Classes, ObjectProperties, DataProperties, or AnnotationProperties tab.
     // We check 'hasChildren' to know if it's expandable.
@@ -250,14 +300,21 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
     let Icon, iconClasses;
     let itemType = entitiesTab;
     
+    // Multi-parent: class appears under more than one parent in the visible tree
+    const isMultiParent = entitiesTab === 'Classes' && multiParentIds.has(item.id);
+
     // Determine icon based on the tab - add equivalence lines for defined classes
     switch (itemType) {
-        case 'Classes': 
-          Icon = Package; 
-          // Defined classes get yellow icon with equivalence symbol (≡)
-          iconClasses = isDefined 
-            ? 'bg-amber-300 border-amber-600 relative' 
-            : 'bg-amber-400 border-amber-600'; 
+        case 'Classes':
+          Icon = Package;
+          // Multi-parent: double-border (Protégé-style) — class has >1 parent
+          // Defined: amber-300 with equivalence indicator
+          // Normal: solid amber-400
+          iconClasses = isMultiParent
+            ? 'bg-amber-400 border-amber-600 ring-1 ring-amber-300 ring-offset-[1px]'
+            : isDefined
+            ? 'bg-amber-300 border-amber-600 relative'
+            : 'bg-amber-400 border-amber-600';
           break;
         case 'ObjectProperties': Icon = GitBranch; iconClasses = 'bg-blue-400 border-blue-600'; break; //
         case 'DataProperties': Icon = Database; iconClasses = 'bg-green-400 border-green-600'; break; //
@@ -328,13 +385,16 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             </div>
           )}
           
-          {/* Entity Icon with defined class indicator */}
-           <div 
-             title={isDefined ? 'Defined class (has equivalent classes)' : itemType.slice(0, -1)} 
+          {/* Entity Icon */}
+           <div
+             title={
+               isMultiParent ? 'This class has multiple parent classes — it appears once under each parent (correct OWL behavior)'
+               : isDefined ? 'Defined class (has equivalent classes)'
+               : itemType.slice(0, -1)
+             }
              className={`w-3.5 h-3.5 rounded-sm border ${iconClasses} mr-2 flex-shrink-0 flex items-center justify-center`}
            >
               {isDefined ? (
-                // Show ≡ symbol for defined classes (three horizontal lines)
                 <div className="text-white text-[8px] font-bold leading-none">≡</div>
               ) : (
                 <Icon size={10} className="text-white"/>
@@ -446,6 +506,21 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
     walk(filteredData || [], 0);
     return out;
   }, [filteredData, expandedNodes, entitiesTab]);
+
+  // Classes that appear more than once in the visible tree are multi-parent.
+  // Shown with a double-border icon (Protégé-style) so the user understands
+  // they're not duplicates — the class genuinely has multiple parent classes.
+  const multiParentIds = useMemo(() => {
+    if (entitiesTab !== 'Classes') return new Set<string>();
+    const seen = new Set<string>();
+    const multi = new Set<string>();
+    for (const { item } of flatNodes) {
+      if (item.id === '__load_more_top_level__') continue;
+      if (seen.has(item.id)) multi.add(item.id);
+      else seen.add(item.id);
+    }
+    return multi;
+  }, [flatNodes, entitiesTab]);
 
   // Render the hierarchy body. Large asserted trees are windowed; small lists and
   // inferred mode (which can have variable-height rows) render normally.
