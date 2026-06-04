@@ -95,7 +95,7 @@ public class HierarchySnapshotBuildService {
 
             int topLevelTotal = snapshotBuilder.countTopLevelCandidates(ontology, reasoner);
             List<OntologyDto.TreeNode> topLevel =
-                    snapshotBuilder.buildTopLevel(ontology, reasoner, TOP_LEVEL_STORE_LIMIT);
+                    snapshotBuilder.buildTopLevel(ontology, reasoner, TOP_LEVEL_STORE_LIMIT, 0);
             Map<String, List<OntologyDto.TreeNode>> childrenIndex =
                     snapshotBuilder.buildChildrenIndex(ontology, reasoner);
             Map<String, Object> meta = new LinkedHashMap<>(metricsComputer.compute(ontology, reasoner));

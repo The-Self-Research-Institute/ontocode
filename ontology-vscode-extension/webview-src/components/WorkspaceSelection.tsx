@@ -157,19 +157,22 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       });
   }, []);
 
-  // First-time user: show plan selection automatically when login reveals no workspaces
+  // First-time user: show plan selection automatically when login reveals no workspaces.
+  // Skip for enterprise domain bypass users — they have billing handled externally
+  // and should not see the plan modal.
   useEffect(() => {
     if (suppressAutoOpenRef.current) return;
     if (firstTimePlanShown.current) return;
     if (loading) return;
     if (accountSubscription === null) return;
     if (workspaces.length > 0) return;
+    if (user?.enterpriseDomainBypass) return; // enterprise bypass: no billing UI
     const hasActivePlan = accountSubscription.status === "active" || accountSubscription.status === "trialing";
     if (!hasActivePlan) {
       firstTimePlanShown.current = true;
       onUpgradeAccountPlan?.();
     }
-  }, [loading, workspaces, accountSubscription, onUpgradeAccountPlan]);
+  }, [loading, workspaces, accountSubscription, onUpgradeAccountPlan, user?.enterpriseDomainBypass]);
 
   const loadWorkspaces = async () => {
     try {

@@ -44,9 +44,9 @@ public class DesktopHierarchyService {
             .orElse(Collections.emptyMap());
     }
 
-    public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
+    public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit, int offset) {
         return ontologyCache.get(projectId)
-            .map(c -> snapshotBuilder.buildTopLevel(c.ontology(), c.reasoner(), limit))
+            .map(c -> snapshotBuilder.buildTopLevel(c.ontology(), c.reasoner(), limit, offset))
             .orElse(Collections.emptyList());
     }
 

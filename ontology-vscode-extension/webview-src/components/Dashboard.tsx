@@ -1550,6 +1550,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isDlQueryLoading, setIsDlQueryLoading] = useState(false);
 
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
+  const [topLevelTruncated, setTopLevelTruncated] = useState(false);
+  const [topLevelTotal, setTopLevelTotal] = useState(0);
+  const [isLoadingMoreTopLevel, setIsLoadingMoreTopLevel] = useState(false);
   const [isHierarchyLoading, setIsHierarchyLoading] = useState(false);
   // Per-section loaders — classes can appear while metadata/properties/etc. still load.
   const [isMetadataLoading, setIsMetadataLoading] = useState(false);
@@ -1739,11 +1742,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                     : [],
             )
           : (() => {
-              if (isHierarchyLoading) return 0;
-              const metaCount = Number((metadata as any)?.classCount) || 0;
-              const treeCount = classHierarchy.length > 0 ? countNodes(classHierarchy) : 0;
-              // Top-level tree is capped (default 5000); total class count comes from OWLAPI metadata.
-              return Math.max(metaCount, treeCount);
+              // Always show the authoritative total from OWLAPI/metadata.
+              // Do NOT gate on isHierarchyLoading — that causes the badge to flash 0
+              // every time the hierarchy refreshes for an already-loaded project.
+              return Number((metadata as any)?.classCount) || 0;
             })(),
       theme: "bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]",
     },
@@ -2761,17 +2763,36 @@ const Dashboard: React.FC<DashboardProps> = ({
           const imports = metadataData?.imports || [];
           const gciAxioms = metadataData?.axioms || [];
           if (metadataData?.filename) setActiveFileName(metadataData.filename);
-          setMetadata({
+          setMetadata((prev) => ({
             ...metadataData,
             annotations: annotationsData,
-            classCount: metadataData?.classCount || metadataData?.counts?.classes || 0,
-            objectPropertyCount: metadataData?.objectPropertyCount || metadataData?.counts?.objectProperties || 0,
-            dataPropertyCount: metadataData?.dataPropertyCount || metadataData?.counts?.dataProperties || 0,
-            individualCount: metadataData?.individualCount || metadataData?.counts?.individuals || 0,
-            annotationPropertyCount:
-              metadataData?.annotationPropertyCount || metadataData?.counts?.annotationProperties || 0,
             prefixes: metadataData?.prefixes || [],
-          });
+            // Preserve OWLAPI-sourced counts when the metadata API returns 0.
+            // Use a strict positive-number check so a genuine 0 from metadata doesn't
+            // erase a valid OWLAPI count already stored in prev.
+            classCount: (metadataData?.classCount > 0 ? metadataData.classCount : null)
+              ?? (metadataData?.counts?.classes > 0 ? metadataData.counts.classes : null)
+              ?? (prev as any)?.classCount
+              ?? 0,
+            objectPropertyCount: (metadataData?.objectPropertyCount > 0 ? metadataData.objectPropertyCount : null)
+              ?? (metadataData?.counts?.objectProperties > 0 ? metadataData.counts.objectProperties : null)
+              ?? (prev as any)?.objectPropertyCount
+              ?? 0,
+            dataPropertyCount: (metadataData?.dataPropertyCount > 0 ? metadataData.dataPropertyCount : null)
+              ?? (metadataData?.counts?.dataProperties > 0 ? metadataData.counts.dataProperties : null)
+              ?? (prev as any)?.dataPropertyCount
+              ?? 0,
+            individualCount: (metadataData?.individualCount > 0 ? metadataData.individualCount : null)
+              ?? (metadataData?.counts?.individuals > 0 ? metadataData.counts.individuals : null)
+              ?? (prev as any)?.individualCount
+              ?? 0,
+            annotationPropertyCount: (metadataData?.annotationPropertyCount > 0 ? metadataData.annotationPropertyCount : null)
+              ?? (metadataData?.counts?.annotationProperties > 0 ? metadataData.counts.annotationProperties : null)
+              ?? (prev as any)?.annotationPropertyCount
+              ?? 0,
+            gciCount: metadataData?.gciCount ?? (prev as any)?.gciCount,
+            hiddenGciCount: metadataData?.hiddenGciCount ?? (prev as any)?.hiddenGciCount,
+          }) as OntologyMetadata);
           setOntologyImports(Array.isArray(imports) ? imports : []);
           setGeneralClassAxioms(
             Array.isArray(gciAxioms)
@@ -2787,7 +2808,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           );
           setOntologyAnnotations(normalizeOntologyAnnotations(annotationsData));
           setPrefixMappings(normalizePrefixMappings(metadataData?.prefixes));
-          applyDeclarationCounts(metadataData);
+          // NOTE: do NOT call applyDeclarationCounts(metadataData) here.
+          // The setMetadata above already handles all counts with prev fallback.
+          // A second setMetadata call would queue after and overwrite the preserved classCount.
         };
 
         const applyPropertiesResponse = (propertiesRes: any) => {
@@ -2888,12 +2911,20 @@ const Dashboard: React.FC<DashboardProps> = ({
           if (isStaleLoad()) return null;
           desktopOwlapiReady = warm.ready;
           if (warm.ready) {
+            // OWLAPI ready — mark as handled so the deferred poller never fires a duplicate.
+            owlapiReadyHandledRef.current = currentProjectId;
+            desktopHierarchyDeferredForProject.current = null;
             console.log("[Dashboard] Desktop OWLAPI warm — using in-memory engine (Protégé-style)");
             applyDeclarationCounts(warm);
             setLoadingStatusMessage("Loading classes…");
             desktopDeferredSectionsLoadedRef.current.clear();
           } else {
-            console.warn("[Dashboard] Desktop OWLAPI warm missed — SPARQL fallback (slower on large files)");
+            // OWLAPI still loading — activate the deferred-hierarchy resolver.
+            // It polls every 5 s and renders the hierarchy ONCE when OWLAPI is ready,
+            // or falls back to SPARQL after 5 min. No intermediate SPARQL render.
+            console.warn("[Dashboard] Desktop OWLAPI still loading — deferring hierarchy (deferred resolver active)");
+            desktopHierarchyDeferredForProject.current = currentProjectId;
+            // Phase 2 (properties, metadata, individuals) still loads normally below.
           }
         }
 
@@ -2920,7 +2951,24 @@ const Dashboard: React.FC<DashboardProps> = ({
           setClassHierarchy((prev) => (prev.length > 0 ? applyInstanceCountsToTree(prev, data) : prev));
         });
 
-        const topLevelClassesRes = await apiClient
+        // On desktop: skip SPARQL hierarchy fetch when OWLAPI is still loading.
+        // We already have the hierarchy skeleton visible (isHierarchyLoading=true).
+        // The owlapiReadyHandledRef poller will call refreshClassHierarchy() once
+        // OWLAPI is confirmed ready, producing ONE clean render with the full count.
+        // Edge case: if OWLAPI never loads (OOM/corrupt file) the poller will NOT fire
+        // and the skeleton will stay until the user navigates away — acceptable because
+        // the fallback means OWLAPI genuinely cannot serve the ontology.
+        if (isDesktop() && !desktopOwlapiReady) {
+          console.log("[Dashboard] Desktop: deferring class hierarchy — awaiting OWLAPI engine");
+          // Skip Phase 1 hierarchy fetch; fall through to Phase 2 (properties, metadata, etc.)
+          // so the editor is usable as soon as OWLAPI is ready.
+          setIsHierarchyLoading(true); // keep skeleton
+          setLoadingStatusMessage("Loading ontology into memory…");
+        }
+
+        // Desktop + OWLAPI not ready: skip SPARQL hierarchy fetch entirely.
+        // The owlapiReadyHandledRef poller renders classes once OWLAPI is confirmed ready.
+        const topLevelClassesRes = (isDesktop() && !desktopOwlapiReady) ? null : await apiClient
           .get<any>(
             `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
             undefined,
@@ -2956,16 +3004,23 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         let topLevelClasses: any[] = [];
+        const tlRes = topLevelClassesRes?.data ?? topLevelClassesRes;
         if (topLevelClassesRes && !hierarchyBuilding) {
-          topLevelClasses = Array.isArray(topLevelClassesRes?.classes)
-            ? topLevelClassesRes.classes
-            : Array.isArray(topLevelClassesRes?.data?.classes)
-              ? topLevelClassesRes.data.classes
-              : Array.isArray(topLevelClassesRes?.data)
-                ? topLevelClassesRes.data
+          topLevelClasses = Array.isArray(tlRes?.classes)
+            ? tlRes.classes
+            : Array.isArray(tlRes?.data?.classes)
+              ? tlRes.data.classes
+              : Array.isArray(tlRes?.data)
+                ? tlRes.data
                 : Array.isArray(topLevelClassesRes)
                   ? topLevelClassesRes
                   : [];
+        }
+        const isTruncated = !!(tlRes?.truncated);
+        const tlTotal = Number(tlRes?.topLevelTotal) || 0;
+        if (!isStaleLoad()) {
+          setTopLevelTruncated(isTruncated);
+          setTopLevelTotal(tlTotal);
         }
         const topLevelNodes: TreeNode[] = topLevelClasses.map((c: TopLevelClass) => ({
           ...c,
@@ -2976,10 +3031,20 @@ const Dashboard: React.FC<DashboardProps> = ({
           ],
         }));
         const resolvedCounts = instanceCountsData && typeof instanceCountsData === "object" ? instanceCountsData : {};
+        // Sentinel node — rendered as "Load more" button by EntityHierarchy when top-level is truncated.
+        const sentinelNode: TreeNode = {
+          id: "__load_more_top_level__",
+          label: `Load more classes…`,
+          children: [],
+          hasChildren: false,
+          annotations: {},
+        };
+        const owlThingChildren = applyInstanceCountsToTree(topLevelNodes, resolvedCounts);
+        if (isTruncated) owlThingChildren.push(sentinelNode);
         const owlThingNode: TreeNode = {
           id: "http://www.w3.org/2002/07/owl#Thing",
           label: "owl:Thing",
-          children: applyInstanceCountsToTree(topLevelNodes, resolvedCounts),
+          children: owlThingChildren,
           hasChildren: topLevelNodes.length > 0,
           annotations: {},
         };
@@ -3055,7 +3120,9 @@ const Dashboard: React.FC<DashboardProps> = ({
             console.debug("[Dashboard] cache-status after top-level:", e);
           }
         }
-        if (!hierarchyBuilding) {
+        // On desktop with deferred hierarchy: keep skeleton until OWLAPI poller fires.
+        const desktopDeferredHierarchy = isDesktop() && !desktopOwlapiReady;
+        if (!hierarchyBuilding && !desktopDeferredHierarchy) {
           setLoadingStatusMessage("");
           setIsHierarchyLoading(false);
         }
@@ -5371,23 +5438,28 @@ const Dashboard: React.FC<DashboardProps> = ({
                   cleanupUI();
                 });
               } else {
-                // Server-side import (upload-by-file-ref) bypasses the VSCode bridge,
-                // so no fileReady message is sent. Trigger fetchData here directly.
-                console.log("[Dashboard] No fetchData in progress — server-side import flow, triggering fetchData now");
                 const targetProjectId = message.status.projectId || projectId;
-                loadingPromiseRef.current = fetchData(targetProjectId, false, initialProjectId)
-                  .then(() => {
-                    loadingPromiseRef.current = null;
-                    cleanupUI();
-                    // Force hierarchy refresh after import — the initial fetch ran before
-                    // GraphDB had data, so the cache was empty; reset throttle then reload.
-                    lastClassHierarchyRefreshAt.current = 0;
-                    refreshClassHierarchy();
-                  })
-                  .catch(() => {
-                    loadingPromiseRef.current = null;
-                    cleanupUI();
-                  });
+                // Guard: skip if the project is already loaded.
+                // The background checker fires every 5s and re-dispatches IMPORT_COMPLETED
+                // after the first load completes (loadingPromiseRef is null at that point),
+                // which would cause infinite reload loops.
+                if (targetProjectId === projectId && classHierarchy.length > 0 && metadata) {
+                  console.log("[Dashboard] IMPORT_COMPLETED: project already loaded, skipping redundant fetch");
+                  cleanupUI();
+                } else {
+                  // Server-side import (upload-by-file-ref) bypasses the VSCode bridge,
+                  // so no fileReady message is sent. Trigger fetchData here directly.
+                  console.log("[Dashboard] No fetchData in progress — server-side import flow, triggering fetchData now");
+                  loadingPromiseRef.current = fetchData(targetProjectId, false, initialProjectId)
+                    .then(() => {
+                      loadingPromiseRef.current = null;
+                      cleanupUI();
+                    })
+                    .catch(() => {
+                      loadingPromiseRef.current = null;
+                      cleanupUI();
+                    });
+                }
               }
 
               // Refresh projects list
@@ -5449,9 +5521,21 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
           }
 
-          // Show queue status when import starts
+          // Show queue status when import starts.
+          // Also: if IMPORT_PROGRESS arrives for the current project with nothing showing,
+          // activate the background banner (not the modal) so the user sees progress without
+          // a dialog popping up again after they dismissed it.
           if (message.status.type === "IMPORT_STARTED" && message.status.projectId === projectId) {
             setShowQueueStatus(true);
+          }
+          if (
+            message.status.type === "IMPORT_PROGRESS" &&
+            message.status.projectId === projectId &&
+            !showLoadingChoice && !showQueueStatus && !backgroundImportActive
+          ) {
+            // Auto-activate the background progress banner so the user always has visibility
+            setBackgroundImportActive(true);
+            if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
           }
 
           // Clear project-specific status after completion/failure
@@ -5854,16 +5938,18 @@ const Dashboard: React.FC<DashboardProps> = ({
       setClassHierarchy(hierarchyWithCounts);
       console.log("[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy");
 
-      // Re-load children for all previously expanded nodes to preserve tree state
-      // We need to reload children in order (parent before child) to maintain tree structure
+      // Re-load children for all previously expanded nodes to preserve tree state.
+      // Deduplicate — expandedNodes can contain the same ID multiple times when a class
+      // has multiple parents and was expanded from different parent contexts.
+      const owlThing = "http://www.w3.org/2002/07/owl#Thing";
+      const seenIds = new Set<string>();
       const currentExpandedNodes = expandedNodesRef.current.filter(
-        (id) => id !== "http://www.w3.org/2002/07/owl#Thing",
+        (id) => id !== owlThing && !seenIds.has(id) && seenIds.add(id),
       );
       for (const nodeId of currentExpandedNodes) {
         try {
           await loadChildren(nodeId);
         } catch (err) {
-          // Node might not exist anymore after refresh, ignore error
           console.log(`[Dashboard] Could not reload children for ${nodeId}:`, err);
         }
       }
@@ -5898,65 +5984,84 @@ const Dashboard: React.FC<DashboardProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode]);
 
-  // Desktop: the in-memory OWLAPI model loads asynchronously after a project
-  // opens. Until it is warm, the hierarchy is served by the Fuseki SPARQL engine,
-  // which computes top-level classes slightly differently (orphan handling, union
-  // members). Poll readiness and, once the fast engine is ready, rebuild the tree
-  // ONCE from it so the user never sees a half-SPARQL / half-OWLAPI mix.
+  // ── Desktop OWLAPI deferred-hierarchy resolver ────────────────────────────
+  // Single responsibility: when fetchData deferred the hierarchy render because
+  // warmOntologyInMemory returned ready=false, this effect polls cache-status
+  // until OWLAPI is confirmed ready, then renders the hierarchy ONCE cleanly.
+  //
+  // Design principles:
+  //   • Only active when fetchData set desktopHierarchyDeferredForProject.
+  //   • Polls every 5 s (not 1.5 s) — OWLAPI load takes tens of seconds.
+  //   • 5-minute hard timeout: falls back to SPARQL so the user is never stuck.
+  //   • fetchData marks owlapiReadyHandledRef when warm.ready=true, preventing
+  //     any redundant second render from this effect.
   const owlapiReadyHandledRef = useRef<string | null>(null);
+  // Set by fetchData when OWLAPI wait was deferred (warm returned ready=false).
+  const desktopHierarchyDeferredForProject = useRef<string | null>(null);
+
   useEffect(() => {
+    if (!isDesktop()) return;
     if (!projectId) return;
-    if (shouldDeferHierarchyDuringFileOpen()) return;
+    // Only run when fetchData explicitly deferred the hierarchy for this project.
+    if (desktopHierarchyDeferredForProject.current !== projectId) return;
+    // Already handled (warm succeeded in fetchData or previous poll iteration).
     if (owlapiReadyHandledRef.current === projectId) return;
 
     let cancelled = false;
-    let attempts = 0;
-    const maxAttempts = 40; // ~60s at 1.5s interval
+    let elapsedMs = 0;
+    const POLL_INTERVAL_MS = 5_000;
+    const TIMEOUT_MS = 300_000; // 5 min — matches warmOntologyInMemory timeout
     let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const applyOwlapiReady = (res: any) => {
+      owlapiReadyHandledRef.current = projectId;
+      desktopHierarchyDeferredForProject.current = null;
+      const patch = extractDeclarationCountsPatch(res);
+      if (patch) setMetadata((prev) => ({ ...(prev || {}), ...patch }) as OntologyMetadata);
+      lastClassHierarchyRefreshAt.current = 0;
+      setIsHierarchyLoading(true); // briefly show skeleton during transition
+      refreshClassHierarchy();     // fetches from OWLAPI → single clean render
+    };
+
+    const fallbackToSparql = () => {
+      console.warn("[Dashboard] Desktop: OWLAPI did not load within timeout — falling back to SPARQL hierarchy");
+      owlapiReadyHandledRef.current = projectId;
+      desktopHierarchyDeferredForProject.current = null;
+      lastClassHierarchyRefreshAt.current = 0;
+      setIsHierarchyLoading(false); // clear skeleton — hierarchy will show SPARQL result
+      refreshClassHierarchy();      // fetches from SPARQL (knownLarge may cap at 5000)
+    };
 
     const poll = async () => {
       if (cancelled) return;
-      attempts += 1;
       try {
         const res = await apiClient.get<any>(`/api/ontology/cache-status/${encodeProjectId(projectId)}`);
-        const ready =
-          res?.owlapiReady ??
-          res?.data?.owlapiReady ??
-          res?.hierarchyReady ??
-          res?.data?.hierarchyReady;
-        if (ready) {
-          owlapiReadyHandledRef.current = projectId;
-          if (!cancelled) {
-            console.log("[Dashboard] Hierarchy engine ready — updating counts");
-            const patch = extractDeclarationCountsPatch(res);
-            if (patch) {
-              setMetadata((prev) => ({ ...(prev || {}), ...patch }) as OntologyMetadata);
-            }
-            // Only rebuild hierarchy when user is on Classes tab in asserted mode —
-            // calling refreshClassHierarchy on other tabs interrupts their loading flow.
-            if (mainTab === "Entities" && entitiesTab === "Classes" && currentHierarchyViewMode === "asserted") {
-              refreshClassHierarchy();
-            }
-          }
+        const ready = res?.owlapiReady ?? res?.data?.owlapiReady;
+        if (ready && !cancelled) {
+          console.log("[Dashboard] Desktop deferred hierarchy — OWLAPI now ready, rendering once");
+          applyOwlapiReady(res);
           return;
         }
-      } catch (e) {
-        // cache-status is desktop-only; stop quietly if it is unavailable.
+      } catch {
+        // cache-status unavailable — stop quietly, leave skeleton as-is
         owlapiReadyHandledRef.current = projectId;
         return;
       }
-      if (!cancelled && attempts < maxAttempts) {
-        timer = setTimeout(poll, 1500);
+      elapsedMs += POLL_INTERVAL_MS;
+      if (!cancelled && elapsedMs < TIMEOUT_MS) {
+        timer = setTimeout(poll, POLL_INTERVAL_MS);
+      } else if (!cancelled) {
+        fallbackToSparql();
       }
     };
 
-    poll();
+    timer = setTimeout(poll, POLL_INTERVAL_MS); // first check after 5 s
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode]);
+  }, [projectId]);
 
   // Load inferred object property hierarchy when switching to inferred mode
   useEffect(() => {
@@ -6711,8 +6816,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         const node = findNode(currentHierarchy as TreeNode[], nodeId);
 
         setExpandedNodes((prev) => {
-          const updated = [...prev, nodeId];
-          return updated;
+          if (prev.includes(nodeId)) return prev; // prevent duplicates → stops repeated children fetches
+          return [...prev, nodeId];
         });
 
         if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
@@ -6770,6 +6875,49 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     };
   }, [toggleNode]);
+
+  // Load next batch of top-level classes when owl:Thing children are truncated
+  const handleLoadMoreTopLevel = useCallback(async () => {
+    if (isLoadingMoreTopLevel || !projectId) return;
+    setIsLoadingMoreTopLevel(true);
+    try {
+      const encoded = encodeURIComponent(projectId);
+      const currentLoaded = classHierarchy[0]?.children?.filter(
+        (c) => c.id !== "__load_more_top_level__"
+      ).length ?? 0;
+      const res: any = await apiClient.get(
+        `/api/ontology/classes/top-level/${encoded}?limit=5000&offset=${currentLoaded}`
+      );
+      const data = res?.data ?? res;
+      const newClasses: TreeNode[] = (Array.isArray(data?.classes) ? data.classes : []).map(
+        (c: any) => ({ ...c, children: [], hasChildren: c.hasChildren !== false, annotations: c.annotations || {} })
+      );
+      const stillTruncated = !!(data?.truncated);
+      setTopLevelTruncated(stillTruncated);
+      setClassHierarchy((prev) => {
+        if (!prev.length || prev[0].id !== "http://www.w3.org/2002/07/owl#Thing") return prev;
+        const owlThing = prev[0];
+        const existingChildren = (owlThing.children || []).filter(
+          (c) => c.id !== "__load_more_top_level__"
+        );
+        const merged = [...existingChildren, ...newClasses];
+        if (stillTruncated) {
+          merged.push({
+            id: "__load_more_top_level__",
+            label: "Load more classes…",
+            children: [],
+            hasChildren: false,
+            annotations: {},
+          });
+        }
+        return [{ ...owlThing, children: merged }];
+      });
+    } catch (e) {
+      console.error("[Dashboard] loadMoreTopLevel failed:", e);
+    } finally {
+      setIsLoadingMoreTopLevel(false);
+    }
+  }, [isLoadingMoreTopLevel, projectId, classHierarchy]);
 
   // Update draft count
   const updateDraftCount = useCallback(async () => {
@@ -12681,6 +12829,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                   isViewOnly={isViewOnlyMember}
                   onViewOnlyAction={handleViewOnlyAction}
                   isLoading={isEntitiesSectionLoading}
+                  onLoadMoreTopLevel={topLevelTruncated ? handleLoadMoreTopLevel : undefined}
+                  isLoadingMoreTopLevel={isLoadingMoreTopLevel}
+                  topLevelTotal={topLevelTotal}
                 />
               </div>
             </aside>

@@ -81,46 +81,36 @@ public class OntologyQueryController {
 
     @GetMapping("/classes/top-level/{projectId:.+}")
     public ResponseEntity<?> topLevel(@PathVariable String projectId,
-                                      @RequestParam(defaultValue = "5000") int limit) {
+                                      @RequestParam(defaultValue = "5000") int limit,
+                                      @RequestParam(defaultValue = "0") int offset) {
         try {
             // Desktop fast path: OWLAPI in-memory → instant, no network
             if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
-                var classes = desktopHierarchyService.topLevelClasses(projectId, limit);
+                var classes = desktopHierarchyService.topLevelClasses(projectId, limit, offset);
                 int topLevelTotal = desktopHierarchyService.topLevelClassTotal(projectId);
+                boolean truncated = (offset + classes.size()) < topLevelTotal;
+                if (offset == 0 && truncated) {
+                    org.slf4j.LoggerFactory.getLogger(getClass()).warn(
+                        "[Desktop] Top-level truncated for {}: total={} limit={}", projectId, topLevelTotal, limit);
+                } else if (offset == 0) {
+                    org.slf4j.LoggerFactory.getLogger(getClass()).info(
+                        "[Desktop] Top-level for {}: total={} (no truncation)", projectId, topLevelTotal);
+                }
                 Map<String, Object> body = new java.util.LinkedHashMap<>();
                 body.put("success", true);
                 body.put("classes", classes);
                 body.put("topLevelReturned", classes.size());
                 body.put("topLevelTotal", topLevelTotal);
+                body.put("topLevelOffset", offset);
                 body.put("topLevelLimit", limit);
-                body.put("truncated", topLevelTotal > limit);
-                body.putAll(desktopHierarchyService.declarationCounts(projectId));
+                body.put("truncated", truncated);
+                if (offset == 0) body.putAll(desktopHierarchyService.declarationCounts(projectId));
                 return ResponseEntity.ok(body);
             }
-            // Trigger lazy OWLAPI load; brief wait so first open gets in-memory counts + tree when possible.
+            // Trigger lazy OWLAPI load (non-blocking — the frontend's POST /warm is the
+            // authoritative wait mechanism; we just ensure load is queued).
             if (desktopOntologyLoader != null) {
                 desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
-                for (int i = 0; i < 80 && desktopHierarchyService != null; i++) {
-                    if (desktopHierarchyService.hasOntology(projectId)) {
-                        var classes = desktopHierarchyService.topLevelClasses(projectId, limit);
-                        int topLevelTotal = desktopHierarchyService.topLevelClassTotal(projectId);
-                        Map<String, Object> body = new java.util.LinkedHashMap<>();
-                        body.put("success", true);
-                        body.put("classes", classes);
-                        body.put("topLevelReturned", classes.size());
-                        body.put("topLevelTotal", topLevelTotal);
-                        body.put("topLevelLimit", limit);
-                        body.put("truncated", topLevelTotal > limit);
-                        body.putAll(desktopHierarchyService.declarationCounts(projectId));
-                        return ResponseEntity.ok(body);
-                    }
-                    try {
-                        Thread.sleep(150);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
             }
             // Cloud: precomputed OWLAPI snapshot (Protégé-parity)
             Optional<Map<String, Object>> snapshot = hierarchyIndexService.topLevelResponse(projectId, limit);
