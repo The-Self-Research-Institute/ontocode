@@ -1739,9 +1739,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                     : [],
             )
           : (() => {
+              if (isHierarchyLoading) return 0;
               const metaCount = Number((metadata as any)?.classCount) || 0;
-              const treeCount =
-                !isHierarchyLoading && classHierarchy.length > 0 ? countNodes(classHierarchy) : 0;
+              const treeCount = classHierarchy.length > 0 ? countNodes(classHierarchy) : 0;
               // Top-level tree is capped (default 5000); total class count comes from OWLAPI metadata.
               return Math.max(metaCount, treeCount);
             })(),
@@ -2622,7 +2622,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Unknown status - allow loading attempt
         console.warn("[Dashboard] Unknown status, allowing load attempt:", status);
         return { ready: true, status };
-      } catch (error) {
+      } catch (error: any) {
+        // 404 = editor has no import record yet (file only in auth/GridFS until first open).
+        if (error?.status === 404) {
+          console.log("[Dashboard] No editor status record yet for", currentProjectId);
+          return { ready: true, status: "NOT_REGISTERED" };
+        }
         console.error("[Dashboard] Error checking project status:", error);
         // Don't block on error - let the load attempt happen
         return { ready: true };
@@ -2923,13 +2928,35 @@ const Dashboard: React.FC<DashboardProps> = ({
           )
           .catch((e: any) => {
             if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") throw e;
+            const status = e?.status ?? e?.response?.status;
             console.error("[Dashboard] Top-level class fetch failed:", e?.message || e);
-            setLoadingStatusMessage("Could not load the class hierarchy. Retrying may help.");
+            if (status === 503) {
+              if (!isStaleLoad()) {
+                setIsHierarchyLoading(true);
+                setLoadingStatusMessage("Ontology editor is busy — still loading…");
+              }
+            } else {
+              setLoadingStatusMessage("Could not load the class hierarchy. Retrying may help.");
+            }
             return null;
           });
 
+        const hierarchyBuilding =
+          topLevelClassesRes &&
+          !isDesktop() &&
+          (topLevelClassesRes?.hierarchyReady === false ||
+            topLevelClassesRes?.status === 202 ||
+            topLevelClassesRes?.success === false);
+        if (hierarchyBuilding && !isStaleLoad()) {
+          setLoadingStatusMessage(
+            topLevelClassesRes?.message ||
+              "Building Protégé-accurate class hierarchy…",
+          );
+          setIsHierarchyLoading(true);
+        }
+
         let topLevelClasses: any[] = [];
-        if (topLevelClassesRes) {
+        if (topLevelClassesRes && !hierarchyBuilding) {
           topLevelClasses = Array.isArray(topLevelClassesRes?.classes)
             ? topLevelClassesRes.classes
             : Array.isArray(topLevelClassesRes?.data?.classes)
@@ -2956,8 +2983,63 @@ const Dashboard: React.FC<DashboardProps> = ({
           hasChildren: topLevelNodes.length > 0,
           annotations: {},
         };
-        setClassHierarchy(applyInstanceCountsToTree([owlThingNode], resolvedCounts));
+        if (!hierarchyBuilding) {
+          setClassHierarchy(applyInstanceCountsToTree([owlThingNode], resolvedCounts));
+        }
         applyDeclarationCounts(topLevelClassesRes);
+        if (!isDesktop() && hierarchyBuilding && !isStaleLoad()) {
+          void (async () => {
+            for (let i = 0; i < 120 && !signal.aborted; i++) {
+              await new Promise((r) => setTimeout(r, 2000));
+              try {
+                const cs = await apiClient.get<any>(
+                  `/api/ontology/cache-status/${encodedProjectId}${cacheBuster}`,
+                  undefined,
+                  { signal },
+                );
+                applyDeclarationCounts(cs);
+                if (cs?.hierarchyReady ?? cs?.owlapiReady) {
+                  const retry = await apiClient.get<any>(
+                    `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+                    undefined,
+                    { signal },
+                  );
+                  const classes = Array.isArray(retry?.classes) ? retry.classes : [];
+                  const nodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
+                    ...c,
+                    children: [],
+                    hasChildren: c.hasChildren !== false,
+                    subClassOfAxioms: [
+                      { id: "http://www.w3.org/2002/07/owl#Thing", type: "SubClassOf", definition: "owl:Thing" },
+                    ],
+                  }));
+                  setClassHierarchy(
+                    applyInstanceCountsToTree(
+                      [
+                        {
+                          id: "http://www.w3.org/2002/07/owl#Thing",
+                          label: "owl:Thing",
+                          children: nodes,
+                          hasChildren: nodes.length > 0,
+                          annotations: {},
+                        },
+                      ],
+                      resolvedCounts,
+                    ),
+                  );
+                  applyDeclarationCounts(retry);
+                  setLoadingStatusMessage("");
+                  setIsHierarchyLoading(false);
+                  return;
+                }
+              } catch {
+                /* retry */
+              }
+            }
+            setLoadingStatusMessage("Class hierarchy index is still building. Try refresh in a moment.");
+            setIsHierarchyLoading(false);
+          })();
+        }
         if (isDesktop() && !isStaleLoad()) {
           try {
             const cs = await apiClient.get<any>(
@@ -2973,8 +3055,10 @@ const Dashboard: React.FC<DashboardProps> = ({
             console.debug("[Dashboard] cache-status after top-level:", e);
           }
         }
-        setLoadingStatusMessage("");
-        setIsHierarchyLoading(false);
+        if (!hierarchyBuilding) {
+          setLoadingStatusMessage("");
+          setIsHierarchyLoading(false);
+        }
 
         // Phase 2: load other entity sections in background (tab spinners + bottom bar).
         if (!isStaleLoad()) {
@@ -4514,7 +4598,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   // closes a spinner, and the data continues loading via the normal effects.
   useEffect(() => {
     const open = isInitialLoading || showLoadingChoice;
-    if (!open || !projectId) return;
+    // Only poll status for file-level project IDs (contain '--').
+    // Parent-only IDs (e.g. "proj-abc123") return 404 from the status endpoint.
+    if (!open || !projectId || !projectId.includes("--")) return;
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -4645,6 +4731,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Track if a file is currently being loaded to prevent duplicate loads
   const fileLoadingRef = useRef(false);
   const lastLoadedFileRef = useRef<string | null>(null);
+
+  /** Skip hierarchy/cache polls until file-scoped projectId is active (not parent-only). */
+  const shouldDeferHierarchyDuringFileOpen = useCallback(() => {
+    if (fileLoadingRef.current) return true;
+    if (initialProjectId && activeFileId && projectId === initialProjectId) return true;
+    return false;
+  }, [initialProjectId, activeFileId, projectId]);
 
   // AbortController for cancelling in-flight fetchData requests when the user switches files
   const fetchAbortControllerRef = useRef<AbortController | null>(null);
@@ -5537,7 +5630,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // OPTIMIZED: Use limit parameter for faster initial load (backend has caching)
         const isOwlThing = nodeId === "http://www.w3.org/2002/07/owl#Thing";
         const endpoint = isOwlThing
-          ? `/api/ontology/classes/top-level/${projectId}?limit=100`
+          ? `/api/ontology/classes/top-level/${projectId}?limit=5000`
           : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`;
 
         const response = await apiClient.get<any>(endpoint);
@@ -5713,6 +5806,10 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const refreshClassHierarchy = useCallback(async () => {
     if (!projectId) return;
+    if (shouldDeferHierarchyDuringFileOpen()) {
+      console.log("[Dashboard] Deferring class hierarchy refresh during file open");
+      return;
+    }
     const now = Date.now();
     if (classHierarchyRefreshInFlight.current) {
       console.warn("[Dashboard] Skipping class hierarchy refresh: already in flight");
@@ -5770,15 +5867,23 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log(`[Dashboard] Could not reload children for ${nodeId}:`, err);
         }
       }
-    } catch (error) {
-      console.error("[Dashboard] Failed to refresh class hierarchy:", error);
+    } catch (error: any) {
+      const status = error?.status ?? error?.response?.status;
+      if (status === 503) {
+        console.warn("[Dashboard] Editor busy (503) during hierarchy refresh — keeping loading state");
+        setIsHierarchyLoading(true);
+        setLoadingStatusMessage("Ontology editor is busy — still loading…");
+      } else {
+        console.error("[Dashboard] Failed to refresh class hierarchy:", error);
+      }
     } finally {
       classHierarchyRefreshInFlight.current = false;
     }
-  }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree]);
+  }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree, shouldDeferHierarchyDuringFileOpen]);
 
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "Classes") return;
+    if (shouldDeferHierarchyDuringFileOpen()) return;
 
     console.log("[Dashboard] Classes tab active, view mode:", currentHierarchyViewMode);
     if (currentHierarchyViewMode === "inferred") {
@@ -5800,7 +5905,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   // ONCE from it so the user never sees a half-SPARQL / half-OWLAPI mix.
   const owlapiReadyHandledRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isDesktop() || !projectId) return;
+    if (!projectId) return;
+    if (shouldDeferHierarchyDuringFileOpen()) return;
     if (owlapiReadyHandledRef.current === projectId) return;
 
     let cancelled = false;
@@ -5813,11 +5919,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       attempts += 1;
       try {
         const res = await apiClient.get<any>(`/api/ontology/cache-status/${encodeProjectId(projectId)}`);
-        const ready = res?.owlapiReady ?? res?.data?.owlapiReady;
+        const ready =
+          res?.owlapiReady ??
+          res?.data?.owlapiReady ??
+          res?.hierarchyReady ??
+          res?.data?.hierarchyReady;
         if (ready) {
           owlapiReadyHandledRef.current = projectId;
           if (!cancelled) {
-            console.log("[Dashboard] OWLAPI model ready — updating counts");
+            console.log("[Dashboard] Hierarchy engine ready — updating counts");
             const patch = extractDeclarationCountsPatch(res);
             if (patch) {
               setMetadata((prev) => ({ ...(prev || {}), ...patch }) as OntologyMetadata);
@@ -6947,11 +7057,22 @@ const Dashboard: React.FC<DashboardProps> = ({
         lastLoadedFileRef.current = fileId;
         fileLoadingRef.current = true;
 
+        const ontologyProjectId = `${initialProjectId}--${fileId}`;
+
         setActiveFileId(fileId);
         setActiveFileName(fileName);
         if (onFileSelected) onFileSelected(fileId, fileName);
 
-        const ontologyProjectId = `${initialProjectId}--${fileId}`;
+        // File-scoped id before slow graphdb/warm-up so effects never query parent-only projectId.
+        setProjectId(ontologyProjectId);
+        setLoadingProjectName(fileName);
+        setIsHierarchyLoading(true);
+        setIsMetadataLoading(true);
+        setIsPropertiesLoading(true);
+        setIsIndividualsLoading(true);
+        setIsAnnotationPropertiesLoading(true);
+        setIsDatatypesLoading(true);
+        setLoadingStatusMessage(`Loading ${fileName}…`);
 
         // ⚡ FAST PATH: Check if data already exists in GraphDB — skip MongoDB fetch + re-upload
         try {
@@ -6968,10 +7089,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               `[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (HIT: ${graphCheck.graphSize} triples)`,
             );
             console.log(`[Dashboard] ⚡ File already in GraphDB (${graphCheck.graphSize} triples), loading directly`);
-            setProjectId(ontologyProjectId);
-            setLoadingProjectName(fileName);
             notificationService.info("Loading", `Loading ${fileName} from cache...`);
-            await fetchData(ontologyProjectId, true, initialProjectId);
+            await fetchData(ontologyProjectId, false, initialProjectId, true);
             setShowLoadingChoice(false);
             setShowQueueStatus(false);
             setQueuePosition(undefined);
@@ -7046,7 +7165,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] ✅ Desktop cache hit (ALREADY_LOADED) — fetching data directly");
           pendingImportProjectIdRef.current = null;
           setIsInitialLoading(false);
-          await fetchData(ontologyProjectId, fileName, fileId, user?.email || "");
+          await fetchData(ontologyProjectId, false, initialProjectId, true);
           return;
         }
 

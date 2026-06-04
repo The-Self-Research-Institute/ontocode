@@ -21,7 +21,6 @@ import java.io.IOException;
 import java.security.Key;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 /**
@@ -39,19 +38,30 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
+    @Value("${ontocode.desktop.user.email:local@ontocode.desktop}")
+    private String desktopUserEmail;
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
 
-        // Desktop mode: all requests run as the local synthetic user — skip JWT entirely.
+        // Desktop: no sign-in — always use the seeded local principal. Electron never
+        // sends Authorization; do not parse web JWTs here (web UI must not share a
+        // desktop-mode auth instance on the same port).
         if (desktopMode) {
+            if (SecurityContextHolder.getContext().getAuthentication() == null) {
+                var auth = new UsernamePasswordAuthenticationToken(
+                    desktopUserEmail, null,
+                    List.of(new SimpleGrantedAuthority("ROLE_USER")));
+                SecurityContextHolder.getContext().setAuthentication(auth);
+            }
             filterChain.doFilter(request, response);
             return;
         }
 
         String authHeader = request.getHeader("Authorization");
-        
-        log.info("[JWT Filter] Processing: {} {} | Auth header present: {}", 
+
+        log.info("[JWT Filter] Processing: {} {} | Auth header present: {}",
                 request.getMethod(), request.getRequestURI(), authHeader != null);
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
@@ -59,7 +69,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             log.debug("[JWT Filter] Token (first 20 chars): {}...", token.substring(0, Math.min(20, token.length())));
 
             try {
-                // Use Base64 decoding to match JwtUtil
                 byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
                 Key key = Keys.hmacShaKeyFor(keyBytes);
 
@@ -69,8 +78,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     .parseClaimsJws(token)
                     .getPayload();
 
-                String username = claims.getSubject();
-                
+                // Use email as the principal name so getCurrentUserEmail() → authentication.getName()
+                // returns the email address that userRepository.findByEmail() expects.
+                // JWT sub = display username; email claim = email for userRepository.findByEmail()
+                Object emailObj = claims.get("email");
+                log.info("[JWT Filter] email claim raw: {} (type: {})", emailObj, emailObj != null ? emailObj.getClass().getSimpleName() : "null");
+                String emailClaim = emailObj instanceof String ? (String) emailObj : null;
+                String username = (emailClaim != null && !emailClaim.isBlank()) ? emailClaim : claims.getSubject();
+
                 log.info("[JWT Filter] ✓ Extracted username: {}", username);
 
                 if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
@@ -101,7 +116,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 log.debug("[JWT Filter] Full stack trace:", e);
             }
         } else {
-            log.warn("[JWT Filter] ✗ No valid Authorization header found for {} {}", 
+            log.warn("[JWT Filter] ✗ No valid Authorization header found for {} {}",
                     request.getMethod(), request.getRequestURI());
         }
 

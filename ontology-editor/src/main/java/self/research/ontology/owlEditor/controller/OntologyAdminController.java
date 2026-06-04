@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.service.HierarchyIndexService;
 import self.research.ontology.owlEditor.service.OntologyAdminService;
 import self.research.ontology.owlEditor.service.TopLevelClassCacheService;
 
@@ -25,11 +26,14 @@ public class OntologyAdminController {
 
     private final OntologyAdminService adminService;
     private final TopLevelClassCacheService topLevelCacheService;
+    private final HierarchyIndexService hierarchyIndexService;
 
     public OntologyAdminController(OntologyAdminService adminService,
-                                   TopLevelClassCacheService topLevelCacheService) {
+                                   TopLevelClassCacheService topLevelCacheService,
+                                   HierarchyIndexService hierarchyIndexService) {
         this.adminService = adminService;
         this.topLevelCacheService = topLevelCacheService;
+        this.hierarchyIndexService = hierarchyIndexService;
     }
 
     /** Evict stale top-level class hierarchy cache for a project.
@@ -39,15 +43,26 @@ public class OntologyAdminController {
     @PostMapping("/cache/evict/{projectId:.+}")
     public ResponseEntity<?> evictHierarchyCache(@PathVariable String projectId) {
         topLevelCacheService.evict(projectId);
+        hierarchyIndexService.evict(projectId);
+        hierarchyIndexService.scheduleBuild(projectId);
         return ResponseEntity.ok(Map.of("success", true, "message",
-            "Top-level hierarchy cache evicted for project " + projectId));
+            "Hierarchy caches evicted and snapshot rebuild scheduled for project " + projectId));
     }
 
     /** Evict ALL projects' top-level cache — use after a hierarchy query fix deployment. */
     @PostMapping("/cache/evict-all")
     public ResponseEntity<?> evictAllHierarchyCache() {
         topLevelCacheService.evictAll();
-        return ResponseEntity.ok(Map.of("success", true, "message", "All hierarchy caches evicted"));
+        return ResponseEntity.ok(Map.of("success", true, "message", "All legacy top-level SPARQL caches evicted"));
+    }
+
+    @PostMapping("/hierarchy/rebuild/{projectId:.+}")
+    public ResponseEntity<?> rebuildHierarchySnapshot(@PathVariable String projectId) {
+        hierarchyIndexService.scheduleBuild(projectId);
+        return ResponseEntity.accepted().body(Map.of(
+                "success", true,
+                "message", "Protégé-parity hierarchy snapshot rebuild scheduled",
+                "projectId", projectId));
     }
 
     @GetMapping("/id/{projectId}")

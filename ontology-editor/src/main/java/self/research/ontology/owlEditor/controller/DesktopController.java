@@ -72,9 +72,13 @@ public class DesktopController {
         return ResponseEntity.ok(Map.of("message", "logged out"));
     }
 
+    @GetMapping("/api/auth/refresh")
     @PostMapping("/api/auth/refresh")
     public ResponseEntity<Map<String, Object>> refresh() {
-        return ResponseEntity.ok(loginResponse());
+        Map<String, Object> resp = loginResponse();
+        // Web AuthContext expects `jwt`; desktop stub historically used `token` only.
+        resp.put("jwt", DESKTOP_TOKEN);
+        return ResponseEntity.ok(resp);
     }
 
     // ── Workspace endpoints ───────────────────────────────────────────────────

@@ -92,7 +92,7 @@ const decodeToken = (token: string): { userId?: string; username: string; email?
             workspaceId: payload.workspaceId,
             workspaceName: payload.workspaceName,
             workspaceRole: payload.workspaceRole,
-            subscriptionPlan: payload.subscriptionPlan
+            subscriptionPlan: payload.subscriptionPlan || payload.plan
         };
     } catch (e) {
         console.error('[AuthContext] Error decoding token:', e);
@@ -906,6 +906,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const refreshPermissions = async () => {
         try {
+            // Desktop has no JWT session — refresh is a cloud/web-only endpoint.
+            if (isDesktop()) {
+                return;
+            }
             // Skip the network call if the token is already expired locally.
             // The 60-second interval will handle logout; no need to race the backend.
             const storedToken = localStorage.getItem('authToken');

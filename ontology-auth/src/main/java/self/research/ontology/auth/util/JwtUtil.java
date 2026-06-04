@@ -70,6 +70,8 @@ public class JwtUtil {
             return extractClaim(token, Claims::getSubject);
         } catch (io.jsonwebtoken.ExpiredJwtException e) {
             return e.getClaims().getSubject();
+        } catch (io.jsonwebtoken.JwtException e) {
+            throw new IllegalArgumentException("Invalid or expired session token: " + e.getMessage(), e);
         }
     }
 

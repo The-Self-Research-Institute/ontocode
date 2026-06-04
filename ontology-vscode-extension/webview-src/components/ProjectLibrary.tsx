@@ -333,16 +333,21 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
       const responseData = (uploadResponse as any)?.data || uploadResponse;
       const uploadedFileId = responseData?.fileId || responseData?.id || null;
-      const uploadedFileName = responseData?.filename || targetFileName;
 
-      // Always reload files to refresh the file list after upload
-      await loadFiles();
-      await loadStorageUsage();
+      // Upload bytes are on the server — clear the progress UI immediately so the
+      // bar doesn't sit at 100% / "Uploading..." while loadFiles() refetches the list.
+      setUploading(false);
+      setUploadProgress(0);
+      setProcessingFile(null);
 
-      // Set the uploaded file as selected in the list, but don't automatically load it into the editor
-      if (uploadedFileId) {
-        setSelectedFile(uploadedFileId);
-      }
+      // Refresh file list in background (can take 20–30s on large projects).
+      void loadFiles().then((files) => {
+        if (uploadedFileId) {
+          setSelectedFile(uploadedFileId);
+        }
+        return files;
+      });
+      void loadStorageUsage();
     } catch (error: any) {
       console.error("Error uploading file:", error);
       console.error("Error status:", error.status);

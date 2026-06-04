@@ -3,6 +3,7 @@ import { X, Users, AlertCircle, Search } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
 import { validateProjectName, validateDescription } from "../utils/validation";
+import { isDesktop } from "../utils/desktop";
 
 interface CreateProjectModalProps {
   isOpen: boolean;
@@ -33,6 +34,7 @@ const isPrivilegedMember = (member: WorkspaceMember) =>
 
 const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const { user } = useAuth();
+  const desktop = isDesktop();
   const [projectName, setProjectName] = useState("");
   const [description, setDescription] = useState("");
   const [shareWith, setShareWith] = useState<"none" | "all" | "specific">("none");
@@ -58,13 +60,19 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
     setSelectedMembers([]);
     setMemberSearch("");
 
+    if (desktop) {
+      setWorkspaceMembers([]);
+      setMembersLoadError(null);
+      return;
+    }
+
     if (user?.workspaceId) {
       loadWorkspaceMembers();
     } else {
       setWorkspaceMembers([]);
       setMembersLoadError("Select a workspace before choosing specific members.");
     }
-  }, [isOpen, user?.workspaceId]);
+  }, [isOpen, user?.workspaceId, desktop]);
 
   useEffect(() => {
     if (shareWith !== "specific") {
@@ -135,7 +143,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
     e.preventDefault();
     setErrorMessage(null);
 
-    if (!user?.workspaceId) {
+    const workspaceId =
+      user?.workspaceId || (desktop ? "desktop-workspace-local" : undefined);
+    if (!workspaceId) {
       setErrorMessage("No workspace selected. Please select a workspace before creating a project.");
       return;
     }
@@ -154,7 +164,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
       }
     }
 
-    if (shareWith === "specific" && selectedMembers.length === 0) {
+    if (!desktop && shareWith === "specific" && selectedMembers.length === 0) {
       setErrorMessage("Please select at least one member to share with, or choose a different sharing option.");
       return;
     }
@@ -163,7 +173,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
       setCreating(true);
 
       const checkResponse = await apiClient.get(
-        `/api/projects/check?name=${encodeURIComponent(projectName.trim())}&workspaceId=${user?.workspaceId || "default"}`,
+        `/api/projects/check?name=${encodeURIComponent(projectName.trim())}&workspaceId=${workspaceId}`,
       );
 
       if (checkResponse?.data?.exists || checkResponse?.exists) {
@@ -173,13 +183,13 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
       }
 
       const payload: any = {
-        workspaceId: user?.workspaceId || "default",
+        workspaceId,
         name: projectName.trim(),
         description: description.trim(),
-        shareWith: shareWith === "none" ? null : shareWith,
+        shareWith: desktop || shareWith === "none" ? null : shareWith,
       };
 
-      if (shareWith === "specific" && selectedMembers.length > 0) {
+      if (!desktop && shareWith === "specific" && selectedMembers.length > 0) {
         payload.memberAccess = selectedMembers.map((email) => ({
           email: email.trim(),
           role: selectedMemberRoles[normalizeEmail(email)] || "VIEWER",
@@ -319,6 +329,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
             </div>
           </div>
 
+          {!desktop && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-3">Share with</label>
             <div className="space-y-3">
@@ -507,6 +518,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
               )}
             </div>
           </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
             <button
