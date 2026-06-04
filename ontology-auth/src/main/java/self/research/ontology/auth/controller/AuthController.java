@@ -309,9 +309,10 @@ public class AuthController {
             // and the 60s client-side expiry check means the token may have just expired.
             String email = jwtUtil.extractEmailAllowExpired(token);
             
-            Optional<User> userOpt = userRepository.findByEmail(email);
+            Optional<User> userOpt = userRepository.findByEmailIgnoreCase(email);
             if (userOpt.isEmpty()) {
-                return ResponseEntity.notFound().build();
+                log.warn("Token refresh: no user for email from token (subject={})", email);
+                return ResponseEntity.status(401).body(Map.of("error", "User not found for this session"));
             }
 
             User user = userOpt.get();

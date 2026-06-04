@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.query.BindingSet;
@@ -41,6 +42,9 @@ public class OntologyMutationService {
 
     @Autowired @Lazy
     private VisualizationController visualizationController;
+
+    @Autowired(required = false) @Nullable
+    private HierarchyIndexService hierarchyIndexService;
 
     public OntologyMutationService(GraphDBDatasetService datasetService,
                                    OntologyIndexService indexService,
@@ -106,6 +110,9 @@ public class OntologyMutationService {
 
             // Evict MongoDB persistent top-level class cache so next read recomputes
             topLevelCacheService.evict(projectId);
+            if (hierarchyIndexService != null) {
+                hierarchyIndexService.markStale(projectId);
+            }
 
             // Clear graph cache after mutations
             graphGeneratingService.clearGraphCache();
