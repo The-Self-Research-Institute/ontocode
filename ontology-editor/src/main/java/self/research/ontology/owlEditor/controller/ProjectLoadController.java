@@ -431,16 +431,30 @@ public class ProjectLoadController {
             if (ontologyCache != null) {
                 boolean owlapiReady = ontologyCache.has(projectId);
 
-                boolean mongoCompleted = metadataService.readStatus(projectId)
+                var mongoStatus = metadataService.readStatus(projectId);
+                boolean mongoCompleted = mongoStatus
                     .map(s -> "COMPLETED".equals(s.status()) || "UPDATED".equals(s.status()))
                     .orElse(false);
 
                 boolean fileExists = storageManager.findCurrentOntology(projectId).isPresent();
 
+                // If MongoDB status is PROCESSING or ERROR, the last import was interrupted
+                // or failed — do NOT skip even if Fuseki has partial data. Force re-import.
+                boolean importFailed = mongoStatus
+                    .map(s -> "PROCESSING".equals(s.status()) || "ERROR".equals(s.status()))
+                    .orElse(false);
+                if (importFailed && fileExists) {
+                    log.info("[ProjectLoadController] MongoDB status is PROCESSING/ERROR — forcing re-import for {}", projectId);
+                    // Fall through to full import path (do not set shouldSkip)
+                }
+
                 // Extra Fuseki check only if MongoDB says completed but file is missing
                 // (handles case where data was manually cleared)
                 boolean fusekiHasData = false;
-                if (mongoCompleted && !fileExists) {
+                if (importFailed) {
+                    // Never skip on a previously failed/interrupted import
+                    mongoCompleted = false;
+                } else if (mongoCompleted && !fileExists) {
                     // File missing → someone cleared data, allow re-import
                     mongoCompleted = false;
                     log.info("[ProjectLoadController] MongoDB says COMPLETED but file missing — forcing re-import for {}", projectId);
