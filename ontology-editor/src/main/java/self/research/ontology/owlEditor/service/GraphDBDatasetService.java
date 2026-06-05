@@ -329,54 +329,152 @@ public class GraphDBDatasetService {
     }
 
     /**
-     * Return a dedicated per-file SPARQLRepository for the given projectId.
-     *
-     * On first call for a projectId:
-     *  1. Derive the Fuseki base URL from fusekiQueryEndpoint (strip the path suffix).
-     *  2. Create a new TDB2 dataset on that Fuseki server via the admin REST API
-     *     (POST /$/datasets), if it doesn't already exist.
-     *  3. Build a SPARQLRepository pointing at /proj-{id}/query and /proj-{id}/update.
-     *  4. Cache and return it.
-     *
-     * Falls back to the shared repository if dataset creation fails, so existing behaviour
-     * is preserved for any error path.
+     * Shared vs dedicated Fuseki dataset for one project. All import and query paths must use
+     * the same binding so clear / GSP PUT / verify / SPARQL hit the same repository and named graph.
+     */
+    private record ProjectGraphBinding(
+            Repository repository,
+            String projectId,
+            String graphUri,
+            String gspBase,
+            boolean dedicatedPerFile) {
+
+        static ProjectGraphBinding shared(Repository repo, String projectId, String graphUri, String gspBase) {
+            return new ProjectGraphBinding(repo, projectId, graphUri, gspBase, false);
+        }
+
+        String namedGraphGspUrl() {
+            return gspBase + "?graph=" + URLEncoder.encode(graphUri, StandardCharsets.UTF_8);
+        }
+    }
+
+    /**
+     * Return a dedicated per-file SPARQLRepository when {@code createIfAbsent} is true (imports),
+     * or when a dedicated dataset already exists on Fuseki (restart / query reconnect).
+     * Never caches a failed fallback in {@link #perFileRepositories}.
      */
     public Repository getRepository(String projectId) {
-        if (projectId == null || projectId.isBlank()) return getRepository();
-        return perFileRepositories.computeIfAbsent(projectId, pid -> {
-            try {
-                // Derive base URL: "http://host:port/ontocode/query" → "http://host:port"
-                java.net.URI endpointUri = java.net.URI.create(fusekiQueryEndpoint);
-                String base = endpointUri.getScheme() + "://" + endpointUri.getHost()
-                    + (endpointUri.getPort() != -1 ? ":" + endpointUri.getPort() : "");
-                // Dataset name must be URL-safe; projectId uses [a-zA-Z0-9-] so it's fine.
-                String dsName = toDatasetName(pid);
+        return resolveBinding(projectId, true).repository();
+    }
 
-                // Create dataset via Fuseki admin API (idempotent — 409 = already exists, OK)
-                ensureFusekiDataset(base, dsName);
+    private String deriveFusekiBase() {
+        java.net.URI endpointUri = java.net.URI.create(fusekiQueryEndpoint);
+        return endpointUri.getScheme() + "://" + endpointUri.getHost()
+                + (endpointUri.getPort() != -1 ? ":" + endpointUri.getPort() : "");
+    }
 
-                String queryUrl  = base + "/" + dsName + "/query";
-                String updateUrl = base + "/" + dsName + "/update";
-
-                SPARQLRepository repo = new SPARQLRepository(queryUrl, updateUrl);
-                if (fusekiAdminUser != null && !fusekiAdminUser.isBlank()) {
-                    BasicCredentialsProvider creds = new BasicCredentialsProvider();
-                    creds.setCredentials(AuthScope.ANY,
-                        new UsernamePasswordCredentials(fusekiAdminUser, fusekiAdminPassword));
-                    CloseableHttpClient httpClient = HttpClients.custom()
-                        .setDefaultCredentialsProvider(creds).build();
-                    SharedHttpClientSessionManager sm = new SharedHttpClientSessionManager();
-                    sm.setHttpClient(httpClient);
-                    repo.setHttpClientSessionManager(sm);
-                }
-                repo.init();
-                log.info("[PerFileDS] Created/reused Fuseki dataset '{}' for project {}", dsName, pid);
-                return repo;
-            } catch (Exception e) {
-                log.warn("[PerFileDS] Could not create per-file dataset for {} — falling back to shared: {}", pid, e.getMessage());
-                return getRepository(); // graceful fallback
+    private boolean fusekiDatasetExists(String fusekiBase, String datasetName) {
+        try {
+            String adminUrl = fusekiBase + "/$/datasets";
+            String auth = "Basic " + java.util.Base64.getEncoder()
+                    .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword).getBytes(StandardCharsets.UTF_8));
+            java.net.URL url = new java.net.URL(adminUrl);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Authorization", auth);
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(30_000);
+            int status = conn.getResponseCode();
+            java.io.InputStream stream = status >= 200 && status < 300
+                    ? conn.getInputStream() : conn.getErrorStream();
+            if (stream == null) {
+                conn.disconnect();
+                return false;
             }
-        });
+            String body = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            conn.disconnect();
+            return body.contains("\"" + datasetName + "\"")
+                    || body.contains("/" + datasetName + "\"");
+        } catch (Exception e) {
+            log.debug("[PerFileDS] Could not list Fuseki datasets: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private SPARQLRepository connectPerFileRepository(String fusekiBase, String dsName) throws Exception {
+        String queryUrl = fusekiBase + "/" + dsName + "/query";
+        String updateUrl = fusekiBase + "/" + dsName + "/update";
+        SPARQLRepository repo = new SPARQLRepository(queryUrl, updateUrl);
+        if (fusekiAdminUser != null && !fusekiAdminUser.isBlank()) {
+            BasicCredentialsProvider creds = new BasicCredentialsProvider();
+            creds.setCredentials(AuthScope.ANY,
+                    new UsernamePasswordCredentials(fusekiAdminUser, fusekiAdminPassword));
+            CloseableHttpClient httpClient = HttpClients.custom()
+                    .setDefaultCredentialsProvider(creds).build();
+            SharedHttpClientSessionManager sm = new SharedHttpClientSessionManager();
+            sm.setHttpClient(httpClient);
+            repo.setHttpClientSessionManager(sm);
+        }
+        repo.init();
+        return repo;
+    }
+
+    private ProjectGraphBinding resolveBinding(String projectId, boolean createIfAbsent) {
+        String graphUri = getGraphUri(projectId);
+        if (projectId == null || projectId.isBlank()) {
+            return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
+        }
+
+        Repository cached = perFileRepositories.get(projectId);
+        if (cached != null) {
+            return new ProjectGraphBinding(cached, projectId, graphUri, getPerFileGspEndpoint(projectId), true);
+        }
+
+        String fusekiBase = deriveFusekiBase();
+        String dsName = toDatasetName(projectId);
+        boolean datasetExists = fusekiDatasetExists(fusekiBase, dsName);
+
+        if (datasetExists || createIfAbsent) {
+            try {
+                if (createIfAbsent && !datasetExists) {
+                    ensureFusekiDataset(fusekiBase, dsName);
+                }
+                SPARQLRepository repo = connectPerFileRepository(fusekiBase, dsName);
+
+                // Legacy split-brain: an empty dedicated dataset was created while chunked import
+                // wrote to the shared named graph. Prefer shared when dedicated has no triples.
+                if (!createIfAbsent && datasetExists) {
+                    try (RepositoryConnection dedicatedConn = repo.getConnection()) {
+                        long dedicatedSize = countGraphTriplesSparql(dedicatedConn, graphUri);
+                        if (dedicatedSize == 0) {
+                            try (RepositoryConnection sharedConn = getRepository().getConnection()) {
+                                long sharedSize = countGraphTriplesSparql(sharedConn, graphUri);
+                                if (sharedSize > 0) {
+                                    log.info("[PerFileDS] Dedicated dataset '{}' is empty but shared graph has {} triples — using shared for {}",
+                                            dsName, sharedSize, projectId);
+                                    return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
+                                }
+                            }
+                        }
+                    } catch (Exception sizeEx) {
+                        log.debug("[PerFileDS] Could not compare dedicated vs shared size for {}: {}",
+                                projectId, sizeEx.getMessage());
+                    }
+                }
+
+                perFileRepositories.put(projectId, repo);
+                log.info("[PerFileDS] Using dedicated Fuseki dataset '{}' for project {} (existed={}, created={})",
+                        dsName, projectId, datasetExists, createIfAbsent && !datasetExists);
+                return new ProjectGraphBinding(repo, projectId, graphUri, getPerFileGspEndpoint(projectId), true);
+            } catch (Exception e) {
+                if (createIfAbsent) {
+                    log.warn("[PerFileDS] Could not use dedicated dataset for {} — shared fallback: {}",
+                            projectId, e.getMessage());
+                }
+            }
+        }
+
+        return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
+    }
+
+    /** Drop in-memory per-file repo handle (e.g. after replace/clear). Does not delete Fuseki data. */
+    public void evictPerFileDataset(String projectId) {
+        if (projectId == null || projectId.isBlank()) {
+            return;
+        }
+        perFileRepositories.remove(projectId);
+        partitionGraphCache.remove(projectId);
+        log.info("[PerFileDS] Evicted cached repository for project {}", projectId);
     }
 
     /** Convert a projectId to a Fuseki-safe dataset name (max 64 chars, alphanumeric + hyphens). */
@@ -445,14 +543,9 @@ public class GraphDBDatasetService {
      */
     public boolean hasGraphData(String projectId) {
         try {
-            // Use per-file dataset if it exists; otherwise fall back to shared named graph.
-            boolean hasPerFile = perFileRepositories.containsKey(projectId);
-            Repository repo = hasPerFile ? perFileRepositories.get(projectId) : getRepository();
-            String graphUri = getGraphUri(projectId);
-            try (RepositoryConnection conn = repo.getConnection()) {
-                return hasPerFile
-                    ? conn.hasStatement(null, null, null, false)  // per-file: any triple in default graph
-                    : countGraphTriplesSparql(conn, graphUri) > 0;
+            ProjectGraphBinding binding = resolveBinding(projectId, false);
+            try (RepositoryConnection conn = binding.repository().getConnection()) {
+                return countGraphTriplesSparql(conn, binding.graphUri()) > 0;
             }
         } catch (Exception e) {
             log.warn("[hasGraphData] Could not check graph for project {}: {}", projectId, e.getMessage());
@@ -465,10 +558,10 @@ public class GraphDBDatasetService {
         result.put("exists", false);
         
         try {
-            Repository repo = getRepository();
-            String graphUri = getGraphUri(projectId);
-            
-            try (RepositoryConnection conn = repo.getConnection()) {
+            ProjectGraphBinding graphBinding = resolveBinding(projectId, false);
+            String graphUri = graphBinding.graphUri();
+
+            try (RepositoryConnection conn = graphBinding.repository().getConnection()) {
                 // Check 1: Check if there are any triples in the graph (basic duplicate prevention)
                 long graphSize = countGraphTriplesSparql(conn, graphUri);
                 
@@ -612,8 +705,11 @@ public class GraphDBDatasetService {
                 // On timeout we return -1 (unknown) → caller proceeds to cache load.
                 try {
                     return CompletableFuture.supplyAsync(() -> {
-                        try (RepositoryConnection conn = getRepository().getConnection()) {
-                            return countGraphTriplesSparql(conn, getGraphUri(pid));
+                        try {
+                            ProjectGraphBinding binding = resolveBinding(pid, false);
+                            try (RepositoryConnection conn = binding.repository().getConnection()) {
+                                return countGraphTriplesSparql(conn, binding.graphUri());
+                            }
                         } catch (Exception e) {
                             log.debug("[MEMCACHE] estimateTripleCount inner error for {}: {}", pid, e.getMessage());
                             return -1L;
@@ -666,8 +762,8 @@ public class GraphDBDatasetService {
      * turn closes its RepositoryConnection.
      */
     private GraphQueryResult execConstructAll(String projectId) {
-        Repository repo = getRepository();
-        final RepositoryConnection conn = repo.getConnection();
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        final RepositoryConnection conn = binding.repository().getConnection();
         try {
             String fromClause = buildFromClause(conn, projectId);
             String q = "CONSTRUCT { ?s ?p ?o } " + fromClause + " WHERE { ?s ?p ?o }";
@@ -695,13 +791,11 @@ public class GraphDBDatasetService {
      * in-memory cache.
      */
     private TupleQueryResult execSelectGraphDB(String projectId, String sparqlQuery, boolean includeInferred) {
-        // Use per-file dataset if available, else fall back to shared dataset + named graph.
-        boolean hasPerFile = perFileRepositories.containsKey(projectId);
-        Repository repo = hasPerFile ? perFileRepositories.get(projectId) : getRepository();
-        String graphUri = getGraphUri(projectId);
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        String graphUri = binding.graphUri();
         long totalStart = System.nanoTime();
 
-        try (RepositoryConnection conn = repo.getConnection()) {
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
             long connMs = (System.nanoTime() - totalStart) / 1_000_000;
             
             // Inject FROM clause if not present
@@ -820,10 +914,10 @@ public class GraphDBDatasetService {
      * Execute a SPARQL CONSTRUCT query
      */
     public GraphQueryResult execConstruct(String projectId, String sparqlQuery) {
-        Repository repo = getRepository();
-        String graphUri = getGraphUri(projectId);
-        
-        try (RepositoryConnection conn = repo.getConnection()) {
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        String graphUri = binding.graphUri();
+
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
             
             // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
@@ -849,11 +943,10 @@ public class GraphDBDatasetService {
      * Execute a SPARQL ASK query
      */
     public boolean execAsk(String projectId, String sparqlQuery) {
-        boolean hasPerFile = perFileRepositories.containsKey(projectId);
-        Repository repo = hasPerFile ? perFileRepositories.get(projectId) : getRepository();
-        String graphUri = getGraphUri(projectId);
-        
-        try (RepositoryConnection conn = repo.getConnection()) {
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        String graphUri = binding.graphUri();
+
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
 
             // Inject FROM clause if not present.
             // ASK queries legally omit the WHERE keyword (ASK { } is valid SPARQL), so we
@@ -886,12 +979,11 @@ public class GraphDBDatasetService {
      * Execute a SPARQL UPDATE operation
      */
     public void execUpdate(String projectId, String sparqlUpdate) {
-        boolean hasPerFile = perFileRepositories.containsKey(projectId);
-        Repository repo = hasPerFile ? perFileRepositories.get(projectId) : getRepository();
-        String graphUri = getGraphUri(projectId);
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        String graphUri = binding.graphUri();
         long totalStart = System.nanoTime();
-        
-        try (RepositoryConnection conn = repo.getConnection()) {
+
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
             long connMs = elapsedMillis(totalStart);
             
             log.info("[GRAPHDB] EXECUTING UPDATE project={} graph={} connTime={}ms", projectId, graphUri, connMs);
@@ -1091,11 +1183,12 @@ public class GraphDBDatasetService {
         
         try {
             long t0 = System.nanoTime();
-            Repository repo = getRepository();
-            String graphUri = getGraphUri(projectId);
+            ProjectGraphBinding binding = resolveBinding(projectId, true);
+            Repository repo = binding.repository();
+            String graphUri = binding.graphUri();
 
-            log.info("Starting CHUNKED bulk load for project: {} with format: {} (batch size: {} triples)",
-                    projectId, rdfFormat, batchSize);
+            log.info("Starting CHUNKED bulk load for project: {} with format: {} (batch size: {} triples, dedicated={})",
+                    projectId, rdfFormat, batchSize, binding.dedicatedPerFile());
 
                 // Strip binary garbage bytes that may be prepended by the upload pipeline.
                 // This includes BOM, whitespace, or other binary data before content starts.
@@ -1207,7 +1300,7 @@ public class GraphDBDatasetService {
                                         graphForStatement, key -> new ArrayList<>(batchSize));
                                 graphBatch.add(st);
                                 if (graphBatch.size() >= batchSize) {
-                                    flushBatchWithRetry(conn, graphBatch, graphForStatement, totalTriples, batchSize);
+                                    flushBatchWithRetry(projectId, conn, graphBatch, graphForStatement, totalTriples, batchSize);
                                     
                                     // Time-based and count-based intermediate commits
                                     long now = System.currentTimeMillis();
@@ -1228,7 +1321,7 @@ public class GraphDBDatasetService {
 
                             batch.add(st);
                             if (batch.size() >= batchSize) {
-                                flushBatchWithRetry(conn, batch, finalTargetGraphIri, totalTriples, batchSize);
+                                flushBatchWithRetry(projectId, conn, batch, finalTargetGraphIri, totalTriples, batchSize);
                                 
                                 // Time-based and count-based intermediate commits
                                 long now = System.currentTimeMillis();
@@ -1279,11 +1372,11 @@ public class GraphDBDatasetService {
                     if (partitionByNamespace) {
                         for (Map.Entry<IRI, List<Statement>> entry : partitionBatches.entrySet()) {
                             if (!entry.getValue().isEmpty()) {
-                                flushBatchWithRetry(conn, entry.getValue(), entry.getKey(), totalTriples, batchSize);
+                                flushBatchWithRetry(projectId, conn, entry.getValue(), entry.getKey(), totalTriples, batchSize);
                             }
                         }
                     } else if (!batch.isEmpty()) {
-                        flushBatchWithRetry(conn, batch, finalTargetGraphIri, totalTriples, batchSize);
+                        flushBatchWithRetry(projectId, conn, batch, finalTargetGraphIri, totalTriples, batchSize);
                     }
 
                     log.info("Parsed {} triples total", totalTriples.get());
@@ -1327,6 +1420,9 @@ public class GraphDBDatasetService {
                     
                     if (verifiedSize == 0 && totalTriples.get() > 0) {
                         log.error("❌ DATA LOSS DETECTED: Parsed {} triples but graph is empty after commit!", totalTriples.get());
+                        throw new RuntimeException(
+                                "Import verification failed: parsed " + totalTriples.get()
+                                        + " triples but named graph is empty after commit for project " + projectId);
                     }
 
                     // Invalidate context caches after new data is committed
@@ -1397,9 +1493,8 @@ public class GraphDBDatasetService {
                                      ImportOptions options,
                                      ProgressListener progressListener) {
         long start = System.nanoTime();
-        // Ensure per-file dataset exists before any upload; this is the authoritative trigger
-        // that creates the isolated TDB2 dataset for this file project.
-        getRepository(projectId);
+        ProjectGraphBinding binding = resolveBinding(projectId, true);
+        String graphUri = binding.graphUri();
 
         ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
         ImportOptions.ImportMode mode = resolvedOptions.getMode() != null
@@ -1416,18 +1511,16 @@ public class GraphDBDatasetService {
             return false;
         }
 
-        String graphUri = getGraphUri(projectId);
         String contentType = rdfFormat.getDefaultMIMEType();
 
-        log.info("[DirectUpload] Starting direct HTTP upload for project: {} | file: {} | size: {} MB | format: {} | content-type: {}",
-                projectId, sourceFile.getFileName(), fileSizeBytes / (1024 * 1024), rdfFormat, contentType);
+        log.info("[DirectUpload] Starting for project: {} | dedicated={} | file: {} | size: {} MB | format: {}",
+                projectId, binding.dedicatedPerFile(), sourceFile.getFileName(),
+                fileSizeBytes / (1024 * 1024), rdfFormat);
 
         try {
-            // Step 1: If FULL mode, clear the existing graph first via SPARQL
             if (mode == ImportOptions.ImportMode.FULL) {
                 long clearStart = System.nanoTime();
-                Repository repo = getRepository();
-                try (RepositoryConnection conn = repo.getConnection()) {
+                try (RepositoryConnection conn = binding.repository().getConnection()) {
                     IRI graphIri = conn.getValueFactory().createIRI(graphUri);
                     long existingSize = safeGraphSize(conn, graphIri, "before-clear", projectId);
                     if (existingSize > 0) {
@@ -1440,15 +1533,7 @@ public class GraphDBDatasetService {
                 }
             }
 
-            // Step 2: PUT entire file to Fuseki Graph Store Protocol endpoint.
-            // For per-file datasets, use the dedicated dataset's GSP endpoint (default graph).
-            // For the shared dataset, use the named graph URL.
-            boolean hasPerFileDs = perFileRepositories.containsKey(projectId);
-            String gspBase = hasPerFileDs ? getPerFileGspEndpoint(projectId) : fusekiGspEndpoint;
-            String url = hasPerFileDs
-                ? gspBase  // per-file dataset: PUT to default graph
-                : gspBase + "?graph=" + URLEncoder.encode(graphUri, StandardCharsets.UTF_8);
-
+            String url = binding.namedGraphGspUrl();
             log.info("[DirectUpload] PUTting to Fuseki GSP: {}", url);
 
             String gspAuth = "Basic " + java.util.Base64.getEncoder()
@@ -1462,7 +1547,6 @@ public class GraphDBDatasetService {
                     .timeout(java.time.Duration.ofMinutes(30))
                     .build();
 
-            // Report initial progress
             if (progressListener != null) {
                 progressListener.onProgress(new ImportProgress(0, fileSizeBytes, 0, 0));
             }
@@ -1471,48 +1555,52 @@ public class GraphDBDatasetService {
             HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
             long uploadMs = elapsedMillis(uploadStart);
 
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                // Step 3: Verify — check graph size (using SPARQL COUNT, much faster than conn.size())
-                long verifyStart = System.nanoTime();
-                Repository repo = getRepository();
-                long verifiedSize = 0;
-                try (RepositoryConnection conn = repo.getConnection()) {
-                    verifiedSize = countGraphTriplesSparql(conn, graphUri);
-                }
-                long verifyMs = elapsedMillis(verifyStart);
-                long totalMs = elapsedMillis(start);
-
-                // Report final progress
-                if (progressListener != null) {
-                    progressListener.onProgress(new ImportProgress(fileSizeBytes, fileSizeBytes, verifiedSize, totalMs));
-                }
-
-                // Invalidate context caches
-                invalidateContextCaches(projectId);
-
-                log.info("═══════════════════════════════════════════════════════════");
-                log.info("✓ DIRECT HTTP UPLOAD COMPLETE for project: {}", projectId);
-                log.info("  Verified triples: {}", verifiedSize);
-                log.info("  TIMING BREAKDOWN:");
-                log.info("    • HTTP upload + Fuseki indexing: {} ms ({} sec)", uploadMs, uploadMs / 1000);
-                log.info("    • Verification: {} ms", verifyMs);
-                log.info("  TOTAL TIME: {} ms ({} seconds)", totalMs, totalMs / 1000);
-                if (verifiedSize > 0) {
-                    log.info("  Average speed: {} triples/sec", (long) ((verifiedSize * 1000.0) / Math.max(uploadMs, 1)));
-                }
-                log.info("═══════════════════════════════════════════════════════════");
-
-                if (verifiedSize == 0 && fileSizeBytes > 0) {
-                    log.error("❌ DIRECT UPLOAD: Fuseki returned 2xx but graph is empty! Falling back to chunked.");
-                    return false;
-                }
-
-                return true;
-            } else {
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                String body = response.body();
                 log.warn("[DirectUpload] Fuseki returned HTTP {}: {}. Falling back to chunked.",
-                        response.statusCode(), response.body().substring(0, Math.min(500, response.body().length())));
+                        response.statusCode(),
+                        body.substring(0, Math.min(500, body.length())));
                 return false;
             }
+
+            long verifyStart = System.nanoTime();
+            long verifiedSize;
+            try (RepositoryConnection conn = binding.repository().getConnection()) {
+                verifiedSize = countGraphTriplesSparql(conn, graphUri);
+            }
+            long verifyMs = elapsedMillis(verifyStart);
+            long totalMs = elapsedMillis(start);
+
+            if (progressListener != null) {
+                progressListener.onProgress(new ImportProgress(fileSizeBytes, fileSizeBytes, verifiedSize, totalMs));
+            }
+
+            if (verifiedSize == 0 && fileSizeBytes > 0) {
+                throw new RuntimeException(
+                        "Direct HTTP upload verification failed: Fuseki returned HTTP "
+                                + response.statusCode() + " but named graph is empty for project " + projectId);
+            }
+
+            invalidateContextCaches(projectId);
+
+            log.info("═══════════════════════════════════════════════════════════");
+            log.info("✓ DIRECT HTTP UPLOAD COMPLETE for project: {}", projectId);
+            log.info("  Verified triples: {}", verifiedSize);
+            log.info("  TIMING BREAKDOWN:");
+            log.info("    • HTTP upload + Fuseki indexing: {} ms ({} sec)", uploadMs, uploadMs / 1000);
+            log.info("    • Verification: {} ms", verifyMs);
+            log.info("  TOTAL TIME: {} ms ({} seconds)", totalMs, totalMs / 1000);
+            if (verifiedSize > 0) {
+                log.info("  Average speed: {} triples/sec", (long) ((verifiedSize * 1000.0) / Math.max(uploadMs, 1)));
+            }
+            log.info("═══════════════════════════════════════════════════════════");
+            return true;
+        } catch (RuntimeException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("Direct HTTP upload verification failed")) {
+                throw e;
+            }
+            log.warn("[DirectUpload] Failed: {}. Falling back to chunked.", e.getMessage());
+            return false;
         } catch (Exception e) {
             log.warn("[DirectUpload] Failed: {}. Falling back to chunked.", e.getMessage());
             return false;
@@ -1885,58 +1973,65 @@ public class GraphDBDatasetService {
         }
     }
     
+    private void clearGraphsInRepository(Repository repo, String projectId) {
+        try (RepositoryConnection conn = repo.getConnection()) {
+            List<String> graphs = getAllGraphUris(conn, projectId);
+            String countQuery = buildCountQuery(graphs);
+
+            try {
+                long countStart = System.nanoTime();
+                var query = conn.prepareTupleQuery(countQuery);
+                try (var result = query.evaluate()) {
+                    if (result.hasNext()) {
+                        var binding = result.next();
+                        var countValue = binding.getValue("count");
+                        long count = Long.parseLong(countValue.stringValue());
+                        log.info("[TIMING] clearDataset count for project {}: {} ms ({} triples)",
+                                projectId, elapsedMillis(countStart), count);
+                        if (count == 0) {
+                            return;
+                        }
+                        log.info("Found {} triples to clear for project: {}", count, projectId);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Could not count triples, proceeding with clear: {}", e.getMessage());
+            }
+
+            for (String g : graphs) {
+                long dropStart = System.nanoTime();
+                try {
+                    conn.prepareUpdate(String.format("DROP SILENT GRAPH <%s>", g)).execute();
+                    log.info("[TIMING] clearDataset DROP GRAPH for project {} graph {}: {} ms",
+                            projectId, g, elapsedMillis(dropStart));
+                } catch (Exception e) {
+                    log.warn("DROP SILENT GRAPH failed for graph {}: {}", g, e.getMessage());
+                }
+            }
+        }
+    }
+
     /**
-     * Clear all data for a project
+     * Clear all data for a project (dedicated dataset if present, plus legacy shared named graph).
      */
     public void clearDataset(String projectId) {
         try {
-            boolean hasPerFile = perFileRepositories.containsKey(projectId);
-            Repository repo = hasPerFile ? perFileRepositories.get(projectId) : getRepository();
             String graphUri = getGraphUri(projectId);
-
-            log.info("Clearing dataset for project: {} (graph: {}, perFile: {})", projectId, graphUri, hasPerFile);
-
-            try (RepositoryConnection conn = repo.getConnection()) {
-                List<String> graphs = getAllGraphUris(conn, projectId);
-
-                // First check if graph has any data to avoid unnecessary clearing
-                String countQuery = buildCountQuery(graphs);
-
-                try {
-                    long countStart = System.nanoTime();
-                    var query = conn.prepareTupleQuery(countQuery);
-                    try (var result = query.evaluate()) {
-                        if (result.hasNext()) {
-                            var binding = result.next();
-                            var countValue = binding.getValue("count");
-                            long count = Long.parseLong(countValue.stringValue());
-                            log.info("[TIMING] clearDataset count query for project {}: {} ms ({} triples)", projectId, elapsedMillis(countStart), count);
-
-                            if (count == 0) {
-                                log.info("Dataset already empty for project: {}, skipping clear", projectId);
-                                return;
-                            }
-                            log.info("Found {} triples to clear for project: {}", count, projectId);
-                        }
-                    }
-                } catch (Exception e) {
-                    log.warn("Could not count triples, proceeding with clear: {}", e.getMessage());
-                }
-
-                for (String g : graphs) {
-                    // DROP SILENT GRAPH is O(1) on TDB2 — it removes the named graph
-                    // entry from the dataset index without iterating over individual triples.
-                    // CLEAR GRAPH iterates and deletes triples one-by-one: 139s for 2.8M triples.
-                    // DROP is semantically equivalent for our use case (full graph replacement).
-                    long dropStart = System.nanoTime();
-                    try {
-                        conn.prepareUpdate(String.format("DROP SILENT GRAPH <%s>", g)).execute();
-                        log.info("[TIMING] clearDataset DROP GRAPH for project {} graph {}: {} ms", projectId, g, elapsedMillis(dropStart));
-                    } catch (Exception e) {
-                        log.warn("DROP SILENT GRAPH failed for graph {}: {}", g, e.getMessage());
-                    }
-                }
+            ProjectGraphBinding dedicated = resolveBinding(projectId, false);
+            if (dedicated.dedicatedPerFile()) {
+                log.info("Clearing dedicated Fuseki dataset for project: {} (graph: {})", projectId, graphUri);
+                clearGraphsInRepository(dedicated.repository(), projectId);
             }
+            ProjectGraphBinding shared = ProjectGraphBinding.shared(
+                    getRepository(), projectId, graphUri, fusekiGspEndpoint);
+            if (!dedicated.dedicatedPerFile()) {
+                log.info("Clearing shared dataset for project: {} (graph: {})", projectId, graphUri);
+            } else {
+                log.info("Clearing legacy shared named graph for project: {} (graph: {})", projectId, graphUri);
+            }
+            clearGraphsInRepository(shared.repository(), projectId);
+            evictPerFileDataset(projectId);
+            invalidateContextCaches(projectId);
 
         } catch (org.eclipse.rdf4j.repository.RepositoryException e) {
             if (e.getMessage().contains("404") || e.getMessage().contains("not found")) {
@@ -1967,11 +2062,9 @@ public class GraphDBDatasetService {
     private Map<String, String> doGetPrefixes(String projectId) {
         Map<String, String> prefixes = new HashMap<>();
         
-        try (RepositoryConnection conn = getRepository().getConnection()) {
-            
+        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
+
             long prefixStart = System.nanoTime();
-            // Collect all registered namespaces
-            Map<String, String> allNamespaces = new HashMap<>();
             for (org.eclipse.rdf4j.model.Namespace ns : conn.getNamespaces()) {
                 String prefix = ns.getPrefix();
                 if (!prefix.endsWith(":") && !prefix.isEmpty()) {
@@ -1996,7 +2089,7 @@ public class GraphDBDatasetService {
      * Set prefix mappings in the dataset
      */
     public void setPrefixes(String projectId, Map<String, String> prefixes) {
-        try (RepositoryConnection conn = getRepository().getConnection()) {
+        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
             
             // Add prefix mappings to repository
             for (Map.Entry<String, String> entry : prefixes.entrySet()) {
@@ -2041,7 +2134,7 @@ public class GraphDBDatasetService {
      * Remove a prefix mapping from the dataset
      */
     public void removePrefix(String projectId, String prefix) {
-        try (RepositoryConnection conn = getRepository().getConnection()) {
+        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
             String normalizedPrefix = prefix;
             if (normalizedPrefix.endsWith(":")) {
                 normalizedPrefix = normalizedPrefix.substring(0, normalizedPrefix.length() - 1);
@@ -2060,10 +2153,10 @@ public class GraphDBDatasetService {
      * Get dataset size (triple count) for a project
      */
     public long getDatasetSize(String projectId) {
-        Repository repo = getRepository();
-        String graphUri = getGraphUri(projectId);
-        
-        try (RepositoryConnection conn = repo.getConnection()) {
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        String graphUri = binding.graphUri();
+
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
             long sizeStart = System.nanoTime();
             List<String> graphs = getAllGraphUris(conn, projectId);
             long total = 0;
@@ -2097,10 +2190,9 @@ public class GraphDBDatasetService {
     );
 
     public String exportDataset(String projectId, RDFFormat format) {
-        Repository repo = getRepository();
-        String graphUri = getGraphUri(projectId);
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
 
-        try (RepositoryConnection conn = repo.getConnection()) {
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
 
             long exportStart = System.nanoTime();
             StringWriter writer = new StringWriter();
@@ -2134,8 +2226,8 @@ public class GraphDBDatasetService {
      * the heap spike (StringWriter + String + ByteArrayInputStream = 3× graph size in RAM).
      */
     public void exportDatasetToStream(String projectId, RDFFormat format, OutputStream out) {
-        Repository repo = getRepository();
-        try (RepositoryConnection conn = repo.getConnection()) {
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
             long exportStart = System.nanoTime();
             List<String> graphs = getAllGraphUris(conn, projectId);
             List<IRI> contexts = new ArrayList<>();
@@ -2402,7 +2494,8 @@ public class GraphDBDatasetService {
         log.info("[TIMING] applyDiffUpdate INSERT for project {}: {} ms", projectId, elapsedMillis(diffInsertStart));
     }
 
-    private void flushBatch(RepositoryConnection conn,
+    private void flushBatch(String projectId,
+                            RepositoryConnection conn,
                             List<Statement> batch,
                             IRI graphIri,
                             AtomicLong totalTriples,
@@ -2413,7 +2506,7 @@ public class GraphDBDatasetService {
 
         long start = System.nanoTime();
         try {
-            postBatchToGSP(batch, graphIri.stringValue());
+            postBatchToGSP(projectId, batch, graphIri.stringValue());
         } catch (Exception e) {
             log.error("Failed to add batch of {} statements to graph {}. Error: {}",
                     batch.size(), graphIri, e.getMessage());
@@ -2437,7 +2530,7 @@ public class GraphDBDatasetService {
      * Bypasses RDF4J SPARQL INSERT DATA transactions — no Jetty 20MB form limit.
      * GSP POST appends to the named graph without replacing it.
      */
-    private void postBatchToGSP(List<Statement> batch, String graphUri) {
+    private void postBatchToGSP(String projectId, List<Statement> batch, String graphUri) {
         if (batch.isEmpty()) return;
 
         StringWriter sw = new StringWriter(batch.size() * 80);
@@ -2452,13 +2545,8 @@ public class GraphDBDatasetService {
             throw new RuntimeException("Failed to serialize batch to Turtle: " + e.getMessage(), e);
         }
 
-        String encodedGraph;
-        try {
-            encodedGraph = URLEncoder.encode(graphUri, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to encode graph URI", e);
-        }
-        String url = fusekiGspEndpoint + "?graph=" + encodedGraph;
+        ProjectGraphBinding binding = resolveBinding(projectId, true);
+        String url = binding.namedGraphGspUrl();
         String auth = "Basic " + java.util.Base64.getEncoder()
                 .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword).getBytes(StandardCharsets.UTF_8));
 
@@ -2486,7 +2574,8 @@ public class GraphDBDatasetService {
      * Flush a batch with retry logic. If GraphDB is temporarily unresponsive (GC pause,
      * high load), wait and retry up to 3 times with exponential backoff.
      */
-    private void flushBatchWithRetry(RepositoryConnection conn,
+    private void flushBatchWithRetry(String projectId,
+                                     RepositoryConnection conn,
                                      List<Statement> batch,
                                      IRI graphIri,
                                      AtomicLong totalTriples,
@@ -2495,7 +2584,7 @@ public class GraphDBDatasetService {
         long backoffMs = 5_000; // 5s initial backoff
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                flushBatch(conn, batch, graphIri, totalTriples, batchSize);
+                flushBatch(projectId, conn, batch, graphIri, totalTriples, batchSize);
                 return;
             } catch (Exception e) {
                 boolean isConnectionError = isConnectionError(e);
@@ -2751,11 +2840,11 @@ public class GraphDBDatasetService {
      */
     public List<Map<String, Object>> getRootClassesFromGraphDB(String projectId) {
         List<Map<String, Object>> rootClasses = new ArrayList<>();
-        
-        Repository repo = getRepository();
-        String graphUri = getGraphUri(projectId);
-        
-        try (RepositoryConnection conn = repo.getConnection()) {
+
+        ProjectGraphBinding graphBinding = resolveBinding(projectId, false);
+        String graphUri = graphBinding.graphUri();
+
+        try (RepositoryConnection conn = graphBinding.repository().getConnection()) {
             String baseGraph = graphUri;
             // SPARQL query to find all classes that are NOT subclasses of any class except owl:Thing
             // Includes owl:Class, rdfs:Class, and classes only mentioned in subclass axioms
@@ -2842,11 +2931,11 @@ public class GraphDBDatasetService {
      */
     public List<Map<String, Object>> getChildClassesFromGraphDB(String projectId, String parentClassIri) {
         List<Map<String, Object>> childClasses = new ArrayList<>();
-        
-        Repository repo = getRepository();
-        String graphUri = getGraphUri(projectId);
-        
-        try (RepositoryConnection conn = repo.getConnection()) {
+
+        ProjectGraphBinding graphBinding = resolveBinding(projectId, false);
+        String graphUri = graphBinding.graphUri();
+
+        try (RepositoryConnection conn = graphBinding.repository().getConnection()) {
             String baseGraph = graphUri;
             // SPARQL query to find direct children of a given class
             String query = 
