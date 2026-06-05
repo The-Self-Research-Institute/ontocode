@@ -365,28 +365,22 @@ public class GraphDBDatasetService {
 
     private boolean fusekiDatasetExists(String fusekiBase, String datasetName) {
         try {
-            String adminUrl = fusekiBase + "/$/datasets";
+            // Check specific dataset directly — O(1) regardless of total dataset count.
+            // GET /$/datasets/{name} returns 200 if exists, 404 if not.
+            String adminUrl = fusekiBase + "/$/datasets/" + datasetName;
             String auth = "Basic " + java.util.Base64.getEncoder()
                     .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword).getBytes(StandardCharsets.UTF_8));
             java.net.URL url = new java.net.URL(adminUrl);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("Authorization", auth);
-            conn.setConnectTimeout(10_000);
-            conn.setReadTimeout(30_000);
+            conn.setConnectTimeout(5_000);
+            conn.setReadTimeout(10_000);
             int status = conn.getResponseCode();
-            java.io.InputStream stream = status >= 200 && status < 300
-                    ? conn.getInputStream() : conn.getErrorStream();
-            if (stream == null) {
-                conn.disconnect();
-                return false;
-            }
-            String body = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
             conn.disconnect();
-            return body.contains("\"" + datasetName + "\"")
-                    || body.contains("/" + datasetName + "\"");
+            return status >= 200 && status < 300;
         } catch (Exception e) {
-            log.debug("[PerFileDS] Could not list Fuseki datasets: {}", e.getMessage());
+            log.debug("[PerFileDS] Could not check Fuseki dataset '{}': {}", datasetName, e.getMessage());
             return false;
         }
     }
