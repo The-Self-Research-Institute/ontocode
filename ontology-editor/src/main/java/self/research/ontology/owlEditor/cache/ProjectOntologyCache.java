@@ -5,8 +5,9 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Component;
+import self.research.ontology.owlEditor.config.FastOpenCondition;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -14,16 +15,13 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Desktop-only in-memory cache of parsed OWLOntology + structural OWLReasoner.
+ * In-memory cache of parsed OWLOntology + optional structural OWLReasoner.
  *
- * Bounded to MAX_PROJECTS entries (LRU eviction).  When an entry is evicted
- * the reasoner is disposed and the manager removes the ontology, freeing heap.
- *
- * Only active when ontocode.desktop.mode=true.  Cloud deployments use Fuseki
- * SPARQL exclusively so this bean is never created there.
+ * Active in desktop mode and in cloud when fast-open is enabled (default).
+ * Cloud fast-open uses asserted hierarchy (no reasoner precompute) for Protégé-like open times.
  */
 @Component
-@ConditionalOnProperty(name = "ontocode.desktop.mode", havingValue = "true")
+@Conditional(FastOpenCondition.class)
 public class ProjectOntologyCache {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectOntologyCache.class);
@@ -33,9 +31,16 @@ public class ProjectOntologyCache {
     private static final int MAX_PROJECTS =
         Math.max(1, Integer.getInteger("ontocode.desktop.cache.maxProjects", 4));
 
-    public record CachedOntology(OWLOntology ontology, OWLReasoner reasoner, OWLOntologyManager manager) {
+    public record CachedOntology(
+            OWLOntology ontology,
+            OWLReasoner reasoner,
+            OWLOntologyManager manager,
+            boolean assertedHierarchyOnly) {
+
         void dispose() {
-            try { reasoner.dispose(); } catch (Exception e) { /* ignore */ }
+            if (reasoner != null) {
+                try { reasoner.dispose(); } catch (Exception e) { /* ignore */ }
+            }
             try { manager.removeOntology(ontology); } catch (Exception e) { /* ignore */ }
         }
     }
@@ -53,10 +58,11 @@ public class ProjectOntologyCache {
             }
         });
 
-    public void put(String projectId, OWLOntology ontology, OWLReasoner reasoner, OWLOntologyManager manager) {
+    public void put(String projectId, OWLOntology ontology, OWLReasoner reasoner,
+                    OWLOntologyManager manager, boolean assertedHierarchyOnly) {
         CachedOntology existing = cache.remove(projectId);
         if (existing != null) existing.dispose();
-        cache.put(projectId, new CachedOntology(ontology, reasoner, manager));
+        cache.put(projectId, new CachedOntology(ontology, reasoner, manager, assertedHierarchyOnly));
         log.info("[OntologyCache] Cached OWLAPI model for project {} ({} classes)",
             projectId, ontology.classesInSignature().count());
     }

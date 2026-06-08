@@ -45,7 +45,14 @@ public record ProjectStatus(
 
     public static ProjectStatus completed(String filename) {
         return new ProjectStatus("COMPLETED",
-                "Ontology imported successfully",
+                "Triple store ready — loading class tree",
+                Instant.now(),
+                filename);
+    }
+
+    public static ProjectStatus hierarchyReady(String filename) {
+        return new ProjectStatus("COMPLETED",
+                "Ontology ready — class tree available",
                 Instant.now(),
                 filename);
     }

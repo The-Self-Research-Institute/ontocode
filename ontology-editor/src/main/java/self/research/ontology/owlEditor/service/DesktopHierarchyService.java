@@ -5,9 +5,10 @@ import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
+import self.research.ontology.owlEditor.config.FastOpenCondition;
 import self.research.ontology.owlEditor.dto.OntologyDto;
 import self.research.ontology.owlEditor.hierarchy.HierarchySnapshotBuilder;
 import self.research.ontology.owlEditor.hierarchy.OntologyMetricsComputer;
@@ -17,10 +18,10 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Desktop-only hierarchy service using OWLAPI in-memory model.
+ * OWLAPI in-memory hierarchy (desktop + cloud fast-open).
  */
 @Service
-@ConditionalOnProperty(name = "ontocode.desktop.mode", havingValue = "true")
+@Conditional(FastOpenCondition.class)
 public class DesktopHierarchyService {
 
     private static final Logger log = LoggerFactory.getLogger(DesktopHierarchyService.class);
@@ -40,25 +41,38 @@ public class DesktopHierarchyService {
 
     public Map<String, Object> declarationCounts(String projectId) {
         return ontologyCache.get(projectId)
-            .map(c -> metricsComputer.compute(c.ontology(), c.reasoner()))
+            .map(c -> c.assertedHierarchyOnly()
+                    ? metricsComputer.computeAsserted(c.ontology())
+                    : metricsComputer.compute(c.ontology(), c.reasoner()))
             .orElse(Collections.emptyMap());
     }
 
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit, int offset) {
         return ontologyCache.get(projectId)
-            .map(c -> snapshotBuilder.buildTopLevel(c.ontology(), c.reasoner(), limit, offset))
+            .map(c -> c.assertedHierarchyOnly()
+                    ? snapshotBuilder.buildTopLevelAsserted(c.ontology(), limit, offset)
+                    : snapshotBuilder.buildTopLevel(c.ontology(), c.reasoner(), limit, offset))
             .orElse(Collections.emptyList());
     }
 
     public int topLevelClassTotal(String projectId) {
         return ontologyCache.get(projectId)
-            .map(c -> snapshotBuilder.countTopLevelCandidates(c.ontology(), c.reasoner()))
+            .map(c -> c.assertedHierarchyOnly()
+                    ? snapshotBuilder.countTopLevelAsserted(c.ontology())
+                    : snapshotBuilder.countTopLevelCandidates(c.ontology(), c.reasoner()))
             .orElse(0);
     }
 
     public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset) {
         return ontologyCache.get(projectId)
-            .map(c -> snapshotBuilder.buildChildren(c.ontology(), c.reasoner(), parentIri, limit, offset))
+            .map(c -> {
+                OWLReasoner r = c.reasoner();
+                if (r == null) {
+                    r = new org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory()
+                            .createNonBufferingReasoner(c.ontology());
+                }
+                return snapshotBuilder.buildChildren(c.ontology(), r, parentIri, limit, offset);
+            })
             .orElse(Collections.emptyList());
     }
 

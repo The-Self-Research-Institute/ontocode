@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.document.HierarchySnapshotDoc;
 import self.research.ontology.owlEditor.dto.OntologyDto;
 import self.research.ontology.owlEditor.hierarchy.HierarchyAlgorithmVersion;
@@ -32,9 +33,12 @@ public class HierarchyIndexService {
     @Value("${ontocode.hierarchy.snapshot.legacy-sparql-fallback:false}")
     private boolean legacySparqlFallback;
 
-    /** Desktop uses live OWLAPI warm — skip redundant snapshot builds. */
+    /** Desktop uses live OWLAPI warm — skip redundant snapshot builds when model is cached. */
     @Autowired(required = false) @Nullable
     private DesktopOntologyLoader desktopOntologyLoader;
+
+    @Autowired(required = false) @Nullable
+    private ProjectOntologyCache ontologyCache;
 
     public HierarchyIndexService(HierarchySnapshotRepository snapshotRepository,
                                  HierarchySnapshotBuildService buildService) {
@@ -133,7 +137,11 @@ public class HierarchyIndexService {
     }
 
     public void scheduleBuild(String projectId) {
-        if (!snapshotEnabled || !buildService.isEnabled() || desktopOntologyLoader != null) {
+        if (!snapshotEnabled || !buildService.isEnabled()) {
+            return;
+        }
+        // Desktop: skip snapshot only when OWLAPI already serves hierarchy (heap-sized files).
+        if (desktopOntologyLoader != null && ontologyCache != null && ontologyCache.has(projectId)) {
             return;
         }
         String revision = Instant.now().toString();

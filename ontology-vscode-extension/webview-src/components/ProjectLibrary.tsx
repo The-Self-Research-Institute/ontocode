@@ -15,6 +15,10 @@ import {
   Code2,
   Plus,
   Bug,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  FolderOpen,
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
@@ -73,10 +77,18 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const [userProjectRole, setUserProjectRole] = useState<string>("VIEWER");
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
   const [workspacePlan, setWorkspacePlan] = useState<string>("FREE");
+  // Refs mirror the above state so async handlers always read the latest values.
+  const workspaceOwnerIdRef = useRef<string | null>(null);
+  const workspacePlanRef = useRef<string>("FREE");
+  const workspaceLoadedRef = useRef<boolean>(false);
   const [storageUsage, setStorageUsage] = useState<{
     usedMB: string; limitGB: number; usagePercent: string; planName: string;
   } | null>(null);
   const { user } = useAuth();
+
+  type FileImportState = { status: 'IMPORTING' | 'COMPLETED' | 'FAILED'; progress: number; message: string; graphSize?: number };
+  const [fileImportStates, setFileImportStates] = useState<Record<string, FileImportState>>({});
+  const importPollingRefs = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
   const loadStorageUsage = async () => {
     const workspaceId = user?.workspaceId;
@@ -95,6 +107,89 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     }
   };
 
+  const startFileImport = async (file: FileItem, { skipPost = false } = {}) => {
+    const ontologyProjectId = `${projectId}--${file.id}`;
+
+    setFileImportStates(prev => ({
+      ...prev,
+      [file.id]: { status: 'IMPORTING', progress: 0, message: skipPost ? 'Import in progress…' : 'Starting import…' },
+    }));
+
+    if (!skipPost) {
+      try {
+        await apiClient.post(
+          `/api/ontology/upload-by-file-ref/${encodeURIComponent(ontologyProjectId)}`,
+          null,
+          {
+            params: {
+              fileId: file.id,
+              parentProjectId: projectId,
+              ownerEmail: user?.email || '',
+              workspaceId: user?.workspaceId || '',
+              action: 'replace',
+            },
+          },
+        );
+      } catch (err: any) {
+        if (err?.status !== 202 && err?.status !== 200) {
+          // POST failed — the file may already be importing (e.g. auto-triggered after upload).
+          // Don't give up: poll the status API to discover actual import state.
+          console.warn('[ProjectLibrary] Import trigger returned', err?.status, '— polling to check existing import status');
+        }
+      }
+    }
+
+    const pollStatus = async () => {
+      try {
+        const res: any = await apiClient.get(`/api/ontology/status/${encodeURIComponent(ontologyProjectId)}`);
+        // API returns { success: true, data: { status, ... } }; axios wraps that in res.data.
+        // Unwrap both layers so we reach the actual status fields.
+        const envelope = res?.data || res;
+        const data = envelope?.data || envelope;
+        const status = data?.status || data?.state || null;
+        const progress = typeof data?.progress === 'number' ? data.progress : 0;
+        const message = data?.statusMessage || data?.message || (data?.metadata && typeof data.metadata.message === 'string' ? data.metadata.message : '') || '';
+        const graphSize = typeof data?.graphSize === 'number' ? data.graphSize : undefined;
+
+        if (!isMountedRef.current) return;
+
+        const formatTriples = (n: number) =>
+          n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M triples` : `${n.toLocaleString()} triples`;
+
+        if (status === 'COMPLETED') {
+          clearInterval(importPollingRefs.current[file.id]);
+          delete importPollingRefs.current[file.id];
+          const doneMsg = graphSize && graphSize > 0 ? `${formatTriples(graphSize)} — ready` : 'Ready to open';
+          setFileImportStates(prev => ({
+            ...prev,
+            [file.id]: { status: 'COMPLETED', progress: 100, message: doneMsg, graphSize },
+          }));
+        } else if (status === 'ERROR' || status === 'FAILED') {
+          clearInterval(importPollingRefs.current[file.id]);
+          delete importPollingRefs.current[file.id];
+          setFileImportStates(prev => ({
+            ...prev,
+            [file.id]: { status: 'FAILED', progress: 0, message: 'Import failed', graphSize },
+          }));
+        } else if (status) {
+          const importingMsg = graphSize && graphSize > 0
+            ? `${formatTriples(graphSize)} loaded…`
+            : message || 'Importing…';
+          setFileImportStates(prev => ({
+            ...prev,
+            [file.id]: { status: 'IMPORTING', progress, message: importingMsg, graphSize },
+          }));
+        }
+      } catch {
+        // Network hiccup — keep polling
+      }
+    };
+
+    await pollStatus();
+    if (importPollingRefs.current[file.id]) clearInterval(importPollingRefs.current[file.id]);
+    importPollingRefs.current[file.id] = setInterval(pollStatus, 3000);
+  };
+
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
@@ -111,7 +206,22 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   };
 
   useEffect(() => {
-    loadFiles();
+    loadFiles().then(async (filesArray) => {
+      // After page refresh, resume progress cards for any imports still running on the backend.
+      await Promise.all(filesArray.map(async (file: FileItem) => {
+        const ontologyProjectId = `${projectId}--${file.id}`;
+        try {
+          const res: any = await apiClient.get(`/api/ontology/status/${encodeURIComponent(ontologyProjectId)}`);
+          const envelope = res?.data || res;
+          const status = envelope?.data?.status || envelope?.status;
+          if (status === 'PROCESSING') {
+            void startFileImport(file, { skipPost: true });
+          }
+        } catch {
+          // Non-blocking — ignore failures for individual files
+        }
+      }));
+    });
   }, [projectId]);
 
   useEffect(() => {
@@ -121,26 +231,43 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   useEffect(() => {
     if (!user?.workspaceId) {
       setWorkspaceOwnerId(null);
+      workspaceOwnerIdRef.current = null;
       setWorkspacePlan("FREE");
+      workspacePlanRef.current = "FREE";
+      workspaceLoadedRef.current = true;
       return;
     }
 
+    workspaceLoadedRef.current = false;
     apiClient
       .get(`/api/workspaces/${user.workspaceId}`)
       .then((response: any) => {
         const workspaceData = response?.data || response;
-        setWorkspaceOwnerId(workspaceData?.ownerId || null);
-        setWorkspacePlan(String(workspaceData?.subscriptionPlan || "FREE").toUpperCase());
+        const ownerId = workspaceData?.ownerId || null;
+        const plan = String(workspaceData?.subscriptionPlan || "FREE").toUpperCase();
+        setWorkspaceOwnerId(ownerId);
+        workspaceOwnerIdRef.current = ownerId;
+        setWorkspacePlan(plan);
+        workspacePlanRef.current = plan;
+        workspaceLoadedRef.current = true;
       })
       .catch(() => {
+        const plan = (user?.subscriptionPlan || "FREE").toUpperCase();
         setWorkspaceOwnerId(null);
-        setWorkspacePlan((user?.subscriptionPlan || "FREE").toUpperCase());
+        workspaceOwnerIdRef.current = null;
+        setWorkspacePlan(plan);
+        workspacePlanRef.current = plan;
+        workspaceLoadedRef.current = true;
       });
   }, [user?.workspaceId, user?.subscriptionPlan]);
 
   useEffect(() => {
+    // Reset on every mount (including StrictMode's simulated remount) so async
+    // callbacks like pollStatus don't see a stale false from the prior cleanup.
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      Object.values(importPollingRefs.current).forEach(clearInterval);
     };
   }, []);
 
@@ -340,10 +467,16 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       setUploadProgress(0);
       setProcessingFile(null);
 
-      // Refresh file list in background (can take 20–30s on large projects).
+      // Refresh file list in background, then auto-start import so the user
+      // doesn't need a second click after the upload finishes.
       void loadFiles().then((files) => {
         if (uploadedFileId) {
           setSelectedFile(uploadedFileId);
+          // Auto-import: find the newly uploaded file and kick off import immediately.
+          const newFile = files?.find((f: FileItem) => f.id === uploadedFileId);
+          if (newFile) {
+            void startFileImport(newFile);
+          }
         }
         return files;
       });
@@ -465,11 +598,23 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     // has opened/imported the file into GraphDB. Desktop is single-user local —
     // no teams, no owner/member distinction (see buildDesktopUser vs Mongo owner id).
     if (!isDesktop()) {
-      const effectivePlan = (workspacePlan || user?.subscriptionPlan || "FREE").toUpperCase();
+      // Wait for workspace data before deciding on plan/owner restrictions.
+      // Clicking before the async workspace API returns would wrongly treat the user
+      // as a "free non-owner" (workspaceOwnerId is null until the API responds).
+      if (!workspaceLoadedRef.current) {
+        await new Promise<void>((resolve) => {
+          const check = setInterval(() => {
+            if (workspaceLoadedRef.current) { clearInterval(check); resolve(); }
+          }, 100);
+          setTimeout(() => { clearInterval(check); resolve(); }, 3000);
+        });
+      }
+
+      const effectivePlan = (workspacePlanRef.current || user?.subscriptionPlan || "FREE").toUpperCase();
       const isWorkspaceOwner =
-        !!workspaceOwnerId &&
+        !!workspaceOwnerIdRef.current &&
         !!user?.userId &&
-        workspaceOwnerId === user.userId;
+        workspaceOwnerIdRef.current === user.userId;
 
       if (effectivePlan === "FREE" && !isWorkspaceOwner) {
         try {
@@ -486,10 +631,40 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           setShowOwnerMustImportDialog(true);
           return;
         }
+        // Falls through to onFileSelect if already in GraphDB
+      } else {
+        // Owner or paid plan: show import card for files not yet in GraphDB
+
+        // If we're already tracking this file's import, handle state transitions
+        const existingImport = fileImportStates[file.id];
+        if (existingImport) {
+          if (existingImport.status === 'COMPLETED') {
+            onFileSelect(file.id, file.name);
+          } else if (existingImport.status === 'FAILED') {
+            // Retry the import — previous attempt may have conflicted with an auto-triggered import
+            await startFileImport(file);
+          }
+          // IMPORTING: do nothing, card already shows the state
+          return;
+        }
+
+        // Check GraphDB — only navigate immediately if already imported
+        try {
+          const ontologyProjectId = `${projectId}--${file.id}`;
+          const graphCheck: any = await apiClient.get(
+            `/api/ontology/${encodeURIComponent(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(file.name)}&fileId=${encodeURIComponent(file.id)}`,
+          );
+          const graphData = graphCheck?.data || graphCheck;
+          if (!graphData?.exists || (graphData.graphSize ?? 0) <= 0) {
+            await startFileImport(file);
+            return;
+          }
+        } catch {
+          // Can't check — fall through to normal open
+        }
       }
     }
 
-    // Single click now opens the file (previously required double-click)
     onFileSelect(file.id, file.name);
   };
 
@@ -758,68 +933,126 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           </div>
         ) : viewMode === "grid" ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filteredFiles.map((file) => (
-              <div
-                key={file.id}
-                onClick={() => handleFileClick(file)}
-                className={`bg-white rounded-lg border-2 p-4 cursor-pointer transition-all hover:shadow-lg ${
-                  selectedFile === file.id ? "border-purple-500 shadow-lg" : "border-gray-200"
-                }`}
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                    <FileText size={24} className="text-purple-600" />
+            {filteredFiles.map((file) => {
+              const importState = fileImportStates[file.id];
+              const isImporting = importState?.status === 'IMPORTING';
+              const isImportDone = importState?.status === 'COMPLETED';
+              const isImportFailed = importState?.status === 'FAILED';
+              const importProgress = importState?.progress ?? 0;
+              const importMessage = importState?.message || '';
+
+              return (
+                <div
+                  key={file.id}
+                  onClick={() => !isImporting && handleFileClick(file)}
+                  className={`relative overflow-hidden bg-white rounded-lg border-2 p-4 transition-all hover:shadow-lg ${
+                    isImporting
+                      ? 'border-blue-300 cursor-default'
+                      : isImportDone
+                      ? 'border-green-400 cursor-pointer hover:border-green-500'
+                      : isImportFailed
+                      ? 'border-red-300 cursor-pointer'
+                      : selectedFile === file.id
+                      ? 'border-purple-500 shadow-lg cursor-pointer'
+                      : 'border-gray-200 cursor-pointer'
+                  }`}
+                >
+                  {/* Progress bar stripe at bottom */}
+                  {isImporting && (
+                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-100">
+                      <div
+                        className={`h-full bg-blue-500 transition-all duration-500 ${importProgress > 0 ? '' : 'animate-pulse w-1/3'}`}
+                        style={importProgress > 0 ? { width: `${Math.min(100, importProgress)}%` } : {}}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-start justify-between mb-3">
+                    <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                      isImporting ? 'bg-blue-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
+                    }`}>
+                      {isImporting
+                        ? <Loader2 size={24} className="text-blue-600 animate-spin" />
+                        : isImportDone
+                        ? <CheckCircle2 size={24} className="text-green-600" />
+                        : isImportFailed
+                        ? <XCircle size={24} className="text-red-500" />
+                        : <FileText size={24} className="text-purple-600" />
+                      }
+                    </div>
+                    {!isImporting && (userProjectRole === "OWNER" ||
+                      userProjectRole === "ADMIN" ||
+                      (userProjectRole === "EDITOR" && file.uploadedByUserId === user?.userId)) && (
+                      <div className="relative">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuFileId(openMenuFileId === file.id ? null : file.id);
+                          }}
+                          className="p-1 hover:bg-gray-100 rounded"
+                        >
+                          <MoreVertical size={16} className="text-gray-400" />
+                        </button>
+                        {openMenuFileId === file.id && (
+                          <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteFile(file.id, file.name);
+                              }}
+                              className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2"
+                            >
+                              <Trash2 size={14} />
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  {(userProjectRole === "OWNER" ||
-                    userProjectRole === "ADMIN" ||
-                    (userProjectRole === "EDITOR" && file.uploadedByUserId === user?.userId)) && (
-                    <div className="relative">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpenMenuFileId(openMenuFileId === file.id ? null : file.id);
-                        }}
-                        className="p-1 hover:bg-gray-100 rounded"
-                      >
-                        <MoreVertical size={16} className="text-gray-400" />
-                      </button>
-                      {openMenuFileId === file.id && (
-                        <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteFile(file.id, file.name);
-                            }}
-                            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2"
-                          >
-                            <Trash2 size={14} />
-                            Delete
-                          </button>
-                        </div>
-                      )}
+
+                  <h3 className={`font-semibold mb-1 truncate ${
+                    isImporting ? 'text-blue-800' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'
+                  }`} title={file.name}>
+                    {file.name}
+                  </h3>
+
+                  {isImporting && (
+                    <p className="text-xs text-blue-600 mb-1">
+                      {importMessage}
+                    </p>
+                  )}
+                  {isImportFailed && (
+                    <p className="text-xs text-red-500 mb-1">{importMessage || 'Import failed — click to retry'}</p>
+                  )}
+
+                  <div className="flex items-center gap-4 text-xs text-gray-500 mb-2">
+                    <span>{formatFileSize(file.size)}</span>
+                    <span>•</span>
+                    <span className="flex items-center gap-1">
+                      <Clock size={12} />
+                      {formatDate(file.uploadedAt)}
+                    </span>
+                  </div>
+
+                  {isImportDone ? (
+                    <button
+                      data-testid="import-open-btn"
+                      className="w-full mt-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 transition-colors"
+                      onClick={(e) => { e.stopPropagation(); onFileSelect(file.id, file.name); }}
+                    >
+                      <FolderOpen size={14} />
+                      Open
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1 text-xs text-gray-600">
+                      <User size={12} />
+                      {file.uploadedBy}
                     </div>
                   )}
                 </div>
-
-                <h3 className="font-semibold text-gray-900 mb-1 truncate" title={file.name}>
-                  {file.name}
-                </h3>
-
-                <div className="flex items-center gap-4 text-xs text-gray-500 mb-2">
-                  <span>{formatFileSize(file.size)}</span>
-                  <span>•</span>
-                  <span className="flex items-center gap-1">
-                    <Clock size={12} />
-                    {formatDate(file.uploadedAt)}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-1 text-xs text-gray-600">
-                  <User size={12} />
-                  {file.uploadedBy}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -844,42 +1077,96 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {filteredFiles.map((file) => (
-                  <tr
-                    key={file.id}
-                    onClick={() => handleFileClick(file)}
-                    className={`cursor-pointer hover:bg-gray-50 transition-colors ${
-                      selectedFile === file.id ? "bg-purple-50" : ""
-                    }`}
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-purple-100 rounded flex items-center justify-center">
-                          <FileText size={16} className="text-purple-600" />
+                {filteredFiles.map((file) => {
+                  const importState = fileImportStates[file.id];
+                  const isImporting = importState?.status === 'IMPORTING';
+                  const isImportDone = importState?.status === 'COMPLETED';
+                  const isImportFailed = importState?.status === 'FAILED';
+                  const importProgress = importState?.progress ?? 0;
+                  const importMessage = importState?.message || '';
+
+                  return (
+                    <tr
+                      key={file.id}
+                      onClick={() => !isImporting && handleFileClick(file)}
+                      className={`transition-colors ${
+                        isImporting
+                          ? 'bg-blue-50 cursor-default'
+                          : isImportDone
+                          ? 'bg-green-50 cursor-pointer hover:bg-green-100'
+                          : isImportFailed
+                          ? 'bg-red-50 cursor-pointer hover:bg-red-100'
+                          : selectedFile === file.id
+                          ? 'bg-purple-50 cursor-pointer hover:bg-gray-50'
+                          : 'cursor-pointer hover:bg-gray-50'
+                      }`}
+                    >
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded flex items-center justify-center ${
+                            isImporting ? 'bg-blue-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
+                          }`}>
+                            {isImporting
+                              ? <Loader2 size={16} className="text-blue-600 animate-spin" />
+                              : isImportDone
+                              ? <CheckCircle2 size={16} className="text-green-600" />
+                              : isImportFailed
+                              ? <XCircle size={16} className="text-red-500" />
+                              : <FileText size={16} className="text-purple-600" />
+                            }
+                          </div>
+                          <div>
+                            <span className={`font-medium ${isImporting ? 'text-blue-800' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'}`}>
+                              {file.name}
+                            </span>
+                            {isImporting && (
+                              <div className="text-xs text-blue-600 mt-0.5">
+                                {importMessage || 'Importing…'}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <span className="font-medium text-gray-900">{file.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{formatFileSize(file.size)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{file.uploadedBy}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{formatDate(file.uploadedAt)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                      {(userProjectRole === "OWNER" ||
-                        userProjectRole === "ADMIN" ||
-                        (userProjectRole === "EDITOR" && file.uploadedByUserId === user?.userId)) && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteFile(file.id, file.name);
-                          }}
-                          className="text-red-600 hover:text-red-800"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                        {isImporting && (
+                          <div className="mt-1.5 h-1 bg-blue-100 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full bg-blue-500 transition-all duration-500 ${importProgress > 0 ? '' : 'animate-pulse w-1/3'}`}
+                              style={importProgress > 0 ? { width: `${Math.min(100, importProgress)}%` } : {}}
+                            />
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{formatFileSize(file.size)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{file.uploadedBy}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{formatDate(file.uploadedAt)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                        {isImportDone ? (
+                          <button
+                            data-testid="import-open-btn"
+                            className="flex items-center gap-1 px-3 py-1 rounded text-sm font-medium bg-green-600 text-white hover:bg-green-700 transition-colors"
+                            onClick={(e) => { e.stopPropagation(); onFileSelect(file.id, file.name); }}
+                          >
+                            <FolderOpen size={13} />
+                            Open
+                          </button>
+                        ) : (
+                          !isImporting && (userProjectRole === "OWNER" ||
+                            userProjectRole === "ADMIN" ||
+                            (userProjectRole === "EDITOR" && file.uploadedByUserId === user?.userId)) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteFile(file.id, file.name);
+                              }}
+                              className="text-red-600 hover:text-red-800"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
