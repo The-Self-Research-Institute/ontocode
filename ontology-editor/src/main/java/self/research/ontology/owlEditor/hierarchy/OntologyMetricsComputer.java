@@ -21,6 +21,23 @@ public class OntologyMetricsComputer {
 
     private static final Logger log = LoggerFactory.getLogger(OntologyMetricsComputer.class);
 
+    /** Fast-open: signature counts from parsed ontology only (no reasoner). */
+    public Map<String, Object> computeAsserted(OWLOntology ontology) {
+        Map<String, Object> metrics = new LinkedHashMap<>();
+        Imports imp = Imports.INCLUDED;
+
+        metrics.put("classCount", ontology.classesInSignature(imp).filter(c -> !c.isBuiltIn()).count());
+        metrics.put("objectPropertyCount", ontology.objectPropertiesInSignature(imp).filter(p -> !p.isBuiltIn()).count());
+        metrics.put("dataPropertyCount", ontology.dataPropertiesInSignature(imp).filter(p -> !p.isBuiltIn()).count());
+        metrics.put("individualCount", ontology.individualsInSignature(imp).filter(i -> !i.isBuiltIn()).count());
+        metrics.put("annotationPropertyCount", ontology.annotationPropertiesInSignature(imp).filter(p -> !p.isBuiltIn()).count());
+        metrics.put("axiomCount", ontology.getAxiomCount());
+        metrics.put("logicalAxiomCount", ontology.getLogicalAxiomCount());
+        metrics.put("hiddenGciCount", 0);
+        metrics.put("hierarchyEngine", "owlapi-asserted");
+        return metrics;
+    }
+
     public Map<String, Object> compute(OWLOntology ontology, OWLReasoner reasoner) {
         Map<String, Object> metrics = new LinkedHashMap<>();
         Imports imp = Imports.INCLUDED;

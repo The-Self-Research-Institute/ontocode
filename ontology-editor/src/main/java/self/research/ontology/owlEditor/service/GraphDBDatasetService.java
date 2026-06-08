@@ -87,6 +87,10 @@ public class GraphDBDatasetService {
     @Value("${ontocode.fuseki.adminPassword:admin}")
     private String fusekiAdminPassword;
 
+    /** Files below this size (MB) import into the shared dataset; larger files get a dedicated TDB2 dataset. */
+    @Value("${ontocode.fuseki.shared-graph.max-file-mb:50}")
+    private int sharedGraphMaxFileMb;
+
     @Value("${ontocode.data.dir:./data}")
     private String dataDir;
     
@@ -354,7 +358,27 @@ public class GraphDBDatasetService {
      * Never caches a failed fallback in {@link #perFileRepositories}.
      */
     public Repository getRepository(String projectId) {
-        return resolveBinding(projectId, true).repository();
+        return resolveBinding(projectId, false).repository();
+    }
+
+    private boolean usesSharedGraphForImport(long fileSizeBytes) {
+        if (sharedGraphMaxFileMb <= 0) {
+            return false;
+        }
+        if (fileSizeBytes <= 0) {
+            return false;
+        }
+        return fileSizeBytes < (long) sharedGraphMaxFileMb * 1024L * 1024L;
+    }
+
+    private ProjectGraphBinding resolveBindingForImport(String projectId, long fileSizeBytes) {
+        String graphUri = getGraphUri(projectId);
+        if (usesSharedGraphForImport(fileSizeBytes)) {
+            log.info("[SharedGraph] File {} MB < {} MB limit — using shared dataset for project {}",
+                    fileSizeBytes / (1024 * 1024), sharedGraphMaxFileMb, projectId);
+            return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
+        }
+        return resolveBinding(projectId, true);
     }
 
     private String deriveFusekiBase() {
@@ -1177,7 +1201,7 @@ public class GraphDBDatasetService {
         
         try {
             long t0 = System.nanoTime();
-            ProjectGraphBinding binding = resolveBinding(projectId, true);
+            ProjectGraphBinding binding = resolveBindingForImport(projectId, fileSizeBytes);
             Repository repo = binding.repository();
             String graphUri = binding.graphUri();
 
@@ -1294,7 +1318,7 @@ public class GraphDBDatasetService {
                                         graphForStatement, key -> new ArrayList<>(batchSize));
                                 graphBatch.add(st);
                                 if (graphBatch.size() >= batchSize) {
-                                    flushBatchWithRetry(projectId, conn, graphBatch, graphForStatement, totalTriples, batchSize);
+                                    flushBatchWithRetry(projectId, conn, graphBatch, graphForStatement, totalTriples, batchSize, fileSizeBytes);
                                     
                                     // Time-based and count-based intermediate commits
                                     long now = System.currentTimeMillis();
@@ -1315,7 +1339,7 @@ public class GraphDBDatasetService {
 
                             batch.add(st);
                             if (batch.size() >= batchSize) {
-                                flushBatchWithRetry(projectId, conn, batch, finalTargetGraphIri, totalTriples, batchSize);
+                                flushBatchWithRetry(projectId, conn, batch, finalTargetGraphIri, totalTriples, batchSize, fileSizeBytes);
                                 
                                 // Time-based and count-based intermediate commits
                                 long now = System.currentTimeMillis();
@@ -1366,11 +1390,11 @@ public class GraphDBDatasetService {
                     if (partitionByNamespace) {
                         for (Map.Entry<IRI, List<Statement>> entry : partitionBatches.entrySet()) {
                             if (!entry.getValue().isEmpty()) {
-                                flushBatchWithRetry(projectId, conn, entry.getValue(), entry.getKey(), totalTriples, batchSize);
+                                flushBatchWithRetry(projectId, conn, entry.getValue(), entry.getKey(), totalTriples, batchSize, fileSizeBytes);
                             }
                         }
                     } else if (!batch.isEmpty()) {
-                        flushBatchWithRetry(projectId, conn, batch, finalTargetGraphIri, totalTriples, batchSize);
+                        flushBatchWithRetry(projectId, conn, batch, finalTargetGraphIri, totalTriples, batchSize, fileSizeBytes);
                     }
 
                     log.info("Parsed {} triples total", totalTriples.get());
@@ -1487,7 +1511,7 @@ public class GraphDBDatasetService {
                                      ImportOptions options,
                                      ProgressListener progressListener) {
         long start = System.nanoTime();
-        ProjectGraphBinding binding = resolveBinding(projectId, true);
+        ProjectGraphBinding binding = resolveBindingForImport(projectId, fileSizeBytes);
         String graphUri = binding.graphUri();
 
         ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
@@ -1538,7 +1562,7 @@ public class GraphDBDatasetService {
                     .header("Content-Type", contentType)
                     .header("Authorization", gspAuth)
                     .PUT(HttpRequest.BodyPublishers.ofFile(sourceFile))
-                    .timeout(java.time.Duration.ofMinutes(30))
+                    .timeout(directUploadTimeout(fileSizeBytes))
                     .build();
 
             if (progressListener != null) {
@@ -2310,6 +2334,45 @@ public class GraphDBDatasetService {
         return "QUERY";
     }
 
+    /** Scale GSP/HTTP upload timeouts with file size — large Fuseki commits can exceed 10 min. */
+    private java.time.Duration gspRequestTimeout(long fileSizeBytes) {
+        long mb = fileSizeBytes > 0 ? fileSizeBytes / (1024 * 1024) : 0;
+        if (mb >= 200) {
+            return java.time.Duration.ofMinutes(45);
+        }
+        if (mb >= 50) {
+            return java.time.Duration.ofMinutes(25);
+        }
+        return java.time.Duration.ofMinutes(10);
+    }
+
+    private java.time.Duration directUploadTimeout(long fileSizeBytes) {
+        long mb = fileSizeBytes > 0 ? fileSizeBytes / (1024 * 1024) : 0;
+        if (mb >= 200) {
+            return java.time.Duration.ofMinutes(120);
+        }
+        if (mb >= 50) {
+            return java.time.Duration.ofMinutes(60);
+        }
+        return java.time.Duration.ofMinutes(30);
+    }
+
+    /**
+     * Triple count for a project's named graph (-1 if Fuseki is unreachable).
+     * Lightweight helper for status polling during long imports.
+     */
+    public long getGraphTripleCount(String projectId) {
+        try {
+            ProjectGraphBinding binding = resolveBinding(projectId, false);
+            try (RepositoryConnection conn = binding.repository().getConnection()) {
+                return countGraphTriplesSparql(conn, binding.graphUri());
+            }
+        } catch (Exception e) {
+            log.debug("[getGraphTripleCount] Could not count triples for {}: {}", projectId, e.getMessage());
+            return -1;
+        }
+    }
+
     private int resolveBatchSize(long fileSizeBytes) {
         // Larger batches reduce HTTP round-trip overhead.
         // Each batch is one HTTP POST to GraphDB's transaction endpoint.
@@ -2493,14 +2556,15 @@ public class GraphDBDatasetService {
                             List<Statement> batch,
                             IRI graphIri,
                             AtomicLong totalTriples,
-                            int batchSize) {
+                            int batchSize,
+                            long fileSizeBytes) {
         if (batch.isEmpty()) {
             return;
         }
 
         long start = System.nanoTime();
         try {
-            postBatchToGSP(projectId, batch, graphIri.stringValue());
+            postBatchToGSP(projectId, batch, graphIri.stringValue(), fileSizeBytes);
         } catch (Exception e) {
             log.error("Failed to add batch of {} statements to graph {}. Error: {}",
                     batch.size(), graphIri, e.getMessage());
@@ -2524,7 +2588,7 @@ public class GraphDBDatasetService {
      * Bypasses RDF4J SPARQL INSERT DATA transactions — no Jetty 20MB form limit.
      * GSP POST appends to the named graph without replacing it.
      */
-    private void postBatchToGSP(String projectId, List<Statement> batch, String graphUri) {
+    private void postBatchToGSP(String projectId, List<Statement> batch, String graphUri, long fileSizeBytes) {
         if (batch.isEmpty()) return;
 
         StringWriter sw = new StringWriter(batch.size() * 80);
@@ -2539,7 +2603,7 @@ public class GraphDBDatasetService {
             throw new RuntimeException("Failed to serialize batch to Turtle: " + e.getMessage(), e);
         }
 
-        ProjectGraphBinding binding = resolveBinding(projectId, true);
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
         String url = binding.namedGraphGspUrl();
         String auth = "Basic " + java.util.Base64.getEncoder()
                 .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword).getBytes(StandardCharsets.UTF_8));
@@ -2550,7 +2614,7 @@ public class GraphDBDatasetService {
                     .header("Content-Type", "text/turtle")
                     .header("Authorization", auth)
                     .POST(HttpRequest.BodyPublishers.ofString(sw.toString(), StandardCharsets.UTF_8))
-                    .timeout(java.time.Duration.ofMinutes(10))
+                    .timeout(gspRequestTimeout(fileSizeBytes))
                     .build();
             HttpResponse<String> resp = SHARED_HTTP_CLIENT.send(gspReq, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
@@ -2573,12 +2637,13 @@ public class GraphDBDatasetService {
                                      List<Statement> batch,
                                      IRI graphIri,
                                      AtomicLong totalTriples,
-                                     int batchSize) {
+                                     int batchSize,
+                                     long fileSizeBytes) {
         int maxRetries = 3;
         long backoffMs = 5_000; // 5s initial backoff
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                flushBatch(projectId, conn, batch, graphIri, totalTriples, batchSize);
+                flushBatch(projectId, conn, batch, graphIri, totalTriples, batchSize, fileSizeBytes);
                 return;
             } catch (Exception e) {
                 boolean isConnectionError = isConnectionError(e);
@@ -2610,8 +2675,12 @@ public class GraphDBDatasetService {
         while (current != null) {
             if (current instanceof java.net.ConnectException
                     || current instanceof java.net.SocketTimeoutException
+                    || current instanceof java.net.http.HttpTimeoutException
                     || current instanceof org.apache.http.conn.HttpHostConnectException
-                    || (current.getMessage() != null && current.getMessage().contains("Connection refused"))) {
+                    || (current.getMessage() != null && (
+                            current.getMessage().contains("Connection refused")
+                            || current.getMessage().toLowerCase(java.util.Locale.ROOT).contains("timed out")
+                            || current.getMessage().contains("no bytes")))) {
                 return true;
             }
             current = current.getCause();

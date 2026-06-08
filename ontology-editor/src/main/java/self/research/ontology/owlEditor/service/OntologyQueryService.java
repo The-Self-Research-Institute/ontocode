@@ -84,6 +84,31 @@ public class OntologyQueryService {
      *
      * Results stored in MongoDB after computation so subsequent restarts skip Fuseki entirely.
      */
+
+    /**
+     * Fast top-level count for status polling — avoids hydrating labels during long imports.
+     */
+    public int topLevelClassCount(String projectId) {
+        String countQuery = PREFIXES + """
+            SELECT (COUNT(DISTINCT ?c) AS ?count) WHERE {
+              ?c rdfs:subClassOf <http://www.w3.org/2002/07/owl#Thing> .
+              FILTER(isIRI(?c))
+            }
+            """;
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, countQuery);
+            if (rs.hasNext()) {
+                org.eclipse.rdf4j.query.BindingSet bs = rs.next();
+                if (bs.hasBinding("count")) {
+                    return Integer.parseInt(bs.getValue("count").stringValue());
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[Status] topLevelClassCount failed for {}: {}", projectId, e.getMessage());
+        }
+        return 0;
+    }
+
     @Cacheable(value = "topLevelClasses", key = "#projectId + '_' + #limit")
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
         long startTime = System.currentTimeMillis();
@@ -511,7 +536,7 @@ public class OntologyQueryService {
               OPTIONAL { ?prop rdfs:domain ?domain . FILTER(isIRI(?domain)) }
               OPTIONAL { ?prop rdfs:range ?range . FILTER(isIRI(?range)) }
               OPTIONAL { ?prop rdfs:subPropertyOf ?super . FILTER(isIRI(?super) && ?super != ?prop) }
-              OPTIONAL { ?prop owl:inverseOf ?inverse . FILTER(isIRI(?inverse)) }
+              OPTIONAL { { ?prop owl:inverseOf ?inverse } UNION { ?inverse owl:inverseOf ?prop } FILTER(isIRI(?inverse)) }
               OPTIONAL { ?prop owl:propertyDisjointWith ?disjoint . FILTER(isIRI(?disjoint)) }
               OPTIONAL { ?prop owl:equivalentProperty ?equiv . FILTER(isIRI(?equiv) && ?equiv != ?prop) }
               OPTIONAL {

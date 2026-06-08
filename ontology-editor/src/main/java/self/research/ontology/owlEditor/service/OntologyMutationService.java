@@ -454,12 +454,16 @@ public class OntologyMutationService {
                 + "<" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> .\n"
                 + "}";
         } else if (type.equals("addInverseProperty")) {
+            // owl:inverseOf is symmetric in OWL — insert both directions so both
+            // properties show each other as inverse (matches Protégé behaviour).
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> owl:inverseOf <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:inverseOf <" + op.iri() + "> .\n"
                 + "}";
         } else if (type.equals("deleteInverseProperty")) {
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> owl:inverseOf <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:inverseOf <" + op.iri() + "> .\n"
                 + "}";
         } else if (type.equals("addDisjointProperty")) {
             return "INSERT DATA {\n"

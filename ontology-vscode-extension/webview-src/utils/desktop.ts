@@ -65,8 +65,8 @@ export function isLicenseExpired(license: DesktopLicense | null | undefined): bo
 export const DESKTOP_LICENSE_UPDATED_EVENT = 'desktop-license-updated';
 
 /**
- * Desktop: load ontology into OWLAPI memory (Protégé-style) before SPARQL-heavy UI fetch.
- * Returns true when the in-memory model is ready for instant hierarchy/details.
+ * Load ontology into OWLAPI memory (Protégé-style fast-open) before SPARQL/snapshot-heavy UI fetch.
+ * Works on desktop and cloud when {@code ontocode.fastopen.enabled=true}.
  */
 export async function warmOntologyInMemory(
     projectId: string,
@@ -80,12 +80,9 @@ export async function warmOntologyInMemory(
     individualCount?: number;
     annotationPropertyCount?: number;
 }> {
-    if (!isDesktop()) {
-        return { ready: false, sparqlFallback: true };
-    }
     const encoded = encodeURIComponent(projectId);
     const timeoutMs = options?.timeoutMs ?? 300_000;
-    options?.onStatus?.('Loading ontology into memory (Protégé-style)…');
+    options?.onStatus?.('Opening ontology (fast path)…');
     try {
         const res: any = await apiClient.post(
             `/api/ontology/warm/${encoded}?timeoutMs=${timeoutMs}`,

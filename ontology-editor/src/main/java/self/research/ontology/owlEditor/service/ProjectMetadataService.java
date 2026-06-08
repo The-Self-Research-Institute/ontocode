@@ -2,12 +2,17 @@ package self.research.ontology.owlEditor.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -17,31 +22,32 @@ public class ProjectMetadataService {
     private static final Logger log = LoggerFactory.getLogger(ProjectMetadataService.class);
     
     private final ProjectRepository projectRepository;
+    private final MongoTemplate mongoTemplate;
 
-    public ProjectMetadataService(ProjectRepository projectRepository) {
+    public ProjectMetadataService(ProjectRepository projectRepository, MongoTemplate mongoTemplate) {
         this.projectRepository = projectRepository;
+        this.mongoTemplate = mongoTemplate;
     }
 
     public Optional<ProjectStatus> readStatus(String projectId) {
-        return projectRepository.findById(projectId)
-                .map(doc -> new ProjectStatus(
-                        doc.getStatus(),
-                        doc.getStatusMessage(),
-                        doc.getUpdatedAt(),
-                        doc.getFilename()
+        Optional<ProjectDocument> doc = projectRepository.findById(projectId);
+        return doc.map(d -> new ProjectStatus(
+                        d.getStatus(),
+                        d.getStatusMessage(),
+                        d.getUpdatedAt(),
+                        d.getFilename()
                 ));
     }
 
     public void writeStatus(String projectId, ProjectStatus status) {
-        ProjectDocument doc = projectRepository.findById(projectId)
-                .orElse(new ProjectDocument(projectId, projectId, status.filename()));
-        
-        doc.setStatus(status.status());
-        doc.setStatusMessage(status.statusMessage());
-        doc.setFilename(status.filename());
-        doc.setUpdatedAt(Instant.now());
-        
-        projectRepository.save(doc);
+        Instant now = Instant.now();
+        Update update = newProjectUpdate(projectId, now)
+                .set("status", status.status())
+                .set("statusMessage", status.statusMessage())
+                .set("filename", status.filename())
+                .set("updatedAt", now);
+
+        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
     }
 
     public Optional<Map<String, Object>> readMeta(String projectId) {
@@ -50,34 +56,36 @@ public class ProjectMetadataService {
     }
 
     public void writeMeta(String projectId, Map<String, Object> meta) {
-        ProjectDocument doc = projectRepository.findById(projectId)
-                .orElse(new ProjectDocument(projectId, projectId, null));
-        
-        meta.put("lastUpdated", Instant.now().toString());
-        doc.setMetadata(meta);
-        doc.setUpdatedAt(Instant.now());
-        
-        projectRepository.save(doc);
+        Instant now = Instant.now();
+        Map<String, Object> metadata = new HashMap<>(meta);
+        metadata.put("lastUpdated", now.toString());
+
+        Update update = newProjectUpdate(projectId, now)
+                .setOnInsert("status", "UPLOADED")
+                .set("metadata", metadata)
+                .set("updatedAt", now);
+
+        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
     }
     
     public void setOwnerEmail(String projectId, String ownerEmail) {
-        ProjectDocument doc = projectRepository.findById(projectId)
-                .orElse(new ProjectDocument(projectId, projectId, null));
-        
-        doc.setOwnerEmail(ownerEmail);
-        doc.setUpdatedAt(Instant.now());
-        
-        projectRepository.save(doc);
+        Instant now = Instant.now();
+        Update update = newProjectUpdate(projectId, now)
+                .setOnInsert("status", "UPLOADED")
+                .set("ownerEmail", ownerEmail)
+                .set("updatedAt", now);
+
+        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
     }
     
     public void setGridfsFileId(String projectId, String gridfsFileId) {
-        ProjectDocument doc = projectRepository.findById(projectId)
-                .orElse(new ProjectDocument(projectId, projectId, null));
-        
-        doc.setGridfsFileId(gridfsFileId);
-        doc.setUpdatedAt(Instant.now());
-        
-        projectRepository.save(doc);
+        Instant now = Instant.now();
+        Update update = newProjectUpdate(projectId, now)
+                .setOnInsert("status", "UPLOADED")
+                .set("gridfsFileId", gridfsFileId)
+                .set("updatedAt", now);
+
+        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
     }
     
     public boolean isDuplicateFilename(String filename, String ownerEmail) {
@@ -114,38 +122,34 @@ public class ProjectMetadataService {
         log.info("[ProjectMetadataService] Updating project metadata - projectId: {}, owner: {}, workspace: {}, parentProject: {}, status: {}", 
             projectId, ownerEmail, workspaceId, parentProjectId, status.status());
             
-        ProjectDocument doc = projectRepository.findById(projectId)
-                .orElse(new ProjectDocument(projectId, projectId, status.filename()));
-
-        // Update all fields in single operation
-        doc.setStatus(status.status());
-        doc.setStatusMessage(status.statusMessage());
-        doc.setFilename(status.filename());
-        doc.setGridfsFileId(gridfsFileId);
+        Instant now = Instant.now();
+        Update update = newProjectUpdate(projectId, now)
+                .set("status", status.status())
+                .set("statusMessage", status.statusMessage())
+                .set("filename", status.filename())
+                .set("gridfsFileId", gridfsFileId)
+                .set("updatedAt", now);
 
         if (ownerEmail != null && !ownerEmail.isEmpty()) {
-            doc.setOwnerEmail(ownerEmail);
+            update.set("ownerEmail", ownerEmail);
             log.info("[ProjectMetadataService] Setting owner email: {} for project: {}", ownerEmail, projectId);
         } else {
             log.warn("[ProjectMetadataService] No owner email provided for project: {}", projectId);
         }
 
         if (workspaceId != null && !workspaceId.isEmpty()) {
-            doc.setWorkspaceId(workspaceId);
+            update.set("workspaceId", workspaceId);
             log.info("[ProjectMetadataService] Setting workspace ID: {} for project: {}", workspaceId, projectId);
         }
 
         if (parentProjectId != null && !parentProjectId.isEmpty()) {
-            doc.setProjectId(parentProjectId);
+            update.set("projectId", parentProjectId);
             log.info("[ProjectMetadataService] Setting parent project ID: {} for file: {}", parentProjectId, projectId);
         }
 
-        doc.setUpdatedAt(Instant.now());
-
-        // Single database write - saves to MongoDB for both cloud and self-hosted
-        ProjectDocument savedDoc = projectRepository.save(doc);
+        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
         log.info("[ProjectMetadataService] ✓ Project saved to MongoDB - id: {}, owner: {}, filename: {}", 
-            savedDoc.getId(), savedDoc.getOwnerEmail(), savedDoc.getFilename());
+            projectId, ownerEmail, status.filename());
     }
     
     /**
@@ -155,5 +159,15 @@ public class ProjectMetadataService {
         return projectRepository.findById(projectId)
                 .map(ProjectDocument::getUpdatedAt)
                 .orElse(null);
+    }
+
+    private Query projectQuery(String projectId) {
+        return Query.query(Criteria.where("_id").is(projectId));
+    }
+
+    private Update newProjectUpdate(String projectId, Instant now) {
+        return new Update()
+                .setOnInsert("name", projectId)
+                .setOnInsert("createdAt", now);
     }
 }
