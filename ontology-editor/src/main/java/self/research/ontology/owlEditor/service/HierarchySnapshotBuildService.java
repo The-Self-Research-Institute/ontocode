@@ -89,6 +89,17 @@ public class HierarchySnapshotBuildService {
                     new OWLOntologyLoaderConfiguration()
                             .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                             .setLoadAnnotationAxioms(true));
+            // Block remote owl:imports from triggering network calls. SILENT mode still tries to
+            // fetch each import URL — and waits for a TCP timeout (~30–60 s per URL) before skipping.
+            // Mapping HTTP/HTTPS IRIs to a nonexistent local path makes the failure instant.
+            manager.addIRIMapper(iri -> {
+                String s = iri.toString();
+                if (s.startsWith("http://") || s.startsWith("https://")) {
+                    return org.semanticweb.owlapi.model.IRI.create(
+                            "file:///intentionally-missing-import-" + Math.abs(s.hashCode()));
+                }
+                return null;
+            });
             ontology = manager.loadOntologyFromOntologyDocument(path.toFile());
             reasoner = new StructuralReasonerFactory().createNonBufferingReasoner(ontology);
             reasoner.precomputeInferences();

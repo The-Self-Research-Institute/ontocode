@@ -105,6 +105,18 @@ public class ProjectLoadController {
     @org.springframework.lang.Nullable
     private DesktopOntologyLoader desktopOntologyLoader;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.DesktopHierarchyService desktopHierarchyService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.OntologyQueryService ontologyQueryService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.HierarchyIndexService hierarchyIndexService;
+
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
     private final MongoTemplate mongoTemplate;
@@ -425,13 +437,23 @@ public class ProjectLoadController {
             ));
         }
         try {
+            var mongoStatus = metadataService.readStatus(projectId);
+            if (importService.isImportActiveOrQueued(projectId)) {
+                log.info("[ProjectLoadController] Import already active for project {}, returning ALREADY_LOADING", projectId);
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "status", "ALREADY_LOADING",
+                    "source", "import-service-guard"
+                ));
+            }
+
             // Desktop fast path: skip re-import if data already exists.
             // Priority: OWLAPI cached → MongoDB status COMPLETED → Fuseki SPARQL count.
             // MongoDB check is most reliable (always fast, doesn't require Fuseki connection).
             if (ontologyCache != null) {
                 boolean owlapiReady = ontologyCache.has(projectId);
 
-                var mongoStatus = metadataService.readStatus(projectId);
                 boolean mongoCompleted = mongoStatus
                     .map(s -> "COMPLETED".equals(s.status()) || "UPDATED".equals(s.status()))
                     .orElse(false);
@@ -816,7 +838,51 @@ public class ProjectLoadController {
     @GetMapping("/status/{projectId:.+}")  // Allow slashes in path variable
     public ResponseEntity<Map<String, Object>> status(@PathVariable String projectId) {
         return metadataService.readStatus(projectId)
-                .map(status -> ResponseEntity.ok(Map.of("success", true, "data", status)))
+                .map(status -> {
+                    Map<String, Object> data = new java.util.LinkedHashMap<>();
+                    data.put("status", status.status());
+                    data.put("statusMessage", status.statusMessage());
+                    data.put("updatedAt", status.updatedAt());
+                    data.put("filename", status.filename());
+                    boolean owlapiReady = ontologyCache != null && ontologyCache.has(projectId);
+                    data.put("owlapiReady", owlapiReady);
+
+                    long graphSize = -1;
+                    boolean graphReady = false;
+                    if ("COMPLETED".equals(status.status())) {
+                        graphSize = datasetService.getGraphTripleCount(projectId);
+                        graphReady = graphSize > 0;
+                    }
+                    // During PROCESSING, skip synchronous triple COUNT — Fuseki may block for
+                    // minutes on large graphs and stall status polls (gateway 504/500).
+                    data.put("graphSize", graphSize > 0 ? graphSize : null);
+                    data.put("graphReady", graphReady);
+
+                    int topLevel = 0;
+                    if (desktopHierarchyService != null && owlapiReady) {
+                        topLevel = desktopHierarchyService.topLevelClassTotal(projectId);
+                    } else if (graphReady && ontologyQueryService != null) {
+                        try {
+                            topLevel = ontologyQueryService.topLevelClassCount(projectId);
+                        } catch (Exception sparqlEx) {
+                            log.debug("[Status] SPARQL top-level count unavailable for {}: {}", projectId, sparqlEx.getMessage());
+                        }
+                    } else if (hierarchyIndexService != null && hierarchyIndexService.isReady(projectId)) {
+                        topLevel = 1;
+                    }
+
+                    boolean hierarchyReady = topLevel > 0;
+                    data.put("topLevelClasses", topLevel);
+                    data.put("hierarchyReady", hierarchyReady);
+                    data.put("editorReady", hierarchyReady);
+                    if ("COMPLETED".equals(status.status()) && graphReady && !hierarchyReady) {
+                        data.put("hierarchyWarming", true);
+                        if (status.statusMessage() == null || status.statusMessage().isBlank()) {
+                            data.put("statusMessage", "Triple store ready — loading class tree…");
+                        }
+                    }
+                    return ResponseEntity.ok(Map.of("success", true, "data", data));
+                })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("success", false, "error", "Project not found")));
     }
@@ -1139,7 +1205,8 @@ public class ProjectLoadController {
                         currentFile.get().getFileName());
                     return ResponseEntity.ok(Map.of("success", true, "exists", true,
                         "projectId", projectId, "fileName", fileName,
-                        "graphSize", 0, "ontologyIRIs", List.of(), "source", "filesystem-check"));
+                        "graphSize", -1, "ontologyIRIs", List.of(), "source", "filesystem-check",
+                        "graphReady", true));
                 }
             }
 

@@ -41,6 +41,47 @@ public class HierarchySnapshotBuilder {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Fast-open path: asserted hierarchy roots (Protégé parity without reasoner precompute).
+     * A named class is top-level when it has no asserted named superclass other than owl:Thing.
+     */
+    public int countTopLevelAsserted(OWLOntology ont) {
+        return assertedTopLevelCandidates(ont).size();
+    }
+
+    public List<OntologyDto.TreeNode> buildTopLevelAsserted(OWLOntology ont, int limit, int offset) {
+        return assertedTopLevelCandidates(ont).stream()
+                .sorted(Comparator.comparing(c -> getLabel(ont, c).toLowerCase(Locale.ROOT)))
+                .skip(Math.max(0, offset))
+                .limit(Math.max(1, limit))
+                .map(c -> toTreeNodeAsserted(ont, c, null))
+                .collect(Collectors.toList());
+    }
+
+    private Set<OWLClass> assertedTopLevelCandidates(OWLOntology ont) {
+        Set<OWLClass> withNamedSuper = new HashSet<>();
+        for (OWLSubClassOfAxiom ax : ont.getAxioms(AxiomType.SUBCLASS_OF)) {
+            OWLClassExpression sub = ax.getSubClass();
+            OWLClassExpression sup = ax.getSuperClass();
+            if (sub.isAnonymous() || sub.isOWLNothing()) {
+                continue;
+            }
+            if (!sup.isAnonymous() && !sup.isOWLThing() && !sup.isOWLNothing()) {
+                withNamedSuper.add(sub.asOWLClass());
+            }
+        }
+        Set<OWLClass> roots = new LinkedHashSet<>();
+        for (OWLClass cls : ont.getClassesInSignature(Imports.EXCLUDED)) {
+            if (cls.isBuiltIn() || cls.isOWLNothing()) {
+                continue;
+            }
+            if (!withNamedSuper.contains(cls)) {
+                roots.add(cls);
+            }
+        }
+        return roots;
+    }
+
     public List<OntologyDto.TreeNode> buildChildren(OWLOntology ont, OWLReasoner reasoner,
                                                     String parentIri, int limit, int offset) {
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
@@ -89,6 +130,28 @@ public class HierarchySnapshotBuilder {
         return reasoner.getSuperClasses(cls, true)
                 .entities()
                 .anyMatch(sc -> !sc.isOWLThing() && !sc.isOWLNothing() && !sc.isAnonymous());
+    }
+
+    private OntologyDto.TreeNode toTreeNodeAsserted(OWLOntology ont, OWLClass cls, String parentIri) {
+        String iri = cls.getIRI().toString();
+        String label = getLabel(ont, cls);
+        String description = getAnnotation(ont, cls, "http://purl.obolibrary.org/obo/IAO_0000115");
+        if (description == null) {
+            description = getAnnotation(ont, cls, "http://www.w3.org/2000/01/rdf-schema#comment");
+        }
+        boolean hasChildren = hasDirectChildren(ont, cls);
+        List<Map<String, String>> equivalentClasses = getEquivalentClasses(ont, cls);
+
+        OntologyDto.TreeNode node = new OntologyDto.TreeNode();
+        node.setId(iri);
+        node.setLabel(label);
+        node.setDescription(description);
+        node.setParent(parentIri);
+        node.setHasChildren(hasChildren);
+        if (!equivalentClasses.isEmpty()) {
+            node.setEquivalentClasses(equivalentClasses);
+        }
+        return node;
     }
 
     private OntologyDto.TreeNode toTreeNode(OWLOntology ont, OWLReasoner reasoner,

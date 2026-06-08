@@ -37,6 +37,9 @@ public class OntologyQueryController {
     @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.DesktopOntologyLoader desktopOntologyLoader;
 
+    @Autowired(required = false) @Nullable
+    private self.research.ontology.owlEditor.service.GraphDBDatasetService datasetService;
+
     public OntologyQueryController(OntologyQueryService queryService,
                                    ProjectMetadataService projectMetadataService,
                                    OntologyMetadataService ontologyMetadataService,
@@ -57,9 +60,42 @@ public class OntologyQueryController {
         if (owlapiReady && desktopHierarchyService != null) {
             body.putAll(desktopHierarchyService.declarationCounts(projectId));
             body.put("hierarchyEngine", "owlapi");
+            int topLevelTotal = desktopHierarchyService.topLevelClassTotal(projectId);
+            body.put("topLevelClasses", topLevelTotal);
+            body.put("hierarchyReady", topLevelTotal > 0);
+        } else if (hierarchyIndexService.isReady(projectId)) {
+            body.put("hierarchyEngine", "snapshot");
             body.put("hierarchyReady", true);
+        } else {
+            int topLevel = 0;
+            try {
+                topLevel = queryService.topLevelClassCount(projectId);
+            } catch (Exception ignored) {
+                /* SPARQL may be warming */
+            }
+            boolean hierarchyReady = topLevel > 0;
+            body.put("topLevelClasses", topLevel);
+            body.put("hierarchyReady", hierarchyReady);
+            body.put("sparqlFallback", true);
+            if (hierarchyReady) {
+                body.put("hierarchyEngine", "sparql");
+            } else if (graphHasTriples(projectId)) {
+                body.put("hierarchyEngine", "sparql");
+                body.put("hierarchyWarming", true);
+            }
         }
         return ResponseEntity.ok(body);
+    }
+
+    private boolean graphHasTriples(String projectId) {
+        if (datasetService == null) {
+            return false;
+        }
+        try {
+            return datasetService.getGraphTripleCount(projectId) > 0;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     /**
@@ -71,7 +107,9 @@ public class OntologyQueryController {
             @PathVariable String projectId,
             @RequestParam(defaultValue = "300000") long timeoutMs) {
         if (desktopOntologyLoader == null) {
-            return ResponseEntity.ok(Map.of("ready", false, "sparqlFallback", true, "message", "Not desktop mode"));
+            return ResponseEntity.ok(Map.of(
+                    "ready", false, "sparqlFallback", true,
+                    "message", "Fast-open disabled (set ontocode.fastopen.enabled=true)"));
         }
         Map<String, Object> result = new HashMap<>(desktopOntologyLoader.warmProject(projectId, timeoutMs));
         result.put("success", true);
@@ -104,7 +142,17 @@ public class OntologyQueryController {
                 body.put("topLevelOffset", offset);
                 body.put("topLevelLimit", limit);
                 body.put("truncated", truncated);
+                body.put("hierarchyEngine", "owlapi");
+                body.put("topLevelClasses", topLevelTotal);
+                body.put("hierarchyReady", topLevelTotal > 0);
                 if (offset == 0) body.putAll(desktopHierarchyService.declarationCounts(projectId));
+                if (offset == 0 && topLevelTotal == 0) {
+                    Map<String, Object> pending = new java.util.LinkedHashMap<>(body);
+                    pending.put("success", false);
+                    pending.put("hierarchyReady", false);
+                    pending.put("message", "Class tree is still loading. Please wait.");
+                    return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
+                }
                 return ResponseEntity.ok(body);
             }
             // Trigger lazy OWLAPI load (non-blocking — the frontend's POST /warm is the
@@ -125,10 +173,33 @@ public class OntologyQueryController {
                 pending.put("message", "Class hierarchy index is building. Please wait and refresh.");
                 return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
             }
-            // Legacy fallback (disabled by default)
-            return ResponseEntity.ok(Map.of("success", true, "classes",
-                    queryService.topLevelClasses(projectId, limit),
-                    "hierarchyEngine", "sparql"));
+            // SPARQL fallback when OWLAPI/snapshot unavailable (e.g. heap-skipped large files)
+            var classes = queryService.topLevelClasses(projectId, limit);
+            if (offset == 0 && classes.isEmpty()) {
+                int topCount = 0;
+                try {
+                    topCount = queryService.topLevelClassCount(projectId);
+                } catch (Exception ignored) {
+                    /* still warming */
+                }
+                if (topCount == 0 && graphHasTriples(projectId)) {
+                    Map<String, Object> pending = new java.util.LinkedHashMap<>();
+                    pending.put("success", false);
+                    pending.put("hierarchyReady", false);
+                    pending.put("classes", List.of());
+                    pending.put("hierarchyEngine", "sparql");
+                    pending.put("sparqlFallback", true);
+                    pending.put("message", "Triple store ready — loading class tree…");
+                    return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
+                }
+            }
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("success", true);
+            body.put("classes", classes);
+            body.put("hierarchyEngine", "sparql");
+            body.put("hierarchyReady", !classes.isEmpty());
+            body.put("topLevelReturned", classes.size());
+            return ResponseEntity.ok(body);
         } catch (Exception e) {
             return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
@@ -164,10 +235,25 @@ public class OntologyQueryController {
             return ResponseEntity.ok(snapChildren.get());
         }
         if (hierarchyIndexService.isEnabled() && !hierarchyIndexService.allowsLegacySparqlFallback()) {
-            return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED)
-                    .body(List.of());
+            Map<String, Object> pending = new java.util.LinkedHashMap<>();
+            pending.put("success", false);
+            pending.put("hierarchyReady", false);
+            pending.put("children", List.of());
+            pending.putAll(hierarchyIndexService.statusPayload(projectId));
+            pending.put("message", "Class hierarchy index is building. Please wait and retry.");
+            return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
         }
-        return ResponseEntity.ok(queryService.children(projectId, parentIri, limit, offset));
+        try {
+            return ResponseEntity.ok(queryService.children(projectId, parentIri, limit, offset));
+        } catch (Exception e) {
+            Map<String, Object> pending = new java.util.LinkedHashMap<>();
+            pending.put("success", false);
+            pending.put("hierarchyReady", false);
+            pending.put("children", List.of());
+            pending.put("message", "Children query is still running. Please retry.");
+            pending.put("error", e.getMessage());
+            return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
+        }
     }
 
     @GetMapping("/properties/{projectId:.+}")

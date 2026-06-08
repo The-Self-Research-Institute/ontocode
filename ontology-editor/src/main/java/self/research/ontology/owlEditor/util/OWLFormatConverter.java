@@ -40,7 +40,17 @@ public class OWLFormatConverter {
 
         // Prevent all network access for import resolution - this is the #1 performance killer.
         // Without this, OWL API tries to HTTP-fetch every <Import> URL and waits for timeout.
+        // SILENT mode still tries to connect before ignoring — so we redirect HTTP/HTTPS IRIs
+        // to a nonexistent local path for instant failure (same fix as HierarchySnapshotBuildService).
         manager.getIRIMappers().clear();
+        manager.addIRIMapper(iri -> {
+            String s = iri.toString();
+            if (s.startsWith("http://") || s.startsWith("https://")) {
+                return org.semanticweb.owlapi.model.IRI.create(
+                        "file:///intentionally-missing-import-" + Math.abs(s.hashCode()));
+            }
+            return null;
+        });
 
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)

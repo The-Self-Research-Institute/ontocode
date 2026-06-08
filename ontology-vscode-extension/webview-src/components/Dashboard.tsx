@@ -1389,7 +1389,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [backgroundImportProgress, setBackgroundImportProgress] = useState<number | undefined>(undefined);
   // Track import status for all projects (for ProjectSelector)
   const [projectImportStatuses, setProjectImportStatuses] = useState<{
-    [projectId: string]: { type: string; status: string; progress?: number };
+    [projectId: string]: { type: string; status: string; progress?: number; metadata?: Record<string, unknown> };
   }>({});
   // Queue status visibility
   const [showQueueStatus, setShowQueueStatus] = useState(false);
@@ -2606,6 +2606,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
 
         if (status === "COMPLETED") {
+          const topLevel = Number(statusRes?.data?.topLevelClasses ?? 0);
+          const hierarchyReady = statusRes?.data?.hierarchyReady ?? topLevel > 0;
+          const graphReady = statusRes?.data?.graphReady ?? (Number(statusRes?.data?.graphSize ?? 0) > 0);
+          if (hierarchyReady || topLevel > 0) {
+            return { ready: true, status };
+          }
+          if (graphReady) {
+            return {
+              ready: false,
+              status: "HIERARCHY_WARMING",
+              error: statusRes?.data?.statusMessage || "Triple store ready — class tree still loading…",
+            };
+          }
           return { ready: true, status };
         }
 
@@ -2689,6 +2702,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       let loadGeneration = 0;
+      let keepInitialLoadingForHierarchy = false;
 
       try {
         // Skip status check for files being reopened (not fresh uploads)
@@ -2702,14 +2716,19 @@ const Dashboard: React.FC<DashboardProps> = ({
           const result = await waitForProcessingComplete(currentProjectId);
 
           if (!result.ready) {
-            const errorTitle = result.status === "ERROR" ? "Import Failed" : "Loading Failed";
-            const errorMessage = result.error || "Unable to load ontology";
+            if (result.status === "HIERARCHY_WARMING") {
+              console.log("[Dashboard] Graph ready, hierarchy still warming — proceeding with retry loop");
+              setIsHierarchyLoading(true);
+              setLoadingStatusMessage(result.error || "Loading class tree…");
+            } else {
+              const errorTitle = result.status === "ERROR" ? "Import Failed" : "Loading Failed";
+              const errorMessage = result.error || "Unable to load ontology";
 
-            console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
-            notificationService.error(errorTitle, errorMessage);
-            setIsInitialLoading(false);
-            return null;
-            return;
+              console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
+              notificationService.error(errorTitle, errorMessage);
+              setIsInitialLoading(false);
+              return null;
+            }
           }
         } else {
           console.log("[Dashboard] ⚡ Force refresh mode - skipping processing status check");
@@ -2901,31 +2920,26 @@ const Dashboard: React.FC<DashboardProps> = ({
         };
 
         let desktopOwlapiReady = false;
-        if (isDesktop()) {
-          const warm = await warmOntologyInMemory(currentProjectId, {
-            timeoutMs: 300_000,
-            onStatus: (msg) => {
-              if (!isStaleLoad()) setLoadingStatusMessage(msg);
-            },
-          });
-          if (isStaleLoad()) return null;
-          desktopOwlapiReady = warm.ready;
-          if (warm.ready) {
-            // OWLAPI ready — mark as handled so the deferred poller never fires a duplicate.
-            owlapiReadyHandledRef.current = currentProjectId;
-            desktopHierarchyDeferredForProject.current = null;
-            console.log("[Dashboard] Desktop OWLAPI warm — using in-memory engine (Protégé-style)");
-            applyDeclarationCounts(warm);
-            setLoadingStatusMessage("Loading classes…");
-            desktopDeferredSectionsLoadedRef.current.clear();
-          } else {
-            // OWLAPI still loading — activate the deferred-hierarchy resolver.
-            // It polls every 5 s and renders the hierarchy ONCE when OWLAPI is ready,
-            // or falls back to SPARQL after 5 min. No intermediate SPARQL render.
-            console.warn("[Dashboard] Desktop OWLAPI still loading — deferring hierarchy (deferred resolver active)");
-            desktopHierarchyDeferredForProject.current = currentProjectId;
-            // Phase 2 (properties, metadata, individuals) still loads normally below.
-          }
+        const warm = await warmOntologyInMemory(currentProjectId, {
+          timeoutMs: 300_000,
+          onStatus: (msg) => {
+            if (!isStaleLoad()) setLoadingStatusMessage(msg);
+          },
+        });
+        if (isStaleLoad()) return null;
+        desktopOwlapiReady = warm.ready;
+        if (warm.ready) {
+          owlapiReadyHandledRef.current = currentProjectId;
+          desktopHierarchyDeferredForProject.current = null;
+          console.log("[Dashboard] OWLAPI fast-open ready — using in-memory hierarchy");
+          applyDeclarationCounts(warm);
+          setLoadingStatusMessage("Loading classes…");
+          desktopDeferredSectionsLoadedRef.current.clear();
+        } else if (!warm.sparqlFallback) {
+          console.warn("[Dashboard] OWLAPI warm in progress — deferring hierarchy until fast-open completes");
+          desktopHierarchyDeferredForProject.current = currentProjectId;
+        } else {
+          console.log("[Dashboard] Fast-open unavailable — using snapshot/SPARQL hierarchy path");
         }
 
         // Large graphs: instance-counts is a full-graph SPARQL scan — skip when OWLAPI serves the tree.
@@ -2958,17 +2972,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Edge case: if OWLAPI never loads (OOM/corrupt file) the poller will NOT fire
         // and the skeleton will stay until the user navigates away — acceptable because
         // the fallback means OWLAPI genuinely cannot serve the ontology.
-        if (isDesktop() && !desktopOwlapiReady) {
-          console.log("[Dashboard] Desktop: deferring class hierarchy — awaiting OWLAPI engine");
-          // Skip Phase 1 hierarchy fetch; fall through to Phase 2 (properties, metadata, etc.)
-          // so the editor is usable as soon as OWLAPI is ready.
-          setIsHierarchyLoading(true); // keep skeleton
-          setLoadingStatusMessage("Loading ontology into memory…");
+        if (!desktopOwlapiReady && desktopHierarchyDeferredForProject.current === currentProjectId) {
+          console.log("[Dashboard] Deferring class hierarchy — awaiting OWLAPI fast-open");
+          setIsHierarchyLoading(true);
+          setLoadingStatusMessage("Opening ontology (fast path)…");
         }
 
-        // Desktop + OWLAPI not ready: skip SPARQL hierarchy fetch entirely.
-        // The owlapiReadyHandledRef poller renders classes once OWLAPI is confirmed ready.
-        const topLevelClassesRes = (isDesktop() && !desktopOwlapiReady) ? null : await apiClient
+        const topLevelClassesRes = (!desktopOwlapiReady && desktopHierarchyDeferredForProject.current === currentProjectId) ? null : await apiClient
           .get<any>(
             `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
             undefined,
@@ -2991,14 +3001,13 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         const hierarchyBuilding =
           topLevelClassesRes &&
-          !isDesktop() &&
           (topLevelClassesRes?.hierarchyReady === false ||
             topLevelClassesRes?.status === 202 ||
             topLevelClassesRes?.success === false);
         if (hierarchyBuilding && !isStaleLoad()) {
           setLoadingStatusMessage(
             topLevelClassesRes?.message ||
-              "Building Protégé-accurate class hierarchy…",
+              "Loading class tree…",
           );
           setIsHierarchyLoading(true);
         }
@@ -3048,11 +3057,92 @@ const Dashboard: React.FC<DashboardProps> = ({
           hasChildren: topLevelNodes.length > 0,
           annotations: {},
         };
+        const applyTopLevelToHierarchy = (classes: TopLevelClass[], truncated = false, total = 0) => {
+          const nodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
+            ...c,
+            children: [],
+            hasChildren: c.hasChildren !== false,
+            subClassOfAxioms: [
+              { id: "http://www.w3.org/2002/07/owl#Thing", type: "SubClassOf", definition: "owl:Thing" },
+            ],
+          }));
+          const children = applyInstanceCountsToTree(nodes, resolvedCounts);
+          if (truncated) {
+            children.push({
+              id: "__load_more_top_level__",
+              label: "Load more classes…",
+              children: [],
+              hasChildren: false,
+              annotations: {},
+            });
+          }
+          setClassHierarchy(
+            applyInstanceCountsToTree(
+              [
+                {
+                  id: "http://www.w3.org/2002/07/owl#Thing",
+                  label: "owl:Thing",
+                  children,
+                  hasChildren: nodes.length > 0,
+                  annotations: {},
+                },
+              ],
+              resolvedCounts,
+            ),
+          );
+          if (!isStaleLoad()) {
+            setTopLevelTruncated(truncated);
+            setTopLevelTotal(total);
+          }
+        };
+
         if (!hierarchyBuilding) {
-          setClassHierarchy(applyInstanceCountsToTree([owlThingNode], resolvedCounts));
+          applyTopLevelToHierarchy(topLevelClasses, isTruncated, tlTotal);
+          if (topLevelClasses.length > 0 && !isStaleLoad()) {
+            setLoadingStatusMessage("");
+            setIsHierarchyLoading(false);
+            notificationService.success("Ready", "Class tree is available.");
+          }
         }
         applyDeclarationCounts(topLevelClassesRes);
-        if (!isDesktop() && hierarchyBuilding && !isStaleLoad()) {
+
+        const needsHierarchyRetry =
+          !hierarchyBuilding && topLevelClasses.length === 0 && !isStaleLoad();
+        if (needsHierarchyRetry) {
+          setIsHierarchyLoading(true);
+          setLoadingStatusMessage("Loading class hierarchy…");
+          void (async () => {
+            for (let i = 0; i < 60 && !signal.aborted; i++) {
+              await new Promise((r) => setTimeout(r, 2000));
+              try {
+                const retry = await apiClient.get<any>(
+                  `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+                  undefined,
+                  { signal },
+                );
+                const classes = Array.isArray(retry?.classes)
+                  ? retry.classes
+                  : Array.isArray(retry?.data?.classes)
+                    ? retry.data.classes
+                    : [];
+                if (classes.length > 0) {
+                  applyTopLevelToHierarchy(classes, !!retry?.truncated, Number(retry?.topLevelTotal) || 0);
+                  applyDeclarationCounts(retry);
+                  setLoadingStatusMessage("");
+                  setIsHierarchyLoading(false);
+                  setIsInitialLoading(false);
+                  notificationService.success("Ready", "Class tree is available.");
+                  return;
+                }
+              } catch {
+                /* retry */
+              }
+            }
+            setLoadingStatusMessage("Class hierarchy is still loading. Try expanding owl:Thing or refresh.");
+            setIsHierarchyLoading(false);
+            setIsInitialLoading(false);
+          })();
+        } else if (!isDesktop() && hierarchyBuilding && !isStaleLoad()) {
           void (async () => {
             for (let i = 0; i < 120 && !signal.aborted; i++) {
               await new Promise((r) => setTimeout(r, 2000));
@@ -3070,32 +3160,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                     { signal },
                   );
                   const classes = Array.isArray(retry?.classes) ? retry.classes : [];
-                  const nodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
-                    ...c,
-                    children: [],
-                    hasChildren: c.hasChildren !== false,
-                    subClassOfAxioms: [
-                      { id: "http://www.w3.org/2002/07/owl#Thing", type: "SubClassOf", definition: "owl:Thing" },
-                    ],
-                  }));
-                  setClassHierarchy(
-                    applyInstanceCountsToTree(
-                      [
-                        {
-                          id: "http://www.w3.org/2002/07/owl#Thing",
-                          label: "owl:Thing",
-                          children: nodes,
-                          hasChildren: nodes.length > 0,
-                          annotations: {},
-                        },
-                      ],
-                      resolvedCounts,
-                    ),
-                  );
-                  applyDeclarationCounts(retry);
-                  setLoadingStatusMessage("");
-                  setIsHierarchyLoading(false);
-                  return;
+                  if (classes.length > 0) {
+                    applyTopLevelToHierarchy(classes, !!retry?.truncated, Number(retry?.topLevelTotal) || 0);
+                    applyDeclarationCounts(retry);
+                    setLoadingStatusMessage("");
+                    setIsHierarchyLoading(false);
+                    setIsInitialLoading(false);
+                    return;
+                  }
                 }
               } catch {
                 /* retry */
@@ -3103,6 +3175,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
             setLoadingStatusMessage("Class hierarchy index is still building. Try refresh in a moment.");
             setIsHierarchyLoading(false);
+            setIsInitialLoading(false);
           })();
         }
         if (isDesktop() && !isStaleLoad()) {
@@ -3120,11 +3193,17 @@ const Dashboard: React.FC<DashboardProps> = ({
             console.debug("[Dashboard] cache-status after top-level:", e);
           }
         }
-        // On desktop with deferred hierarchy: keep skeleton until OWLAPI poller fires.
         const desktopDeferredHierarchy = isDesktop() && !desktopOwlapiReady;
-        if (!hierarchyBuilding && !desktopDeferredHierarchy) {
+        const hierarchyVisible = topLevelClasses.length > 0;
+        keepInitialLoadingForHierarchy =
+          !hierarchyVisible || hierarchyBuilding || needsHierarchyRetry || desktopDeferredHierarchy;
+        if (!hierarchyBuilding && !desktopDeferredHierarchy && !needsHierarchyRetry && hierarchyVisible) {
           setLoadingStatusMessage("");
           setIsHierarchyLoading(false);
+          setIsInitialLoading(false);
+        } else if (!hierarchyVisible && !isStaleLoad()) {
+          setIsHierarchyLoading(true);
+          setLoadingStatusMessage((prev) => prev || "Loading class tree…");
         }
 
         // Phase 2: load other entity sections in background (tab spinners + bottom bar).
@@ -3389,8 +3468,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] ℹ️ Regular user flow - files already loaded from user email query");
         }
 
-        // Classes are ready; other sections finish in background with their own tab spinners.
-        notificationService.success("Ontology Loaded", `"${currentProjectId}" is ready.`);
+        // Class-tree notification fires when top-level classes are applied (see hierarchy block above).
       } catch (error: any) {
         // Ignore cancellations – these happen when the user switches files mid-load
         if (error?.name === "AbortError" || error?.code === "ERR_CANCELED" || error?.message?.includes("aborted")) {
@@ -3420,11 +3498,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           setIsDatatypesLoading(false);
         }
       } finally {
-        // Only clear the modal spinner here — section loaders are owned by each background fetch.
-        // Guard with loadGeneration so a stale fetch cannot wipe a newer load's spinners.
-        if (fetchDataGenerationRef.current === loadGeneration) {
+        // Keep the modal spinner until top-level classes are visible (see keepInitialLoadingForHierarchy).
+        if (fetchDataGenerationRef.current === loadGeneration && !keepInitialLoadingForHierarchy) {
           setIsInitialLoading(false);
-          setLoadingStatusMessage("");
         }
       }
     },
@@ -4571,6 +4647,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [user?.email, user?.workspaceId, resolveUserEmail]); // Track workspace mode changes + email fallback
 
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
+    // Webapp: don't navigate to editor while import is still in progress
+    const importState = projectImportStatuses[selectedProjectId];
+    if (!isDesktop() && importState &&
+        importState.type !== "IMPORT_COMPLETED" && importState.type !== "IMPORT_FAILED") {
+      return;
+    }
+
     setHasUserSelectedFile(true); // Mark that user has manually selected a file
     setProjectId(selectedProjectId);
     // In free mode, use projectId as the active file identifier
@@ -4582,7 +4665,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     setActiveFileName(null);
     setShowProjectSelector(false);
     fetchData(selectedProjectId);
-  }, []);
+  }, [projectImportStatuses]);
   // fetchData captured in closure, removed to prevent infinite loop
 
   const handleDeleteFile = useCallback((projectIdToDelete: string, fileName: string) => {
@@ -4694,8 +4777,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
         const res = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(projectId)}`);
         const status = res?.data?.status || res?.status;
-        if (status === "COMPLETED" || status === "ERROR") {
+        const topLevel = Number(res?.data?.topLevelClasses ?? 0);
+        const hierarchyReady = res?.data?.hierarchyReady ?? topLevel > 0;
+        if (status === "ERROR") {
           closeSpinner(`backend status=${status}`);
+          return;
+        }
+        if (status === "COMPLETED" && hierarchyReady) {
+          closeSpinner(`backend status=${status} hierarchy ready`);
           return;
         }
       } catch {
@@ -5039,9 +5128,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
         console.log("[Dashboard] Set pendingImportProjectIdRef.current to:", pendingImportProjectIdRef.current);
         setIsExpectingFileReady(true);
-        // Show loading dialog immediately
-        setShowLoadingChoice(true);
         setLoadingProjectName(message.fileName || message.projectId || "Processing file upload...");
+        if (isDesktop()) {
+          // Desktop: block with Protégé-style loading dialog
+          setShowLoadingChoice(true);
+        } else {
+          // Webapp: stay in project library — import card shows live progress
+          setShowProjectSelector(true);
+        }
         // Don't fetch projects yet - wait for upload to complete
         return;
       }
@@ -5277,7 +5371,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           // If triggered by "Create New File", skip the choice dialog and load immediately
           if (autoLoadNewFileRef.current) {
             autoLoadNewFileRef.current = false;
-          } else {
+          } else if (isDesktop()) {
+            // Webapp uses the import card in ProjectSelector, not this blocking dialog
             setShowLoadingChoice(true);
           }
 
@@ -5341,6 +5436,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 type: message.status.type,
                 status: message.status.status,
                 progress: message.status.progress,
+                metadata: message.status.metadata,
               },
             }));
 
@@ -5354,6 +5450,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 parsing: "Parsing ontology file...",
                 "graphdb-loading": "Loading data into GraphDB (this may take several minutes for large files)...",
                 "graphdb-load-complete": "GraphDB load complete, computing metadata...",
+                "hierarchy-warming": "Loading class tree…",
                 "computing-metadata": "Computing ontology statistics...",
               };
               setLoadingStatusMessage(stageMessages[stage] || "Processing...");
@@ -5411,6 +5508,17 @@ const Dashboard: React.FC<DashboardProps> = ({
               console.log("[Dashboard] Cleared pendingImportProjectIdRef");
               setIsExpectingFileReady(false);
 
+              // Webapp: keep user in project library — the card turns green, user clicks to open
+              if (!isDesktop()) {
+                setShowLoadingChoice(false);
+                setBackgroundImportActive(false);
+                setBackgroundImportProgress(undefined);
+                setIsInitialLoading(false);
+                userLoadingChoice.current = null;
+                setTimeout(() => fetchProjects(), 500);
+                break;
+              }
+
               // Data loading is handled by the fileReady message (always sent before IMPORT_COMPLETED).
               // Here we only clean up UI state. If fetchData is already in progress, chain cleanup onto it;
               // otherwise close dialogs immediately.
@@ -5422,15 +5530,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                 setTotalInQueue(undefined);
                 setEstimatedWaitTimeMs(undefined);
                 setShowProjectSelector(false);
-                setIsInitialLoading(false);
                 setBackgroundImportActive(false);
                 setBackgroundImportProgress(undefined);
                 userLoadingChoice.current = null;
               };
 
-              // Show completion notification
-              const importedName = message.status.filename || message.status.projectId || "Ontology";
-              notificationService.success("Import Complete", `"${importedName}" has been loaded successfully.`);
+              setIsHierarchyLoading(true);
+              setLoadingStatusMessage(
+                message.status.metadata?.message || "Loading class tree…",
+              );
 
               if (loadingPromiseRef.current) {
                 console.log("[Dashboard] fetchData already in progress (from fileReady), chaining UI cleanup");
@@ -5443,9 +5551,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                 // The background checker fires every 5s and re-dispatches IMPORT_COMPLETED
                 // after the first load completes (loadingPromiseRef is null at that point),
                 // which would cause infinite reload loops.
-                if (targetProjectId === projectId && classHierarchy.length > 0 && metadata) {
+                const owlThingChildren =
+                  classHierarchy.find((n) => n.id === "http://www.w3.org/2002/07/owl#Thing")?.children?.length ?? 0;
+                if (targetProjectId === projectId && owlThingChildren > 0 && metadata) {
                   console.log("[Dashboard] IMPORT_COMPLETED: project already loaded, skipping redundant fetch");
                   cleanupUI();
+                  setIsInitialLoading(false);
+                  setIsHierarchyLoading(false);
                 } else {
                   // Server-side import (upload-by-file-ref) bypasses the VSCode bridge,
                   // so no fileReady message is sent. Trigger fetchData here directly.

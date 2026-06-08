@@ -274,8 +274,8 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
-                    <!-- Increase heap size for large ontology file imports -->
-                    <jvmArguments>-Xms512m -Xmx2048m</jvmArguments>
+                    <!-- go-plus/mondo (~225MB OWL) need headroom; 2g OOM'd under concurrent import -->
+                    <jvmArguments>-Xms1g -Xmx6144m -XX:+UseG1GC</jvmArguments>
                 </configuration>
                 <executions>
                     <execution>
