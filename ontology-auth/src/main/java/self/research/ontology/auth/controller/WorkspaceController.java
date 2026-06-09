@@ -456,8 +456,10 @@ public class WorkspaceController {
                     || "PAST_DUE".equalsIgnoreCase(billingStatus)
                     || "PAYMENT_ACTION_REQUIRED".equalsIgnoreCase(billingStatus);
 
-            // Block access only when the plan has truly expired (canceled, unpaid, expired)
-            if (isPaidPlan && !hasValidBilling) {
+            // Block access only when the plan has truly expired (canceled, unpaid, expired).
+            // Enterprise domain bypass users are exempt — their access is managed externally.
+            boolean isEnterpriseDomainUser = systemSettingsService.isEnterpriseDomain(user.getEmail());
+            if (isPaidPlan && !hasValidBilling && !isEnterpriseDomainUser) {
                 log.warn("[Workspace] Access blocked for workspace {} due to {} billing status", workspaceId, billingStatus);
                 return ResponseEntity.status(402).body(Map.of(
                     "error", "Plan validity has ended. Please update your subscription to restore access.",
