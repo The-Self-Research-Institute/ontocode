@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
+import { isDesktop } from '../utils/desktop';
 
 export interface SubscriptionLimits {
     maxTeamMembers: number;
@@ -100,8 +101,8 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
 export const useSubscription = () => {
     const { user } = useAuth();
 
-    // Get workspace subscription plan from user context and normalize to lowercase
-    const plan = (user?.subscriptionPlan || 'free').toLowerCase();
+    // Desktop is a local single-user app — all features are unlocked regardless of cloud plan.
+    const plan = isDesktop() ? 'enterprise' : (user?.subscriptionPlan || 'free').toLowerCase();
     const limits = useMemo(() => PLAN_LIMITS[plan] || PLAN_LIMITS.free, [plan]);
 
     const canAccessFeature = (feature: keyof SubscriptionLimits): boolean => {

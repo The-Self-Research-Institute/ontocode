@@ -113,6 +113,12 @@ public class GraphDBDatasetService {
     // (GO-plus, NCBITaxon) cannot degrade queries against smaller co-resident files.
     private final Map<String, Repository> perFileRepositories = new ConcurrentHashMap<>();
 
+    // Projects whose dedicated dataset exists but is empty while the shared named graph has data
+    // (legacy split-brain from chunked imports). Cached to avoid re-running expensive COUNT/ASK
+    // on every status poll. Evicted by evictPerFileDataset() when a new import starts.
+    private final java.util.Set<String> sharedFallbackProjects =
+            java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+
     // Shared Java HttpClient — reused for GSP batch POSTs and direct file uploads.
     // HttpClient is expensive to construct (thread pools); one instance per service is correct.
     private static final java.net.http.HttpClient SHARED_HTTP_CLIENT = java.net.http.HttpClient.newBuilder()
@@ -452,14 +458,20 @@ public class GraphDBDatasetService {
                 // Legacy split-brain: an empty dedicated dataset was created while chunked import
                 // wrote to the shared named graph. Prefer shared when dedicated has no triples.
                 if (!createIfAbsent && datasetExists) {
+                    // Fast path: cached decision from a prior call avoids repeated SPARQL on every poll.
+                    if (sharedFallbackProjects.contains(projectId)) {
+                        return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
+                    }
                     try (RepositoryConnection dedicatedConn = repo.getConnection()) {
-                        long dedicatedSize = countGraphTriplesSparql(dedicatedConn, graphUri);
-                        if (dedicatedSize == 0) {
+                        // Use ASK (stops at first triple) instead of COUNT (scans all triples).
+                        boolean dedicatedEmpty = !askGraphHasData(dedicatedConn, graphUri);
+                        if (dedicatedEmpty) {
                             try (RepositoryConnection sharedConn = getRepository().getConnection()) {
-                                long sharedSize = countGraphTriplesSparql(sharedConn, graphUri);
-                                if (sharedSize > 0) {
-                                    log.info("[PerFileDS] Dedicated dataset '{}' is empty but shared graph has {} triples — using shared for {}",
-                                            dsName, sharedSize, projectId);
+                                boolean sharedHasData = askGraphHasData(sharedConn, graphUri);
+                                if (sharedHasData) {
+                                    log.info("[PerFileDS] Dedicated dataset '{}' is empty but shared graph has data — using shared for {}",
+                                            dsName, projectId);
+                                    sharedFallbackProjects.add(projectId);
                                     return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
                                 }
                             }
@@ -492,6 +504,7 @@ public class GraphDBDatasetService {
         }
         perFileRepositories.remove(projectId);
         partitionGraphCache.remove(projectId);
+        sharedFallbackProjects.remove(projectId);
         log.info("[PerFileDS] Evicted cached repository for project {}", projectId);
     }
 
@@ -2755,6 +2768,21 @@ public class GraphDBDatasetService {
             }
         }
         return 0;
+    }
+
+    /**
+     * ASK-based existence check: returns true immediately on the first triple found.
+     * Use this instead of countGraphTriplesSparql when you only need a yes/no answer —
+     * ASK is O(1) regardless of graph size while COUNT scans every triple.
+     */
+    private boolean askGraphHasData(RepositoryConnection conn, String graphUri) {
+        String query = "ASK { GRAPH <" + graphUri + "> { ?s ?p ?o } }";
+        try {
+            return conn.prepareBooleanQuery(query).evaluate();
+        } catch (Exception e) {
+            log.debug("[askGraphHasData] ASK failed for graph {}: {}", graphUri, e.getMessage());
+            return false;
+        }
     }
 
     private void logCauseChain(Throwable throwable) {

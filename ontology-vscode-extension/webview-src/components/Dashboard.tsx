@@ -1039,9 +1039,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [userProjectRole, setUserProjectRole] = useState<string | null>(null);
   const isProjectViewerRole = userProjectRole === 'VIEWER';
   const isViewOnlyMember =
-    (subscription.isFree && user?.workspaceRole != null && normalizeRole(user.workspaceRole) !== "OWNER") ||
-    isWorkspaceViewerRole(workspaceRoleParsed) ||
-    isProjectViewerRole;
+    !isDesktop() && (
+      (subscription.isFree && user?.workspaceRole != null && normalizeRole(user.workspaceRole) !== "OWNER") ||
+      isWorkspaceViewerRole(workspaceRoleParsed) ||
+      isProjectViewerRole
+    );
   const viewOnlyMessage = isProjectViewerRole
     ? "You have view-only access to this project. Contact the project owner to request edit permissions."
     : "You have view-only access. Upgrade your plan to edit.";
