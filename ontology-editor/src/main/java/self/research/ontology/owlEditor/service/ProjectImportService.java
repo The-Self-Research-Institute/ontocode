@@ -136,6 +136,10 @@ public class ProjectImportService {
                 .orElse(filename);
         metadataService.writeStatus(projectId, ProjectStatus.processing(displayFilename));
 
+        // Evict any cached binding decision so the next resolveBinding() re-evaluates whether
+        // to use the shared vs. dedicated dataset (the new import will write to dedicated).
+        datasetService.evictPerFileDataset(projectId);
+
         // Fast path for small files: skip queue overhead when no concurrent imports running
         long fileSizeBytes;
         try {

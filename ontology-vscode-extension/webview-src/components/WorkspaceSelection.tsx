@@ -73,7 +73,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   onManageAccountBilling,
   onUpgradeAccountPlan,
 }) => {
-  const { user } = useAuth();
+  const { user, patchEnterpriseBypass } = useAuth();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [selecting, setSelecting] = useState(false);
@@ -150,6 +150,10 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       .then((res: any) => {
         const d = res?.data || res;
         setAccountSubscription({ planName: d.planName || "FREE", status: d.status || "", billingInterval: d.billingInterval || "monthly" });
+        // Refresh bypass flag in case it was added to the domain list after the user's last login
+        if (d.enterpriseDomainBypass === true) {
+          patchEnterpriseBypass(true);
+        }
       })
       .catch(() => {
         // Failed to fetch — treat as FREE/no subscription
