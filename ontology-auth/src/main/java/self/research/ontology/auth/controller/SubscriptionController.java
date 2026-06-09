@@ -97,34 +97,36 @@ public class SubscriptionController {
         User user = resolveUser(principal);
         if (systemSettingsService.isEnterpriseDomain(user.getEmail())) {
             return ResponseEntity.ok(Map.of(
-                "planName",          "ENTERPRISE",
-                "status",            "active",
-                "billingInterval",   "monthly",
-                "autoRenewEnabled",  true,
-                "currentPeriodEnd",  "",
-                "canceledAt",        "",
-                "hasStripeCustomer", user.getStripeCustomerId() != null,
-                "hasUsedFreeTrial",  user.isHasUsedFreeTrial(),
-                "trialEligible",     false
+                "planName",               "ENTERPRISE",
+                "status",                 "active",
+                "billingInterval",        "monthly",
+                "autoRenewEnabled",       true,
+                "currentPeriodEnd",       "",
+                "canceledAt",             "",
+                "hasStripeCustomer",      user.getStripeCustomerId() != null,
+                "hasUsedFreeTrial",       user.isHasUsedFreeTrial(),
+                "trialEligible",          false,
+                "enterpriseDomainBypass", true
             ));
         }
         // Sync live status + period end from Stripe to repair any stale snapshot in MongoDB
         // (e.g. period end stuck at trial-end timestamp after immediate trial→paid upgrade).
         String liveStatus = stripeService.syncStatusFromStripe(user);
         return ResponseEntity.ok(Map.of(
-                "planName",              orEmpty(user.getSubscriptionPlanName()),
-                "status",                liveStatus,
-                "billingInterval",       orEmpty(user.getBillingInterval()),
-                "autoRenewEnabled",      user.isAutoRenewEnabled(),
-                "currentPeriodEnd",      user.getSubscriptionCurrentPeriodEnd() != null
-                                             ? user.getSubscriptionCurrentPeriodEnd().toString() : "",
-                "canceledAt",            user.getSubscriptionCanceledAt() != null
-                                             ? user.getSubscriptionCanceledAt().toString() : "",
-                "hasStripeCustomer",     user.getStripeCustomerId() != null,
-                "hasUsedFreeTrial",      user.isHasUsedFreeTrial(),
-                "trialEligible",         !user.isHasUsedFreeTrial()
-                                             && user.getFirstSubscriptionAt() == null
-                                             && (user.getStripeSubscriptionId() == null || user.getStripeSubscriptionId().isBlank())
+                "planName",               orEmpty(user.getSubscriptionPlanName()),
+                "status",                 liveStatus,
+                "billingInterval",        orEmpty(user.getBillingInterval()),
+                "autoRenewEnabled",       user.isAutoRenewEnabled(),
+                "currentPeriodEnd",       user.getSubscriptionCurrentPeriodEnd() != null
+                                              ? user.getSubscriptionCurrentPeriodEnd().toString() : "",
+                "canceledAt",             user.getSubscriptionCanceledAt() != null
+                                              ? user.getSubscriptionCanceledAt().toString() : "",
+                "hasStripeCustomer",      user.getStripeCustomerId() != null,
+                "hasUsedFreeTrial",       user.isHasUsedFreeTrial(),
+                "trialEligible",          !user.isHasUsedFreeTrial()
+                                              && user.getFirstSubscriptionAt() == null
+                                              && (user.getStripeSubscriptionId() == null || user.getStripeSubscriptionId().isBlank()),
+                "enterpriseDomainBypass", false
         ));
     }
 

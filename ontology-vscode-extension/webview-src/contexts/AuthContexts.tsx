@@ -42,6 +42,7 @@ interface AuthContextType {
     updateSubscriptionPlan: (planId: string) => Promise<void>;
     updateUserRole: (deploymentType: 'self-hosted' | 'cloud') => Promise<void>;
     refreshPermissions: () => Promise<void>;
+    patchEnterpriseBypass: (bypass: boolean) => void;
     logout: (showExpiredMessage?: boolean) => void;
     sessionExpiredMessage: string | null;
 }
@@ -1010,6 +1011,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
+    const patchEnterpriseBypass = (bypass: boolean) => {
+        try { localStorage.setItem('enterpriseDomainBypass', String(bypass)); } catch {}
+        setUser(prev => prev ? { ...prev, enterpriseDomainBypass: bypass } : prev);
+    };
+
     const value = {
         user,
         loading,
@@ -1025,6 +1031,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         updateSubscriptionPlan,
         updateUserRole,
         refreshPermissions,
+        patchEnterpriseBypass,
         logout: () => logout(false),
         sessionExpiredMessage,
     };
