@@ -3207,7 +3207,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         }
         const desktopDeferredHierarchy = isDesktop() && !desktopOwlapiReady;
-        const hierarchyVisible = topLevelClasses.length > 0;
+        const hierarchyVisible = topLevelClasses.length > 0 || tlTotal === 0;
         keepInitialLoadingForHierarchy =
           !hierarchyVisible || hierarchyBuilding || needsHierarchyRetry || desktopDeferredHierarchy;
         if (!hierarchyBuilding && !desktopDeferredHierarchy && !needsHierarchyRetry && hierarchyVisible) {
