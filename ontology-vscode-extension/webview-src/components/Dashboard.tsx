@@ -3028,10 +3028,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                   : [];
         }
         const isTruncated = !!(tlRes?.truncated);
-        const tlTotal = Number(tlRes?.topLevelTotal) || 0;
+        // Preserve undefined vs 0: undefined means server didn't confirm count;
+        // 0 means server confirmed the ontology has no top-level classes.
+        const tlTotal = tlRes?.topLevelTotal !== undefined ? Number(tlRes.topLevelTotal) : undefined;
         if (!isStaleLoad()) {
           setTopLevelTruncated(isTruncated);
-          setTopLevelTotal(tlTotal);
+          setTopLevelTotal(tlTotal ?? 0);
         }
         const topLevelNodes: TreeNode[] = topLevelClasses.map((c: TopLevelClass) => ({
           ...c,
@@ -3099,17 +3101,26 @@ const Dashboard: React.FC<DashboardProps> = ({
         };
 
         if (!hierarchyBuilding) {
-          applyTopLevelToHierarchy(topLevelClasses, isTruncated, tlTotal);
-          if (topLevelClasses.length > 0 && !isStaleLoad()) {
-            setLoadingStatusMessage("");
-            setIsHierarchyLoading(false);
-            notificationService.success("Ready", "Class tree is available.");
+          applyTopLevelToHierarchy(topLevelClasses, isTruncated, tlTotal ?? 0);
+          if (!isStaleLoad()) {
+            if (topLevelClasses.length > 0) {
+              setLoadingStatusMessage("");
+              setIsHierarchyLoading(false);
+              notificationService.success("Ready", "Class tree is available.");
+            } else if (tlTotal === 0) {
+              // Server confirmed empty ontology — stop loading immediately
+              setLoadingStatusMessage("");
+              setIsHierarchyLoading(false);
+            }
           }
         }
         applyDeclarationCounts(topLevelClassesRes);
 
+        // Only retry when the server response was non-null (we got a real response, not a timeout)
+        // AND the server did not explicitly confirm 0 top-level classes (tlTotal === 0 means
+        // the ontology is genuinely empty — no point polling for 120 seconds).
         const needsHierarchyRetry =
-          !hierarchyBuilding && topLevelClasses.length === 0 && !isStaleLoad();
+          topLevelClassesRes !== null && !hierarchyBuilding && topLevelClasses.length === 0 && tlTotal !== 0 && !isStaleLoad();
         if (needsHierarchyRetry) {
           setIsHierarchyLoading(true);
           setLoadingStatusMessage("Loading class hierarchy…");
