@@ -93,7 +93,7 @@ const getEntityTypeFromAxiom = (axiom: Axiom, dataProperties: any[] = [], proper
 // Text is BLACK, only keywords (some, and, or, etc.) are MAGENTA/PINK
 // Property names in restrictions can be shown as links (underlined)
 const ColorizedAxiomDefinition: React.FC<{
-  definition: string;
+  definition: string | undefined | null;
   axiom: Axiom;
   properties?: any[];
   dataProperties?: any[];
@@ -101,7 +101,8 @@ const ColorizedAxiomDefinition: React.FC<{
 }> = ({ definition, axiom, properties = [], dataProperties = [], onNavigate }) => {
   // Tokenize and colorize: only keywords get color, everything else is black
   // This matches Protégé's style exactly
-  
+  if (!definition) return <span className="text-gray-400 italic text-xs">(no definition)</span>;
+
   const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
   
   // Helper function to extract label from IRI
