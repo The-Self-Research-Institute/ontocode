@@ -144,15 +144,10 @@ public class OntologyQueryController {
                 body.put("truncated", truncated);
                 body.put("hierarchyEngine", "owlapi");
                 body.put("topLevelClasses", topLevelTotal);
-                body.put("hierarchyReady", topLevelTotal > 0);
+                // OWLAPI is authoritative: 0 classes means the ontology is genuinely empty,
+                // not still loading. Always return 200 so the frontend doesn't spin.
+                body.put("hierarchyReady", true);
                 if (offset == 0) body.putAll(desktopHierarchyService.declarationCounts(projectId));
-                if (offset == 0 && topLevelTotal == 0) {
-                    Map<String, Object> pending = new java.util.LinkedHashMap<>(body);
-                    pending.put("success", false);
-                    pending.put("hierarchyReady", false);
-                    pending.put("message", "Class tree is still loading. Please wait.");
-                    return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
-                }
                 return ResponseEntity.ok(body);
             }
             // Trigger lazy OWLAPI load (non-blocking — the frontend's POST /warm is the
