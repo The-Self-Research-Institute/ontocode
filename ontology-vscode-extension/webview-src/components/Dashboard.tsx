@@ -816,7 +816,40 @@ const OpenFileDialog = ({
     onClose();
   };
 
-  const handleCreateNewFile = () => {
+  const handleCreateNewFile = async () => {
+    if (isDesktop() && parentProjectId) {
+      const fileName = window.prompt("Enter filename for new ontology:", "my-ontology.owl");
+      if (!fileName?.trim()) return;
+      const trimmed = fileName.trim();
+      const validExtensions = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
+      if (!validExtensions.some((ext) => trimmed.toLowerCase().endsWith(ext))) {
+        alert("File must have a valid extension: .owl, .rdf, .ttl, .n3, .nt, or .jsonld");
+        return;
+      }
+      const ontologyIRI = `http://example.org/ontologies/${trimmed.replace(/\.[^/.]+$/, "")}`;
+      const content = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+      const file = new File([content], trimmed, { type: "application/rdf+xml" });
+      const formData = new FormData();
+      formData.append("file", file, trimmed);
+      formData.append("fileName", trimmed);
+      formData.append("fileType", "application/rdf+xml");
+      await apiClient.post(`/api/projects/${parentProjectId}/files`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      onCreateNewFile?.();
+      onClose();
+      return;
+    }
     if (!canOpenLocalFile || !window.vscode) {
       return;
     }

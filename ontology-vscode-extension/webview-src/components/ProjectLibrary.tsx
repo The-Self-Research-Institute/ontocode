@@ -197,6 +197,31 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
   const handleCreateNewFile = () => {
     console.log("[ProjectLibrary] 📝 Creating new file for project:", projectId);
+    if (isDesktop()) {
+      const fileName = window.prompt("Enter filename for new ontology:", "my-ontology.owl");
+      if (!fileName?.trim()) return;
+      const trimmed = fileName.trim();
+      const validExtensions = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
+      if (!validExtensions.some((ext) => trimmed.toLowerCase().endsWith(ext))) {
+        showToast("File must have a valid extension: .owl, .rdf, .ttl, .n3, .nt, or .jsonld", "error");
+        return;
+      }
+      const ontologyIRI = `http://example.org/ontologies/${trimmed.replace(/\.[^/.]+$/, "")}`;
+      const content = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+      const file = new File([content], trimmed, { type: "application/rdf+xml" });
+      performUpload(file);
+      return;
+    }
     if (window.vscode) {
       window.vscode.postMessage({
         type: "createNewFile",
