@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2, HelpCircle, AtSign, Circle, Loader } from "lucide-react";
 import { useCollaboration } from "../../contexts/CollaborationContext";
 import apiClient from "../../services/apiClient";
+import axiomAnnotationService from "../../services/axiomAnnotationService";
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
 
@@ -303,12 +304,45 @@ export const AxiomRow: React.FC<{
   onNavigate?: (iri: string, type: string) => void;
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
-}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [], onNavigate, isViewOnly = false, onViewOnlyAction }) => {
+  projectId?: string;
+  parentEntityIri?: string;
+  sectionName?: string;
+}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations: hasAxiomAnnotationsProp = false, properties = [], dataProperties = [], onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, sectionName }) => {
   // Handle isInferred from prop or axiom object (can be boolean or string 'true')
   const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
   const [isEditing, setIsEditing] = useState(false);
   const [showAxiomAnnotations, setShowAxiomAnnotations] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
+  const [axiomAnnotations, setAxiomAnnotations] = useState<Array<{ property: string; value: string; language?: string }>>([]);
+  const [newAnnotProp, setNewAnnotProp] = useState('http://www.w3.org/2000/01/rdf-schema#comment');
+  const [newAnnotValue, setNewAnnotValue] = useState('');
+  const [showAddAxiomAnnotForm, setShowAddAxiomAnnotForm] = useState(false);
+  const [annotationsLoading, setAnnotationsLoading] = useState(false);
+
+  const relatedIri = axiom.id?.includes('|||') ? axiom.id.split('|||')[0] : axiom.id;
+  const hasAxiomAnnotations = hasAxiomAnnotationsProp || axiomAnnotations.length > 0;
+
+  const loadAxiomAnnotations = useCallback(async () => {
+    if (!projectId || !parentEntityIri || !relatedIri) return;
+    setAnnotationsLoading(true);
+    try {
+      const data = await axiomAnnotationService.getAnnotations(
+        projectId, parentEntityIri, relatedIri, sectionName,
+      );
+      setAxiomAnnotations(data);
+    } catch (error) {
+      console.warn('Failed to load axiom annotations', error);
+      setAxiomAnnotations([]);
+    } finally {
+      setAnnotationsLoading(false);
+    }
+  }, [projectId, parentEntityIri, relatedIri, sectionName]);
+
+  useEffect(() => {
+    if (showAxiomAnnotations) {
+      void loadAxiomAnnotations();
+    }
+  }, [showAxiomAnnotations, loadAxiomAnnotations]);
 
   const handleEdit = (newDefinition: string) => {
     if (onEdit) {
@@ -398,22 +432,25 @@ export const AxiomRow: React.FC<{
   };
 
   return (
-    <div 
-      className={`group flex justify-between items-start px-3 py-2 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors ${
+    <div
+      className={`group border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors ${
         isInferred ? 'bg-yellow-50' : 'bg-white'
       } ${isFocused ? 'ring-2' : ''} ${!isInferred ? 'cursor-pointer' : ''}`}
-      title={ontologyIri ? `Defined in: ${ontologyIri}${!isInferred ? ' (Double-click to edit, Del to delete)' : ''}` : (!isInferred ? 'Double-click to edit, Del to delete' : undefined)}
       data-axiom-id={axiom.id}
       data-axiom-type={axiom.type}
+      style={{
+        borderLeft: isInActiveOntology ? '3px solid #D97706' : 'none',
+      }}
+    >
+    <div
+      className="flex justify-between items-start px-3 py-2"
+      title={ontologyIri ? `Defined in: ${ontologyIri}${!isInferred ? ' (Double-click to edit, Del to delete)' : ''}` : (!isInferred ? 'Double-click to edit, Del to delete' : undefined)}
       tabIndex={0}
       onFocus={() => setIsFocused(true)}
       onBlur={() => setIsFocused(false)}
       onDoubleClick={handleDoubleClick}
       onKeyDown={handleKeyDown}
-      style={{
-        borderLeft: isInActiveOntology ? '3px solid #D97706' : 'none',
-        paddingLeft: isInActiveOntology ? '9px' : undefined
-      }}
+      style={{ paddingLeft: isInActiveOntology ? '9px' : undefined }}
     >
       {isEditing ? (
         <div className="flex-1">
@@ -496,14 +533,98 @@ export const AxiomRow: React.FC<{
           </div>
         </>
       )}
-      
+    </div>
+
       {/* Axiom Annotations Panel */}
       {showAxiomAnnotations && (
-        <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
-          <div className="font-semibold text-blue-900 mb-1">Axiom Annotations</div>
-          <div className="text-gray-600 italic">
-            {hasAxiomAnnotations ? 'Axiom annotations would be displayed here' : 'No annotations on this axiom'}
-          </div>
+        <div className="mx-3 mb-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs">
+          <div className="font-semibold text-amber-800 mb-1">Axiom Annotations</div>
+          {annotationsLoading ? (
+            <div className="text-gray-500 italic">Loading…</div>
+          ) : (
+            <>
+              {axiomAnnotations.map((ann, idx) => (
+                <div key={idx} className="flex items-start justify-between bg-white border border-amber-100 rounded px-2 py-1 mb-1">
+                  <div>
+                    <div className="text-[10px] font-medium text-amber-700">{ann.property.split('#').pop() || ann.property.split('/').pop()}</div>
+                    <div className="text-[10px] text-gray-700">{ann.value}</div>
+                  </div>
+                  {!isInferred && !isViewOnly && projectId && parentEntityIri && (
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await axiomAnnotationService.deleteAnnotation(projectId, {
+                          entityIri: parentEntityIri,
+                          relatedIri,
+                          sectionName,
+                          annotationProperty: ann.property,
+                          value: ann.value,
+                        });
+                        await loadAxiomAnnotations();
+                      }}
+                      className="ml-1 p-0.5 text-gray-400 hover:text-red-500"
+                      title="Remove annotation"
+                    >
+                      <Trash2 size={10} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {!isInferred && !isViewOnly && projectId && parentEntityIri && (
+                showAddAxiomAnnotForm ? (
+                  <div className="mt-1 p-2 bg-white border border-amber-300 rounded" onClick={(e) => e.stopPropagation()}>
+                    <select
+                      value={newAnnotProp}
+                      onChange={(e) => setNewAnnotProp(e.target.value)}
+                      className="w-full mb-1 px-2 py-1 text-[10px] border border-amber-200 rounded"
+                    >
+                      <option value="http://www.w3.org/2000/01/rdf-schema#comment">rdfs:comment</option>
+                      <option value="http://www.w3.org/2000/01/rdf-schema#label">rdfs:label</option>
+                      <option value="http://www.w3.org/2000/01/rdf-schema#seeAlso">rdfs:seeAlso</option>
+                      <option value="http://www.w3.org/2000/01/rdf-schema#isDefinedBy">rdfs:isDefinedBy</option>
+                    </select>
+                    <textarea
+                      autoFocus
+                      value={newAnnotValue}
+                      onChange={(e) => setNewAnnotValue(e.target.value)}
+                      rows={2}
+                      className="w-full mb-1 px-2 py-1 text-[10px] border border-amber-200 rounded resize-none"
+                      placeholder="Annotation value…"
+                    />
+                    <div className="flex justify-end gap-1">
+                      <button className="px-2 py-0.5 text-[10px] bg-gray-100 rounded" onClick={() => { setShowAddAxiomAnnotForm(false); setNewAnnotValue(''); }}>Cancel</button>
+                      <button
+                        disabled={!newAnnotValue.trim()}
+                        className="px-2 py-0.5 text-[10px] bg-amber-500 text-white rounded disabled:opacity-40"
+                        onClick={async () => {
+                          await axiomAnnotationService.addAnnotation(projectId, {
+                            entityIri: parentEntityIri,
+                            relatedIri,
+                            sectionName,
+                            annotationProperty: newAnnotProp,
+                            value: newAnnotValue.trim(),
+                          });
+                          setNewAnnotValue('');
+                          setShowAddAxiomAnnotForm(false);
+                          await loadAxiomAnnotations();
+                        }}
+                      >Save</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    className="mt-1 text-[10px] text-amber-700 hover:text-amber-900 flex items-center gap-0.5"
+                    onClick={(e) => { e.stopPropagation(); setShowAddAxiomAnnotForm(true); }}
+                  >
+                    <Plus size={11} /> Add annotation
+                  </button>
+                )
+              )}
+              {axiomAnnotations.length === 0 && !showAddAxiomAnnotForm && (
+                <div className="text-gray-500 italic">No annotations on this axiom.</div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -527,7 +648,9 @@ export const AxiomSubsection: React.FC<{
   onNavigate?: (iri: string, type: string) => void;
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
-}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction }) => {
+  projectId?: string;
+  parentEntityIri?: string;
+}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -671,12 +794,14 @@ export const AxiomSubsection: React.FC<{
                 isInferred={false}
                 isInActiveOntology={axiom.ontologyIri === activeOntologyIri}
                 ontologyIri={axiom.ontologyIri}
-                hasAxiomAnnotations={false}
                 properties={properties}
                 dataProperties={dataProperties}
                 onNavigate={onNavigate}
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={parentEntityIri}
+                sectionName={title}
               />
             ))}
             {/* Inferred axioms */}
@@ -746,20 +871,38 @@ const getPropertyLabel = (uri: string): string => {
  * in Protégé style - grouped by property with full URI displayed.
  * Sorts annotations to show rdfs:comment first, then rdfs:label, then others alphabetically.
  */
+type AnnotationMap = Record<string, string | string[]>;
+
+const flattenAnnotations = (annotations?: AnnotationMap) => {
+  const rows: Array<{ property: string; value: string; rowKey: string }> = [];
+  if (!annotations) return rows;
+  Object.entries(annotations).forEach(([property, rawValue]) => {
+    const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+    values.forEach((value, index) => {
+      rows.push({
+        property,
+        value,
+        rowKey: `${property}::${index}::${value}`,
+      });
+    });
+  });
+  return rows;
+};
+
 export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly = false, onViewOnlyAction }: {
-  annotations?: Record<string, string>,
-  onDelete: (key: string) => void,
-  onEdit?: (key: string, currentValue: string) => void,
+  annotations?: AnnotationMap,
+  onDelete: (property: string, value?: string) => void,
+  onEdit?: (property: string, currentValue: string) => void,
   isViewOnly?: boolean,
   onViewOnlyAction?: () => void,
 }) => {
-  if (!annotations || Object.keys(annotations).length === 0) {
+  const rows = flattenAnnotations(annotations);
+  if (rows.length === 0) {
     return (
         <div className="p-3 text-xs text-gray-400 italic text-center">No annotations</div>
     );
   }
   
-  // Priority annotation properties (shown first)
   const priorityProps = [
     'http://www.w3.org/2000/01/rdf-schema#label',
     'http://www.w3.org/2000/01/rdf-schema#comment',
@@ -767,36 +910,26 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly =
     'http://www.w3.org/2000/01/rdf-schema#seeAlso'
   ];
   
-  const sortedAnnotations = Object.entries(annotations).sort(([keyA], [keyB]) => {
-    const priorityA = priorityProps.indexOf(keyA);
-    const priorityB = priorityProps.indexOf(keyB);
-    
-    // If both have priority, sort by priority order
-    if (priorityA !== -1 && priorityB !== -1) {
-      return priorityA - priorityB;
-    }
-    // If only A has priority, A comes first
+  const sortedRows = [...rows].sort((a, b) => {
+    const priorityA = priorityProps.indexOf(a.property);
+    const priorityB = priorityProps.indexOf(b.property);
+    if (priorityA !== -1 && priorityB !== -1) return priorityA - priorityB;
     if (priorityA !== -1) return -1;
-    // If only B has priority, B comes first
     if (priorityB !== -1) return 1;
-    // Otherwise sort alphabetically by label
-    const labelA = getPropertyLabel(keyA);
-    const labelB = getPropertyLabel(keyB);
-    return labelA.localeCompare(labelB);
+    return getPropertyLabel(a.property).localeCompare(getPropertyLabel(b.property));
   });
   
   return (
     <div className="rounded-sm overflow-hidden" style={{ border: '1px solid var(--border)' }}>
-      {sortedAnnotations.map(([key, value]) => {
-        const propertyLabel = getPropertyLabel(key);
+      {sortedRows.map((row) => {
+        const propertyLabel = getPropertyLabel(row.property);
         
         return (
           <div
-            key={key}
+            key={row.rowKey}
             className="group transition-colors border-b last:border-b-0"
             style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}
           >
-            {/* Property header row - Clean minimal style */}
             <div
               className="flex items-center justify-between px-3 py-1.5 border-b"
               style={{ backgroundColor: 'var(--surface-2)', borderColor: 'var(--border)' }}
@@ -805,14 +938,14 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly =
                 <span className="text-xs font-medium text-secondary">
                   {propertyLabel}
                 </span>
-                <span className="text-[10px] text-tertiary font-mono truncate" title={key}>
-                  ({key})
+                <span className="text-[10px] text-tertiary font-mono truncate" title={row.property}>
+                  ({row.property})
                 </span>
               </div>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 {onEdit && (
                   <button
-                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onEdit(key, value)}
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onEdit(row.property, row.value)}
                     className="p-1 rounded hover-overlay transition-all"
                     title={isViewOnly ? "View-only: upgrade to edit" : `Edit ${propertyLabel}`}
                   >
@@ -820,7 +953,7 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly =
                   </button>
                 )}
                 <button
-                  onClick={() => isViewOnly ? onViewOnlyAction?.() : onDelete(key)}
+                  onClick={() => isViewOnly ? onViewOnlyAction?.() : onDelete(row.property, row.value)}
                   className="p-1 rounded hover-overlay transition-all"
                   title={isViewOnly ? "View-only: upgrade to edit" : `Delete ${propertyLabel}`}
                 >
@@ -828,9 +961,8 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly =
                 </button>
               </div>
             </div>
-            {/* Value row */}
             <div className="px-3 py-2">
-              <AnnotationValue value={value} />
+              <AnnotationValue value={row.value} />
             </div>
           </div>
         );
@@ -936,6 +1068,25 @@ export const MultiSelectItem: React.FC<{
     const [newAnnotProp, setNewAnnotProp] = useState('http://www.w3.org/2000/01/rdf-schema#comment');
     const [newAnnotValue, setNewAnnotValue] = useState('');
     const [localAnnotations, setLocalAnnotations] = useState<{ property: string; value: string }[]>([]);
+    const [annotationsLoading, setAnnotationsLoading] = useState(false);
+
+    const displayItem = item.includes('|||') ? item.split('|||')[0] : item;
+
+    const fetchAxiomAnnotations = useCallback(async () => {
+        if (!projectId || !parentEntityIri) return;
+        setAnnotationsLoading(true);
+        try {
+            const data = await axiomAnnotationService.getAnnotations(
+                projectId, parentEntityIri, displayItem, sectionName,
+            );
+            setLocalAnnotations(data);
+        } catch (error) {
+            console.warn('Failed to load axiom annotations', error);
+            setLocalAnnotations([]);
+        } finally {
+            setAnnotationsLoading(false);
+        }
+    }, [projectId, parentEntityIri, displayItem, sectionName]);
 
     const fetchExplanation = useCallback(async (type: 'regular' | 'laconic', limit: number) => {
         if (!projectId || !parentEntityIri) return;
@@ -956,7 +1107,7 @@ export const MultiSelectItem: React.FC<{
         } finally {
             setExplanationLoading(false);
         }
-    }, [projectId, parentEntityIri, item, sectionName]);
+    }, [projectId, parentEntityIri, displayItem, sectionName]);
 
     useEffect(() => {
         if (showExplanation) {
@@ -965,8 +1116,11 @@ export const MultiSelectItem: React.FC<{
         }
     }, [showExplanation]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Strip backend-encoded IRI metadata (format: "display|||type|||propIri|||fillerIri|||card")
-    const displayItem = item.includes('|||') ? item.split('|||')[0] : item;
+    useEffect(() => {
+        if (showAnnotations) {
+            void fetchAxiomAnnotations();
+        }
+    }, [showAnnotations, fetchAxiomAnnotations]);
 
     const handleCopyIri = () => {
         navigator.clipboard.writeText(displayItem).then(() => {
@@ -1312,14 +1466,21 @@ export const MultiSelectItem: React.FC<{
                                     onClick={(e) => { e.stopPropagation(); setShowAddAnnotationForm(false); setNewAnnotValue(''); }}
                                 >Cancel</button>
                                 <button
-                                    disabled={!newAnnotValue.trim()}
+                                    disabled={!newAnnotValue.trim() || !projectId || !parentEntityIri}
                                     className="px-2 py-0.5 text-[10px] bg-amber-500 text-white rounded hover:bg-amber-600 disabled:opacity-40"
-                                    onClick={(e) => {
+                                    onClick={async (e) => {
                                         e.stopPropagation();
-                                        if (!newAnnotValue.trim()) return;
-                                        setLocalAnnotations(prev => [...prev, { property: newAnnotProp, value: newAnnotValue.trim() }]);
+                                        if (!newAnnotValue.trim() || !projectId || !parentEntityIri) return;
+                                        await axiomAnnotationService.addAnnotation(projectId, {
+                                            entityIri: parentEntityIri,
+                                            relatedIri: displayItem,
+                                            sectionName,
+                                            annotationProperty: newAnnotProp,
+                                            value: newAnnotValue.trim(),
+                                        });
                                         setShowAddAnnotationForm(false);
                                         setNewAnnotValue('');
+                                        await fetchAxiomAnnotations();
                                     }}
                                 >Save</button>
                             </div>
@@ -1335,7 +1496,18 @@ export const MultiSelectItem: React.FC<{
                                         <div className="text-[10px] text-gray-700">{ann.value}</div>
                                     </div>
                                     <button
-                                        onClick={(e) => { e.stopPropagation(); setLocalAnnotations(prev => prev.filter((_, i) => i !== idx)); }}
+                                        onClick={async (e) => {
+                                            e.stopPropagation();
+                                            if (!projectId || !parentEntityIri) return;
+                                            await axiomAnnotationService.deleteAnnotation(projectId, {
+                                                entityIri: parentEntityIri,
+                                                relatedIri: displayItem,
+                                                sectionName,
+                                                annotationProperty: ann.property,
+                                                value: ann.value,
+                                            });
+                                            await fetchAxiomAnnotations();
+                                        }}
                                         className="ml-1 p-0.5 text-gray-400 hover:text-red-500"
                                         title="Remove annotation"
                                     >

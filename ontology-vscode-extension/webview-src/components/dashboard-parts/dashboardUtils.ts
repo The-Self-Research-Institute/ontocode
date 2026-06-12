@@ -152,6 +152,44 @@ export const normalizeOntologyAnnotations = (annotations: unknown) =>
     .map(normalizeOntologyAnnotation)
     .filter((annotation): annotation is NonNullable<ReturnType<typeof normalizeOntologyAnnotation>> => annotation !== null);
 
+export const buildAnnotationPropertyHierarchy = (properties: AnnotationProperty[]): any[] => {
+  if (!Array.isArray(properties) || properties.length === 0) return [];
+
+  const nodeMap = new Map<string, any>();
+  properties.forEach((prop) => {
+    nodeMap.set(prop.id, {
+      ...prop,
+      type: "AnnotationProperty",
+      children: [] as any[],
+      hasChildren: false,
+    });
+  });
+
+  const roots: any[] = [];
+  properties.forEach((prop) => {
+    const node = nodeMap.get(prop.id);
+    const supers = (prop as AnnotationProperty & { superProperties?: string[] }).superProperties || [];
+    if (supers.length === 0) {
+      roots.push(node);
+      return;
+    }
+    let attached = false;
+    supers.forEach((superId) => {
+      const parent = nodeMap.get(superId);
+      if (parent) {
+        parent.children.push(node);
+        parent.hasChildren = true;
+        attached = true;
+      }
+    });
+    if (!attached) {
+      roots.push(node);
+    }
+  });
+
+  return roots;
+};
+
 export const mapAnnotationProperty = (prop: any): AnnotationProperty => {
   const id = prop?.id || prop?.iri;
   if (!id) {
@@ -169,6 +207,7 @@ export const mapAnnotationProperty = (prop: any): AnnotationProperty => {
     id,
     label: prop?.label || id.split("#").pop() || id.split("/").pop() || id,
     annotations,
+    superProperties: Array.isArray(prop?.superProperties) ? prop.superProperties : [],
   };
 };
 

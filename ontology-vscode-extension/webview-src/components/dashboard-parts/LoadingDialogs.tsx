@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Loader2, Clock, Users } from "lucide-react";
+import { formatQueueWait, sanitizeImportMessage } from "../../utils/importStatusText";
 
 const MODAL_FADE_MS = 220;
 
@@ -12,6 +13,7 @@ export const LoadingDialog = ({
   queuePosition,
   totalInQueue,
   estimatedWaitTimeMs,
+  inImportQueue,
 }: {
   isOpen: boolean;
   message?: string;
@@ -21,6 +23,7 @@ export const LoadingDialog = ({
   queuePosition?: number;
   totalInQueue?: number;
   estimatedWaitTimeMs?: number;
+  inImportQueue?: boolean;
 }) => {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [mounted, setMounted] = useState(isOpen);
@@ -53,20 +56,24 @@ export const LoadingDialog = ({
     return `${Math.floor(s / 60)}m ${s % 60}s`;
   };
 
-  const hasProgress = progress !== undefined && progress > 0;
-  const hasQueue = queuePosition !== undefined && queuePosition > 0;
+  const hasProgress = progress !== undefined;
+  const isQueued = queuePosition !== undefined && queuePosition > 0;
+  const isProcessingNow =
+    inImportQueue && queuePosition === 0;
+  const showQueueInfo = isQueued || isProcessingNow;
 
   const phaseLabel = (() => {
     const msg = (loadingStatusMessage || "").toLowerCase();
+    if (msg.includes("upload")) return sanitizeImportMessage(loadingStatusMessage) || "Uploading file…";
     if (msg.includes("detect") || msg.includes("format")) return "Detecting format…";
     if (msg.includes("sanitiz")) return "Sanitising file…";
     if (msg.includes("convert")) return "Converting format…";
-    if (msg.includes("loading") || msg.includes("bulk") || msg.includes("graphdb") || msg.includes("fuseki"))
-      return "Loading triples into triple store…";
-    if (msg.includes("index") || msg.includes("metadata") || msg.includes("background"))
+    if (msg.includes("loading") || msg.includes("bulk") || msg.includes("import"))
+      return "Loading ontology data…";
+    if (msg.includes("index") || msg.includes("metadata") || msg.includes("background") || msg.includes("hierarchy"))
       return "Building class index…";
     if (msg.includes("queue") || msg.includes("wait")) return "Waiting in queue…";
-    if (loadingStatusMessage) return loadingStatusMessage;
+    if (loadingStatusMessage) return sanitizeImportMessage(loadingStatusMessage);
     return "Processing ontology…";
   })();
 
@@ -167,10 +174,10 @@ export const LoadingDialog = ({
                 </span>
               </span>
             </div>
-            {!hasQueue && <span className="text-[10px] opacity-60">Large files may take 1–3 min</span>}
+            {!showQueueInfo && <span className="text-[10px] opacity-60">Large files may take 1–3 min</span>}
           </div>
 
-          {hasQueue && (
+          {showQueueInfo && (
             <div
               className="mt-3 rounded-lg border px-3 py-2 text-xs"
               style={{
@@ -178,23 +185,35 @@ export const LoadingDialog = ({
                 borderColor: "rgba(147,51,234,0.15)",
               }}
             >
-              <div className="mb-1 flex items-center justify-between font-medium text-purple-400">
-                <span className="flex items-center gap-1">
-                  <Clock size={11} /> Queue #{queuePosition}
-                </span>
-                {totalInQueue !== undefined && totalInQueue > 0 && (
-                  <span className="rounded-full bg-purple-900 px-1.5 py-0.5 text-[10px] text-purple-300">
-                    {totalInQueue} in queue
-                  </span>
-                )}
-              </div>
-              {queuePosition! > 1 && (
-                <div className="flex items-center gap-1 text-purple-500">
-                  <Users size={10} />
-                  <span>
-                    {queuePosition! - 1} file{queuePosition! - 1 !== 1 ? "s" : ""} ahead
-                  </span>
-                </div>
+              {isProcessingNow ? (
+                <div className="font-medium text-blue-400">Processing now — your file is being imported</div>
+              ) : (
+                <>
+                  <div className="mb-1 flex items-center justify-between font-medium text-purple-400">
+                    <span className="flex items-center gap-1">
+                      <Clock size={11} /> Queue #{queuePosition}
+                    </span>
+                    {totalInQueue !== undefined && totalInQueue > 0 && (
+                      <span className="rounded-full bg-purple-900 px-1.5 py-0.5 text-[10px] text-purple-300">
+                        {totalInQueue} in queue
+                      </span>
+                    )}
+                  </div>
+                  {queuePosition! > 1 && (
+                    <div className="flex items-center gap-1 text-purple-500">
+                      <Users size={10} />
+                      <span>
+                        {queuePosition! - 1} file{queuePosition! - 1 !== 1 ? "s" : ""} ahead
+                      </span>
+                    </div>
+                  )}
+                  {estimatedWaitTimeMs !== undefined && estimatedWaitTimeMs > 0 && (
+                    <div className="mt-1 flex items-center gap-1 text-purple-500">
+                      <Clock size={10} />
+                      <span>Est. wait: {formatQueueWait(estimatedWaitTimeMs) ?? "< 1 min"}</span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

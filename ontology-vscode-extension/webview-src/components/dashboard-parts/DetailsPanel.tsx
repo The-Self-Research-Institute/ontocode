@@ -49,6 +49,8 @@ export const DetailsPanel = ({
   viewMode = "asserted",
   isViewOnly = false,
   onViewOnlyAction,
+  isReasonerRunning = false,
+  selectedReasoner = "HERMIT",
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -87,6 +89,8 @@ export const DetailsPanel = ({
   viewMode?: "asserted" | "inferred";
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
+  isReasonerRunning?: boolean;
+  selectedReasoner?: string;
 }) => {
   if (!selectedItem) {
     return (
@@ -183,7 +187,15 @@ export const DetailsPanel = ({
         />
       );
     case "Individuals":
-      return <IndividualEditor item={selectedItem as Individual} onUpdate={onUpdate} {...sharedProps} />;
+      return (
+        <IndividualEditor
+          item={selectedItem as Individual}
+          onUpdate={onUpdate}
+          {...sharedProps}
+          isReasonerRunning={isReasonerRunning}
+          selectedReasoner={selectedReasoner}
+        />
+      );
     case "AnnotationProperties": {
       const apItem = selectedItem as AnnotationProperty;
       return (

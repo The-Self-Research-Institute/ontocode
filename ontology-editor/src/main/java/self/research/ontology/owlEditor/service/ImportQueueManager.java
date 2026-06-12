@@ -42,6 +42,8 @@ public class ImportQueueManager {
 
     private static final int MAX_RETRIES = 3;
     private static final long RETRY_DELAY_MS = 10 * 1000;
+    /** Cap total queue wait shown to users (sum of ahead-of-you estimates). */
+    private static final long MAX_WAIT_TIME_MS = 20 * 60 * 1000;
 
     public ImportQueueManager(SimpMessagingTemplate messagingTemplate,
                               ImportTimeEstimator estimator,
@@ -384,7 +386,7 @@ public class ImportQueueManager {
             waitTimeMs += estimateDurationMsForItem(item);
         }
 
-        return waitTimeMs;
+        return Math.min(waitTimeMs, MAX_WAIT_TIME_MS);
     }
 
     private long estimateRemainingTimeMs(ImportQueueItem item) {

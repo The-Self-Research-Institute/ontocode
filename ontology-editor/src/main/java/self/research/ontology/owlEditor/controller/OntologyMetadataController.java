@@ -153,6 +153,17 @@ public class OntologyMetadataController {
         }
     }
 
+    @GetMapping("/{projectId:.+}/imports/closure")
+    public ResponseEntity<?> getImportClosure(@PathVariable String projectId) {
+        try {
+            Map<String, List<Map<String, Object>>> closure = metadataService.getImportClosure(projectId);
+            return ResponseEntity.ok(Map.of("success", true, "closure", closure));
+        } catch (Exception e) {
+            log.error("Error fetching import closure", e);
+            return ResponseEntity.ok(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
     @PostMapping("/{projectId}/imports")
     public ResponseEntity<?> addImport(@PathVariable String projectId,
                                        @RequestBody Map<String, String> request,

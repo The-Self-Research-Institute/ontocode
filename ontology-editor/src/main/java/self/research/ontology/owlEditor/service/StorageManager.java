@@ -7,6 +7,7 @@ import org.semanticweb.owlapi.formats.ManchesterSyntaxDocumentFormat;
 import org.semanticweb.owlapi.formats.OWLXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
+import org.coode.owlapi.obo12.parser.OBO12DocumentFormat;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
@@ -116,6 +117,7 @@ public class StorageManager {
             case "owlxml" -> "owlxml";
             case "manchester", "manchestersyntax" -> "omn";
             case "functional", "functionalsyntax" -> "ofn";
+            case "obo" -> "obo";
             default -> format.toLowerCase();
         };
     }
@@ -129,7 +131,8 @@ public class StorageManager {
                 || normalized.equals("manchester")
                 || normalized.equals("manchestersyntax")
                 || normalized.equals("functional")
-                || normalized.equals("functionalsyntax");
+                || normalized.equals("functionalsyntax")
+                || normalized.equals("obo");
     }
 
     private Path exportOntologyWithOwlApi(String projectId, String format) throws IOException {
@@ -188,6 +191,7 @@ public class StorageManager {
             case "owlxml" -> new OWLXMLDocumentFormat();
             case "manchester", "manchestersyntax" -> new ManchesterSyntaxDocumentFormat();
             case "functional", "functionalsyntax" -> new FunctionalSyntaxDocumentFormat();
+            case "obo" -> new OBO12DocumentFormat();
             case "rdfxml", "rdf", "xml" -> new RDFXMLDocumentFormat();
             default -> new RDFXMLDocumentFormat();
         };

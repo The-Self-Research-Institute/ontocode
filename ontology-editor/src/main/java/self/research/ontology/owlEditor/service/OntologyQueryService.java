@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.dto.AnnotationPropertyDto;
+import self.research.ontology.owlEditor.util.AnnotationValueCollector;
 import self.research.ontology.owlEditor.dto.DatatypeDto;
 import self.research.ontology.owlEditor.dto.IndividualDto;
 import self.research.ontology.owlEditor.dto.OntologyDto;
@@ -87,7 +88,17 @@ public class OntologyQueryService {
 
     /**
      * Fast top-level count for status polling — avoids hydrating labels during long imports.
+     *
+     * Must agree with {@link #topLevelClasses}: top-level = explicit owl:Thing children
+     * PLUS implicit roots (owl:Class with no named parent). Most real ontologies never
+     * assert {@code rdfs:subClassOf owl:Thing}, so counting only explicit children made
+     * the status endpoint report hierarchyReady=false forever and the UI hung on
+     * "loading class tree" even though the import was complete.
+     *
+     * Cached in the "topLevelClasses" cache so the 2s status poll costs one query, not one
+     * per poll; the cache is evicted on every mutation and import.
      */
+    @Cacheable(value = "topLevelClasses", key = "#projectId + '_statusCount'", sync = true)
     public int topLevelClassCount(String projectId) {
         String countQuery = PREFIXES + """
             SELECT (COUNT(DISTINCT ?c) AS ?count) WHERE {
@@ -100,11 +111,31 @@ public class OntologyQueryService {
             if (rs.hasNext()) {
                 org.eclipse.rdf4j.query.BindingSet bs = rs.next();
                 if (bs.hasBinding("count")) {
-                    return Integer.parseInt(bs.getValue("count").stringValue());
+                    int explicit = Integer.parseInt(bs.getValue("count").stringValue());
+                    if (explicit > 0) {
+                        return explicit;
+                    }
                 }
             }
         } catch (Exception e) {
             log.debug("[Status] topLevelClassCount failed for {}: {}", projectId, e.getMessage());
+        }
+
+        // No explicit owl:Thing children — implicit-root ontologies (GO, MONDO, most OBO).
+        // A single ASK index probe; callers only test > 0, and the full MINUS-based orphan
+        // scan (7-40s on large TDB2 graphs) has no place on a 2-second status poll.
+        String anyClassAsk = PREFIXES + """
+            ASK {
+              ?c a owl:Class .
+              FILTER(isIRI(?c) && ?c != <http://www.w3.org/2002/07/owl#Thing>)
+            }
+            """;
+        try {
+            if (datasetService.execAsk(projectId, anyClassAsk)) {
+                return 1;
+            }
+        } catch (Exception e) {
+            log.debug("[Status] class existence ASK failed for {}: {}", projectId, e.getMessage());
         }
         return 0;
     }
@@ -652,14 +683,12 @@ public class OntologyQueryService {
                 }
                 """.formatted(propertyIri);
             TupleQueryResult annRs = datasetService.execSelect(projectId, annQuery);
-            Map<String, String> annotations = new java.util.LinkedHashMap<>();
+            Map<String, List<String>> annotations = AnnotationValueCollector.newMap();
             while (annRs.hasNext()) {
                 BindingSet annSol = annRs.next();
                 String annProp = resource(annSol, "prop");
                 String annValue = literal(annSol, "value");
-                if (annProp != null && !annValue.isBlank()) {
-                    annotations.put(annProp, annValue);
-                }
+                AnnotationValueCollector.add(annotations, annProp, annValue);
             }
             dto.setAnnotations(annotations);
 
@@ -774,11 +803,13 @@ public class OntologyQueryService {
         long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
             SELECT DISTINCT ?prop (SAMPLE(?lbl) AS ?label) (SAMPLE(?cmt) AS ?description)
+                   (GROUP_CONCAT(DISTINCT STR(?super); SEPARATOR="|") AS ?superProperties)
             WHERE {
               ?prop a owl:AnnotationProperty .
               FILTER(!isBlank(?prop))
               OPTIONAL { ?prop rdfs:label ?lbl }
               OPTIONAL { ?prop rdfs:comment ?cmt }
+              OPTIONAL { ?prop rdfs:subPropertyOf ?super . FILTER(isIRI(?super) && ?super != ?prop) }
             }
             GROUP BY ?prop
             ORDER BY COALESCE(LCASE(?label), STR(?prop))
@@ -802,18 +833,21 @@ public class OntologyQueryService {
             dto.setLabel(label.isBlank() ? localName(iri) : label);
             String description = literal(sol, "description");
             dto.setDescription(description);
+            dto.setSuperProperties(splitPipe(literal(sol, "superProperties")));
             props.add(dto);
         }
 
-        Map<String, Map<String, String>> annotationsByProperty = loadAnnotationPropertyAnnotations(projectId);
+        Map<String, Map<String, List<String>>> annotationsByProperty = loadAnnotationPropertyAnnotations(projectId);
         for (AnnotationPropertyDto dto : props) {
-            Map<String, String> annotations = new LinkedHashMap<>(
+            Map<String, List<String>> annotations = new LinkedHashMap<>(
                     annotationsByProperty.getOrDefault(dto.getId(), Map.of()));
             if (dto.getLabel() != null && !dto.getLabel().isBlank()) {
-                annotations.putIfAbsent("http://www.w3.org/2000/01/rdf-schema#label", dto.getLabel());
+                annotations.computeIfAbsent("http://www.w3.org/2000/01/rdf-schema#label", ignored -> new ArrayList<>())
+                        .add(dto.getLabel());
             }
             if (dto.getDescription() != null && !dto.getDescription().isBlank()) {
-                annotations.putIfAbsent("http://www.w3.org/2000/01/rdf-schema#comment", dto.getDescription());
+                annotations.computeIfAbsent("http://www.w3.org/2000/01/rdf-schema#comment", ignored -> new ArrayList<>())
+                        .add(dto.getDescription());
             }
             dto.setAnnotations(annotations);
         }
@@ -823,7 +857,7 @@ public class OntologyQueryService {
         return props;
     }
 
-    private Map<String, Map<String, String>> loadAnnotationPropertyAnnotations(String projectId) {
+    private Map<String, Map<String, List<String>>> loadAnnotationPropertyAnnotations(String projectId) {
         String query = PREFIXES + """
             SELECT ?entity ?annProp ?value WHERE {
               ?entity a owl:AnnotationProperty .
@@ -837,7 +871,7 @@ public class OntologyQueryService {
             }
             """;
         TupleQueryResult rs = datasetService.execSelect(projectId, query);
-        Map<String, Map<String, String>> annotationsByProperty = new LinkedHashMap<>();
+        Map<String, Map<String, List<String>>> annotationsByProperty = new LinkedHashMap<>();
         while (rs.hasNext()) {
             BindingSet sol = rs.next();
             String entityIri = resource(sol, "entity");
@@ -846,9 +880,9 @@ public class OntologyQueryService {
             if (entityIri == null || annProp == null || value.isBlank()) {
                 continue;
             }
-            annotationsByProperty
-                    .computeIfAbsent(entityIri, ignored -> new LinkedHashMap<>())
-                    .put(annProp, value);
+            Map<String, List<String>> entityAnnotations = annotationsByProperty
+                    .computeIfAbsent(entityIri, ignored -> AnnotationValueCollector.newMap());
+            AnnotationValueCollector.add(entityAnnotations, annProp, value);
         }
         return annotationsByProperty;
     }
@@ -1219,6 +1253,153 @@ public class OntologyQueryService {
         });
     }
 
+    /**
+     * Render a Manchester-style class expression for a blank node (restriction, and/or/not, etc.).
+     */
+    private String describeBlankNodeManchester(String projectId, String blankNodeId) {
+        if (blankNodeId == null || blankNodeId.isBlank()) return null;
+        if (blankNodeId.startsWith("http://") || blankNodeId.startsWith("https://") || blankNodeId.startsWith("urn:")) {
+            return null;
+        }
+
+        String restriction = describeBlankNodeRestriction(projectId, blankNodeId);
+        if (restriction != null && !restriction.isBlank()) return restriction;
+
+        List<String> intersection = describeBlankNodeMemberList(projectId, blankNodeId, "intersectionOf");
+        if (!intersection.isEmpty()) return String.join(" and ", intersection);
+
+        List<String> union = describeBlankNodeMemberList(projectId, blankNodeId, "unionOf");
+        if (!union.isEmpty()) return String.join(" or ", union);
+
+        String complement = describeBlankNodeComplement(projectId, blankNodeId);
+        if (complement != null && !complement.isBlank()) return "not " + complement;
+
+        List<String> oneOf = describeBlankNodeMemberList(projectId, blankNodeId, "oneOf");
+        if (!oneOf.isEmpty()) return "{" + String.join(", ", oneOf) + "}";
+
+        return null;
+    }
+
+    private String blankNodeFilterClause(String var, String blankNodeId) {
+        String nodeKey = blankNodeId.startsWith("_:") ? blankNodeId.substring(2) : blankNodeId;
+        String escaped = nodeKey.replace("\\", "\\\\").replace("\"", "\\\"");
+        return String.format("FILTER(isBlank(%s) && STR(%s) = \"%s\")", var, var, escaped);
+    }
+
+    private String describeBlankNodeRestriction(String projectId, String blankNodeId) {
+        String query = PREFIXES + """
+            SELECT ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card WHERE {
+              ?bnode a owl:Restriction ;
+                     owl:onProperty ?prop .
+              %s
+              OPTIONAL { ?prop rdfs:label ?propLabel }
+              OPTIONAL {
+                { ?bnode owl:someValuesFrom ?filler . BIND("some" AS ?restrictionType) }
+                UNION { ?bnode owl:allValuesFrom ?filler . BIND("only" AS ?restrictionType) }
+                UNION { ?bnode owl:hasValue ?filler . BIND("value" AS ?restrictionType) }
+                UNION { ?bnode owl:hasSelf true . BIND("Self" AS ?filler) . BIND("some" AS ?restrictionType) }
+                UNION { ?bnode owl:minQualifiedCardinality ?card . BIND("min" AS ?restrictionType) }
+                UNION { ?bnode owl:maxQualifiedCardinality ?card . BIND("max" AS ?restrictionType) }
+                UNION { ?bnode owl:qualifiedCardinality ?card . BIND("exactly" AS ?restrictionType) }
+                UNION {
+                  ?bnode owl:minCardinality ?card .
+                  FILTER NOT EXISTS { ?bnode owl:minQualifiedCardinality ?any }
+                  BIND("min" AS ?restrictionType)
+                  BIND(owl:Thing AS ?filler)
+                }
+                UNION {
+                  ?bnode owl:maxCardinality ?card .
+                  FILTER NOT EXISTS { ?bnode owl:maxQualifiedCardinality ?any }
+                  BIND("max" AS ?restrictionType)
+                  BIND(owl:Thing AS ?filler)
+                }
+                UNION {
+                  ?bnode owl:cardinality ?card .
+                  FILTER NOT EXISTS { ?bnode owl:qualifiedCardinality ?any }
+                  BIND("exactly" AS ?restrictionType)
+                  BIND(owl:Thing AS ?filler)
+                }
+              }
+              OPTIONAL { ?bnode owl:onClass ?filler }
+              OPTIONAL { ?bnode owl:onDataRange ?filler }
+              OPTIONAL { ?filler rdfs:label ?fillerLabel }
+              FILTER(BOUND(?restrictionType))
+            }
+            LIMIT 1
+            """.formatted(blankNodeFilterClause("?bnode", blankNodeId));
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, query);
+            if (!rs.hasNext()) return null;
+            BindingSet sol = rs.next();
+            String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : localName(resource(sol, "prop"));
+            String filler = resourceOrBlank(sol, "filler");
+            String fillerLabel = sol.hasBinding("fillerLabel") ? literal(sol, "fillerLabel")
+                    : (filler != null ? localName(filler) : "");
+            String restrictionType = literal(sol, "restrictionType");
+            String card = literal(sol, "card");
+            if ("Self".equals(fillerLabel)) {
+                return propLabel + " some Self";
+            }
+            if (!card.isBlank()) {
+                return propLabel + " " + restrictionType + " " + card + " " + fillerLabel;
+            }
+            return propLabel + " " + restrictionType + " " + fillerLabel;
+        } catch (Exception e) {
+            log.debug("Could not describe restriction for {}: {}", blankNodeId, e.getMessage());
+            return null;
+        }
+    }
+
+    private List<String> describeBlankNodeMemberList(String projectId, String blankNodeId, String listPred) {
+        String owlPred = "intersectionOf".equals(listPred) ? "owl:intersectionOf"
+                : "unionOf".equals(listPred) ? "owl:unionOf" : "owl:oneOf";
+        String query = PREFIXES + """
+            SELECT ?member ?memberLabel WHERE {
+              ?bnode %s ?list .
+              ?list rdf:rest*/rdf:first ?member .
+              %s
+              OPTIONAL { ?member rdfs:label ?memberLabel }
+            }
+            """.formatted(owlPred, blankNodeFilterClause("?bnode", blankNodeId));
+        List<String> labels = new ArrayList<>();
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, query);
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                String member = resourceOrBlank(sol, "member");
+                if (member == null) continue;
+                String label = sol.hasBinding("memberLabel") ? literal(sol, "memberLabel") : localName(member);
+                labels.add(label.isBlank() ? member : label);
+            }
+        } catch (Exception e) {
+            log.debug("Could not describe {} for {}: {}", listPred, blankNodeId, e.getMessage());
+        }
+        return labels;
+    }
+
+    private String describeBlankNodeComplement(String projectId, String blankNodeId) {
+        String query = PREFIXES + """
+            SELECT ?complement ?complementLabel WHERE {
+              ?bnode owl:complementOf ?complement .
+              %s
+              OPTIONAL { ?complement rdfs:label ?complementLabel }
+            }
+            LIMIT 1
+            """.formatted(blankNodeFilterClause("?bnode", blankNodeId));
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, query);
+            if (!rs.hasNext()) return null;
+            BindingSet sol = rs.next();
+            String complement = resourceOrBlank(sol, "complement");
+            if (complement == null) return null;
+            String label = sol.hasBinding("complementLabel") ? literal(sol, "complementLabel") : localName(complement);
+            return label.isBlank() ? complement : label;
+        } catch (Exception e) {
+            log.debug("Could not describe complement for {}: {}", blankNodeId, e.getMessage());
+            return null;
+        }
+    }
+
     private String resourceOrBlank(BindingSet sol, String var) {
         if (sol.hasBinding(var)) {
             Value node = sol.getValue(var);
@@ -1358,6 +1539,7 @@ public class OntologyQueryService {
             String superLabel = sol.hasBinding("label") ? literal(sol, "label") : localName(superIri);
 
             Map<String, String> axiom = new LinkedHashMap<>();
+            axiom.put("id", subExpr);
             axiom.put("subExpression", subExpr);
             axiom.put("superClassIri", superIri);
             axiom.put("superClassLabel", superLabel);
@@ -1899,7 +2081,7 @@ public class OntologyQueryService {
             }
             """.formatted(classIri);
 
-        Map<String, Object> annotations = new LinkedHashMap<>();
+        Map<String, List<String>> annotations = AnnotationValueCollector.newMap();
         String label = null;
         try {
             TupleQueryResult annRs = datasetService.execSelect(projectId, annQuery);
@@ -1909,7 +2091,7 @@ public class OntologyQueryService {
                 if (propIri != null && sol.hasBinding("value")) {
                     Value valueNode = sol.getValue("value");
                     String value = valueNode.isLiteral() ? valueNode.stringValue() : valueNode.toString();
-                    annotations.put(propIri, value);
+                    AnnotationValueCollector.add(annotations, propIri, value);
                     if (label == null && propIri.endsWith("#label")) {
                         label = value;
                     }
@@ -2339,7 +2521,7 @@ public class OntologyQueryService {
         // ancestor count for a single class.
         CompletableFuture<TupleQueryResult> ancestorFuture = CompletableFuture.supplyAsync(() -> {
             String q = PREFIXES + """
-                SELECT DISTINCT ?super ?label WHERE {
+                SELECT DISTINCT ?ancestor ?super ?label WHERE {
                   <%s> rdfs:subClassOf+ ?ancestor .
                   ?ancestor rdfs:subClassOf ?super .
                   FILTER(isBlank(?super) || (?super != owl:Thing && ?super != <%s>))
@@ -2367,7 +2549,7 @@ public class OntologyQueryService {
         
         // --- Process annotations ---
         TupleQueryResult annRs = annFuture.join();
-        Map<String, Object> annotations = new LinkedHashMap<>();
+        Map<String, List<String>> annotations = AnnotationValueCollector.newMap();
         String label = null;
         while (annRs.hasNext()) {
             BindingSet sol = annRs.next();
@@ -2375,7 +2557,7 @@ public class OntologyQueryService {
             if (propIri != null && sol.hasBinding("value")) {
                 Value valueNode = sol.getValue("value");
                 String value = valueNode.isLiteral() ? valueNode.stringValue() : valueNode.toString();
-                annotations.put(propIri, value);
+                AnnotationValueCollector.add(annotations, propIri, value);
                 if (label == null && propIri.endsWith("#label")) {
                     label = value;
                 }
@@ -2807,14 +2989,28 @@ public class OntologyQueryService {
         Set<String> seenAncestors = new LinkedHashSet<>();
         while (ancestorRs.hasNext()) {
             BindingSet sol = ancestorRs.next();
-            String superIri = sol.getValue("super").stringValue();
-            if (!seenAncestors.contains(superIri)) {
-                seenAncestors.add(superIri);
+            String superIri = resourceOrBlank(sol, "super");
+            if (superIri == null) continue;
+            String ancestorKey = superIri + "|" + resource(sol, "ancestor");
+            if (!seenAncestors.contains(ancestorKey)) {
+                seenAncestors.add(ancestorKey);
                 Map<String, String> axiom = new LinkedHashMap<>();
                 axiom.put("id", superIri);
                 axiom.put("type", "SubClassOf");
-                if (superIri.startsWith("_:")) {
-                    axiom.put("definition", "Anonymous superclass");
+                String ancestorIri = resource(sol, "ancestor");
+                if (ancestorIri != null) {
+                    axiom.put("ancestorIri", ancestorIri);
+                }
+                boolean navigable = superIri.startsWith("http://") || superIri.startsWith("https://") || superIri.startsWith("urn:");
+                axiom.put("navigable", String.valueOf(navigable));
+                if (!navigable) {
+                    String manchester = describeBlankNodeManchester(projectId, superIri);
+                    if (manchester != null && !manchester.isBlank()) {
+                        axiom.put("manchester", manchester);
+                        axiom.put("definition", manchester);
+                    } else {
+                        axiom.put("definition", "Anonymous superclass");
+                    }
                 } else {
                     axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(superIri));
                 }
@@ -2826,6 +3022,364 @@ public class OntologyQueryService {
         long duration = System.currentTimeMillis() - startTime;
         log.info("[PERF] classDetails for {} completed in {}ms project={} (parallel)", localName(classIri), duration, projectId);
         return details;
+    }
+
+    /**
+     * Merge SPARQL-only class-detail sections into an OWLAPI fast-path response.
+     * Keeps asserted axioms from the in-memory model (~5ms) and supplements fields
+     * the OWLAPI builder does not yet produce (GCIs, anonymous ancestors, inferred
+     * axioms, hasKey, disjointUnion, multi-valued annotations).
+     */
+    public void enrichOwlApiClassDetails(String projectId, String classIri, Map<String, Object> details) {
+        if (details == null || details.isEmpty()) {
+            return;
+        }
+        long startTime = System.currentTimeMillis();
+        final Executor queryPool = queryExecutorFor(projectId);
+
+        CompletableFuture<TupleQueryResult> annFuture = CompletableFuture.supplyAsync(() -> {
+            String annQuery = PREFIXES + """
+                SELECT ?prop ?value WHERE {
+                  <%s> ?prop ?value .
+                  FILTER(isLiteral(?value) || isIRI(?value))
+                  {
+                    ?prop a owl:AnnotationProperty .
+                  } UNION {
+                    VALUES ?prop {
+                      rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy
+                      owl:deprecated owl:versionInfo owl:backwardCompatibleWith
+                      owl:incompatibleWith owl:priorVersion
+                    }
+                  }
+                }
+                """.formatted(classIri);
+            return datasetService.execSelect(projectId, annQuery);
+        }, queryPool);
+
+        CompletableFuture<TupleQueryResult> disjointFuture = CompletableFuture.supplyAsync(() -> {
+            String q = PREFIXES + """
+                SELECT DISTINCT ?disjoint ?label WHERE {
+                  {
+                    <%s> owl:disjointWith ?disjoint .
+                  } UNION {
+                    ?disjoint owl:disjointWith <%s> .
+                  } UNION {
+                    ?allDisjoint a owl:AllDisjointClasses ;
+                                 owl:members ?list .
+                    ?list rdf:rest*/rdf:first <%s> .
+                    ?list rdf:rest*/rdf:first ?disjoint .
+                    FILTER(?disjoint != <%s>)
+                  }
+                  FILTER(isIRI(?disjoint) && ?disjoint != <%s>)
+                  OPTIONAL { ?disjoint rdfs:label ?label }
+                }
+                ORDER BY ?label
+                """.formatted(classIri, classIri, classIri, classIri, classIri);
+            return datasetService.execSelect(projectId, q);
+        }, queryPool);
+
+        CompletableFuture<TupleQueryResult> disjointUnionFuture = CompletableFuture.supplyAsync(() -> {
+            String q = PREFIXES + """
+                SELECT ?list ?member WHERE {
+                  <%s> owl:disjointUnionOf ?list .
+                  ?list rdf:rest*/rdf:first ?member .
+                }
+                """.formatted(classIri);
+            return datasetService.execSelect(projectId, q);
+        }, queryPool);
+
+        CompletableFuture<TupleQueryResult> hasKeyFuture = CompletableFuture.supplyAsync(() -> {
+            String q = PREFIXES + """
+                SELECT ?keyList ?prop WHERE {
+                  <%s> owl:hasKey ?keyList .
+                  ?keyList rdf:rest*/rdf:first ?prop .
+                }
+                """.formatted(classIri);
+            return datasetService.execSelect(projectId, q);
+        }, queryPool);
+
+        CompletableFuture<TupleQueryResult> inferredEquivFuture = CompletableFuture.supplyAsync(() -> {
+            String q = PREFIXES + """
+                SELECT DISTINCT ?equiv ?label WHERE {
+                  GRAPH <http://www.ontotext.com/inferred> {
+                    <%s> owl:equivalentClass ?equiv .
+                  }
+                  FILTER NOT EXISTS {
+                    GRAPH <http://www.ontotext.com/explicit> {
+                      <%s> owl:equivalentClass ?equiv .
+                    }
+                  }
+                  FILTER(isIRI(?equiv) && ?equiv != <%s>)
+                  OPTIONAL { ?equiv rdfs:label ?label }
+                }
+                """.formatted(classIri, classIri, classIri);
+            return datasetService.execSelect(projectId, q);
+        }, queryPool);
+
+        CompletableFuture<TupleQueryResult> inferredSuperFuture = CompletableFuture.supplyAsync(() -> {
+            String q = PREFIXES + """
+                SELECT DISTINCT ?super ?label WHERE {
+                  GRAPH <http://www.ontotext.com/inferred> {
+                    <%s> rdfs:subClassOf ?super .
+                  }
+                  FILTER NOT EXISTS {
+                    GRAPH <http://www.ontotext.com/explicit> {
+                      <%s> rdfs:subClassOf ?super .
+                    }
+                  }
+                  FILTER(isIRI(?super) && ?super != owl:Thing && ?super != <%s>)
+                  OPTIONAL { ?super rdfs:label ?label }
+                }
+                """.formatted(classIri, classIri, classIri);
+            return datasetService.execSelect(projectId, q);
+        }, queryPool);
+
+        CompletableFuture<TupleQueryResult> inferredDisjointFuture = CompletableFuture.supplyAsync(() -> {
+            String q = PREFIXES + """
+                SELECT DISTINCT ?disjoint ?label WHERE {
+                  GRAPH <http://www.ontotext.com/inferred> {
+                    {
+                      <%s> owl:disjointWith ?disjoint .
+                    } UNION {
+                      ?disjoint owl:disjointWith <%s> .
+                    }
+                  }
+                  FILTER NOT EXISTS {
+                    GRAPH <http://www.ontotext.com/explicit> {
+                      {
+                        <%s> owl:disjointWith ?disjoint .
+                      } UNION {
+                        ?disjoint owl:disjointWith <%s> .
+                      }
+                    }
+                  }
+                  FILTER(isIRI(?disjoint) && ?disjoint != <%s>)
+                  OPTIONAL { ?disjoint rdfs:label ?label }
+                }
+                """.formatted(classIri, classIri, classIri, classIri, classIri);
+            return datasetService.execSelect(projectId, q);
+        }, queryPool);
+
+        CompletableFuture<TupleQueryResult> gciFuture = CompletableFuture.supplyAsync(() -> {
+            String q = PREFIXES + """
+                SELECT DISTINCT ?subExpr ?superClass WHERE {
+                  ?subExpr rdfs:subClassOf ?superClass .
+                  FILTER(isBlank(?subExpr))
+                  {
+                    FILTER(?superClass = <%s>)
+                  } UNION {
+                    ?subExpr (rdf:first|rdf:rest|owl:intersectionOf|owl:unionOf|owl:complementOf|owl:someValuesFrom|owl:allValuesFrom|owl:onClass)+ <%s> .
+                  }
+                }
+                LIMIT 200
+                """.formatted(classIri, classIri);
+            return datasetService.execSelect(projectId, q);
+        }, queryPool);
+
+        CompletableFuture<TupleQueryResult> ancestorFuture = CompletableFuture.supplyAsync(() -> {
+            String q = PREFIXES + """
+                SELECT DISTINCT ?ancestor ?super ?label WHERE {
+                  <%s> rdfs:subClassOf+ ?ancestor .
+                  ?ancestor rdfs:subClassOf ?super .
+                  FILTER(isBlank(?super) || (?super != owl:Thing && ?super != <%s>))
+                  OPTIONAL { ?super rdfs:label ?label }
+                }
+                LIMIT 500
+                """.formatted(classIri, classIri);
+            return datasetService.execSelect(projectId, q);
+        }, queryPool);
+
+        CompletableFuture.allOf(
+                annFuture, disjointFuture, disjointUnionFuture, hasKeyFuture,
+                inferredEquivFuture, inferredSuperFuture, inferredDisjointFuture,
+                gciFuture, ancestorFuture
+        ).join();
+
+        TupleQueryResult annRs = annFuture.join();
+        Map<String, List<String>> annotations = AnnotationValueCollector.newMap();
+        String label = null;
+        while (annRs.hasNext()) {
+            BindingSet sol = annRs.next();
+            String propIri = resource(sol, "prop");
+            if (propIri != null && sol.hasBinding("value")) {
+                Value valueNode = sol.getValue("value");
+                String value = valueNode.isLiteral() ? valueNode.stringValue() : valueNode.toString();
+                AnnotationValueCollector.add(annotations, propIri, value);
+                if (label == null && propIri.endsWith("#label")) {
+                    label = value;
+                }
+            }
+        }
+        details.put("label", label != null ? label : localName(classIri));
+        details.put("annotations", annotations);
+
+        TupleQueryResult disjointRs = disjointFuture.join();
+        List<Map<String, String>> disjointAxioms = new ArrayList<>();
+        while (disjointRs.hasNext()) {
+            BindingSet sol = disjointRs.next();
+            String disjointIri = resource(sol, "disjoint");
+            if (disjointIri != null) {
+                Map<String, String> axiom = new LinkedHashMap<>();
+                axiom.put("id", disjointIri);
+                axiom.put("type", "DisjointWith");
+                axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(disjointIri));
+                disjointAxioms.add(axiom);
+            }
+        }
+        details.put("disjointClassesAxioms", disjointAxioms);
+
+        TupleQueryResult disjointUnionRs = disjointUnionFuture.join();
+        Map<String, List<String>> disjointUnionGroups = new LinkedHashMap<>();
+        while (disjointUnionRs.hasNext()) {
+            BindingSet sol = disjointUnionRs.next();
+            String listNode = sol.getValue("list").stringValue();
+            String memberIri = sol.getValue("member").stringValue();
+            disjointUnionGroups.computeIfAbsent(listNode, k -> new ArrayList<>()).add(memberIri);
+        }
+        List<Map<String, Object>> disjointUnionAxioms = new ArrayList<>();
+        for (Map.Entry<String, List<String>> entry : disjointUnionGroups.entrySet()) {
+            List<String> members = entry.getValue();
+            if (!members.isEmpty()) {
+                Map<String, Object> axiom = new LinkedHashMap<>();
+                axiom.put("id", entry.getKey());
+                axiom.put("type", "DisjointUnionOf");
+                axiom.put("members", members);
+                StringBuilder defBuilder = new StringBuilder();
+                for (int i = 0; i < members.size(); i++) {
+                    if (i > 0) defBuilder.append(", ");
+                    defBuilder.append(localName(members.get(i)));
+                }
+                axiom.put("definition", defBuilder.toString());
+                disjointUnionAxioms.add(axiom);
+            }
+        }
+        details.put("disjointUnionAxioms", disjointUnionAxioms);
+
+        TupleQueryResult hasKeyRs = hasKeyFuture.join();
+        Map<String, List<String>> hasKeyGroups = new LinkedHashMap<>();
+        while (hasKeyRs.hasNext()) {
+            BindingSet sol = hasKeyRs.next();
+            String listNode = sol.getValue("keyList").stringValue();
+            String propIri = sol.getValue("prop").stringValue();
+            hasKeyGroups.computeIfAbsent(listNode, k -> new ArrayList<>()).add(propIri);
+        }
+        List<Map<String, Object>> hasKeyAxioms = new ArrayList<>();
+        for (Map.Entry<String, List<String>> entry : hasKeyGroups.entrySet()) {
+            List<String> keyProperties = entry.getValue();
+            if (!keyProperties.isEmpty()) {
+                Map<String, Object> axiom = new LinkedHashMap<>();
+                axiom.put("id", entry.getKey());
+                axiom.put("type", "HasKey");
+                axiom.put("properties", keyProperties);
+                StringBuilder defBuilder = new StringBuilder();
+                for (int i = 0; i < keyProperties.size(); i++) {
+                    if (i > 0) defBuilder.append(", ");
+                    defBuilder.append(localName(keyProperties.get(i)));
+                }
+                axiom.put("definition", defBuilder.toString());
+                hasKeyAxioms.add(axiom);
+            }
+        }
+        details.put("hasKeyAxioms", hasKeyAxioms);
+
+        TupleQueryResult inferredEquivRs = inferredEquivFuture.join();
+        List<Map<String, String>> inferredEquivAxioms = new ArrayList<>();
+        while (inferredEquivRs.hasNext()) {
+            BindingSet sol = inferredEquivRs.next();
+            String equivIri = resource(sol, "equiv");
+            if (equivIri != null) {
+                Map<String, String> axiom = new LinkedHashMap<>();
+                axiom.put("id", equivIri);
+                axiom.put("type", "EquivalentTo");
+                axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(equivIri));
+                axiom.put("isInferred", "true");
+                inferredEquivAxioms.add(axiom);
+            }
+        }
+        details.put("inferredEquivalentClassesAxioms", inferredEquivAxioms);
+
+        TupleQueryResult inferredSuperRs = inferredSuperFuture.join();
+        List<Map<String, String>> inferredSubClassAxioms = new ArrayList<>();
+        while (inferredSuperRs.hasNext()) {
+            BindingSet sol = inferredSuperRs.next();
+            String superIri = resource(sol, "super");
+            if (superIri != null) {
+                Map<String, String> axiom = new LinkedHashMap<>();
+                axiom.put("id", superIri);
+                axiom.put("type", "SubClassOf");
+                axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(superIri));
+                axiom.put("isInferred", "true");
+                inferredSubClassAxioms.add(axiom);
+            }
+        }
+        details.put("inferredSubClassOfAxioms", inferredSubClassAxioms);
+
+        TupleQueryResult inferredDisjointRs = inferredDisjointFuture.join();
+        List<Map<String, String>> inferredDisjointAxioms = new ArrayList<>();
+        while (inferredDisjointRs.hasNext()) {
+            BindingSet sol = inferredDisjointRs.next();
+            String disjointIri = resource(sol, "disjoint");
+            if (disjointIri != null) {
+                Map<String, String> axiom = new LinkedHashMap<>();
+                axiom.put("id", disjointIri);
+                axiom.put("type", "DisjointWith");
+                axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(disjointIri));
+                axiom.put("isInferred", "true");
+                inferredDisjointAxioms.add(axiom);
+            }
+        }
+        details.put("inferredDisjointClassesAxioms", inferredDisjointAxioms);
+
+        TupleQueryResult gciRs = gciFuture.join();
+        List<Map<String, String>> generalClassAxioms = new ArrayList<>();
+        while (gciRs.hasNext()) {
+            BindingSet sol = gciRs.next();
+            String subExpr = sol.getValue("subExpr").stringValue();
+            Map<String, String> axiom = new LinkedHashMap<>();
+            axiom.put("id", subExpr);
+            axiom.put("type", "GCI");
+            axiom.put("definition", "Complex axiom involving " + localName(classIri));
+            generalClassAxioms.add(axiom);
+        }
+        details.put("generalClassAxioms", generalClassAxioms);
+
+        TupleQueryResult ancestorRs = ancestorFuture.join();
+        List<Map<String, String>> anonymousAncestorAxioms = new ArrayList<>();
+        Set<String> seenAncestors = new LinkedHashSet<>();
+        while (ancestorRs.hasNext()) {
+            BindingSet sol = ancestorRs.next();
+            String superIri = resourceOrBlank(sol, "super");
+            if (superIri == null) continue;
+            String ancestorKey = superIri + "|" + resource(sol, "ancestor");
+            if (!seenAncestors.contains(ancestorKey)) {
+                seenAncestors.add(ancestorKey);
+                Map<String, String> axiom = new LinkedHashMap<>();
+                axiom.put("id", superIri);
+                axiom.put("type", "SubClassOf");
+                String ancestorIri = resource(sol, "ancestor");
+                if (ancestorIri != null) {
+                    axiom.put("ancestorIri", ancestorIri);
+                }
+                boolean navigable = superIri.startsWith("http://") || superIri.startsWith("https://") || superIri.startsWith("urn:");
+                axiom.put("navigable", String.valueOf(navigable));
+                if (!navigable) {
+                    String manchester = describeBlankNodeManchester(projectId, superIri);
+                    if (manchester != null && !manchester.isBlank()) {
+                        axiom.put("manchester", manchester);
+                        axiom.put("definition", manchester);
+                    } else {
+                        axiom.put("definition", "Anonymous superclass");
+                    }
+                } else {
+                    axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(superIri));
+                }
+                anonymousAncestorAxioms.add(axiom);
+            }
+        }
+        details.put("anonymousAncestorAxioms", anonymousAncestorAxioms);
+
+        log.info("[PERF] enrichOwlApiClassDetails for {} completed in {}ms project={}",
+                localName(classIri), System.currentTimeMillis() - startTime, projectId);
     }
 
     /**
@@ -2993,13 +3547,13 @@ public class OntologyQueryService {
             }
             """.formatted(individualIri);
         TupleQueryResult annRs = datasetService.execSelect(projectId, annQuery);
-        Map<String, Object> annotations = new LinkedHashMap<>();
+        Map<String, List<String>> annotations = AnnotationValueCollector.newMap();
         while (annRs.hasNext()) {
             BindingSet sol = annRs.next();
             String propIri = resource(sol, "prop");
             if (propIri != null && sol.hasBinding("value")) {
                 String value = sol.getValue("value").stringValue();
-                annotations.put(propIri, value);
+                AnnotationValueCollector.add(annotations, propIri, value);
             }
         }
         details.put("annotations", annotations);

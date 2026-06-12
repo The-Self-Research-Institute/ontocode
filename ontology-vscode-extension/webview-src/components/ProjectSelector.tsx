@@ -1,5 +1,6 @@
 import React from 'react';
 import { Loader2, CheckCircle2, XCircle, FolderOpen, Clock } from 'lucide-react';
+import { importStageLabel } from '../utils/importStatusText';
 
 interface ProjectInfo {
   id: string;
@@ -34,21 +35,13 @@ interface ProjectSelectorProps {
   importStatus?: { [projectId: string]: ImportStatus };
 }
 
-const STAGE_LABELS: Record<string, string> = {
-  parsing: 'Parsing ontology file…',
-  'graphdb-loading': 'Loading triples into Fuseki…',
-  'graphdb-load-complete': 'Triples loaded, computing stats…',
-  'hierarchy-warming': 'Warming class hierarchy cache…',
-  'computing-metadata': 'Computing ontology statistics…',
-  bulk_load: 'Bulk loading data…',
-  conversion: 'Converting OWL format…',
-};
-
 function stageLabel(metadata?: Record<string, unknown>): string {
   if (!metadata) return 'Processing…';
-  if (typeof metadata.message === 'string' && metadata.message) return metadata.message;
+  if (typeof metadata.message === 'string' && metadata.message) {
+    return importStageLabel(undefined, metadata.message);
+  }
   if (typeof metadata.stage === 'string' && metadata.stage) {
-    return STAGE_LABELS[metadata.stage] || 'Processing…';
+    return importStageLabel(metadata.stage);
   }
   return 'Processing…';
 }

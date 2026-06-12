@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Search, ExternalLink, AlertCircle, Edit3, User } from 'lucide-react';
 import { Panel, AnnotationsDisplay, AxiomSubsection, CollaboratorPresenceBar } from './common';
 import { ClassExpressionDialog, MultiClassSelectorDialog, MultiPropertySelectorDialog, IRIEditorDialog, IndividualSelectorDialog, RestrictionData } from '../dialogs';
+import expressionService from '../../services/expressionService';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
@@ -260,6 +261,8 @@ const ClassEditor: React.FC<{
   >();
   const [editorInitialRestrictionData, setEditorInitialRestrictionData] = useState<any>();
   const [editorAllowedTabs, setEditorAllowedTabs] = useState<("hierarchy" | "objectRestriction" | "dataRestriction" | "classExpression")[] | undefined>();
+  /** When editing an anonymous-ancestor axiom, mutations apply to the ancestor class, not the selected class. */
+  const [editorSubjectClassIri, setEditorSubjectClassIri] = useState<string | undefined>();
   // Flat label→IRI lookup for resolving Manchester expressions (all classes, not just loaded tree)
   const [allClassesLookup, setAllClassesLookup] = useState<Map<string, string>>(new Map());
 
@@ -865,6 +868,7 @@ const ClassEditor: React.FC<{
     existingId?: string,
     initialTab?: "hierarchy" | "objectRestriction" | "dataRestriction" | "classExpression",
     restrictionData?: any,
+    subjectClassIri?: string,
   ) => {
     console.log("[ClassEditor] openEditor called:", { type, title, classHierarchyLength: classHierarchy.length });
     setEditorType(type);
@@ -884,6 +888,7 @@ const ClassEditor: React.FC<{
     }
     setEditorInitialTab(initialTab);
     setEditorInitialRestrictionData(restrictionData);
+    setEditorSubjectClassIri(subjectClassIri);
 
     // Add mode shows the full Protégé-style builder set. Edit mode shows the
     // expression editor plus only the builder that matches the existing axiom.
@@ -920,6 +925,8 @@ const ClassEditor: React.FC<{
       return;
     }
 
+    const subjectClassIri = editorSubjectClassIri || item.id;
+
     try {
       if (editorExistingId) {
         // ── EDIT: single replaceAxiom call — delete + add in one HTTP request ──
@@ -945,9 +952,8 @@ const ClassEditor: React.FC<{
           expressionToSave.startsWith("https://") ||
           expressionToSave.startsWith("urn:");
 
-        let newDesc: Parameters<typeof ontologyMutationService.replaceAxiom>[4];
         if (restrictionData) {
-          newDesc = {
+          const newDesc: Parameters<typeof ontologyMutationService.replaceAxiom>[4] = {
             restriction: {
               property: restrictionData.propertyIri!,
               restrictionType: restrictionData.restrictionType!,
@@ -956,23 +962,34 @@ const ClassEditor: React.FC<{
               isData: restrictionData.type === 'dataRestriction',
             },
           };
+          await ontologyMutationService.replaceAxiom(
+            projectId, subjectClassIri, axiomType, oldDesc, newDesc,
+            user?.email, user?.username || user?.email,
+          );
         } else if (isNewIRI) {
-          newDesc = { iri: expressionToSave };
+          await ontologyMutationService.replaceAxiom(
+            projectId, subjectClassIri, axiomType, oldDesc, { iri: expressionToSave },
+            user?.email, user?.username || user?.email,
+          );
         } else {
           const parsed = parseManchesterExpression(expressionToSave);
           if (parsed && axiomType !== "DisjointWith") {
-            newDesc = parsed.expressionType === "intersection"
-              ? { intersection: parsed.iris }
-              : { union: parsed.iris };
+            const newDesc: Parameters<typeof ontologyMutationService.replaceAxiom>[4] =
+              parsed.expressionType === "intersection"
+                ? { intersection: parsed.iris }
+                : { union: parsed.iris };
+            await ontologyMutationService.replaceAxiom(
+              projectId, subjectClassIri, axiomType, oldDesc, newDesc,
+              user?.email, user?.username || user?.email,
+            );
           } else {
-            throw new Error(`Cannot save expression: "${expressionToSave}". Use a class IRI, intersection (A and B), or union (A or B).`);
+            await handleDeleteAxiom(axiomType, editorExistingId, subjectClassIri);
+            await expressionService.addClassExpressionAxiom(
+              projectId, subjectClassIri, axiomType, expressionToSave,
+              user?.email, user?.username || user?.email,
+            );
           }
         }
-
-        await ontologyMutationService.replaceAxiom(
-          projectId, item.id, axiomType, oldDesc, newDesc,
-          user?.email, user?.username || user?.email,
-        );
 
         await loadClassDetails();
       } else {
@@ -990,6 +1007,7 @@ const ClassEditor: React.FC<{
       setEditorInitialClassIri(undefined);
       setEditorInitialTab(undefined);
       setEditorInitialRestrictionData(undefined);
+      setEditorSubjectClassIri(undefined);
     }
   };
 
@@ -1181,13 +1199,9 @@ const ClassEditor: React.FC<{
           notificationService.warning("Empty Expression", "Cannot add axiom: expression is empty.");
           return;
         }
-        if (type === "DisjointWith") {
-          notificationService.warning("Not Supported", "Complex expressions are not supported for Disjoint With. Please select a class from the hierarchy.");
-          return;
-        }
-        // Try to parse as a structured intersection/union expression (e.g., "Horse and Animal")
+        // Try fast path for simple intersection/union of named classes
         const parsed = parseManchesterExpression(definition);
-        if (parsed) {
+        if (parsed && type !== "DisjointWith") {
           console.log(`[ClassEditor] Parsed ${parsed.expressionType} expression:`, parsed.iris);
           if (parsed.expressionType === "intersection") {
             await ontologyMutationService.addIntersection(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
@@ -1195,10 +1209,15 @@ const ClassEditor: React.FC<{
             await ontologyMutationService.addUnion(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
           }
         } else {
-          notificationService.warning("Unsupported Expression",
-            `Cannot add: "${definition}". Supported: a single class IRI, "ClassA and ClassB" (intersection), "ClassA or ClassB" (union), or use the Restriction tab.`
+          // Full Manchester via OWLAPI (not, restrictions, oneOf, nested expressions, disjoint expressions)
+          await expressionService.addClassExpressionAxiom(
+            projectId,
+            item.id,
+            type,
+            definition,
+            user?.email,
+            user?.username || user?.email,
           );
-          return;
         }
       }
       // Wait for GraphDB to index the new axiom (increased delay for SPARQL consistency)
@@ -1216,8 +1235,9 @@ const ClassEditor: React.FC<{
     }
   };
 
-  const handleDeleteAxiom = async (type: AxiomType, id: string) => {
-    console.log("[ClassEditor] handleDeleteAxiom called:", { type, id, classIri: item.id });
+  const handleDeleteAxiom = async (type: AxiomType, id: string, classIriOverride?: string) => {
+    const ownerIri = classIriOverride || item.id;
+    console.log("[ClassEditor] handleDeleteAxiom called:", { type, id, classIri: ownerIri });
     try {
       // Find the axiom object to check if it's a restriction
       // Use classDetails if available (most recent data), otherwise fall back to item
@@ -1242,7 +1262,7 @@ const ClassEditor: React.FC<{
           dataProperties.some((p) => p.id === axiom.propertyIri);
 
         console.log("[ClassEditor] Deleting restriction:", {
-          classIri: item.id,
+          classIri: ownerIri,
           axiomType,
           propertyIri: axiom.propertyIri,
           restrictionType: axiom.restrictionType,
@@ -1253,7 +1273,7 @@ const ClassEditor: React.FC<{
         if (isDataProperty) {
           await ontologyMutationService.deleteDataRestriction(
             projectId,
-            item.id,
+            ownerIri,
             axiomType,
             axiom.propertyIri,
             axiom.restrictionType as "some" | "only" | "min" | "max" | "exactly",
@@ -1262,7 +1282,7 @@ const ClassEditor: React.FC<{
         } else {
           await ontologyMutationService.deleteObjectRestriction(
             projectId,
-            item.id,
+            ownerIri,
             axiomType,
             axiom.propertyIri,
             axiom.restrictionType as "some" | "only" | "min" | "max" | "exactly" | "value",
@@ -1275,14 +1295,14 @@ const ClassEditor: React.FC<{
       } else {
         // The id is usually the IRI of the related class
         // Always attempt to delete - the backend will handle validation
-        console.log("[ClassEditor] Deleting simple class axiom:", { type, classIri: item.id, targetIri: id });
+        console.log("[ClassEditor] Deleting simple class axiom:", { type, classIri: ownerIri, targetIri: id });
 
         switch (type) {
           case "EquivalentTo":
             console.log("[ClassEditor] Calling deleteEquivalentClass");
             await ontologyMutationService.deleteEquivalentClass(
               projectId,
-              item.id,
+              ownerIri,
               id,
               user?.email,
               user?.username || user?.email,
@@ -1291,12 +1311,12 @@ const ClassEditor: React.FC<{
           case "SubClassOf":
             console.log("[ClassEditor] Calling deleteSubClassOf with params:", {
               projectId,
-              classIri: item.id,
+              classIri: ownerIri,
               superClassIri: id,
             });
             await ontologyMutationService.deleteSubClassOf(
               projectId,
-              item.id,
+              ownerIri,
               id,
               user?.email,
               user?.username || user?.email,
@@ -1307,7 +1327,7 @@ const ClassEditor: React.FC<{
             console.log("[ClassEditor] Calling deleteDisjointWith");
             await ontologyMutationService.deleteDisjointWith(
               projectId,
-              item.id,
+              ownerIri,
               id,
               user?.email,
               user?.username || user?.email,
@@ -1323,7 +1343,7 @@ const ClassEditor: React.FC<{
       }
     } catch (error) {
       console.error("[ClassEditor] Failed to delete axiom:", error);
-      console.error("[ClassEditor] Delete axiom details:", { type, id, classIri: item.id });
+      console.error("[ClassEditor] Delete axiom details:", { type, id, classIri: ownerIri });
       notificationService.error("Delete Failed", `Failed to delete axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
@@ -1444,7 +1464,6 @@ const ClassEditor: React.FC<{
               break;
           }
         } else {
-          // For complex expressions, parse intersection/union; otherwise report an error
           const parsed = parseManchesterExpression(newDefinition);
           if (parsed && type !== "DisjointWith") {
             if (parsed.expressionType === "intersection") {
@@ -1453,7 +1472,10 @@ const ClassEditor: React.FC<{
               await ontologyMutationService.addUnion(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
             }
           } else {
-            throw new Error(`Cannot save expression: "${newDefinition}". Use a class IRI, intersection (A and B), or union (A or B).`);
+            await expressionService.addClassExpressionAxiom(
+              projectId, item.id, type, newDefinition,
+              user?.email, user?.username || user?.email,
+            );
           }
         }
       }
@@ -1550,8 +1572,10 @@ const ClassEditor: React.FC<{
         restrictionData,
       );
     } else if (isSimpleIri) {
-      // Simple class axiom - open hierarchy tab
-      openEditor("DisjointWith", "Disjoint Class Expression", axiom.definition, axiomId, "hierarchy");
+      // Simple named class — use class selector (openEditor rejects plain IRIs for DisjointWith)
+      setEditingDisjointWithId(axiomId);
+      setEditingDisjointWithTarget(axiomId);
+      setIsDisjointWithOpen(true);
     } else {
       // Complex expression - open class expression editor
       openEditor("DisjointWith", "Disjoint Class Expression", axiom.definition, axiomId, "classExpression");
@@ -1821,18 +1845,35 @@ const ClassEditor: React.FC<{
 
       // Parse expression: supports "A and B" (intersection) or "A or B" (union)
       // These create GCAs of the form: (A and B) rdfs:subClassOf <classIri>
-      const parsed = parseManchesterExpression(expression);
-      if (!parsed) {
-        notificationService.warning("Unsupported Expression",
-          `Cannot create GCA: "${expression}". Supported: "ClassA and ClassB" (intersection), "ClassA or ClassB" (union), or "ClassA EquivalentTo ClassB". Class names must match labels or IRIs in the hierarchy.`
-        );
-        return;
-      }
-
-      if (parsed.expressionType === "intersection") {
-        await ontologyMutationService.addGCAIntersection(projectId, item.id, parsed.iris);
+      const subClassOfMatch = expression.trim().match(/^(.+?)\s+SubClassOf\s+(.+)$/i);
+      if (subClassOfMatch) {
+        const subExpr = subClassOfMatch[1].trim();
+        const superExpr = subClassOfMatch[2].trim();
+        const superIri = findClassIriByLabelOrIri(superExpr, classHierarchy) || superExpr;
+        const parsedSub = parseManchesterExpression(subExpr);
+        if (parsedSub?.expressionType === "intersection") {
+          await ontologyMutationService.addGCAIntersection(projectId, superIri, parsedSub.iris);
+        } else if (parsedSub?.expressionType === "union") {
+          await ontologyMutationService.addGCAUnion(projectId, superIri, parsedSub.iris);
+        } else {
+          await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/expression/add-gca`, {
+            subClassExpression: subExpr,
+            superClassExpression: superIri,
+          });
+        }
       } else {
-        await ontologyMutationService.addGCAUnion(projectId, item.id, parsed.iris);
+        const parsed = parseManchesterExpression(expression);
+        if (parsed?.expressionType === "intersection") {
+          await ontologyMutationService.addGCAIntersection(projectId, item.id, parsed.iris);
+        } else if (parsed?.expressionType === "union") {
+          await ontologyMutationService.addGCAUnion(projectId, item.id, parsed.iris);
+        } else {
+          const superIri = item.id;
+          await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/expression/add-gca`, {
+            subClassExpression: expression.trim(),
+            superClassExpression: superIri,
+          });
+        }
       }
 
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -2000,6 +2041,8 @@ const ClassEditor: React.FC<{
                 onNavigate={handleNavigate}
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* SubClass Of Section */}
@@ -2020,6 +2063,8 @@ const ClassEditor: React.FC<{
                 onNavigate={handleNavigate}
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* General Class Axioms Section */}
@@ -2035,6 +2080,8 @@ const ClassEditor: React.FC<{
                 themeColor="yellow"
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* SubClass Of (Anonymous Ancestor) */}
@@ -2043,18 +2090,57 @@ const ClassEditor: React.FC<{
                 axioms={classDetails?.anonymousAncestorAxioms || []}
                 onAdd={() => {}}
                 onDelete={() => {}}
+                onEditClick={(axiom) => {
+                  const target = axiom.id || '';
+                  if (target.startsWith('http://') || target.startsWith('https://') || target.startsWith('urn:')) {
+                    handleNavigate(target, 'class');
+                    return;
+                  }
+                  const ancestorIri = (axiom as { ancestorIri?: string }).ancestorIri;
+                  const manchester =
+                    (axiom as { manchester?: string }).manchester ||
+                    (axiom.definition && axiom.definition !== 'Anonymous superclass'
+                      ? axiom.definition
+                      : undefined);
+                  if (manchester && ancestorIri) {
+                    openEditor(
+                      'SubClassOf',
+                      'Anonymous Ancestor Expression',
+                      manchester,
+                      target,
+                      'classExpression',
+                      undefined,
+                      ancestorIri,
+                    );
+                  } else if (target.startsWith('_:') || target.includes('genid')) {
+                    handleEditGCA(target);
+                  }
+                }}
+                onNavigate={handleNavigate}
                 themeColor="yellow"
-                isViewOnly={true}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Instances Section */}
               <AxiomSubsection
                 title="Instances"
-                axioms={classInstances.map((instance) => ({
-                  id: instance.id,
-                  type: "Instance",
-                  definition: instance.label,
-                }))}
+                axioms={classInstances
+                  .filter((instance) => !(instance as { isInferred?: boolean }).isInferred)
+                  .map((instance) => ({
+                    id: instance.id,
+                    type: "Instance",
+                    definition: instance.label,
+                  }))}
+                inferredAxioms={classInstances
+                  .filter((instance) => (instance as { isInferred?: boolean }).isInferred)
+                  .map((instance) => ({
+                    id: instance.id,
+                    type: "Instance",
+                    definition: instance.label,
+                  }))}
                 onAdd={() => {}}
                 onEdit={(id, newDef) => handleEditInstance(id)}
                 onDelete={(id) => handleDeleteInstance(id)}
@@ -2064,6 +2150,8 @@ const ClassEditor: React.FC<{
                 themeColor="yellow"
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Target for Key Section */}
@@ -2081,6 +2169,8 @@ const ClassEditor: React.FC<{
                 dataProperties={dataProperties}
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Disjoint With Section */}
@@ -2100,6 +2190,8 @@ const ClassEditor: React.FC<{
                 onNavigate={handleNavigate}
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Disjoint Union Of Section */}
@@ -2117,6 +2209,8 @@ const ClassEditor: React.FC<{
                 dataProperties={dataProperties}
                 isViewOnly={isViewOnly}
                 onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
             </div>
           </div>

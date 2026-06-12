@@ -20,6 +20,7 @@ export {
   normalizeOntologyAnnotation,
   normalizeOntologyAnnotations,
   mapAnnotationProperty,
+  buildAnnotationPropertyHierarchy,
   STANDARD_ANNOTATION_PROPERTIES,
   mergeAnnotationProperties,
   combineReasonerResults,

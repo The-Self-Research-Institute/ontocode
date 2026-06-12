@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, CheckCircle2, AlertCircle } from 'lucide-react';
 import EntityHierarchy from '../EntityHierarchy';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import expressionService from '../../services/expressionService';
 import { notificationService } from '../../services/notificationService';
 import type { TreeNode, Property } from '../../types';
 
@@ -129,6 +130,9 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
   // Class Expression (Manchester) state
   const [manchesterExpression, setManchesterExpression] = useState(initialValue);
+  const [manchesterParseError, setManchesterParseError] = useState<string | null>(null);
+  const [manchesterParseOk, setManchesterParseOk] = useState(false);
+  const parseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Inline class creation state
   const [showInlineCreate, setShowInlineCreate] = useState(false);
@@ -402,7 +406,40 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     }
   };
 
-  const handleConfirm = () => {
+  useEffect(() => {
+    if (!projectId || activeTab !== 'classExpression') {
+      setManchesterParseError(null);
+      setManchesterParseOk(false);
+      return;
+    }
+    const expr = manchesterExpression.trim();
+    if (!expr) {
+      setManchesterParseError(null);
+      setManchesterParseOk(false);
+      return;
+    }
+    if (parseTimerRef.current) clearTimeout(parseTimerRef.current);
+    parseTimerRef.current = setTimeout(async () => {
+      try {
+        const result = await expressionService.parseExpression(projectId, expr);
+        if (result.success) {
+          setManchesterParseError(null);
+          setManchesterParseOk(true);
+        } else {
+          setManchesterParseError(result.error || 'Invalid Manchester expression');
+          setManchesterParseOk(false);
+        }
+      } catch (err: unknown) {
+        setManchesterParseError(err instanceof Error ? err.message : 'Validation failed');
+        setManchesterParseOk(false);
+      }
+    }, 400);
+    return () => {
+      if (parseTimerRef.current) clearTimeout(parseTimerRef.current);
+    };
+  }, [projectId, activeTab, manchesterExpression]);
+
+  const handleConfirm = async () => {
     console.log('[ClassExpressionDialog] handleConfirm called', {
       activeTab,
       selectedClass: selectedClass?.id,
@@ -443,6 +480,17 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         break;
       case 'classExpression':
         expression = manchesterExpression.trim();
+        if (!expression) {
+          notificationService.warning('Expression Required', 'Enter a Manchester class expression');
+          return;
+        }
+        if (projectId) {
+          const result = await expressionService.parseExpression(projectId, expression);
+          if (!result.success) {
+            notificationService.error('Invalid Expression', result.error || 'Could not parse Manchester expression');
+            return;
+          }
+        }
         break;
       case 'dataRestriction':
         console.log('[ClassExpressionDialog] dataRestriction case - calling buildDataRestriction');
@@ -1090,19 +1138,34 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                 <label className="text-sm font-semibold text-gray-700 mb-2">Class Expression</label>
                 <textarea
                   value={manchesterExpression}
-                  onChange={(e) => setManchesterExpression(e.target.value)}
-                  placeholder="e.g., Horse and Animal&#10;      Cat or Dog&#10;      http://example.org/MyClass"
+                  onChange={(e) => {
+                    setManchesterExpression(e.target.value);
+                    setManchesterParseOk(false);
+                  }}
+                  placeholder={"e.g., Pizza and (hasTopping some Cheese)\n      not VegetarianPizza\n      {IndividualA, IndividualB}"}
                   className="flex-1 p-4 border border-gray-300 rounded font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none bg-white text-black"
                 />
+                {projectId && manchesterExpression.trim() && (
+                  <div className={`mt-2 flex items-center gap-2 text-xs px-2 py-1 rounded ${
+                    manchesterParseError ? 'bg-red-50 text-red-700' : manchesterParseOk ? 'bg-green-50 text-green-700' : 'text-gray-500'
+                  }`}>
+                    {manchesterParseError ? (
+                      <><AlertCircle size={14} /> {manchesterParseError}</>
+                    ) : manchesterParseOk ? (
+                      <><CheckCircle2 size={14} /> Valid Manchester expression</>
+                    ) : (
+                      <span>Validating…</span>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="mt-4 p-4 bg-amber-50 rounded border border-amber-200">
-                <p className="text-xs font-semibold text-amber-900 mb-2">SUPPORTED EXPRESSIONS</p>
-                <ul className="text-xs text-amber-800 space-y-1 mb-3">
-                  <li className="font-mono">• ClassA and ClassB [and ClassC…]  (intersection)</li>
-                  <li className="font-mono">• ClassA or ClassB [or ClassC…]    (union)</li>
-                  <li className="font-mono">• http://example.org/ClassName      (single class IRI)</li>
-                </ul>
-                <p className="text-xs text-amber-700">Class names must match labels or IRIs in the class hierarchy. For restrictions (some, only, min…) use the <strong>Restriction</strong> tab instead.</p>
+                <p className="text-xs font-semibold text-amber-900 mb-2">MANCHESTER OWL SYNTAX</p>
+                <p className="text-xs text-amber-800 mb-2">
+                  Full Manchester syntax is validated against your ontology signature (OWLAPI parser).
+                  Supports <span className="font-mono">and</span>, <span className="font-mono">or</span>, <span className="font-mono">not</span>, <span className="font-mono">some</span>, <span className="font-mono">only</span>, cardinality, and <span className="font-mono">{'{a, b}'}</span> enumerations.
+                </p>
+                <p className="text-xs text-amber-700">Use the <strong>Restriction</strong> tab for guided restriction building with pickers.</p>
               </div>
           </div>
 

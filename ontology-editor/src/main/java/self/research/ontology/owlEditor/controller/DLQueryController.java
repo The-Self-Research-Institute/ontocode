@@ -24,6 +24,8 @@ import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
+import self.research.ontology.owlEditor.service.ReasonerService;
+import self.research.ontology.owlEditor.service.ReasonerType;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -56,6 +58,9 @@ public class DLQueryController {
 
     @Autowired
     private OntologyMutationService mutationService;
+
+    @Autowired
+    private ReasonerService reasonerService;
 
     // Reasoner factory - using Openllet (OWLAPI 5.x compatible)
     private OWLReasonerFactory reasonerFactory;
@@ -632,17 +637,43 @@ public class DLQueryController {
                     ? request.getSectionName().toLowerCase() : "";
             int maxJ = request.getMaxJustifications() > 0 ? request.getMaxJustifications() : 99;
 
-            List<Map<String, Object>> rawAxioms = findMatchingAxioms(
+            boolean laconic = request.getJustificationType() != null
+                    && request.getJustificationType().toLowerCase().contains("laconic");
+
+            Set<OWLAxiom> matchedOwlAxioms = findMatchingOwlAxioms(
                     ontology, df, request.getEntityIri(), request.getRelatedIri(), sec);
 
-            // Each matched axiom becomes its own justification set (asserted → justifies itself)
+            boolean isInferred = false;
+            if (matchedOwlAxioms.isEmpty()) {
+                isInferred = isInferredRelationship(
+                        ontology, df, request.getEntityIri(), request.getRelatedIri(), sec);
+                if (isInferred) {
+                    matchedOwlAxioms = findSupportingAxioms(
+                            ontology, df, request.getEntityIri(), request.getRelatedIri(), sec);
+                }
+            }
+
+            List<Map<String, Object>> rawAxioms = matchedOwlAxioms.stream()
+                    .map(ax -> axiomToMap(ontology, ax))
+                    .collect(Collectors.toList());
+
             List<Map<String, Object>> justifications = new ArrayList<>();
-            for (int i = 0; i < Math.min(rawAxioms.size(), maxJ); i++) {
+            if (laconic && !rawAxioms.isEmpty()) {
                 Map<String, Object> j = new LinkedHashMap<>();
-                j.put("index", i + 1);
-                j.put("axioms", List.of(rawAxioms.get(i)));
-                j.put("isAsserted", true);
+                j.put("index", 1);
+                j.put("axioms", rawAxioms.stream().limit(maxJ).collect(Collectors.toList()));
+                j.put("isAsserted", !isInferred);
+                j.put("isInferred", isInferred);
                 justifications.add(j);
+            } else {
+                for (int i = 0; i < Math.min(rawAxioms.size(), maxJ); i++) {
+                    Map<String, Object> j = new LinkedHashMap<>();
+                    j.put("index", i + 1);
+                    j.put("axioms", List.of(rawAxioms.get(i)));
+                    j.put("isAsserted", !isInferred);
+                    j.put("isInferred", isInferred);
+                    justifications.add(j);
+                }
             }
 
             Map<String, Object> resp = new LinkedHashMap<>();
@@ -664,8 +695,16 @@ public class DLQueryController {
     private List<Map<String, Object>> findMatchingAxioms(
             OWLOntology ontology, OWLDataFactory df,
             String entityIri, String relatedIri, String sec) {
+        return findMatchingOwlAxioms(ontology, df, entityIri, relatedIri, sec).stream()
+                .map(ax -> axiomToMap(ontology, ax))
+                .collect(Collectors.toList());
+    }
 
-        List<Map<String, Object>> results = new ArrayList<>();
+    private Set<OWLAxiom> findMatchingOwlAxioms(
+            OWLOntology ontology, OWLDataFactory df,
+            String entityIri, String relatedIri, String sec) {
+
+        Set<OWLAxiom> results = new LinkedHashSet<>();
         if (entityIri == null || relatedIri == null) return results;
 
         IRI eIri = IRI.create(entityIri);
@@ -676,82 +715,162 @@ public class DLQueryController {
                     @Override public void visit(OWLDataProperty p) {
                         ontology.getDataPropertyRangeAxioms(p).stream()
                                 .filter(ax -> axiomInvolves(ax, relatedIri))
-                                .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                                .forEach(results::add);
                     }
                     @Override public void visit(OWLObjectProperty p) {}
                     @Override public void visit(OWLObjectInverseOf p) {}
                 });
                 ontology.getObjectPropertyRangeAxioms(df.getOWLObjectProperty(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
 
             } else if (sec.contains("domain")) {
                 ontology.getDataPropertyDomainAxioms(df.getOWLDataProperty(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
                 ontology.getObjectPropertyDomainAxioms(df.getOWLObjectProperty(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
 
             } else if (sec.contains("subclass") || sec.contains("sub class")) {
                 ontology.getSubClassAxiomsForSubClass(df.getOWLClass(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
 
             } else if (sec.contains("equivalent")) {
                 ontology.getEquivalentClassesAxioms(df.getOWLClass(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
                 ontology.getEquivalentObjectPropertiesAxioms(df.getOWLObjectProperty(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
                 ontology.getEquivalentDataPropertiesAxioms(df.getOWLDataProperty(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
 
             } else if (sec.contains("disjoint")) {
                 ontology.getDisjointClassesAxioms(df.getOWLClass(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
                 ontology.getDisjointObjectPropertiesAxioms(df.getOWLObjectProperty(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
 
             } else if (sec.contains("inverse")) {
                 ontology.getInverseObjectPropertyAxioms(df.getOWLObjectProperty(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
 
             } else if (sec.contains("subproperty") || sec.contains("superprop") || sec.contains("super property")) {
                 ontology.getObjectSubPropertyAxiomsForSubProperty(df.getOWLObjectProperty(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
                 ontology.getDataSubPropertyAxiomsForSubProperty(df.getOWLDataProperty(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
 
             } else if (sec.contains("same")) {
                 ontology.getSameIndividualAxioms(df.getOWLNamedIndividual(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
 
             } else if (sec.contains("different")) {
                 ontology.getDifferentIndividualAxioms(df.getOWLNamedIndividual(eIri)).stream()
                         .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
 
             } else {
-                // Generic: any axiom whose signature contains both IRIs
                 IRI rIri = IRI.create(relatedIri);
                 ontology.getAxioms().stream()
                         .filter(ax -> ax.getSignature().stream().anyMatch(e -> e.getIRI().equals(eIri))
                                    && ax.getSignature().stream().anyMatch(e -> e.getIRI().equals(rIri)))
-                        .map(ax -> axiomToMap(ontology, ax)).forEach(results::add);
+                        .forEach(results::add);
             }
         } catch (Exception e) {
-            log.warn("findMatchingAxioms error entity={} related={}: {}", entityIri, relatedIri, e.getMessage());
+            log.warn("findMatchingOwlAxioms error entity={} related={}: {}", entityIri, relatedIri, e.getMessage());
         }
         return results;
+    }
+
+    private Set<OWLAxiom> findSupportingAxioms(
+            OWLOntology ontology, OWLDataFactory df,
+            String entityIri, String relatedIri, String sec) {
+
+        Set<OWLAxiom> supporting = new LinkedHashSet<>();
+        if (entityIri == null) return supporting;
+
+        IRI eIri = IRI.create(entityIri);
+        try {
+            if (ontology.containsClassInSignature(eIri)) {
+                ontology.getAxioms(df.getOWLClass(eIri)).stream()
+                        .filter(ax -> !ax.isAnnotationAxiom())
+                        .filter(ax -> relatedIri == null || axiomInvolves(ax, relatedIri))
+                        .forEach(supporting::add);
+            }
+            if (ontology.containsObjectPropertyInSignature(eIri)) {
+                ontology.getAxioms(df.getOWLObjectProperty(eIri)).stream()
+                        .filter(ax -> !ax.isAnnotationAxiom())
+                        .filter(ax -> relatedIri == null || axiomInvolves(ax, relatedIri))
+                        .forEach(supporting::add);
+            }
+            if (ontology.containsDataPropertyInSignature(eIri)) {
+                ontology.getAxioms(df.getOWLDataProperty(eIri)).stream()
+                        .filter(ax -> !ax.isAnnotationAxiom())
+                        .filter(ax -> relatedIri == null || axiomInvolves(ax, relatedIri))
+                        .forEach(supporting::add);
+            }
+            if (ontology.containsIndividualInSignature(eIri)) {
+                ontology.getAxioms(df.getOWLNamedIndividual(eIri)).stream()
+                        .filter(ax -> !ax.isAnnotationAxiom())
+                        .filter(ax -> relatedIri == null || axiomInvolves(ax, relatedIri))
+                        .forEach(supporting::add);
+            }
+        } catch (Exception e) {
+            log.warn("findSupportingAxioms error entity={}: {}", entityIri, e.getMessage());
+        }
+        return supporting;
+    }
+
+    private boolean isInferredRelationship(
+            OWLOntology ontology, OWLDataFactory df,
+            String entityIri, String relatedIri, String sec) {
+
+        if (entityIri == null || relatedIri == null) return false;
+        try {
+            OWLReasoner reasoner = reasonerService.getReasoner(ontology, ReasonerType.HERMIT);
+            IRI eIri = IRI.create(entityIri);
+            IRI rIri = IRI.create(relatedIri);
+
+            if ((sec.contains("subclass") || sec.contains("sub class"))
+                    && ontology.containsClassInSignature(eIri) && ontology.containsClassInSignature(rIri)) {
+                OWLClass sub = df.getOWLClass(eIri);
+                OWLClass sup = df.getOWLClass(rIri);
+                boolean entailed = reasoner.getSuperClasses(sub, true).getFlattened().contains(sup);
+                boolean asserted = ontology.containsAxiom(df.getOWLSubClassOfAxiom(sub, sup));
+                return entailed && !asserted;
+            }
+            if (sec.contains("equivalent") && ontology.containsClassInSignature(eIri)
+                    && ontology.containsClassInSignature(rIri)) {
+                OWLClass cls = df.getOWLClass(eIri);
+                OWLClass other = df.getOWLClass(rIri);
+                boolean entailed = reasoner.getEquivalentClasses(cls).getEntities().contains(other);
+                boolean asserted = ontology.getEquivalentClassesAxioms(cls).stream()
+                        .anyMatch(ax -> axiomInvolves(ax, relatedIri));
+                return entailed && !asserted;
+            }
+            if ((sec.contains("subproperty") || sec.contains("superprop"))
+                    && ontology.containsObjectPropertyInSignature(eIri)
+                    && ontology.containsObjectPropertyInSignature(rIri)) {
+                OWLObjectProperty sub = df.getOWLObjectProperty(eIri);
+                OWLObjectProperty sup = df.getOWLObjectProperty(rIri);
+                boolean entailed = reasoner.getSuperObjectProperties(sub, true).getFlattened().contains(sup);
+                boolean asserted = ontology.containsAxiom(df.getOWLSubObjectPropertyOfAxiom(sub, sup));
+                return entailed && !asserted;
+            }
+        } catch (Exception e) {
+            log.warn("isInferredRelationship check failed: {}", e.getMessage());
+        }
+        return false;
     }
 
     private boolean axiomInvolves(OWLAxiom axiom, String iri) {

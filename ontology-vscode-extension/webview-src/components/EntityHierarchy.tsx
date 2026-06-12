@@ -51,6 +51,7 @@ interface EntityHierarchyProps {
   onMoveClass?: (classId: string, newParentId: string) => void;
   onOpenPreferences?: () => void;
   onRenameItem?: (itemId: string, newLabel: string) => void;
+  onChangeEntityIri?: (item: SelectableItem) => void;
   onQuickSetParent?: (item: SelectableItem) => void;
   onQuickAddNote?: (item: SelectableItem) => void;
   viewMode?: 'asserted' | 'inferred';
@@ -86,6 +87,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   onMoveClass,
   onOpenPreferences,
   onRenameItem,
+  onChangeEntityIri,
   onQuickSetParent,
   onQuickAddNote,
   viewMode = 'asserted',
@@ -910,8 +912,21 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             }}
           >
             <Edit3 size={14} />
-            Rename
+            Rename label
           </button>
+          {onChangeEntityIri && (
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+              onClick={() => {
+                setContextMenu(null);
+                if (isViewOnly) { onViewOnlyAction?.(); return; }
+                onChangeEntityIri(contextMenu.item);
+              }}
+            >
+              <Edit3 size={14} />
+              Change IRI…
+            </button>
+          )}
           {onQuickSetParent && (
             <button
               className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"

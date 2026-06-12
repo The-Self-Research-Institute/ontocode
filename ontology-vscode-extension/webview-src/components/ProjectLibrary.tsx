@@ -19,8 +19,10 @@ import {
   CheckCircle2,
   XCircle,
   FolderOpen,
+  Users,
 } from "lucide-react";
 import apiClient from "../services/apiClient";
+import { formatQueueWait, sanitizeImportMessage } from "../utils/importStatusText";
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop } from "../utils/desktop";
 import { isAppOnline } from "../utils/connectivity";
@@ -43,6 +45,52 @@ interface FileItem {
   uploadedAt: string;
   type: string;
 }
+
+type FileImportState = {
+  status: "IMPORTING" | "COMPLETED" | "FAILED";
+  progress: number;
+  message: string;
+  graphSize?: number;
+  inQueue?: boolean;
+  queuePosition?: number;
+  totalInQueue?: number;
+  estimatedWaitMs?: number;
+};
+
+const formatTriples = (n: number) =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M triples` : `${n.toLocaleString()} triples`;
+
+const buildImportDisplayMessage = (
+  progress: number,
+  statusMessage: string,
+  graphSize: number | undefined,
+  queue: Pick<FileImportState, "inQueue" | "queuePosition" | "totalInQueue" | "estimatedWaitMs">,
+): string => {
+  if (queue.inQueue && (queue.queuePosition ?? 0) > 0) {
+    const pos = queue.queuePosition!;
+    const ahead = pos - 1;
+    const waitLabel = formatQueueWait(queue.estimatedWaitMs);
+    let queueMsg = `Waiting in queue — position #${pos}`;
+    if (ahead > 0) queueMsg += ` (${ahead} file${ahead !== 1 ? "s" : ""} ahead)`;
+    if (waitLabel) queueMsg += ` · est. ${waitLabel}`;
+    if (queue.totalInQueue && queue.totalInQueue > 0) queueMsg += ` · ${queue.totalInQueue} total queued`;
+    return queueMsg;
+  }
+
+  if (queue.inQueue && queue.queuePosition === 0) {
+    const base =
+      graphSize && graphSize > 0
+        ? `${formatTriples(graphSize)} loaded…`
+        : sanitizeImportMessage(statusMessage) ||
+          (progress > 0 ? `Importing… (${progress}%)` : "Processing…");
+    return `Processing now — ${base}`;
+  }
+
+  if (graphSize && graphSize > 0) return `${formatTriples(graphSize)} loaded…`;
+  if (statusMessage) return sanitizeImportMessage(statusMessage);
+  if (progress > 0) return `Importing… (${progress}%)`;
+  return "Importing…";
+};
 
 const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   projectId,
@@ -86,9 +134,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   } | null>(null);
   const { user } = useAuth();
 
-  type FileImportState = { status: 'IMPORTING' | 'COMPLETED' | 'FAILED'; progress: number; message: string; graphSize?: number };
   const [fileImportStates, setFileImportStates] = useState<Record<string, FileImportState>>({});
   const importPollingRefs = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const [globalQueueStats, setGlobalQueueStats] = useState<{
+    activeImports: number;
+    queuedImports: number;
+  } | null>(null);
 
   const loadStorageUsage = async () => {
     const workspaceId = user?.workspaceId;
@@ -141,43 +192,62 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
     const pollStatus = async () => {
       try {
-        const res: any = await apiClient.get(`/api/ontology/status/${encodeURIComponent(ontologyProjectId)}`);
+        const [res, queueRes]: any[] = await Promise.all([
+          apiClient.get(`/api/ontology/status/${encodeURIComponent(ontologyProjectId)}`),
+          apiClient.get(`/api/import-queue/position/${encodeURIComponent(ontologyProjectId)}`).catch(() => null),
+        ]);
         // API returns { success: true, data: { status, ... } }; axios wraps that in res.data.
         // Unwrap both layers so we reach the actual status fields.
         const envelope = res?.data || res;
         const data = envelope?.data || envelope;
         const status = data?.status || data?.state || null;
-        const progress = typeof data?.progress === 'number' ? data.progress : 0;
-        const message = data?.statusMessage || data?.message || (data?.metadata && typeof data.metadata.message === 'string' ? data.metadata.message : '') || '';
-        const graphSize = typeof data?.graphSize === 'number' ? data.graphSize : undefined;
+        const progress = typeof data?.progress === "number" ? data.progress : 0;
+        const message =
+          data?.statusMessage ||
+          data?.message ||
+          (data?.metadata && typeof data.metadata.message === "string" ? data.metadata.message : "") ||
+          "";
+        const graphSize = typeof data?.graphSize === "number" ? data.graphSize : undefined;
+
+        const queueData = queueRes?.data || queueRes;
+        const queueFields: Pick<FileImportState, "inQueue" | "queuePosition" | "totalInQueue" | "estimatedWaitMs"> =
+          queueData?.inQueue
+            ? {
+                inQueue: true,
+                queuePosition: queueData.position ?? 0,
+                totalInQueue: queueData.totalInQueue ?? 0,
+                estimatedWaitMs: queueData.estimatedWaitMs ?? 0,
+              }
+            : {};
 
         if (!isMountedRef.current) return;
 
-        const formatTriples = (n: number) =>
-          n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M triples` : `${n.toLocaleString()} triples`;
-
-        if (status === 'COMPLETED') {
+        if (status === "COMPLETED") {
           clearInterval(importPollingRefs.current[file.id]);
           delete importPollingRefs.current[file.id];
-          const doneMsg = graphSize && graphSize > 0 ? `${formatTriples(graphSize)} — ready` : 'Ready to open';
-          setFileImportStates(prev => ({
+          const doneMsg = graphSize && graphSize > 0 ? `${formatTriples(graphSize)} — ready` : "Ready to open";
+          setFileImportStates((prev) => ({
             ...prev,
-            [file.id]: { status: 'COMPLETED', progress: 100, message: doneMsg, graphSize },
+            [file.id]: { status: "COMPLETED", progress: 100, message: doneMsg, graphSize },
           }));
-        } else if (status === 'ERROR' || status === 'FAILED') {
+        } else if (status === "ERROR" || status === "FAILED") {
           clearInterval(importPollingRefs.current[file.id]);
           delete importPollingRefs.current[file.id];
-          setFileImportStates(prev => ({
+          setFileImportStates((prev) => ({
             ...prev,
-            [file.id]: { status: 'FAILED', progress: 0, message: 'Import failed', graphSize },
+            [file.id]: { status: "FAILED", progress: 0, message: "Import failed", graphSize },
           }));
         } else if (status) {
-          const importingMsg = graphSize && graphSize > 0
-            ? `${formatTriples(graphSize)} loaded…`
-            : message || 'Importing…';
-          setFileImportStates(prev => ({
+          const importingMsg = buildImportDisplayMessage(progress, message, graphSize, queueFields);
+          setFileImportStates((prev) => ({
             ...prev,
-            [file.id]: { status: 'IMPORTING', progress, message: importingMsg, graphSize },
+            [file.id]: {
+              status: "IMPORTING",
+              progress,
+              message: importingMsg,
+              graphSize,
+              ...queueFields,
+            },
           }));
         }
       } catch {
@@ -295,6 +365,70 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       Object.values(importPollingRefs.current).forEach(clearInterval);
     };
   }, []);
+
+  const hasActiveImports = Object.values(fileImportStates).some((s) => s.status === "IMPORTING");
+
+  useEffect(() => {
+    if (!hasActiveImports) {
+      setGlobalQueueStats(null);
+      return;
+    }
+
+    const pollGlobalQueue = async () => {
+      try {
+        const res: any = await apiClient.get("/api/import-queue/stats");
+        const stats = res?.data || res;
+        if (stats && typeof stats.activeImports === "number") {
+          setGlobalQueueStats({
+            activeImports: stats.activeImports,
+            queuedImports: stats.queuedImports ?? 0,
+          });
+        }
+      } catch {
+        // Non-blocking
+      }
+    };
+
+    pollGlobalQueue();
+    const intervalId = setInterval(pollGlobalQueue, 3000);
+    return () => clearInterval(intervalId);
+  }, [hasActiveImports]);
+
+  useEffect(() => {
+    const prefix = `${projectId}--`;
+
+    const handleQueueUpdate = (e: Event) => {
+      const status = (e as CustomEvent).detail;
+      if (!status?.projectId?.startsWith(prefix)) return;
+      const fileId = status.projectId.slice(prefix.length);
+      setFileImportStates((prev) => {
+        const current = prev[fileId];
+        if (!current || current.status !== "IMPORTING") return prev;
+        const queueFields = {
+          inQueue: true,
+          queuePosition: status.queuePosition ?? 0,
+          totalInQueue: status.totalInQueue ?? 0,
+          estimatedWaitMs: status.estimatedWaitTimeMs ?? 0,
+        };
+        return {
+          ...prev,
+          [fileId]: {
+            ...current,
+            ...queueFields,
+            message: buildImportDisplayMessage(
+              current.progress,
+              status.message || current.message,
+              current.graphSize,
+              queueFields,
+            ),
+          },
+        };
+      });
+    };
+
+    window.addEventListener("queueStatusUpdate", handleQueueUpdate);
+    return () => window.removeEventListener("queueStatusUpdate", handleQueueUpdate);
+  }, [projectId]);
 
   // Listen for file import completion messages from extension
   useEffect(() => {
@@ -457,9 +591,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       // Send as multipart/form-data
       const uploadResponse = await apiClient.post(`/api/projects/${projectId}/files`, formData, {
         timeout: 600000, // 10 minute timeout for very large files
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
             const uploadPercent = Math.round((progressEvent.loaded / progressEvent.total) * 90);
@@ -898,6 +1029,34 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         </div>
       </div>
 
+      {globalQueueStats &&
+        (globalQueueStats.activeImports > 0 || globalQueueStats.queuedImports > 0) && (
+          <div className="bg-purple-50 border-b border-purple-200 px-6 py-2">
+            <div className="max-w-7xl mx-auto flex items-center gap-4 text-xs text-purple-900">
+              <span className="flex items-center gap-1.5 font-medium">
+                <Loader2
+                  size={13}
+                  className={globalQueueStats.activeImports > 0 ? "animate-spin text-blue-600" : "text-gray-400"}
+                />
+                {globalQueueStats.activeImports} processing
+              </span>
+              {globalQueueStats.queuedImports > 0 && (
+                <>
+                  <span className="text-purple-300">|</span>
+                  <span className="flex items-center gap-1.5">
+                    <Clock size={13} className="text-purple-600" />
+                    {globalQueueStats.queuedImports} waiting in queue
+                  </span>
+                  <span className="flex items-center gap-1.5 text-purple-700">
+                    <Users size={13} />
+                    Files show their queue position on the card below
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
       {/* Content */}
       <div className="max-w-7xl mx-auto px-6 py-6 overflow-y-auto" style={{ maxHeight: "calc(100vh - 280px)" }}>
         {loading ? (
@@ -964,7 +1123,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               const isImportDone = importState?.status === 'COMPLETED';
               const isImportFailed = importState?.status === 'FAILED';
               const importProgress = importState?.progress ?? 0;
-              const importMessage = importState?.message || '';
+              const importMessage = importState?.message || "";
+              const isQueued = isImporting && (importState?.queuePosition ?? 0) > 0;
+              const isProcessingNow = isImporting && importState?.inQueue && importState?.queuePosition === 0;
 
               return (
                 <div
@@ -972,7 +1133,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   onClick={() => !isImporting && handleFileClick(file)}
                   className={`relative overflow-hidden bg-white rounded-lg border-2 p-4 transition-all hover:shadow-lg ${
                     isImporting
-                      ? 'border-blue-300 cursor-default'
+                      ? isQueued
+                        ? "border-purple-300 cursor-default"
+                        : "border-blue-300 cursor-default"
                       : isImportDone
                       ? 'border-green-400 cursor-pointer hover:border-green-500'
                       : isImportFailed
@@ -1043,12 +1206,24 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   </h3>
 
                   {isImporting && (
-                    <p className="text-xs text-blue-600 mb-1">
-                      {importMessage}
-                    </p>
+                    <div className="mb-2 space-y-1">
+                      {isQueued && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-semibold text-purple-700">
+                          <Clock size={10} />
+                          Queue #{importState?.queuePosition}
+                        </span>
+                      )}
+                      {isProcessingNow && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                          <Loader2 size={10} className="animate-spin" />
+                          Processing now
+                        </span>
+                      )}
+                      <p className={`text-xs ${isQueued ? "text-purple-700" : "text-blue-600"}`}>{importMessage}</p>
+                    </div>
                   )}
                   {isImportFailed && (
-                    <p className="text-xs text-red-500 mb-1">{importMessage || 'Import failed — click to retry'}</p>
+                    <p className="text-xs text-red-500 mb-1">{importMessage || "Import failed — click to retry"}</p>
                   )}
 
                   <div className="flex items-center gap-4 text-xs text-gray-500 mb-2">
@@ -1064,7 +1239,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                     <button
                       data-testid="import-open-btn"
                       className="w-full mt-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 transition-colors"
-                      onClick={(e) => { e.stopPropagation(); onFileSelect(file.id, file.name); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onFileSelect(file.id, file.name);
+                      }}
                     >
                       <FolderOpen size={14} />
                       Open
@@ -1108,7 +1286,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   const isImportDone = importState?.status === 'COMPLETED';
                   const isImportFailed = importState?.status === 'FAILED';
                   const importProgress = importState?.progress ?? 0;
-                  const importMessage = importState?.message || '';
+                  const importMessage = importState?.message || "";
+                  const isQueued = isImporting && (importState?.queuePosition ?? 0) > 0;
+                  const isProcessingNow = isImporting && importState?.inQueue && importState?.queuePosition === 0;
 
                   return (
                     <tr
@@ -1116,7 +1296,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                       onClick={() => !isImporting && handleFileClick(file)}
                       className={`transition-colors ${
                         isImporting
-                          ? 'bg-blue-50 cursor-default'
+                          ? isQueued
+                            ? "bg-purple-50 cursor-default"
+                            : "bg-blue-50 cursor-default"
                           : isImportDone
                           ? 'bg-green-50 cursor-pointer hover:bg-green-100'
                           : isImportFailed
@@ -1145,8 +1327,14 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                               {file.name}
                             </span>
                             {isImporting && (
-                              <div className="text-xs text-blue-600 mt-0.5">
-                                {importMessage || 'Importing…'}
+                              <div className={`text-xs mt-0.5 ${isQueued ? "text-purple-700" : "text-blue-600"}`}>
+                                {isQueued && (
+                                  <span className="mr-1 font-semibold">Queue #{importState?.queuePosition} ·</span>
+                                )}
+                                {isProcessingNow && (
+                                  <span className="mr-1 font-semibold">Processing now ·</span>
+                                )}
+                                {importMessage || "Importing…"}
                               </div>
                             )}
                           </div>

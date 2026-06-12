@@ -878,7 +878,7 @@ public class ProjectLoadController {
                     if ("COMPLETED".equals(status.status()) && graphReady && !hierarchyReady) {
                         data.put("hierarchyWarming", true);
                         if (status.statusMessage() == null || status.statusMessage().isBlank()) {
-                            data.put("statusMessage", "Triple store ready — loading class tree…");
+                            data.put("statusMessage", "Loading class hierarchy…");
                         }
                     }
                     return ResponseEntity.ok(Map.of("success", true, "data", data));

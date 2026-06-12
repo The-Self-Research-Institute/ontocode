@@ -28,6 +28,7 @@ import { notificationService } from '../services/notificationService';
 import { openOntologyFile, fileContentToBase64 } from './fileAccess';
 import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
 import { getGatewayUrl } from '../config/deploymentConfig';
+import { uploadFormDataWithProgress } from './uploadWithProgress';
 
 let browserZoteroLibrarySessionCounter = 0;
 
@@ -807,16 +808,14 @@ function handleBrowserMessage(message: any) {
                     if (message.skipDuplicateCheck) query.set('action', 'replace');
 
                     const httpPostStart = Date.now();
-                    const resp = await fetch(
-                        `${baseUrl}/api/ontology/upload/${encodeURIComponent(uploadProjectId)}?${query.toString()}`,
-                        {
-                            method: 'POST',
-                            headers: token ? { Authorization: `Bearer ${token}` } : {},
-                            body: formData,
-                        }
-                    );
-
-                    const responseText = await resp.text();
+                    const uploadUrl = `${baseUrl}/api/ontology/upload/${encodeURIComponent(uploadProjectId)}?${query.toString()}`;
+                    const uploadResult = await uploadFormDataWithProgress(uploadUrl, formData, {
+                        headers: token ? { Authorization: `Bearer ${token}` } : {},
+                        timeoutMs: 7_200_000,
+                        projectId: uploadProjectId,
+                    });
+                    const resp = { ok: uploadResult.ok, status: uploadResult.status };
+                    const responseText = uploadResult.text;
                     console.log(`[BrowserBridge] [PERF] HTTP POST upload: ${Date.now() - httpPostStart}ms`);
 
                     let responseData: any = {};
@@ -935,7 +934,7 @@ function handleBrowserMessage(message: any) {
                                         return;
                                     }
                                     if (status === 'FAILED' || status === 'ERROR') {
-                                        postToSelf({ type: 'importFailed', projectId: actualProjectId, error: payload?.statusMessage || 'Import failed in GraphDB' });
+                                        postToSelf({ type: 'importFailed', projectId: actualProjectId, error: payload?.statusMessage || 'Import failed' });
                                         return;
                                     }
 
@@ -961,7 +960,7 @@ function handleBrowserMessage(message: any) {
                                 }
                             }
                             // Timeout
-                            postToSelf({ type: 'importFailed', projectId: actualProjectId, error: 'Import timed out waiting for GraphDB processing' });
+                            postToSelf({ type: 'importFailed', projectId: actualProjectId, error: 'Import timed out waiting for processing to complete' });
                         };
                         pollStatus();
                     } else if (responseData.isDuplicate) {
@@ -1006,7 +1005,23 @@ function handleBrowserMessage(message: any) {
                     formData.append('file', fileBlob, message.fileName);
                     formData.append('fileName', message.fileName);
                     formData.append('fileType', 'owl');
-                    await apiClient.post(`/api/projects/${message.projectId}/files`, formData);
+                    await apiClient.post(`/api/projects/${message.projectId}/files`, formData, {
+                        onUploadProgress: (progressEvent) => {
+                            if (progressEvent.total) {
+                                const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+                                postToSelf({
+                                    type: 'uploadProgress',
+                                    projectId: message.projectId,
+                                    percent,
+                                    loaded: progressEvent.loaded,
+                                    total: progressEvent.total,
+                                    message: percent >= 100
+                                        ? 'Upload complete. Processing on server...'
+                                        : `Uploading: ${percent}%`,
+                                });
+                            }
+                        },
+                    });
                     console.log('[BrowserBridge] uploadFileToProject success');
                 } catch (err: any) {
                     console.error('[BrowserBridge] uploadFileToProject error:', err);
@@ -1283,11 +1298,38 @@ function handleBrowserMessage(message: any) {
         }
 
         case 'getQueueStatus': {
-            // No background queue in browser mode; signal completed
-            postToSelf({
-                type: 'queueStatusUpdate',
-                status: { projectId: message.projectId, status: 'COMPLETED', position: 0 },
-            });
+            (async () => {
+                try {
+                    const positionData: any = await apiClient.get(`/api/import-queue/position/${message.projectId}`);
+                    if (!positionData?.inQueue) {
+                        postToSelf({
+                            type: 'queueStatusUpdate',
+                            status: {
+                                projectId: message.projectId,
+                                status: 'COMPLETED',
+                                queuePosition: 0,
+                                totalInQueue: 0,
+                                estimatedWaitTimeMs: 0,
+                                message: positionData?.message || 'Not in queue',
+                            },
+                        });
+                        return;
+                    }
+                    postToSelf({
+                        type: 'queueStatusUpdate',
+                        status: {
+                            projectId: message.projectId,
+                            status: positionData.status || 'QUEUED',
+                            queuePosition: positionData.position ?? 0,
+                            totalInQueue: positionData.totalInQueue ?? 0,
+                            estimatedWaitTimeMs: positionData.estimatedWaitMs ?? 0,
+                            message: positionData.message,
+                        },
+                    });
+                } catch (err) {
+                    console.warn('[BrowserBridge] getQueueStatus failed:', err);
+                }
+            })();
             break;
         }
 

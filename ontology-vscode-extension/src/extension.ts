@@ -1631,10 +1631,39 @@ class OntoCodePanel {
             console.log(`[Proxy] ${type.replace('api', '').toUpperCase()}: ${fullUrl}`, isPublicEndpoint ? '(public)' : '(authenticated)');
 
             // Set a timeout for requests (10 minutes default; 2 hours for ontology uploads up to 1GB)
-            const requestTimeoutMs = url.includes('/api/ontology/upload/')
+            const requestTimeoutMs = url.includes('/api/ontology/upload/') || /\/api\/projects\/[^/]+\/files/.test(url)
                 ? 7_200_000
                 : 600_000;
             const axiosConfig: any = { headers, timeout: requestTimeoutMs };
+
+            const extractUploadProjectId = (requestUrl: string): string | undefined => {
+                const uploadMatch = requestUrl.match(/\/api\/ontology\/upload\/([^/?]+)/);
+                if (uploadMatch) return decodeURIComponent(uploadMatch[1]);
+                const filesMatch = requestUrl.match(/\/api\/projects\/([^/]+)\/files/);
+                if (filesMatch) return decodeURIComponent(filesMatch[1]);
+                return undefined;
+            };
+
+            const isUploadUrl = url.includes('/api/ontology/upload/') || /\/api\/projects\/[^/]+\/files/.test(url);
+            const uploadProjectId = isUploadUrl ? extractUploadProjectId(url) : undefined;
+            if (uploadProjectId && type === 'apiPost') {
+                axiosConfig.onUploadProgress = (progressEvent) => {
+                    const percentCompleted = progressEvent.total
+                        ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
+                        : 0;
+                    const statusMsg = percentCompleted >= 100
+                        ? 'Upload complete. Processing on server...'
+                        : `Uploading: ${percentCompleted}%`;
+                    this.postMessage({
+                        type: 'uploadProgress',
+                        projectId: uploadProjectId,
+                        percent: percentCompleted,
+                        loaded: progressEvent.loaded,
+                        total: progressEvent.total ?? 0,
+                        message: statusMsg,
+                    });
+                };
+            }
 
             // Detect multipart upload requests reconstructed from webview FormData
             const body = (message as any).body;

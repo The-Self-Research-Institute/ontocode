@@ -3,18 +3,20 @@ package self.research.ontology.owlEditor.service;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Deque;
-import java.util.List;
 
 /**
- * Simple estimator that learns average per-feature processing time
- * from recent imports and produces an ETA for queued files.
+ * Estimates import duration for queue wait times.
+ * Baseline: file-size tiers (~1–5 min for large files). When recent imports of
+ * similar size exist, uses their actual bulk-load duration (no byte-rate extrapolation).
  */
 @Service
 public class ImportTimeEstimator {
 
-    private static final long DEFAULT_ESTIMATED_DURATION_MS = 5 * 60 * 1000;
+    private static final long DEFAULT_ESTIMATED_DURATION_MS = 3 * 60 * 1000;
+    /** Hard cap per file — large ontologies typically finish within a few minutes. */
+    private static final long MAX_ESTIMATE_MS = 8 * 60 * 1000;
+    private static final long MIN_ESTIMATE_MS = 20_000;
     private static final int MAX_SAMPLES = 20;
 
     private final Deque<ImportSample> samples = new ArrayDeque<>();
@@ -23,11 +25,11 @@ public class ImportTimeEstimator {
                                           Integer classCount,
                                           Integer annotationCount,
                                           long durationMs) {
-        if (durationMs <= 0) {
+        if (durationMs <= 0 || fileSizeBytes <= 0) {
             return;
         }
 
-        samples.addLast(new ImportSample(fileSizeBytes, safeCount(classCount), safeCount(annotationCount), durationMs));
+        samples.addLast(new ImportSample(fileSizeBytes, durationMs));
         while (samples.size() > MAX_SAMPLES) {
             samples.removeFirst();
         }
@@ -36,37 +38,16 @@ public class ImportTimeEstimator {
     public synchronized long estimateDurationMs(long fileSizeBytes,
                                                 Integer classCount,
                                                 Integer annotationCount) {
-        long fallback = getAverageDurationMs();
+        long tierEstimate = tierEstimateMs(fileSizeBytes);
+        long similarSampleMs = averageDurationForSimilarSize(fileSizeBytes);
 
-        List<Long> estimates = new ArrayList<>(3);
-
-        double msPerByte = averageMsPerByte();
-        if (msPerByte > 0 && fileSizeBytes > 0) {
-            estimates.add(Math.round(msPerByte * fileSizeBytes));
+        if (similarSampleMs > 0) {
+            // Trust measured times for similar-sized files, but stay within tier bounds.
+            long blended = Math.round((tierEstimate + similarSampleMs) / 2.0);
+            return clamp(blended);
         }
 
-        double msPerClass = averageMsPerClass();
-        long classCountValue = safeCount(classCount);
-        if (msPerClass > 0 && classCountValue > 0) {
-            estimates.add(Math.round(msPerClass * classCountValue));
-        }
-
-        double msPerAnnotation = averageMsPerAnnotation();
-        long annotationCountValue = safeCount(annotationCount);
-        if (msPerAnnotation > 0 && annotationCountValue > 0) {
-            estimates.add(Math.round(msPerAnnotation * annotationCountValue));
-        }
-
-        if (estimates.isEmpty()) {
-            return fallback;
-        }
-
-        long average = (long) estimates.stream()
-                .mapToLong(Long::longValue)
-                .average()
-                .orElse(fallback);
-
-        return average > 0 ? average : fallback;
+        return clamp(tierEstimate);
     }
 
     public synchronized long getAverageDurationMs() {
@@ -74,62 +55,62 @@ public class ImportTimeEstimator {
             return DEFAULT_ESTIMATED_DURATION_MS;
         }
 
-        return (long) samples.stream()
+        return clamp((long) samples.stream()
                 .mapToLong(sample -> sample.durationMs)
                 .average()
-                .orElse(DEFAULT_ESTIMATED_DURATION_MS);
+                .orElse(DEFAULT_ESTIMATED_DURATION_MS));
     }
 
-    private double averageMsPerByte() {
-        double total = 0;
-        int count = 0;
-        for (ImportSample sample : samples) {
-            if (sample.fileSizeBytes > 0) {
-                total += (double) sample.durationMs / sample.fileSizeBytes;
-                count++;
-            }
+    /**
+     * Typical bulk-import duration by file size (observed: large OWL files ~1–5 min).
+     */
+    static long tierEstimateMs(long fileSizeBytes) {
+        if (fileSizeBytes <= 0) {
+            return DEFAULT_ESTIMATED_DURATION_MS;
         }
-        return count == 0 ? 0 : total / count;
-    }
-
-    private double averageMsPerClass() {
-        double total = 0;
-        int count = 0;
-        for (ImportSample sample : samples) {
-            if (sample.classCount > 0) {
-                total += (double) sample.durationMs / sample.classCount;
-                count++;
-            }
+        long mb = fileSizeBytes / (1024 * 1024);
+        if (mb < 1) {
+            return 45_000;
         }
-        return count == 0 ? 0 : total / count;
-    }
-
-    private double averageMsPerAnnotation() {
-        double total = 0;
-        int count = 0;
-        for (ImportSample sample : samples) {
-            if (sample.annotationCount > 0) {
-                total += (double) sample.durationMs / sample.annotationCount;
-                count++;
-            }
+        if (mb < 10) {
+            return 90_000;
         }
-        return count == 0 ? 0 : total / count;
+        if (mb < 50) {
+            return 2 * 60_000;
+        }
+        if (mb < 150) {
+            return 3 * 60_000;
+        }
+        if (mb < 300) {
+            return 4 * 60_000;
+        }
+        return 5 * 60_000;
     }
 
-    private long safeCount(Integer value) {
-        return value == null ? 0 : Math.max(0, value);
+    private long averageDurationForSimilarSize(long targetFileSizeBytes) {
+        return (long) samples.stream()
+                .filter(sample -> isSimilarSize(sample.fileSizeBytes, targetFileSizeBytes))
+                .mapToLong(sample -> sample.durationMs)
+                .average()
+                .orElse(0);
+    }
+
+    private static boolean isSimilarSize(long sampleBytes, long targetBytes) {
+        long min = Math.min(sampleBytes, targetBytes);
+        long max = Math.max(sampleBytes, targetBytes);
+        return max <= min * 4L;
+    }
+
+    private static long clamp(long ms) {
+        return Math.max(MIN_ESTIMATE_MS, Math.min(MAX_ESTIMATE_MS, ms));
     }
 
     private static final class ImportSample {
         private final long fileSizeBytes;
-        private final long classCount;
-        private final long annotationCount;
         private final long durationMs;
 
-        private ImportSample(long fileSizeBytes, long classCount, long annotationCount, long durationMs) {
+        private ImportSample(long fileSizeBytes, long durationMs) {
             this.fileSizeBytes = Math.max(0, fileSizeBytes);
-            this.classCount = Math.max(0, classCount);
-            this.annotationCount = Math.max(0, annotationCount);
             this.durationMs = durationMs;
         }
     }
