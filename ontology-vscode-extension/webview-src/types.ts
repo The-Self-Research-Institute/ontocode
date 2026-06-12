@@ -17,6 +17,8 @@ export interface TreeNode {
   equivalentClasses?: { iri: string; label: string }[];
   isUnsatisfiable?: boolean;
   subClassOfAxioms?: Axiom[];
+  inferredSubClassOfAxioms?: Axiom[];
+  inferredEquivalentClassesAxioms?: Axiom[];
   disjointClassesAxioms?: Axiom[];
   disjointUnionAxioms?: Axiom[];
   hasKeyAxioms?: Axiom[];
@@ -78,7 +80,7 @@ export interface PropertyAssertion {
 
 export interface Axiom {
   id: string;
-  type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith' | 'DisjointUnionOf' | 'HasKey';
+  type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith' | 'DisjointUnionOf' | 'HasKey' | 'Instance';
   definition: string;
   // Fields for restrictions (returned by backend when axiom is a restriction)
   isRestriction?: boolean | string;

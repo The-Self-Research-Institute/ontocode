@@ -93,12 +93,13 @@ const UsageTab: React.FC<{
 
   if (!loaded && !loading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+      <div className="flex flex-col items-center justify-center min-h-[200px] py-12 p-6 text-center">
         <div className="text-sm text-gray-600 mb-3">
           Usage lookup for <span className="font-semibold">{label}</span> can be slow on large ontologies.
         </div>
         <button
           onClick={loadUsages}
+          data-testid="load-usage-btn"
           className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700"
         >
           Load usage
@@ -970,7 +971,7 @@ const ClassEditor: React.FC<{
 
         await ontologyMutationService.replaceAxiom(
           projectId, item.id, axiomType, oldDesc, newDesc,
-          user?.email, user?.displayName || user?.email,
+          user?.email, user?.username || user?.email,
         );
 
         await loadClassDetails();
@@ -1136,7 +1137,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 definition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               console.log("[ClassEditor] addEquivalentClass completed successfully");
               break;
@@ -1151,7 +1152,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 definition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               console.log("[ClassEditor] addSubClassOf completed successfully");
               break;
@@ -1166,7 +1167,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 definition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               console.log("[ClassEditor] addDisjointWith completed successfully");
               break;
@@ -1284,7 +1285,7 @@ const ClassEditor: React.FC<{
               item.id,
               id,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             break;
           case "SubClassOf":
@@ -1298,7 +1299,7 @@ const ClassEditor: React.FC<{
               item.id,
               id,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             console.log("[ClassEditor] deleteSubClassOf completed");
             break;
@@ -1309,7 +1310,7 @@ const ClassEditor: React.FC<{
               item.id,
               id,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             break;
         }
@@ -1347,7 +1348,7 @@ const ClassEditor: React.FC<{
               oldId,
               newDefinition,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             break;
           case "SubClassOf":
@@ -1357,7 +1358,7 @@ const ClassEditor: React.FC<{
               oldId,
               newDefinition,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             break;
           case "DisjointWith":
@@ -1367,7 +1368,7 @@ const ClassEditor: React.FC<{
               oldId,
               newDefinition,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             break;
         }
@@ -1384,7 +1385,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 oldId,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
             case "SubClassOf":
@@ -1393,7 +1394,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 oldId,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
             case "DisjointWith":
@@ -1402,7 +1403,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 oldId,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
           }
@@ -1420,7 +1421,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 newDefinition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
             case "SubClassOf":
@@ -1429,7 +1430,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 newDefinition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
             case "DisjointWith":
@@ -1438,7 +1439,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 newDefinition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
           }
@@ -1812,7 +1813,7 @@ const ClassEditor: React.FC<{
           );
           return;
         }
-        await ontologyMutationService.addEquivalentClass(projectId, subjectIri, objectIri, user?.email, user?.displayName || user?.email);
+        await ontologyMutationService.addEquivalentClass(projectId, subjectIri, objectIri, user?.email, user?.username || user?.email);
         await new Promise((resolve) => setTimeout(resolve, 500));
         await loadClassDetails();
         return;

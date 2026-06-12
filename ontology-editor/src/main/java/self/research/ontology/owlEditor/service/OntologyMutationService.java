@@ -11,6 +11,7 @@ import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.query.BindingSet;
+import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.controller.VisualizationController;
 
 import java.util.List;
@@ -45,6 +46,9 @@ public class OntologyMutationService {
 
     @Autowired(required = false) @Nullable
     private HierarchyIndexService hierarchyIndexService;
+
+    @Autowired(required = false) @Nullable
+    private ProjectOntologyCache ontologyCache;
 
     public OntologyMutationService(GraphDBDatasetService datasetService,
                                    OntologyIndexService indexService,
@@ -107,6 +111,12 @@ public class OntologyMutationService {
             datasetService.execUpdate(projectId, sparql);
             long sparqlDuration = System.currentTimeMillis() - sparqlStart;
             log.info("[MUTATION] SPARQL update completed in {}ms for project={}", sparqlDuration, projectId);
+
+            // Evict OWLAPI in-memory cache so the fast-path returns fresh data after mutations
+            if (ontologyCache != null) {
+                ontologyCache.evict(projectId);
+                log.info("[MUTATION] Evicted OWLAPI in-memory cache for project={}", projectId);
+            }
 
             // Evict MongoDB persistent top-level class cache so next read recomputes
             topLevelCacheService.evict(projectId);

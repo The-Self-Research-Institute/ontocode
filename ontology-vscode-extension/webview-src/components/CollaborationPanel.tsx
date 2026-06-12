@@ -454,7 +454,7 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                                                     <div className="text-xs text-gray-500">
                                                         by <span className="font-medium">{change.username}</span>
                                                         <span className="mx-1">•</span>
-                                                        {formatTime(change.timestamp)}
+                                                        {formatTime(new Date(change.timestamp).getTime())}
                                                     </div>
                                                 </div>
                                             </div>

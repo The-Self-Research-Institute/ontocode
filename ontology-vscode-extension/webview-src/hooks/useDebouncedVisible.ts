@@ -17,8 +17,8 @@ export function useDebouncedVisible(
 ): boolean {
   const [visible, setVisible] = useState(false);
   const visibleSinceRef = useRef<number | null>(null);
-  const showTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     clearTimeout(showTimerRef.current);
