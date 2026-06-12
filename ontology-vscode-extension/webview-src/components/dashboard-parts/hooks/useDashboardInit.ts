@@ -3558,8 +3558,7 @@ export function useDashboardInit(state: DashboardState) {
 
   useEffect(() => {
     // Initialize notification service to show toasts via collaboration context
-    // This is a one-time setup that shouldn't re-run
-    notificationService.onToast((options) => {
+    const unsubscribe = notificationService.onToast((options) => {
       collaboration.addNotification({
         type: options.type,
         message: `${options.title}: ${options.message}`,
@@ -3574,7 +3573,9 @@ export function useDashboardInit(state: DashboardState) {
     if (typeof window !== "undefined" && !window.vscode) {
       notificationService.requestPermission();
     }
-  }, []); // Empty deps - collaboration.addNotification is stable
+
+    return unsubscribe;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // Load previously installed plugins from localStorage

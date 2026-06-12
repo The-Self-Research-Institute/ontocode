@@ -762,6 +762,7 @@ const OpenFileDialog = ({
   onPartitionStrategyChange,
   isWorkspaceMode,
   onRefresh,
+  onCreateNewFile,
   isPlanExpired,
 }: {
   isOpen: boolean;
@@ -3070,6 +3071,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         const topLevelNodes: TreeNode[] = topLevelClasses.map((c: TopLevelClass) => ({
           ...c,
+          label: c.label ?? c.id ?? "",
           children: [],
           hasChildren: c.hasChildren !== false,
           subClassOfAxioms: [
@@ -3097,6 +3099,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         const applyTopLevelToHierarchy = (classes: TopLevelClass[], truncated = false, total = 0) => {
           const nodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
             ...c,
+            label: c.label ?? c.id ?? "",
             children: [],
             hasChildren: c.hasChildren !== false,
             subClassOfAxioms: [
@@ -4121,8 +4124,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     const axiom = generalClassAxioms[index];
     setEditingAxiomIndex(index);
     setAxiomDraft({
-      definition: axiom.subClass || axiom.definition || "",
-      superClassIri: axiom.superClass || axiom.superClassIri || "",
+      definition: axiom.subExpression || axiom.definition || "",
+      superClassIri: axiom.superClassIri || "",
     });
     setAxiomDialogOpen(true);
   };
@@ -4141,7 +4144,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Use PUT endpoint to update - backend expects oldValue as the full value string
       await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`, {
-        oldValue: oldAxiom.value || oldAxiom.subClass || oldAxiom.definition || "",
+        oldValue: oldAxiom.subExpression || oldAxiom.definition || "",
         subClass,
         superClass: superClass || "",
       });
@@ -4149,9 +4152,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Immediately update UI
       const updatedAxioms = [...generalClassAxioms];
       updatedAxioms[editingAxiomIndex] = {
-        value: `${subClass} SubClassOf ${superClass}`,
-        subClass,
-        superClass: superClass || "",
         definition: subClass,
         superClassIri: superClass || "",
         subExpression: subClass,
@@ -4176,8 +4176,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId) return;
     try {
       const axiom = generalClassAxioms[index];
-      // Backend expects the 'value' field or construct it from subClass
-      const value = axiom.value || axiom.subClass || axiom.definition || axiom.subExpression || "";
+      const value = axiom.subExpression || axiom.definition || "";
       console.log("[Dashboard] Deleting general class axiom:", { projectId, axiom, value });
 
       if (!value) {
@@ -4243,7 +4242,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId) return;
 
     const activeUsersInProject = Array.from(collaboration.state.activeUsers.values()).filter(
-      (u) => u.projectId === projectId && u.userId !== user?.id,
+      (u) => u.projectId === projectId && u.userId !== user?.userId,
     );
 
     if (activeUsersInProject.length > 0) {
@@ -4251,7 +4250,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       ontologyMutationService.setRealTimeSync(true);
       setSyncMode("public");
     }
-  }, [projectId, collaboration.state.activeUsers, user?.id]);
+  }, [projectId, collaboration.state.activeUsers, user?.userId]);
 
   // Collaborative cursor tracking - includes clicks and mouse movement
   useEffect(() => {
@@ -4266,7 +4265,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         window.vscode.postMessage({
           type: "broadcastCursor",
           projectId,
-          userId: user.id,
+          userId: user.userId,
           userName: user.username || user.email || "Anonymous",
           position: newCursor,
           timestamp: Date.now(),
@@ -4301,7 +4300,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
 
-      if (message.type === "cursorUpdate" && message.userId !== user?.id) {
+      if (message.type === "cursorUpdate" && message.userId !== user?.userId) {
         // Generate consistent color for each user
         const color = getUserColor(message.userId);
 
@@ -6079,6 +6078,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const topLevelNodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
         ...c,
+        label: c.label ?? c.id ?? "",
         children: [],
         hasChildren: c.hasChildren,
         subClassOfAxioms: [{ id: "sub1", type: "SubClassOf", definition: "Thing" }],
@@ -6300,7 +6300,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       ]);
       if (!METADATA_EVENTS.has(edit.type)) {
         const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
-        const currentUserId = user?.email || user?.id;
+        const currentUserId = user?.email || user?.userId;
         if (editUserId && currentUserId && editUserId === currentUserId) {
           console.log("[Dashboard] ⏭️ Skipping refresh - edit was made by current user");
           return;
@@ -6368,7 +6368,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setTimeout(() => {
             // Trigger refresh of current selected item to show updated annotations
             if (selectedItem) {
-              const entityId = selectedItem.id || selectedItem.iri;
+              const entityId = selectedItem.id || (selectedItem as any).iri;
               // Check if the edit is relevant to the selected item (optional optimization, but good for correctness)
               // The edit object usually has 'subject' or 'iri'
               const editSubject = (edit as any).subject || (edit as any).iri || (edit as any).id;
@@ -6844,24 +6844,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [projectId]); // Removed fetchData, showNotification to prevent infinite loop
 
   useEffect(() => {
-    // Initialize notification service to show toasts via collaboration context
-    // This is a one-time setup that shouldn't re-run
-    notificationService.onToast((options) => {
-      collaboration.addNotification({
-        type: options.type,
-        message: `${options.title}: ${options.message}`,
-        userId: "system",
-        username: "System",
-        userColor: "#6366f1",
-        timestamp: Date.now(),
-      });
-    });
-
     // Request notification permission for web browsers
+    // (toast subscription is handled in useDashboardInit to avoid double-firing)
     if (typeof window !== "undefined" && !window.vscode) {
       notificationService.requestPermission();
     }
-  }, []); // Empty deps - collaboration.addNotification is stable
+  }, []);
 
   useEffect(() => {
     // Load previously installed plugins from localStorage
@@ -7158,7 +7146,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Save will apply all drafts to GraphDB and export
       const startTime = Date.now();
-      const saveUrl = `/api/ontology/save/${projectId}?userId=${user?.id || "anonymous"}&username=${encodeURIComponent(user?.username || "Anonymous")}`;
+      const saveUrl = `/api/ontology/save/${projectId}?userId=${user?.userId || "anonymous"}&username=${encodeURIComponent(user?.username || "Anonymous")}`;
       console.log("[Dashboard] 📤 Save URL:", saveUrl);
       const response = await apiClient.post(saveUrl);
       const duration = Date.now() - startTime;
@@ -7202,7 +7190,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     } finally {
       setIsSaving(false);
     }
-  }, [projectId, isSaving, user?.id, user?.username]);
+  }, [projectId, isSaving, user?.userId, user?.username]);
 
   // Switch to a different file (with unsaved changes check)
   const handleSwitchFile = useCallback(
@@ -9442,8 +9430,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Other shortcuts only for Classes tab
       if (entitiesTab !== "Classes") return;
 
-      // Ctrl+\ or Cmd+\ - Add Subclass
-      if ((e.ctrlKey || e.metaKey) && e.key === "\\") {
+      // Ctrl+E (tooltip) or Ctrl+\ - Add Subclass
+      if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E" || e.key === "\\")) {
         e.preventDefault();
         handleAddItem("subclass");
       }
@@ -12309,7 +12297,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <div className="space-y-2">
                     {ontologyAnnotations.map((annotation, idx) => {
                         const key = `${annotation.propertyIri}-${annotation.value}-${idx}`;
-                        const propertyIri = annotation.propertyIri || annotation.property || "";
+                        const propertyIri = annotation.propertyIri || "";
                         const propertyLabel = propertyIri.includes("#")
                           ? propertyIri.split("#").pop()
                           : propertyIri.includes("/")
@@ -12815,14 +12803,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                                       Axiom #{idx + 1}
                                     </div>
                                     <div className="font-medium text-xs mb-1" style={{ color: "var(--text-primary)" }}>
-                                      {axiom.subClass || axiom.definition || "Anonymous class expression"}
+                                      {axiom.subExpression || axiom.definition || "Anonymous class expression"}
                                     </div>
-                                    {(axiom.superClass || axiom.superClassIri) && (
+                                    {axiom.superClassIri && (
                                       <div
                                         className="text-[10px] font-mono break-all"
                                         style={{ color: "var(--text-tertiary)" }}
                                       >
-                                        SubClassOf: {axiom.superClass || axiom.superClassIri}
+                                        SubClassOf: {axiom.superClassIri}
                                       </div>
                                     )}
                                   </div>
@@ -13583,7 +13571,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     setSelectorEditingItem(editingItem || null);
 
     // For Data Property ranges, show the datatype selector instead of class expression
-    if (target === "range" && selectedItem?.type === "DatatypeProperty") {
+    if (target === "range" && (selectedItem as any)?.type === "DatatypeProperty") {
       setIsDataPropertyRangeDialogOpen(true);
       return;
     }
@@ -13811,7 +13799,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               projectId, selectedItem.id, finalExpression,
               user?.email || "anonymous", user?.username || "Anonymous",
             );
-            updateItemInState({ ...selectedItem, equivalentProperties: [...existing, finalExpression] });
+            updateItemInState({ ...selectedItem, equivalentProperties: [...existing as string[], finalExpression] });
             break;
           }
         }
@@ -14692,7 +14680,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               )}
               {!isDesktop() && (
                 <button
-                  onClick={logout}
+                  onClick={() => logout()}
                   className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer"
                 >
                   <LogOut size={14} />
@@ -14799,15 +14787,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                     onAddAnnotation={handleAddAnnotation}
                     onEditAnnotation={handleEditAnnotation}
                     onDeleteAnnotation={handleDeleteAnnotation}
-                    onAddDomainClick={(e) => handleOpenClassSelector("domain", e)}
-                    onAddRangeClick={(e) => handleOpenClassSelector("range", e)}
-                    onAddSubPropertyClick={(e) => handleOpenPropertySelector("subProperty", e)}
-                    onAddInverseClick={(e) => handleOpenPropertySelector("inverse", e)}
-                    onAddDisjointClick={(e) => handleOpenPropertySelector("disjoint", e)}
-                    onAddEquivalentClick={(e) => handleOpenPropertySelector("equivalent", e)}
-                    onAddAnnotationDomainClick={(e) => handleOpenAnnotationDomainDialog(e)}
-                    onAddAnnotationRangeClick={(e) => handleOpenAnnotationRangeDialog(e)}
-                    onAddAnnotationSuperpropertyClick={(e) => handleOpenAnnotationSuperpropertyDialog(e)}
+                    onAddDomainClick={() => handleOpenClassSelector("domain")}
+                    onAddRangeClick={() => handleOpenClassSelector("range")}
+                    onAddSubPropertyClick={() => handleOpenPropertySelector("subProperty")}
+                    onAddInverseClick={() => handleOpenPropertySelector("inverse")}
+                    onAddDisjointClick={() => handleOpenPropertySelector("disjoint")}
+                    onAddEquivalentClick={() => handleOpenPropertySelector("equivalent")}
+                    onAddAnnotationDomainClick={() => handleOpenAnnotationDomainDialog()}
+                    onAddAnnotationRangeClick={() => handleOpenAnnotationRangeDialog()}
+                    onAddAnnotationSuperpropertyClick={() => handleOpenAnnotationSuperpropertyDialog()}
                     classHierarchy={classHierarchy}
                     objectProperties={objectProperties}
                     dataProperties={dataProperties}
@@ -14858,7 +14846,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         onToggleNode={toggleNode}
         onAddClass={(type) => handleAddItem(type)}
         onDeleteClass={() => handleDeleteItem()}
-        onAddProperty={(type) => handleAddItem(type)}
+        onAddDataProperty={(type) => handleAddItem(type)}
         onDeleteProperty={() => handleDeleteItem()}
         onRefreshClasses={refreshClassHierarchy}
         metadata={metadata}
@@ -15079,7 +15067,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         onConfirm={handlePropertySelected}
         propertyHierarchy={objectPropertyHierarchy}
-        propertyType={selectedItem?.type === "DatatypeProperty" ? "data" : "object"}
+        propertyType={(selectedItem as any)?.type === "DatatypeProperty" ? "data" : "object"}
         title={`Select ${selectorTarget ? selectorTarget.charAt(0).toUpperCase() + selectorTarget.slice(1) : "Property"}`}
       />
       <PropertyExpressionDialog
@@ -15123,15 +15111,15 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         onConfirm={handleObjectPropertySelected}
         objectPropertyHierarchy={
-          selectedItem?.type === "DatatypeProperty" ? dataPropertyHierarchy : objectPropertyHierarchy
+          (selectedItem as any)?.type === "DatatypeProperty" ? dataPropertyHierarchy : objectPropertyHierarchy
         }
         title={
           selectedItem ? `'${(selectedItem as Property).label || selectedItem.id.split("#").pop()}'` : "Select Property"
         }
         projectId={projectId || undefined}
         onRefresh={refreshProperties}
-        showInverseOption={selectorTarget !== "subProperty" && selectedItem?.type !== "DatatypeProperty"}
-        propertyType={selectedItem?.type === "DatatypeProperty" ? "data" : "object"}
+        showInverseOption={selectorTarget !== "subProperty" && (selectedItem as any)?.type !== "DatatypeProperty"}
+        propertyType={(selectedItem as any)?.type === "DatatypeProperty" ? "data" : "object"}
       />
 
       {/* Annotation Property Domain Dialog (Protégé-style) */}
@@ -15472,10 +15460,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         {collaboration.state.notifications.map((notification) => (
           <ToastNotification
             key={notification.id}
-            type={notification.type}
-            message={notification.message}
-            username={notification.username}
-            userColor={notification.userColor}
+            toasts={[{ id: notification.id, type: notification.type, message: notification.message, username: notification.username, color: notification.userColor }]}
             onDismiss={() => collaboration.removeNotification(notification.id)}
           />
         ))}

@@ -32,10 +32,14 @@ class NotificationService {
   }
 
   /**
-   * Register a callback for web-based toast notifications
+   * Register a callback for web-based toast notifications.
+   * Returns an unsubscribe function — call it in useEffect cleanup to avoid duplicates.
    */
-  onToast(callback: (options: NotificationOptions) => void): void {
+  onToast(callback: (options: NotificationOptions) => void): () => void {
     this.toastCallbacks.push(callback);
+    return () => {
+      this.toastCallbacks = this.toastCallbacks.filter(cb => cb !== callback);
+    };
   }
 
   /**

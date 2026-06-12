@@ -191,8 +191,8 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
   const scheduleSaveCacheToDisk = useCallback(() => {
     const list = citationsRef.current;
     if (!list.length) return;
-    if (saveCacheTimerRef.current) window.clearTimeout(saveCacheTimerRef.current);
-    saveCacheTimerRef.current = window.setTimeout(() => {
+    if (saveCacheTimerRef.current) clearTimeout(saveCacheTimerRef.current);
+    saveCacheTimerRef.current = setTimeout(() => {
       const snapshot = citationsRef.current;
       const te = totalEstimatedRef.current;
       const total =

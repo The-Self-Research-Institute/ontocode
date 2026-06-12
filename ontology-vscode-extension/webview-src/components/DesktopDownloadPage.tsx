@@ -155,7 +155,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
               <h2 className="text-xl font-semibold mb-1">{activeOption.label}</h2>
               <p className="text-sm text-white/50">{activeOption.requirements}</p>
             </div>
-            {os => <activeOption.icon size={32} className="text-white/30" />}
+            <activeOption.icon size={32} className="text-white/30" />
           </div>
 
           <div className="space-y-3">

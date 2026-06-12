@@ -1070,7 +1070,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               </button>
               {!isDesktop() && (
                 <button
-                  onClick={logout}
+                  onClick={() => logout()}
                   className="h-9 inline-flex items-center justify-center gap-2 px-3 sm:px-4 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                 >
                   <LogOut size={20} />

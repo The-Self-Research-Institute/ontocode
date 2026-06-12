@@ -66,6 +66,7 @@ interface EntityHierarchyProps {
   onLoadMoreTopLevel?: () => void;
   isLoadingMoreTopLevel?: boolean;
   topLevelTotal?: number;
+  excludeIds?: string[];
 }
 
 const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
