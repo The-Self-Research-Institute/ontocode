@@ -382,6 +382,13 @@ export const ontologyMutationService = {
   /**
    * Delete an annotation property
    */
+  async renameEntity(projectId: string, oldIri: string, newIri: string, userId?: string, username?: string): Promise<void> {
+    await apiClient.post(
+      `/api/ontology/entity/${encodeURIComponent(projectId)}/rename?userId=${encodeURIComponent(userId || 'anonymous')}&username=${encodeURIComponent(username || 'Anonymous')}`,
+      { oldIri, newIri },
+    );
+  },
+
   async deleteAnnotationProperty(projectId: string, iri: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteAnnotationProperty',
@@ -582,8 +589,24 @@ export const ontologyMutationService = {
   /**
    * Add a data property assertion to an individual
    */
-  async addDataPropertyAssertion(projectId: string, individualIri: string, propertyIri: string, literalValue: string, userId?: string, username?: string): Promise<void> {
-    await this.applyMutations(projectId, [{ type: 'addDataPropertyAssertion', iri: individualIri, property: propertyIri, value: literalValue }], undefined, userId, username);
+  async addDataPropertyAssertion(
+    projectId: string,
+    individualIri: string,
+    propertyIri: string,
+    literalValue: string,
+    userId?: string,
+    username?: string,
+    language?: string,
+    datatype?: string,
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addDataPropertyAssertion',
+      iri: individualIri,
+      property: propertyIri,
+      value: literalValue,
+      language,
+      datatype,
+    }], undefined, userId, username);
   },
 
   /**

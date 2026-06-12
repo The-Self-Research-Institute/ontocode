@@ -139,7 +139,9 @@ const IndividualEditor: React.FC<{
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
   onNavigate?: (iri: string, type: string) => void;
-}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy, dataPropertyHierarchy, isViewOnly = false, onViewOnlyAction, onNavigate }) => {
+  isReasonerRunning?: boolean;
+  selectedReasoner?: string;
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy, dataPropertyHierarchy, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT' }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [isNegativeAssertion, setIsNegativeAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
@@ -151,6 +153,7 @@ const IndividualEditor: React.FC<{
   const [allIndividuals, setAllIndividuals] = useState<Individual[]>([]);
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
   const [typeClassHierarchy, setTypeClassHierarchy] = useState<TreeNode[]>([]);
+  const [inferredTypes, setInferredTypes] = useState<Array<{ iri: string; label: string }>>([]);
 
   const loadIndividualDetails = async () => {
     if (!projectId || !item.id) return;
@@ -175,6 +178,29 @@ const IndividualEditor: React.FC<{
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!projectId || !item.id || !isReasonerRunning) {
+      setInferredTypes([]);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const response = await apiClient.get<any>(
+          `/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-individual-types?individualIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(selectedReasoner)}`,
+        );
+        const payload = response?.data ?? response;
+        const types = payload?.inferredTypes ?? payload?.data?.inferredTypes ?? [];
+        if (alive) {
+          setInferredTypes(Array.isArray(types) ? types : []);
+        }
+      } catch {
+        if (alive) setInferredTypes([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, [projectId, item.id, isReasonerRunning, selectedReasoner]);
 
   // Fetch individual details when component mounts or item changes.
   // Uses an "alive" flag so stale responses from a previously selected
@@ -263,9 +289,6 @@ const IndividualEditor: React.FC<{
     const propLabel = data?.propertyLabel || newAssertion.propertyLabel;
     const targetLabel = data?.targetLabel || newAssertion.targetLabel;
     const isObjProp = data ? data.isObjectProperty : newAssertion.isObjectProperty;
-    // Note: language and datatype are available in 'data' but backend support might be pending.
-    // We will pass them if the service supports it.
-
     if (!propLabel || !targetLabel) {
         notificationService.warning("Validation Error", "Property and value cannot be empty.");
         return;
@@ -301,7 +324,8 @@ const IndividualEditor: React.FC<{
           );
         } else {
           await ontologyMutationService.addDataPropertyAssertion(
-            projectId, item.id, propertyIri, targetLabel, userId, username
+            projectId, item.id, propertyIri, targetLabel, userId, username,
+            data?.language, data?.datatype,
           );
         }
       }
@@ -533,12 +557,43 @@ const IndividualEditor: React.FC<{
               </div>
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm p-1.5 space-y-1">
                 {item.types?.map(type => (
-                    <div key={type} className="text-xs p-1 bg-gray-50 rounded border border-gray-100 flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
-                        <span>{type.split('#').pop()}</span>
+                    <div key={type} className="group text-xs p-1 bg-gray-50 rounded border border-gray-100 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
+                          <span className="truncate">{type.split('#').pop()?.split('/').pop()}</span>
+                        </div>
+                        <button
+                          onClick={isViewOnly ? () => onViewOnlyAction?.() : async () => {
+                            try {
+                              await ontologyMutationService.removeClassAssertion(projectId, item.id, type);
+                              await loadIndividualDetails();
+                            } catch (error) {
+                              console.error('[IndividualEditor] Failed to remove type:', error);
+                              notificationService.error('Remove Failed', 'Failed to remove type assertion.');
+                            }
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200 flex-shrink-0"
+                          title={isViewOnly ? 'View-only: upgrade to edit' : 'Remove type'}
+                        >
+                          <Trash2 size={12} className="text-red-600" />
+                        </button>
                     </div>
                 ))}
-                {(!item.types || item.types.length === 0) && (
+                {inferredTypes.map((type) => (
+                    <div
+                      key={type.iri}
+                      className="text-xs p-1 bg-blue-50 rounded border border-blue-100 flex items-center justify-between gap-2 cursor-pointer hover:bg-blue-100"
+                      onClick={() => onNavigate?.(type.iri, 'class')}
+                      title={type.iri}
+                    >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"></div>
+                          <span className="truncate text-blue-900">{type.label || type.iri.split('#').pop()?.split('/').pop()}</span>
+                          <span className="text-[9px] uppercase text-blue-600 font-semibold flex-shrink-0">inferred</span>
+                        </div>
+                    </div>
+                ))}
+                {(!item.types || item.types.length === 0) && inferredTypes.length === 0 && (
                     <div className="text-xs text-gray-400 italic p-1">No types defined</div>
                 )}
               </div>

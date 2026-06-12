@@ -161,6 +161,26 @@ public class ProjectMetadataService {
                 .orElse(null);
     }
 
+    public long getMutationVersion(String projectId) {
+        return projectRepository.findById(projectId)
+                .map(ProjectDocument::getMutationVersion)
+                .map(v -> v != null ? v : 0L)
+                .orElse(0L);
+    }
+
+    /**
+     * Synchronous version bump — must complete before mutation HTTP response returns
+     * so other users' reads never see a stale OWLAPI model with a matching version.
+     */
+    public long incrementMutationVersion(String projectId) {
+        Instant now = Instant.now();
+        Update update = newProjectUpdate(projectId, now)
+                .inc("mutationVersion", 1)
+                .set("updatedAt", now);
+        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
+        return getMutationVersion(projectId);
+    }
+
     private Query projectQuery(String projectId) {
         return Query.query(Criteria.where("_id").is(projectId));
     }

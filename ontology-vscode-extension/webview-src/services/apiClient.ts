@@ -30,7 +30,36 @@ const TIMEOUT = 600_000; // Default API timeout (10 minutes)
 const UPLOAD_TIMEOUT = 7_200_000; // Up to 1GB uploads through gateway/editor (2 hours)
 
 function isUploadRequest(url: string): boolean {
-  return url.includes('/api/ontology/upload/');
+  return url.includes('/api/ontology/upload/') || /\/api\/projects\/[^/]+\/files/.test(url);
+}
+
+function extractUploadProjectId(url: string): string | undefined {
+  const uploadMatch = url.match(/\/api\/ontology\/upload\/([^/?]+)/);
+  if (uploadMatch) return decodeURIComponent(uploadMatch[1]);
+  const filesMatch = url.match(/\/api\/projects\/([^/]+)\/files/);
+  if (filesMatch) return decodeURIComponent(filesMatch[1]);
+  return undefined;
+}
+
+function dispatchUploadProgress(projectId: string, progressEvent: { loaded: number; total?: number }) {
+  const total = progressEvent.total ?? 0;
+  const percent = total ? Math.round((progressEvent.loaded * 100) / total) : 0;
+  const message =
+    percent >= 100
+      ? 'Upload complete. Processing on server...'
+      : `Uploading: ${percent}%`;
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      data: {
+        type: 'uploadProgress',
+        projectId,
+        percent,
+        loaded: progressEvent.loaded,
+        total,
+        message,
+      },
+    }),
+  );
 }
 
 // VS Code API detection
@@ -307,13 +336,38 @@ class ApiClient {
     } else {
       // When sending FormData, remove the default Content-Type so axios/browser
       // can auto-set multipart/form-data with the correct boundary.
+      const uploadProjectId = isUploadRequest(url) ? extractUploadProjectId(url) : undefined;
+      const userOnUploadProgress = config?.onUploadProgress;
       const postConfig = body instanceof FormData
         ? {
             ...config,
             timeout: isUploadRequest(url) ? UPLOAD_TIMEOUT : TIMEOUT,
             headers: { ...config?.headers, 'Content-Type': undefined },
+            onUploadProgress: (progressEvent: { loaded: number; total?: number }) => {
+              userOnUploadProgress?.(progressEvent as any);
+              if (uploadProjectId && progressEvent.total) {
+                dispatchUploadProgress(uploadProjectId, progressEvent);
+              }
+            },
           }
-        : { ...config, timeout: isUploadRequest(url) ? UPLOAD_TIMEOUT : config?.timeout ?? TIMEOUT };
+        : {
+            ...config,
+            timeout: isUploadRequest(url) ? UPLOAD_TIMEOUT : config?.timeout ?? TIMEOUT,
+            onUploadProgress: userOnUploadProgress
+              ? (progressEvent: { loaded: number; total?: number }) => {
+                  userOnUploadProgress(progressEvent as any);
+                  if (uploadProjectId && progressEvent.total) {
+                    dispatchUploadProgress(uploadProjectId, progressEvent);
+                  }
+                }
+              : uploadProjectId
+                ? (progressEvent: { loaded: number; total?: number }) => {
+                    if (progressEvent.total) {
+                      dispatchUploadProgress(uploadProjectId, progressEvent);
+                    }
+                  }
+                : undefined,
+          };
       const resp = await this.axiosClient!.post(url, body, postConfig);
       data = resp.data as T;
     }

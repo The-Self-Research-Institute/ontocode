@@ -40,7 +40,8 @@ import {
   Save,
   Trash2,
   ChevronRight,
-  ChevronDown
+  ChevronDown,
+  Zap
 } from 'lucide-react';
 
 interface ReasonerPluginProps {
@@ -261,7 +262,10 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set());
   const [expandedObjectProperties, setExpandedObjectProperties] = useState<Set<string>>(new Set());
   const [expandedDataProperties, setExpandedDataProperties] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<'classes' | 'objectProperties' | 'dataProperties'>('classes');
+  const [activeTab, setActiveTab] = useState<'classes' | 'objectProperties' | 'dataProperties' | 'inferredAxioms'>('classes');
+  const [inferredAxioms, setInferredAxioms] = useState<Array<{ axiomType: string; readable: string; axiom: string }>>([]);
+  const [inferredAxiomsTotal, setInferredAxiomsTotal] = useState(0);
+  const [inferredAxiomsFilter, setInferredAxiomsFilter] = useState('');
   const [hoveredClass, setHoveredClass] = useState<string | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
   const [explanations, setExplanations] = useState<Map<string, ExplanationData>>(new Map());
@@ -342,6 +346,23 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showReasonerMenu]);
+
+  const fetchInferredAxioms = useCallback(async (reasonerType: string) => {
+    try {
+      const encodedProjectId = encodeURIComponent(projectId);
+      const response = await fetch(
+        `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/inferred-axioms?reasonerType=${reasonerType}`,
+      );
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.axioms && Array.isArray(data.axioms)) {
+        setInferredAxioms(data.axioms);
+        setInferredAxiomsTotal(data.totalInferredAxioms || data.axioms.length);
+      }
+    } catch (err) {
+      console.warn('[ProtegeReasonerPlugin] Failed to fetch inferred axioms:', err);
+    }
+  }, [projectId, normalizedApiBaseUrl]);
 
   // Start reasoning
   const startReasoner = useCallback(async (task: 'consistency' | 'classification' | 'realization') => {
@@ -426,6 +447,9 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         if (!result.consistent && result.unsatisfiableClasses) {
           setUnsatisfiableClasses(result.unsatisfiableClasses);
         }
+        if (result.consistent) {
+          await fetchInferredAxioms(reasonerType);
+        }
       } else if (task === 'classification') {
         // Set consistency from classification result
         if (result.isConsistent !== undefined) {
@@ -440,6 +464,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         
         // Generate explanations for classes
         generateExplanations(result);
+        await fetchInferredAxioms(reasonerType);
       } else if (task === 'realization') {
         // Set consistency from realization result
         if (result.isConsistent !== undefined) {
@@ -461,7 +486,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, apiBaseUrl, selectedReasoner]);
+  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms]);
 
   // Generate explanations for reasoning results
   const generateExplanations = (classificationResult: any) => {
@@ -1395,7 +1420,8 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                     {[
                       { id: 'classes', label: 'Classes', icon: <Network size={14} /> },
                       { id: 'objectProperties', label: 'Object Properties', icon: <Link2 size={14} /> },
-                      { id: 'dataProperties', label: 'Data Properties', icon: <Database size={14} /> }
+                      { id: 'dataProperties', label: 'Data Properties', icon: <Database size={14} /> },
+                      { id: 'inferredAxioms', label: 'Inferred Axioms', icon: <Zap size={14} /> },
                     ].map((tab) => (
                       <button
                         key={tab.id}
@@ -1473,6 +1499,60 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                   ) : (
                     <div className={`flex items-center justify-center h-full text-sm italic ${isDark ? 'text-gray-600' : 'text-gray-500'}`}>
                       No inferred data property hierarchy available. Run the reasoner to generate results.
+                    </div>
+                  )
+                )}
+
+                {activeTab === 'inferredAxioms' && (
+                  inferredAxioms.length > 0 ? (
+                    <div className="space-y-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={inferredAxiomsFilter}
+                          onChange={(e) => setInferredAxiomsFilter(e.target.value)}
+                          placeholder="Filter axioms..."
+                          className={`flex-1 px-3 py-1.5 text-xs rounded border ${
+                            isDark ? 'bg-gray-800 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'
+                          }`}
+                        />
+                        <span className={`text-xs whitespace-nowrap ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                          {inferredAxiomsTotal > inferredAxioms.length
+                            ? `Showing ${inferredAxioms.length} of ${inferredAxiomsTotal}`
+                            : `${inferredAxioms.length} axioms`}
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        {inferredAxioms
+                          .filter((ax) => {
+                            const q = inferredAxiomsFilter.trim().toLowerCase();
+                            if (!q) return true;
+                            return (
+                              (ax.readable || '').toLowerCase().includes(q) ||
+                              (ax.axiom || '').toLowerCase().includes(q) ||
+                              (ax.axiomType || '').toLowerCase().includes(q)
+                            );
+                          })
+                          .map((ax, idx) => (
+                            <div
+                              key={idx}
+                              className={`px-3 py-2 rounded border text-xs font-mono ${
+                                isDark ? 'bg-gray-800/50 border-gray-700 text-gray-200' : 'bg-gray-50 border-gray-200 text-gray-800'
+                              }`}
+                            >
+                              <span className={`inline-block px-1.5 py-0.5 mr-2 rounded text-[10px] font-sans font-medium ${
+                                isDark ? 'bg-purple-900/40 text-purple-300' : 'bg-purple-100 text-purple-700'
+                              }`}>
+                                {ax.axiomType}
+                              </span>
+                              {ax.readable || ax.axiom}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={`flex items-center justify-center h-full text-sm italic ${isDark ? 'text-gray-600' : 'text-gray-500'}`}>
+                      No inferred axioms yet. Run consistency check or classification to populate this view.
                     </div>
                   )
                 )}

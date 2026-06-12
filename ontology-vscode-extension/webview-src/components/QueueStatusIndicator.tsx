@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Clock, Users, Loader2 } from 'lucide-react';
+import apiClient from '../services/apiClient';
+import { formatQueueWait } from '../utils/importStatusText';
 
 interface QueueStatus {
   projectId: string;
@@ -35,18 +37,56 @@ export const QueueStatusIndicator: React.FC<QueueStatusIndicatorProps> = ({
       }
     };
 
-    window.addEventListener('message', handleMessage);
+    const handleQueueCustomEvent = (e: Event) => {
+      const status = (e as CustomEvent).detail;
+      if (status?.projectId === projectId) {
+        setQueueStatus(status);
+      }
+    };
 
-    // Request current queue status
-    if (window.vscode) {
-      window.vscode.postMessage({
-        type: 'getQueueStatus',
-        projectId
-      });
-    }
+    window.addEventListener('message', handleMessage);
+    window.addEventListener('queueStatusUpdate', handleQueueCustomEvent);
+
+    const requestQueueStatus = () => {
+      if (window.vscode) {
+        window.vscode.postMessage({
+          type: 'getQueueStatus',
+          projectId
+        });
+      }
+    };
+
+    const pollQueueStatus = async () => {
+      try {
+        const positionData: any = await apiClient.get(`/api/import-queue/position/${projectId}`);
+        if (!positionData?.inQueue) {
+          return;
+        }
+        setQueueStatus({
+          projectId,
+          status: positionData.status === 'PROCESSING' ? 'PROCESSING' : 'QUEUED',
+          queuePosition: positionData.position ?? 0,
+          totalInQueue: positionData.totalInQueue ?? 0,
+          estimatedWaitTimeMs: positionData.estimatedWaitMs ?? 0,
+          message: positionData.message ?? '',
+          timestamp: Date.now(),
+        });
+      } catch {
+        // Queue endpoint may be unavailable during startup
+      }
+    };
+
+    requestQueueStatus();
+    pollQueueStatus();
+    const intervalId = setInterval(() => {
+      requestQueueStatus();
+      pollQueueStatus();
+    }, 3000);
 
     return () => {
       window.removeEventListener('message', handleMessage);
+      window.removeEventListener('queueStatusUpdate', handleQueueCustomEvent);
+      clearInterval(intervalId);
     };
   }, [projectId, visible]);
 
@@ -54,12 +94,7 @@ export const QueueStatusIndicator: React.FC<QueueStatusIndicatorProps> = ({
     return null;
   }
 
-  const formatWaitTime = (ms: number): string => {
-    const minutes = Math.ceil(ms / 60000);
-    if (minutes < 1) return 'Less than 1 minute';
-    if (minutes === 1) return '1 minute';
-    return `${minutes} minutes`;
-  };
+  const formatWaitTime = (ms: number): string => formatQueueWait(ms) ?? 'Less than 1 minute';
 
   const getStatusColor = () => {
     switch (queueStatus.status) {
@@ -154,10 +189,35 @@ export const GlobalQueueStats: React.FC<GlobalQueueStatsProps> = ({ visible = tr
       }
     };
 
+    const handleStatsCustomEvent = (e: Event) => {
+      setStats((e as CustomEvent).detail);
+    };
+
     window.addEventListener('message', handleMessage);
+    window.addEventListener('queueStatsUpdate', handleStatsCustomEvent);
+
+    const pollStats = async () => {
+      try {
+        const data: any = await apiClient.get('/api/import-queue/stats');
+        if (data && typeof data.activeImports === 'number') {
+          setStats({
+            activeImports: data.activeImports,
+            queuedImports: data.queuedImports ?? 0,
+            averageProcessingTimeMs: data.averageProcessingTimeMs ?? 0,
+          });
+        }
+      } catch {
+        // Stats endpoint may be unavailable during startup
+      }
+    };
+
+    pollStats();
+    const intervalId = setInterval(pollStats, 3000);
 
     return () => {
       window.removeEventListener('message', handleMessage);
+      window.removeEventListener('queueStatsUpdate', handleStatsCustomEvent);
+      clearInterval(intervalId);
     };
   }, [visible]);
 

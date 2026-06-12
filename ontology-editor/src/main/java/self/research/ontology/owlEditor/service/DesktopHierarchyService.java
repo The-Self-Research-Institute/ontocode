@@ -34,7 +34,13 @@ public class DesktopHierarchyService {
     @Autowired
     private OntologyMetricsComputer metricsComputer;
 
+    @Autowired(required = false)
+    private OwlApiMutationCoordinator mutationCoordinator;
+
     public boolean hasOntology(String projectId) {
+        if (mutationCoordinator != null) {
+            mutationCoordinator.ensureFreshForRead(projectId);
+        }
         return ontologyCache.has(projectId);
     }
 
@@ -84,6 +90,18 @@ public class DesktopHierarchyService {
     public Map<String, Object> classUsage(String projectId, String classIri) {
         return ontologyCache.get(projectId)
             .map(c -> buildClassUsage(c.ontology(), classIri))
+            .orElse(Collections.emptyMap());
+    }
+
+    public List<Map<String, Object>> classInstances(String projectId, String classIri) {
+        return ontologyCache.get(projectId)
+            .map(c -> buildClassInstances(c.ontology(), c.reasoner(), classIri))
+            .orElse(Collections.emptyList());
+    }
+
+    public Map<String, Map<String, Integer>> classInstanceCounts(String projectId) {
+        return ontologyCache.get(projectId)
+            .map(c -> buildClassInstanceCounts(c.ontology()))
             .orElse(Collections.emptyMap());
     }
 
@@ -370,6 +388,85 @@ public class DesktopHierarchyService {
             return dtIri.getShortForm();
         }
         return range.getClass().getSimpleName();
+    }
+
+    private Map<String, Map<String, Integer>> buildClassInstanceCounts(OWLOntology ont) {
+        Map<String, Map<String, Integer>> counts = new LinkedHashMap<>();
+        for (OWLClassAssertionAxiom ax : ont.getAxioms(org.semanticweb.owlapi.model.AxiomType.CLASS_ASSERTION)) {
+            OWLIndividual ind = ax.getIndividual();
+            OWLClassExpression ce = ax.getClassExpression();
+            if (!ind.isNamed() || ce.isAnonymous()) {
+                continue;
+            }
+            OWLClass cls = ce.asOWLClass();
+            if (cls.isOWLThing() || cls.isOWLNothing()) {
+                continue;
+            }
+            String classIri = cls.getIRI().toString();
+            Map<String, Integer> entry = counts.computeIfAbsent(classIri, k -> {
+                Map<String, Integer> m = new LinkedHashMap<>();
+                m.put("direct", 0);
+                m.put("inferred", 0);
+                m.put("total", 0);
+                return m;
+            });
+            entry.put("direct", entry.get("direct") + 1);
+            entry.put("total", entry.get("total") + 1);
+        }
+        return counts;
+    }
+
+    private List<Map<String, Object>> buildClassInstances(OWLOntology ont, OWLReasoner reasoner, String classIri) {
+        long start = System.currentTimeMillis();
+        OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
+        OWLClass cls = df.getOWLClass(IRI.create(classIri));
+        Set<String> assertedIris = new LinkedHashSet<>();
+        List<Map<String, Object>> instances = new ArrayList<>();
+
+        for (OWLClassAssertionAxiom ax : ont.getClassAssertionAxioms(cls)) {
+            OWLIndividual ind = ax.getIndividual();
+            if (!ind.isNamed()) {
+                continue;
+            }
+            String iri = ind.asOWLNamedIndividual().getIRI().toString();
+            if (!assertedIris.add(iri)) {
+                continue;
+            }
+            instances.add(individualInstanceEntry(ont, ind.asOWLNamedIndividual(), classIri, false));
+        }
+
+        OWLReasoner r = reasoner;
+        if (r != null) {
+            try {
+                for (OWLNamedIndividual ind : r.getInstances(cls, false).getFlattened()) {
+                    String iri = ind.getIRI().toString();
+                    if (assertedIris.contains(iri)) {
+                        continue;
+                    }
+                    instances.add(individualInstanceEntry(ont, ind, classIri, true));
+                }
+            } catch (Exception e) {
+                log.debug("[Desktop] Reasoner class instances failed for {}: {}", classIri, e.getMessage());
+            }
+        }
+
+        instances.sort(Comparator.comparing(m -> (String) m.get("label"), String.CASE_INSENSITIVE_ORDER));
+        log.info("[PERF][Desktop] classInstances({}) loaded {} in {}ms",
+                classIri, instances.size(), System.currentTimeMillis() - start);
+        return instances;
+    }
+
+    private Map<String, Object> individualInstanceEntry(OWLOntology ont,
+                                                        OWLNamedIndividual ind,
+                                                        String classIri,
+                                                        boolean inferred) {
+        String iri = ind.getIRI().toString();
+        Map<String, Object> individual = new LinkedHashMap<>();
+        individual.put("id", iri);
+        individual.put("label", getLabel(ont, ind.getIRI()));
+        individual.put("isInferred", inferred);
+        individual.put("types", List.of(classIri));
+        return individual;
     }
 
     private Map<String, Object> buildClassUsage(OWLOntology ont, String classIri) {

@@ -34,6 +34,7 @@ interface MainContentRouterProps {
 }
 
 export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, init, handlers, apiBaseUrl }) => {
+  const [importClosureMap, setImportClosureMap] = useState<Record<string, Array<{ iri: string; children?: any[] }>>>({});
   const {
     projectId, metadata, mainTab, entitiesTab,
     classHierarchy, inferredClassHierarchy,
@@ -105,6 +106,25 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     handleAddItem, handleCreateClass, handleDeleteAnnotation,
     handleAddDlToOntology, handleSaveOntologyIRIs, handleSaveGCI, handleDeleteGCI,
   } = handlers;
+
+  useEffect(() => {
+    if (!projectId || !showImportClosure) return;
+    const loadImportClosure = async () => {
+      try {
+        const res = await apiClient.get<any>(
+          `/api/ontology/metadata/${encodeProjectId(projectId)}/imports/closure`,
+        );
+        const payload = res?.data || res;
+        if (payload?.closure && typeof payload.closure === "object") {
+          setImportClosureMap(payload.closure);
+        }
+      } catch (error) {
+        console.warn("[MainContentRouter] Failed to load import closure:", error);
+      }
+    };
+    void loadImportClosure();
+  }, [projectId, showImportClosure, ontologyImports, encodeProjectId]);
+
   // #region Render Methods
 
   const getImportResolutionStatus = (iri: string): { label: string; tone: "success" | "warning" | "error" | "neutral"; detail: string } => {
@@ -931,13 +951,22 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                       </div>
                                       {showImportClosure && isExpanded && (
                                         <div
-                                          className="mt-2 ml-4 pl-3 border-l-2 text-[10px]"
+                                          className="mt-2 ml-4 pl-3 border-l-2 text-[10px] space-y-1"
                                           style={{ borderColor: "var(--border)", color: "var(--text-tertiary)" }}
                                         >
-                                          <div className="italic">Transitive imports would appear here</div>
-                                          <div className="text-[9px] mt-1" style={{ color: "var(--text-quaternary)" }}>
-                                            (Feature requires backend support)
-                                          </div>
+                                          {(importClosureMap[iri] || []).length === 0 ? (
+                                            <div className="italic">No transitive imports declared</div>
+                                          ) : (
+                                            (importClosureMap[iri] || []).map((child, childIdx) => {
+                                              const renderClosure = (node: { iri: string; children?: any[] }, depth = 0): React.ReactNode => (
+                                                <div key={`${node.iri}-${depth}`} style={{ marginLeft: depth * 12 }}>
+                                                  <div className="font-mono break-all">{node.iri}</div>
+                                                  {(node.children || []).map((c) => renderClosure(c, depth + 1))}
+                                                </div>
+                                              );
+                                              return <div key={`${child.iri}-${childIdx}`}>{renderClosure(child)}</div>;
+                                            })
+                                          )}
                                         </div>
                                       )}
                                     </div>

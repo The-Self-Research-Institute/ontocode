@@ -631,6 +631,52 @@ public class ReasonerController {
         return node;
     }
 
+    private List<Map<String, Object>> buildAnnotationPropertyHierarchy(OWLOntology ontology) {
+        Set<OWLAnnotationProperty> signature = ontology.getAnnotationPropertiesInSignature();
+        Map<String, Map<String, Object>> nodeMap = new LinkedHashMap<>();
+        Map<String, Set<String>> superMap = new HashMap<>();
+
+        for (OWLAnnotationProperty prop : signature) {
+            String iri = prop.getIRI().toString();
+            Map<String, Object> node = new HashMap<>();
+            node.put("id", iri);
+            node.put("label", getLabel(prop, ontology));
+            node.put("type", "AnnotationProperty");
+            node.put("children", new ArrayList<Map<String, Object>>());
+            node.put("hasChildren", false);
+            nodeMap.put(iri, node);
+        }
+
+        for (OWLSubAnnotationPropertyOfAxiom axiom : ontology.getAxioms(AxiomType.SUB_ANNOTATION_PROPERTY_OF)) {
+            if (!axiom.getSubProperty().isNamed() || !axiom.getSuperProperty().isNamed()) {
+                continue;
+            }
+            String sub = axiom.getSubProperty().asOWLAnnotationProperty().getIRI().toString();
+            String sup = axiom.getSuperProperty().asOWLAnnotationProperty().getIRI().toString();
+            if (!nodeMap.containsKey(sub) || !nodeMap.containsKey(sup) || sub.equals(sup)) {
+                continue;
+            }
+            superMap.computeIfAbsent(sub, ignored -> new HashSet<>()).add(sup);
+        }
+
+        Set<String> hasSuper = new HashSet<>();
+        for (Map.Entry<String, Set<String>> entry : superMap.entrySet()) {
+            String subIri = entry.getKey();
+            for (String superIri : entry.getValue()) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> children = (List<Map<String, Object>>) nodeMap.get(superIri).get("children");
+                children.add(nodeMap.get(subIri));
+                nodeMap.get(superIri).put("hasChildren", true);
+                hasSuper.add(subIri);
+            }
+        }
+
+        return nodeMap.values().stream()
+                .filter(node -> !hasSuper.contains(node.get("id")))
+                .sorted(Comparator.comparing(m -> m.get("label").toString()))
+                .collect(Collectors.toList());
+    }
+
     /**
      * Get inferred object property hierarchy
      * GET /api/ontology/{projectId}/reasoner/inferred-object-property-hierarchy
@@ -999,6 +1045,55 @@ public class ReasonerController {
     }
 
     /**
+     * Get inferred types for a single individual
+     * GET /api/ontology/{projectId}/reasoner/inferred-individual-types?individualIri=...
+     */
+    @GetMapping("/{projectId}/reasoner/inferred-individual-types")
+    public ResponseEntity<Map<String, Object>> getInferredTypesForIndividual(
+            @PathVariable String projectId,
+            @RequestParam String individualIri,
+            @RequestParam(defaultValue = "HERMIT") String reasonerType
+    ) {
+        try {
+            OWLOntology ontology = loadOntology(projectId);
+            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            OWLNamedIndividual individual = df.getOWLNamedIndividual(IRI.create(individualIri));
+
+            Set<OWLClass> assertedTypes = ontology.getClassAssertionAxioms(individual).stream()
+                    .map(OWLClassAssertionAxiom::getClassExpression)
+                    .filter(OWLClassExpression::isNamed)
+                    .map(OWLClassExpression::asOWLClass)
+                    .collect(Collectors.toSet());
+
+            Set<OWLClass> inferredTypes = reasonerService.getInferredTypes(ontology, individual, type);
+            OWLClass nothing = df.getOWLNothing();
+            OWLClass thing = df.getOWLThing();
+
+            List<Map<String, String>> typesList = inferredTypes.stream()
+                    .filter(cls -> !cls.equals(nothing) && !cls.equals(thing))
+                    .filter(cls -> !assertedTypes.contains(cls))
+                    .map(cls -> Map.of(
+                            "iri", cls.getIRI().toString(),
+                            "label", getLabel(cls, ontology)
+                    ))
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "individualIri", individualIri,
+                    "inferredTypes", typesList
+            ));
+        } catch (Exception e) {
+            log.error("Error getting inferred types for individual {}", individualIri, e);
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
      * Get inferred annotation property hierarchy
      * GET /api/ontology/{projectId}/reasoner/inferred-annotation-property-hierarchy
      */
@@ -1009,19 +1104,7 @@ public class ReasonerController {
         try {
             OWLOntology ontology = loadOntology(projectId);
             
-            // Annotation properties are not reasoned over by standard OWL reasoners,
-            // so we return the asserted hierarchy to keep the UI consistent.
-            List<Map<String, Object>> hierarchy = ontology.getAnnotationPropertiesInSignature().stream()
-                    .map(prop -> {
-                        Map<String, Object> node = new HashMap<>();
-                        node.put("id", prop.getIRI().toString());
-                        node.put("label", getLabel(prop, ontology));
-                        node.put("type", "AnnotationProperty");
-                        node.put("children", List.of());
-                        node.put("hasChildren", false);
-                        return node;
-                    })
-                    .collect(Collectors.toList());
+            List<Map<String, Object>> hierarchy = buildAnnotationPropertyHierarchy(ontology);
 
             return ResponseEntity.ok(Map.of(
                     "success", true,

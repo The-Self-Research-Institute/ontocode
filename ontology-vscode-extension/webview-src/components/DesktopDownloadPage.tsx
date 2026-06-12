@@ -50,7 +50,7 @@ const FEATURES = [
   "Peer-to-peer sync via Syncthing — no cloud account needed",
   "OWLAPI-powered instant class navigation",
   "All reasoners: HermiT, Openllet, ELK",
-  "SPARQL query interface with Fuseki",
+  "SPARQL query interface",
   "Plugin marketplace support",
   "Free for personal use",
 ];

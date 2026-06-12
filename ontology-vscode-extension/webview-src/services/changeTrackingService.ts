@@ -88,7 +88,38 @@ export const changeTrackingService = {
       console.error('[changeTrackingService] getStatistics failed:', error);
       return {};
     }
-  }
+  },
+
+  async rollbackChange(
+    projectId: string,
+    payload: {
+      changeId: string;
+      changeType: string;
+      action: string;
+      entityIRI: string;
+      entityLabel?: string;
+      oldValue?: string;
+      newValue?: string;
+      userId?: string;
+      username?: string;
+    },
+  ): Promise<{ success: boolean; error?: string; message?: string }> {
+    try {
+      const response = await apiClient.post(
+        `/api/ontology/${encodeURIComponent(projectId)}/changes/rollback`,
+        payload,
+      );
+      const data = response.data || response;
+      return {
+        success: data.success !== false,
+        error: data.error,
+        message: data.message,
+      };
+    } catch (error) {
+      console.error('[changeTrackingService] rollbackChange failed:', error);
+      return { success: false, error: 'Rollback request failed' };
+    }
+  },
 };
 
 export default changeTrackingService;

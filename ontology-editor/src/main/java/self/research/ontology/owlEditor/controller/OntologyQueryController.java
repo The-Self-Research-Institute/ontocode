@@ -363,12 +363,17 @@ public class OntologyQueryController {
     public ResponseEntity<?> classDetails(@PathVariable String projectId,
                                          @RequestParam String classIri,
                                          jakarta.servlet.http.HttpServletRequest httpRequest) {
-        // Desktop fast-path: OWLAPI in-memory. Cache is evicted after mutations so stale
-        // data is never served — after any mutation the OWLAPI cache is cleared and this
-        // falls through to SPARQL until the project is re-opened.
+        // Fast-open: OWLAPI for asserted axioms (~5ms) + targeted SPARQL supplements
+        // for sections the in-memory builder does not yet produce (GCIs, inferred axioms,
+        // hasKey, disjointUnion, multi-valued annotations). Falls through to full SPARQL
+        // when the OWLAPI model is not warmed.
         if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
-            return ResponseEntity.ok(Map.of("success", true, "data",
-                    desktopHierarchyService.classDetails(projectId, classIri)));
+            Map<String, Object> details = new java.util.LinkedHashMap<>(
+                    desktopHierarchyService.classDetails(projectId, classIri));
+            if (!details.isEmpty()) {
+                queryService.enrichOwlApiClassDetails(projectId, classIri, details);
+                return ResponseEntity.ok(Map.of("success", true, "data", details));
+            }
         }
         try {
             if (httpRequest.isAsyncStarted()) {
@@ -395,12 +400,21 @@ public class OntologyQueryController {
     @GetMapping("/classes/instances/{projectId}")
     public ResponseEntity<?> classInstances(@PathVariable String projectId,
                                            @RequestParam String classIri) {
+        if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            return ResponseEntity.ok(desktopHierarchyService.classInstances(projectId, classIri));
+        }
         return ResponseEntity.ok(queryService.getClassInstances(projectId, classIri));
     }
 
     @GetMapping("/classes/instance-counts/{projectId:.+}")
     public ResponseEntity<?> classInstanceCounts(@PathVariable String projectId) {
         try {
+            if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+                return ResponseEntity.ok(Map.of(
+                        "success", true,
+                        "data", desktopHierarchyService.classInstanceCounts(projectId)
+                ));
+            }
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "data", queryService.getClassInstanceCounts(projectId)

@@ -46,6 +46,9 @@ public class DesktopOntologyLoader {
     @Autowired
     private StorageManager storageManager;
 
+    @Autowired
+    private ProjectMetadataService metadataService;
+
     @Autowired(required = false)
     private DesktopHierarchyService desktopHierarchyService;
 
@@ -150,6 +153,22 @@ public class DesktopOntologyLoader {
         );
     }
 
+    /**
+     * After an OWLAPI cache eviction (non-patchable mutation), kick off a background
+     * re-parse so the next editor session returns to the fast path without blocking
+     * the mutation response.
+     */
+    public void scheduleRewarm(String projectId) {
+        if (projectId == null || projectId.isBlank()) {
+            return;
+        }
+        if (cache.has(projectId) || loadingInProgress.contains(projectId)) {
+            return;
+        }
+        log.info("[FastOpen] Scheduling async OWLAPI re-warm for project {}", projectId);
+        triggerLazyLoadIfNeeded(projectId);
+    }
+
     /** Start OWLAPI parse in parallel with Fuseki import (Protégé-style fast-open). */
     public void startParallelWarm(String projectId, Path owlFilePath) {
         if (cache.has(projectId)) {
@@ -164,6 +183,35 @@ public class DesktopOntologyLoader {
 
     private Optional<Path> findFastestParseSource(String projectId) {
         Path dir = storageManager.projectDir(projectId);
+
+        // Mutations since the last import live only in Fuseki — the on-disk artifacts
+        // are stale. Export fresh before parsing, or a re-warm would resurrect
+        // pre-mutation data into the OWLAPI fast path.
+        Path dirtyMarker = dir.resolve("ontology.dirty");
+        if (java.nio.file.Files.exists(dirtyMarker)) {
+            try {
+                Path fresh = storageManager.exportOntology(projectId, "rdfxml");
+                // Remove stale derived artifacts so they can't shadow the fresh export
+                // on later warms (they're re-derivable from Fuseki via export at any time).
+                for (String stale : List.of("ontology.original.ofn", "ontology.original.ttl",
+                        "ontology.original.nt", "ontology.current.ttl", "ontology.current.owl")) {
+                    Path p = dir.resolve(stale);
+                    if (!p.equals(fresh)) {
+                        java.nio.file.Files.deleteIfExists(p);
+                    }
+                }
+                java.nio.file.Files.deleteIfExists(dirtyMarker);
+                log.info("[Desktop] Project {} had post-import mutations — parsed source re-exported from Fuseki: {}",
+                        projectId, fresh);
+                return Optional.of(fresh);
+            } catch (Exception e) {
+                log.warn("[Desktop] Fresh export failed for dirty project {} — skipping OWLAPI warm, SPARQL fallback: {}",
+                        projectId, e.getMessage());
+                // Stale files must not be parsed; SPARQL path reads Fuseki directly and is correct.
+                return Optional.empty();
+            }
+        }
+
         List<String> fastFirst = List.of(
             "ontology.original.ofn",
             "ontology.original.ttl",
@@ -221,7 +269,7 @@ public class DesktopOntologyLoader {
             projectId, owlFilePath, fileSizeMb, maxHeapMb);
 
         try {
-            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            OWLOntologyManager manager = OWLManager.createConcurrentOWLOntologyManager();
             manager.setOntologyLoaderConfiguration(
                 new OWLOntologyLoaderConfiguration()
                     .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
@@ -241,6 +289,7 @@ public class DesktopOntologyLoader {
             }
 
             cache.put(projectId, ontology, reasoner, manager, assertedOnly);
+            cache.setCachedVersion(projectId, metadataService.getMutationVersion(projectId));
             log.info("[FastOpen] OWLAPI model cached for project {} in {}ms (assertedOnly={})",
                 projectId, System.currentTimeMillis() - start, assertedOnly);
             return true;

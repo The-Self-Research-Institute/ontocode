@@ -9,7 +9,7 @@ public class PropertyDto {
     private String label;
     private String description;
     private String type;
-    private Map<String, String> annotations;
+    private Map<String, List<String>> annotations;
     private List<String> domains;
     private List<String> ranges;
     private List<String> characteristics;
@@ -62,11 +62,11 @@ public class PropertyDto {
         this.type = type;
     }
 
-    public Map<String, String> getAnnotations() {
+    public Map<String, List<String>> getAnnotations() {
         return annotations;
     }
 
-    public void setAnnotations(Map<String, String> annotations) {
+    public void setAnnotations(Map<String, List<String>> annotations) {
         this.annotations = annotations;
     }
 

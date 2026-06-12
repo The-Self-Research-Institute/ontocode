@@ -33,4 +33,5 @@ export { default as DataPropertyRangeDialog } from './DataPropertyRangeDialog';
 export { default as AddImportDialog } from './AddImportDialog';
 export { default as GCIEditorDialog } from './GCIEditorDialog';
 export { default as EditOntologyIRIDialog } from './EditOntologyIRIDialog';
+export { default as EditEntityIRIDialog } from './EditEntityIRIDialog';
 export { default as PrefixDialog } from './PrefixDialog';

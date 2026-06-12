@@ -273,7 +273,7 @@ public class ProjectImportService {
      */
     private String extractErrorReason(Exception e) {
         if (isRetryableError(e)) {
-            return "Connection to GraphDB lost. This usually means GraphDB ran out of memory for large files.";
+            return "Connection lost during import. Large files may need more server memory.";
         }
         
         String message = e.getMessage();
@@ -366,11 +366,11 @@ public class ProjectImportService {
             Map<String, Object> bulkLoadStartMeta = new HashMap<>();
             bulkLoadStartMeta.put("progress", 60);
             bulkLoadStartMeta.put("stage", "graphdb-loading");
-            bulkLoadStartMeta.put("message", "Loading data into GraphDB (this may take several minutes for large files)...");
+            bulkLoadStartMeta.put("message", "Loading ontology data (large files may take several minutes)…");
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
-                    "PROCESSING", "Loading into GraphDB...", filename, bulkLoadStartMeta);
+                    "PROCESSING", "Loading ontology data…", filename, bulkLoadStartMeta);
             // Also update status.json so polling clients get the progress message
-            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, "Loading into GraphDB..."));
+            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, "Loading ontology data…"));
 
             // Protégé-style: parse OWL into memory in parallel with Fuseki ingest
             if (desktopOntologyLoader != null) {
@@ -603,8 +603,9 @@ public class ProjectImportService {
                 }
             }
             } // end if (!serverImportDone)
-            log.info("[Import {}] [TIMING] GraphDB bulk load completed in {} ms (total import so far: {} ms)", 
-                    projectId, elapsedMillis(bulkLoadStart), elapsedMillis(importStart));
+            final long bulkLoadDurationMs = elapsedMillis(bulkLoadStart);
+            log.info("[Import {}] [TIMING] GraphDB bulk load completed in {} ms (total import so far: {} ms)",
+                    projectId, bulkLoadDurationMs, elapsedMillis(importStart));
 
             // Copy file to current location
             stage = "persist-copy";
@@ -628,11 +629,11 @@ public class ProjectImportService {
             completionMeta.put("stage", "hierarchy-warming");
             completionMeta.put("durationMs", durationMs);
             completionMeta.put("hierarchyReady", false);
-            completionMeta.put("message", "Triple store ready — loading class tree…");
+            completionMeta.put("message", "Loading class hierarchy…");
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
-                    "PROCESSING", "Loading class tree…", filename, completionMeta);
+                    "PROCESSING", "Loading class hierarchy…", filename, completionMeta);
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_COMPLETED,
-                    "COMPLETED", "Triple store ready — loading class tree", filename, completionMeta);
+                    "COMPLETED", "Loading class hierarchy…", filename, completionMeta);
             
             // Evict stale Caffeine + Mongo top-level/children caches so the next
             // hierarchy request recomputes from fresh Fuseki data (not a cached wrong tree).
@@ -710,6 +711,7 @@ public class ProjectImportService {
                     importMetrics.put("classCount", classCount);
                     importMetrics.put("annotationCount", annotationCount);
                     importMetrics.put("durationMs", totalDurationMs);
+                    importMetrics.put("bulkLoadDurationMs", bulkLoadDurationMs);
                     importMetrics.put("importedAt", java.time.Instant.now().toString());
                     meta.put("importMetrics", importMetrics);
                     meta.put("importResolution", importResolution);
@@ -718,7 +720,7 @@ public class ProjectImportService {
                     log.info("[Import {}] ✅ Metadata computed in {} ms", projectId, metadataComputeMs);
                     metadataService.writeMeta(projectId, meta);
 
-                    timeEstimator.recordSample(fileSizeBytes, classCount, annotationCount, totalDurationMs);
+                    timeEstimator.recordSample(fileSizeBytes, classCount, annotationCount, bulkLoadDurationMs);
 
                     log.info("✅ [Import {}] Background indexing complete. Total time: {} ms (GraphDB: {} ms, Metadata: {} ms)", 
                             projectId, totalDurationMs, totalDurationMs - metadataComputeMs, metadataComputeMs);

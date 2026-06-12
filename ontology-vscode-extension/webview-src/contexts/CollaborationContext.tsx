@@ -171,6 +171,19 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
           subscriptionsRef.current.set("shares", sub);
         }
 
+        // Global import queue stats
+        const queueStatsSub = client.subscribe("/topic/queue/stats", (msg) => {
+          try {
+            const payload = JSON.parse(msg.body);
+            if (payload.queueStats) {
+              window.dispatchEvent(new CustomEvent("queueStatsUpdate", { detail: payload.queueStats }));
+            }
+          } catch (e) {
+            console.error("[CollaborationContext] Queue stats parse error:", e);
+          }
+        });
+        subscriptionsRef.current.set("queueStats", queueStatsSub);
+
         // Subscribe to workspace-level events (project created/deleted by others)
         if (user.workspaceId) {
           const wsSub = client.subscribe(`/topic/workspace/${user.workspaceId}`, (msg) => {
@@ -226,9 +239,9 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
   // Helper: subscribe to project-specific STOMP topics
   const joinProjectTopics = useCallback(
     (client: Client, projectId: string) => {
-      // Clear previous project subscriptions (keep shares)
+      // Clear previous project subscriptions (keep shares + global queue stats)
       subscriptionsRef.current.forEach((sub, key) => {
-        if (key !== "shares") {
+        if (key !== "shares" && key !== "queueStats") {
           sub.unsubscribe();
           subscriptionsRef.current.delete(key);
         }
@@ -293,6 +306,18 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         }
       });
       subscriptionsRef.current.set("import", importSub);
+
+      // Import queue position / wait time for this project
+      const queueSub = client.subscribe(`/topic/queue/${projectId}`, (msg) => {
+        try {
+          const status = JSON.parse(msg.body);
+          console.log("[CollaborationContext] 📋 Queue status:", status);
+          window.dispatchEvent(new CustomEvent("queueStatusUpdate", { detail: status }));
+        } catch (e) {
+          console.error("[CollaborationContext] Queue status parse error:", e);
+        }
+      });
+      subscriptionsRef.current.set("queue", queueSub);
 
       // Cursors
       const cursorSub = client.subscribe(`/topic/cursor/${projectId}`, (msg) => {
