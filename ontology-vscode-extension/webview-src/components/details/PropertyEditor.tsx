@@ -533,6 +533,8 @@ const PropertyEditor: React.FC<{
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
                             onNavigate={onNavigate}
+                            projectId={projectId}
+                            parentEntityIri={item.id}
                         />
 
                         {isObjectProperty && (
@@ -562,6 +564,8 @@ const PropertyEditor: React.FC<{
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
                             onNavigate={onNavigate}
+                            projectId={projectId}
+                            parentEntityIri={item.id}
                         />
                         )}
 
@@ -576,6 +580,8 @@ const PropertyEditor: React.FC<{
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
                             onNavigate={onNavigate}
+                            projectId={projectId}
+                            parentEntityIri={item.id}
                         />
                         )}
 
@@ -589,6 +595,8 @@ const PropertyEditor: React.FC<{
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
                             onNavigate={onNavigate}
+                            projectId={projectId}
+                            parentEntityIri={item.id}
                         />
 
                         {isObjectProperty && (

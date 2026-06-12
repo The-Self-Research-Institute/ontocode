@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.dto;
 
+import java.util.List;
 import java.util.Map;
 
 public class AnnotationPropertyDto {
@@ -7,7 +8,8 @@ public class AnnotationPropertyDto {
     private String iri;
     private String label;
     private String description;
-    private Map<String, String> annotations;
+    private Map<String, List<String>> annotations;
+    private List<String> superProperties;
 
     public String getId() {
         return id;
@@ -41,11 +43,19 @@ public class AnnotationPropertyDto {
         this.description = description;
     }
 
-    public Map<String, String> getAnnotations() {
+    public Map<String, List<String>> getAnnotations() {
         return annotations;
     }
 
-    public void setAnnotations(Map<String, String> annotations) {
+    public void setAnnotations(Map<String, List<String>> annotations) {
         this.annotations = annotations;
+    }
+
+    public List<String> getSuperProperties() {
+        return superProperties;
+    }
+
+    public void setSuperProperties(List<String> superProperties) {
+        this.superProperties = superProperties;
     }
 }

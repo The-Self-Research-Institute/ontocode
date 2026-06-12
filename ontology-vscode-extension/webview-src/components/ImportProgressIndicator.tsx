@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Loader2, CheckCircle, XCircle, Upload, AlertCircle, GripVertical } from 'lucide-react';
+import { sanitizeImportMessage } from '../utils/importStatusText';
 
 export interface ImportStatus {
   type: 'IMPORT_STARTED' | 'IMPORT_PROGRESS' | 'IMPORT_COMPLETED' | 'IMPORT_FAILED' | 'IDLE';
@@ -72,13 +73,13 @@ export const ImportProgressIndicator: React.FC<ImportProgressIndicatorProps> = (
       case 'IMPORT_STARTED':
         return 'Starting import...';
       case 'IMPORT_PROGRESS':
-        return importStatus.statusMessage || 'Importing...';
+        return sanitizeImportMessage(importStatus.statusMessage) || 'Importing...';
       case 'IMPORT_COMPLETED':
         return 'Import completed';
       case 'IMPORT_FAILED':
         return 'Import failed';
       default:
-        return importStatus.statusMessage || 'Processing...';
+        return sanitizeImportMessage(importStatus.statusMessage) || 'Processing...';
     }
   };
 
@@ -86,7 +87,7 @@ export const ImportProgressIndicator: React.FC<ImportProgressIndicatorProps> = (
     <div
       className={`flex items-center gap-2 px-3 py-1.5 rounded-md border ${getStatusColor()} cursor-pointer hover:opacity-80 transition-opacity`}
       onClick={onClick}
-      title={importStatus.statusMessage}
+      title={sanitizeImportMessage(importStatus.statusMessage)}
     >
       {getStatusIcon()}
       <div className="flex flex-col">
@@ -149,7 +150,7 @@ export const ImportProgressBadge: React.FC<ImportProgressIndicatorProps> = ({
     <button
       onClick={onClick}
       className={`relative p-2 rounded-md hover:bg-opacity-80 transition-colors ${getColor()}`}
-      title={importStatus.statusMessage}
+      title={sanitizeImportMessage(importStatus.statusMessage)}
     >
       {getIcon()}
       {importStatus.type === 'IMPORT_PROGRESS' && importStatus.progress !== undefined && (

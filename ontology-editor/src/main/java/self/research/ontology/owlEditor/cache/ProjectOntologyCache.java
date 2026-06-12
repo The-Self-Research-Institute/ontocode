@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * In-memory cache of parsed OWLOntology + optional structural OWLReasoner.
@@ -45,6 +46,8 @@ public class ProjectOntologyCache {
         }
     }
 
+    private final Map<String, Long> cachedMutationVersions = new ConcurrentHashMap<>();
+
     private final Map<String, CachedOntology> cache =
         Collections.synchronizedMap(new LinkedHashMap<>(MAX_PROJECTS + 1, 0.75f, true) {
             @Override
@@ -67,6 +70,20 @@ public class ProjectOntologyCache {
             projectId, ontology.classesInSignature().count());
     }
 
+    public void setCachedVersion(String projectId, long mutationVersion) {
+        if (cache.containsKey(projectId)) {
+            cachedMutationVersions.put(projectId, mutationVersion);
+        }
+    }
+
+    public void updateCachedVersion(String projectId, long mutationVersion) {
+        cachedMutationVersions.put(projectId, mutationVersion);
+    }
+
+    public long getCachedVersion(String projectId) {
+        return cachedMutationVersions.getOrDefault(projectId, -1L);
+    }
+
     public Optional<CachedOntology> get(String projectId) {
         return Optional.ofNullable(cache.get(projectId));
     }
@@ -76,6 +93,7 @@ public class ProjectOntologyCache {
     }
 
     public void evict(String projectId) {
+        cachedMutationVersions.remove(projectId);
         CachedOntology removed = cache.remove(projectId);
         if (removed != null) {
             removed.dispose();

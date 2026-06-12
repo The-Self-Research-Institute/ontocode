@@ -5,6 +5,7 @@ import apiClient from "../../../services/apiClient";
 import ontologyMutationService from "../../../services/ontologyMutationService";
 import { draftTrackingService } from "../../../services/draftTrackingService";
 import { notificationService } from "../../../services/notificationService";
+import { importStageLabel, sanitizeImportMessage } from "../../../utils/importStatusText";
 import { syncService } from "../../../services/syncService";
 import { pluginLoader } from "../../../services/pluginLoader";
 import type { DashboardState } from "./useDashboardState";
@@ -2514,16 +2515,12 @@ export function useDashboardInit(state: DashboardState) {
 
             // Update loading status message for user feedback
             if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.message) {
-              setLoadingStatusMessage(message.status.metadata.message);
+              setLoadingStatusMessage(sanitizeImportMessage(message.status.metadata.message as string));
             } else if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.stage) {
-              const stage = message.status.metadata.stage;
-              const stageMessages: Record<string, string> = {
-                parsing: "Parsing ontology file...",
-                "graphdb-loading": "Loading data into GraphDB (this may take several minutes for large files)...",
-                "graphdb-load-complete": "GraphDB load complete, computing metadata...",
-                "computing-metadata": "Computing ontology statistics...",
-              };
-              setLoadingStatusMessage(stageMessages[stage] || "Processing...");
+              const stage = message.status.metadata.stage as string;
+              setLoadingStatusMessage(
+                importStageLabel(stage, message.status.metadata?.message as string | undefined),
+              );
             }
           }
 
@@ -2622,7 +2619,10 @@ export function useDashboardInit(state: DashboardState) {
               status: message.status.status,
             });
 
-            const errorMessage = message.status.statusMessage || message.status.metadata?.error || "Import failed";
+            const errorMessage =
+              sanitizeImportMessage(message.status.statusMessage) ||
+              sanitizeImportMessage(message.status.metadata?.error as string) ||
+              "Import failed";
             const projectName = message.status.projectId || "unknown";
 
             // Extract more user-friendly error message
@@ -2631,17 +2631,17 @@ export function useDashboardInit(state: DashboardState) {
               errorMessage.includes("UnknownHostException: graphdb") ||
               errorMessage.includes("UnknownHostException")
             ) {
-              displayError = "Cannot connect to GraphDB. Please ensure GraphDB service is running and accessible.";
+              displayError = "Cannot connect to the ontology service. Please ensure backend services are running.";
               console.log("[Dashboard] ðŸ”„ Translated error to user-friendly message (UnknownHost)");
             } else if (errorMessage.includes("Connection refused") || errorMessage.includes("ConnectException")) {
-              displayError = "GraphDB connection refused. Please verify GraphDB is running on the correct port.";
+              displayError = "Ontology service connection refused. Please verify backend services are running.";
               console.log("[Dashboard] ðŸ”„ Translated error to user-friendly message (Connection refused)");
             } else if (errorMessage.includes("HTTP error code 404")) {
-              displayError = "Repository not found or not initialized. Please check GraphDB configuration.";
+              displayError = "Ontology data store not found or not initialized. Please check service configuration.";
               console.log("[Dashboard] ðŸ”„ Translated error to user-friendly message (404)");
             } else if (errorMessage.includes("unable to start transaction")) {
               displayError =
-                "Unable to start database transaction. Please verify GraphDB is running and the repository exists.";
+                "Unable to start database transaction. Please verify backend services are running.";
               console.log("[Dashboard] ðŸ”„ Translated error to user-friendly message (transaction)");
             }
 

@@ -97,6 +97,9 @@ public class GraphDBDatasetService {
     @Autowired(required = false)
     private CacheManager cacheManager;
 
+    @Autowired(required = false)
+    private OntologySpringCacheEvictionService springCacheEviction;
+
     // Phase C: in-memory mirror of project graphs to bypass GraphDB on hot reads.
     @Autowired(required = false)
     private ProjectRepoCache projectRepoCache;
@@ -104,6 +107,12 @@ public class GraphDBDatasetService {
     // MongoDB persistent top-level class cache — evicted on import/mutation.
     @Autowired(required = false)
     private TopLevelClassCacheService topLevelCacheService;
+
+    // OWLAPI in-memory model (fast-open). Evicted here so EVERY write path —
+    // including services that call execUpdate directly without going through
+    // OntologyMutationService.apply() — invalidates the parsed model.
+    @Autowired(required = false)
+    private OwlApiMutationCoordinator mutationCoordinator;
 
     // Shared repository connection (legacy / fallback for existing data)
     private Repository repository;
@@ -1053,6 +1062,17 @@ public class GraphDBDatasetService {
                 // with the just-written triples. Cheap (microseconds) + safe.
                 if (projectRepoCache != null) {
                     projectRepoCache.evict(projectId);
+                }
+
+                // Single choke point for derived-cache invalidation: several services
+                // (metadata, Manchester expressions, axiom annotations, citations, raw
+                // SPARQL console) write here without going through the mutation service,
+                // so this is the only place that reliably sees every data change.
+                invalidateDerivedCachesAfterUpdate(projectId);
+
+                List<OntologyMutationService.MutationOp> structuredOps = MutationContext.getAndClear();
+                if (mutationCoordinator != null) {
+                    mutationCoordinator.afterMutation(projectId, structuredOps);
                 }
 
                 if (totalMs > 1000) {
@@ -2370,15 +2390,28 @@ public class GraphDBDatasetService {
         return java.time.Duration.ofMinutes(30);
     }
 
+    // Triple counts only change on import/mutation, but the UI polls status every ~2s.
+    // Without this cache each poll runs COUNT(*) — 10-60s on large cold TDB2 graphs,
+    // stacking polls until the gateway 504s and the import looks failed to the user.
+    private final Map<String, Long> tripleCountCache = new ConcurrentHashMap<>();
+
     /**
      * Triple count for a project's named graph (-1 if Fuseki is unreachable).
      * Lightweight helper for status polling during long imports.
      */
     public long getGraphTripleCount(String projectId) {
+        Long cached = tripleCountCache.get(projectId);
+        if (cached != null) {
+            return cached;
+        }
         try {
             ProjectGraphBinding binding = resolveBinding(projectId, false);
             try (RepositoryConnection conn = binding.repository().getConnection()) {
-                return countGraphTriplesSparql(conn, binding.graphUri());
+                long count = countGraphTriplesSparql(conn, binding.graphUri());
+                if (count > 0) {
+                    tripleCountCache.put(projectId, count);
+                }
+                return count;
             }
         } catch (Exception e) {
             log.debug("[getGraphTripleCount] Could not count triples for {}: {}", projectId, e.getMessage());
@@ -2848,11 +2881,58 @@ public class GraphDBDatasetService {
     }
 
     /**
+     * Invalidate every cache derived from the project's triples after a SPARQL UPDATE.
+     * Deliberately does NOT touch the partition graph cache (partitions only change on import).
+     */
+    private void invalidateDerivedCachesAfterUpdate(String projectId) {
+        tripleCountCache.remove(projectId);
+        if (topLevelCacheService != null) {
+            topLevelCacheService.evict(projectId);
+        }
+        if (springCacheEviction != null) {
+            springCacheEviction.evictForProject(projectId);
+        }
+        markProjectDirty(projectId);
+    }
+
+    /**
+     * Marker file recording that Fuseki has changes the on-disk OWL artifacts don't.
+     * DesktopOntologyLoader checks it before re-warming the OWLAPI model so a re-warm
+     * never resurrects pre-mutation data from a stale ontology.original.* file.
+     */
+    private void markProjectDirty(String projectId) {
+        if (projectId == null || projectId.isBlank()) return;
+        try {
+            java.nio.file.Path dir = java.nio.file.Path.of(dataDir).toAbsolutePath().normalize()
+                    .resolve("projects").resolve(projectId);
+            if (java.nio.file.Files.isDirectory(dir)) {
+                java.nio.file.Files.writeString(dir.resolve("ontology.dirty"),
+                        String.valueOf(System.currentTimeMillis()));
+            }
+        } catch (Exception e) {
+            log.debug("[CACHE] Could not write dirty marker for {}: {}", projectId, e.getMessage());
+        }
+    }
+
+    /** Fresh import: on-disk artifacts match Fuseki again, so the dirty marker no longer applies. */
+    private void clearProjectDirty(String projectId) {
+        if (projectId == null || projectId.isBlank()) return;
+        try {
+            java.nio.file.Files.deleteIfExists(java.nio.file.Path.of(dataDir).toAbsolutePath().normalize()
+                    .resolve("projects").resolve(projectId).resolve("ontology.dirty"));
+        } catch (Exception e) {
+            log.debug("[CACHE] Could not clear dirty marker for {}: {}", projectId, e.getMessage());
+        }
+    }
+
+    /**
      * Invalidate the per-project partition cache and Spring-managed caches.
      * Called after successful imports to ensure new graphs are discovered.
      */
     private void invalidateContextCaches(String projectId) {
         partitionGraphCache.remove(projectId);
+        tripleCountCache.remove(projectId);
+        clearProjectDirty(projectId);
         // Drop the in-memory project mirror so imports are visible.
         if (projectRepoCache != null) {
             projectRepoCache.evict(projectId);
@@ -2861,15 +2941,9 @@ public class GraphDBDatasetService {
         if (topLevelCacheService != null) {
             topLevelCacheService.evict(projectId);
         }
-        // Evict Spring-managed Caffeine caches that depend on ontology data
-        if (cacheManager != null) {
-            for (String cacheName : List.of("topLevelClasses", "classChildren", "allClasses",
-                    "ontologyProperties", "ontologyIndividuals", "classInstanceCounts",
-                    "classDetails", "classAnnotations", "classInstances", "individualCount", "debugInfo", "graphCache")) {
-                var cache = cacheManager.getCache(cacheName);
-                if (cache != null) cache.clear();
-            }
-            log.info("[CACHE] Evicted all Spring caches after import for project {}", projectId);
+        if (springCacheEviction != null) {
+            springCacheEviction.evictForProject(projectId);
+            log.info("[CACHE] Evicted Spring caches for project {} after import", projectId);
         }
         log.info("[CACHE] Invalidated partition cache for project {}", projectId);
     }

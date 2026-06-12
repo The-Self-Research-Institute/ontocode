@@ -57,6 +57,8 @@ import {
 } from "lucide-react";
 import apiClient, { getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
+import expressionService, { isManchesterClassExpression, isSimpleOntologyIri } from "../services/expressionService";
+import undoRedoService from "../services/undoRedoService";
 import { draftTrackingService } from "../services/draftTrackingService";
 import { notificationService } from "../services/notificationService";
 import { syncService } from "../services/syncService";
@@ -71,6 +73,7 @@ import type {
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory } from "../utils/desktop";
+import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
 import { normalizeRole, parseWorkspaceRole, isWorkspaceViewerRole } from "../utils/roles";
 import { useCollaboration } from "../contexts/CollaborationContext";
@@ -118,6 +121,7 @@ import {
   GCIEditorDialog,
   AddImportDialog,
   EditOntologyIRIDialog,
+  EditEntityIRIDialog,
   PrefixDialog,
 } from "./dialogs";
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from "../hooks/useKeyboardShortcuts";
@@ -153,6 +157,7 @@ import {
   normalizeOntologyAnnotation,
   normalizeOntologyAnnotations,
   mapAnnotationProperty,
+  buildAnnotationPropertyHierarchy,
   STANDARD_ANNOTATION_PROPERTIES,
   mergeAnnotationProperties,
   combineReasonerResults,
@@ -594,6 +599,7 @@ const TopMenuBar = ({
                           { label: "OWL/XML (.owlxml)", format: "owlxml", ext: "owlxml" },
                           { label: "Manchester (.omn)", format: "manchester", ext: "omn" },
                           { label: "Functional (.ofn)", format: "functional", ext: "ofn" },
+                          { label: "OBO Flatfile (.obo)", format: "obo", ext: "obo" },
                         ] as { label: string; format: string; ext: string }[]).map(({ label, format, ext }) => (
                           <button
                             key={format}
@@ -1195,7 +1201,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     [user?.email, user?.username], // collaboration.addNotification is stable, no need to include
   );
   const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
-  const storedProjectId = isNonWorkspaceMode ? localStorage.getItem("ontocode_lastProjectId") : null;
+  // Desktop always has a workspace id but opens files directly via localStorage (no project library).
+  const shouldRestoreLastOpenedFile = isDesktop() || isNonWorkspaceMode;
+  const storedProjectId = shouldRestoreLastOpenedFile ? localStorage.getItem("ontocode_lastProjectId") : null;
 
   const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || null);
   const prevProjectIdRef = useRef<string | null>(null);
@@ -1406,6 +1414,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const webviewReadySentRef = useRef(false); // Track if we've sent webviewReady
   const [isExpectingFileReady, setIsExpectingFileReady] = useState(false); // Don't auto-load if expecting upload
   const pendingImportProjectIdRef = useRef<string | null>(null); // Track which project is being imported (using ref for persistence)
+  const [pendingImportProjectId, setPendingImportProjectId] = useState<string | null>(null);
   const [showLoadingChoice, setShowLoadingChoice] = useState(false);
   const [loadingProjectName, setLoadingProjectName] = useState("");
   const [loadingStatusMessage, setLoadingStatusMessage] = useState<string>(""); // Track import progress message
@@ -1433,6 +1442,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [queuePosition, setQueuePosition] = useState<number | undefined>(undefined);
   const [totalInQueue, setTotalInQueue] = useState<number | undefined>(undefined);
   const [estimatedWaitTimeMs, setEstimatedWaitTimeMs] = useState<number | undefined>(undefined);
+  const [inImportQueue, setInImportQueue] = useState(false);
   const collaborationPanelRef = useRef<CollaborationPanelRef>(null);
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState("prefixes");
@@ -1443,6 +1453,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
   const [isEditOntologyIRIDialogOpen, setEditOntologyIRIDialogOpen] = useState(false);
+  const [isEditEntityIRIDialogOpen, setEditEntityIRIDialogOpen] = useState(false);
+  const [editEntityIRITarget, setEditEntityIRITarget] = useState<SelectableItem | null>(null);
   const [isGCIEditorDialogOpen, setGCIEditorDialogOpen] = useState(false);
   const [editGCIData, setEditGCIData] = useState<{
     subClass: string;
@@ -1604,7 +1616,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
   const [inferredDataPropertyHierarchy, setInferredDataPropertyHierarchy] = useState<TreeNode[]>([]);
   const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
+  const [annotationPropertyHierarchy, setAnnotationPropertyHierarchy] = useState<TreeNode[]>([]);
   const [inferredAnnotationPropertyHierarchy, setInferredAnnotationPropertyHierarchy] = useState<TreeNode[]>([]);
+  const [importClosureMap, setImportClosureMap] = useState<Record<string, Array<{ iri: string; children?: any[] }>>>({});
   const [individuals, setIndividuals] = useState<Individual[]>([]);
   const [inferredIndividuals, setInferredIndividuals] = useState<Individual[]>([]);
   const [datatypes, setDatatypes] = useState<Datatype[]>([]);
@@ -1644,6 +1658,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     "Entities",
     "IndividualsByClass",
     "DLQuery",
+    "SPARQL",
+    "Reasoner",
     "CodeView",
   ]);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
@@ -1836,7 +1852,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       label: "Annotation properties",
       icon: Tag,
       count: !isAnnotationPropertiesLoading
-        ? annotationProperties.length || (metadata as any)?.annotationPropertyCount || 0
+        ? annotationProperties.length ||
+          (annotationPropertyHierarchy.length > 0 ? countNodes(annotationPropertyHierarchy) : 0) ||
+          (metadata as any)?.annotationPropertyCount ||
+          0
         : (metadata as any)?.annotationPropertyCount ?? undefined,
       theme: "bg-gradient-to-b from-orange-300 to-orange-500 text-white border-orange-600",
     },
@@ -1920,8 +1939,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           hierarchyViewModes.AnnotationProperties === "inferred"
             ? inferredAnnotationPropertyHierarchy.length > 0
               ? inferredAnnotationPropertyHierarchy
-              : annotationProperties
-            : annotationProperties;
+              : annotationPropertyHierarchy.length > 0
+                ? annotationPropertyHierarchy
+                : annotationProperties
+            : annotationPropertyHierarchy.length > 0
+              ? annotationPropertyHierarchy
+              : annotationProperties;
         return Array.isArray(base) ? base : [];
       }
       case "Individuals":
@@ -1947,6 +1970,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     dataPropertyHierarchy,
     inferredObjectPropertyHierarchy,
     inferredDataPropertyHierarchy,
+    annotationPropertyHierarchy,
     inferredAnnotationPropertyHierarchy,
     inferredIndividuals,
     inferredDatatypes,
@@ -2156,9 +2180,15 @@ const Dashboard: React.FC<DashboardProps> = ({
   );
 
   const normalizeHierarchyNode = useCallback((node: any): any => {
+    const id = node.id || node.iri;
     const children = Array.isArray(node.children) ? node.children.map(normalizeHierarchyNode) : [];
     const hasChildren = node.hasChildren !== undefined ? node.hasChildren : children.length > 0;
-    return { ...node, children, hasChildren };
+    let label = node.label;
+    if (!label && id === "http://www.w3.org/2002/07/owl#Nothing") label = "owl:Nothing";
+    if (!label && id === "http://www.w3.org/2002/07/owl#Thing") label = "owl:Thing";
+    const isUnsatisfiable =
+      node.isUnsatisfiable === true || id === "http://www.w3.org/2002/07/owl#Nothing";
+    return { ...node, id, label, children, hasChildren, isUnsatisfiable };
   }, []);
 
   const loadInferredHierarchy = useCallback(async () => {
@@ -2316,6 +2346,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const results = await fetchReasonerBundle(reasonerType);
       setReasonerResults(results);
+
+      // Realize individuals (inferred types) after classification
+      try {
+        await apiClient.post(`/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/realize`, {
+          reasonerType,
+        });
+      } catch (realizeError) {
+        console.warn("[Dashboard] Realization step failed (non-fatal):", realizeError);
+      }
 
       // After successful classification, load full recursive hierarchies from the main API
       // This ensures we have the full depth like Desktop Protégé, not just the bundle's view
@@ -2652,7 +2691,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             return {
               ready: false,
               status: "HIERARCHY_WARMING",
-              error: statusRes?.data?.statusMessage || "Triple store ready — class tree still loading…",
+              error: sanitizeImportMessage(statusRes?.data?.statusMessage) || "Loading class hierarchy…",
             };
           }
           return { ready: true, status };
@@ -2852,6 +2891,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setGeneralClassAxioms(
             Array.isArray(gciAxioms)
               ? gciAxioms.map((axiom: any) => ({
+                  id: axiom.id,
                   value: axiom.value,
                   subClass: axiom.subClass || "",
                   superClass: axiom.superClass || "",
@@ -3343,16 +3383,16 @@ const Dashboard: React.FC<DashboardProps> = ({
               { signal },
             );
             if (!isStaleLoad()) {
-              setAnnotationProperties(
-                mergeAnnotationProperties(
-                  (Array.isArray(res?.data)
-                    ? res.data
-                    : Array.isArray(res?.annotationProperties)
-                      ? res.annotationProperties
-                      : []
-                  ).map(mapAnnotationProperty),
-                ),
+              const merged = mergeAnnotationProperties(
+                (Array.isArray(res?.data)
+                  ? res.data
+                  : Array.isArray(res?.annotationProperties)
+                    ? res.annotationProperties
+                    : []
+                ).map(mapAnnotationProperty),
               );
+              setAnnotationProperties(merged);
+              setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(merged));
             }
           } catch (e: any) {
             if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
@@ -4133,18 +4173,34 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleUpdateAxiom = async (newSubClass?: string, newSuperClass?: string) => {
     if (!projectId || editingAxiomIndex === null) return;
     try {
-      const oldAxiom = generalClassAxioms[editingAxiomIndex];
+      const oldAxiom = generalClassAxioms[editingAxiomIndex] as {
+        id?: string;
+        value?: string;
+        subClass?: string;
+        superClass?: string;
+        subExpression?: string;
+        definition?: string;
+      };
       const subClass = newSubClass !== undefined ? newSubClass : axiomDraft.definition;
       const superClass = newSuperClass !== undefined ? newSuperClass : axiomDraft.superClassIri;
+      const oldValue =
+        oldAxiom.id ||
+        oldAxiom.value ||
+        (oldAxiom.subClass && oldAxiom.superClass
+          ? `${oldAxiom.subClass} SubClassOf ${oldAxiom.superClass}`
+          : "") ||
+        oldAxiom.subExpression ||
+        oldAxiom.definition ||
+        "";
       console.log("[Dashboard] Updating general class axiom:", {
         projectId,
         oldAxiom,
+        oldValue,
         newAxiom: { subClass, superClass },
       });
 
-      // Use PUT endpoint to update - backend expects oldValue as the full value string
       await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`, {
-        oldValue: oldAxiom.subExpression || oldAxiom.definition || "",
+        oldValue,
         subClass,
         superClass: superClass || "",
       });
@@ -4175,8 +4231,23 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleDeleteAxiom = async (index: number) => {
     if (!projectId) return;
     try {
-      const axiom = generalClassAxioms[index];
-      const value = axiom.subExpression || axiom.definition || "";
+      const axiom = generalClassAxioms[index] as {
+        id?: string;
+        value?: string;
+        subClass?: string;
+        superClass?: string;
+        subExpression?: string;
+        definition?: string;
+      };
+      const value =
+        axiom.id ||
+        axiom.value ||
+        (axiom.subClass && axiom.superClass
+          ? `${axiom.subClass} SubClassOf ${axiom.superClass}`
+          : "") ||
+        axiom.subExpression ||
+        axiom.definition ||
+        "";
       console.log("[Dashboard] Deleting general class axiom:", { projectId, axiom, value });
 
       if (!value) {
@@ -4209,6 +4280,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Map backend fields to frontend expected structure
       const mappedData = Array.isArray(data)
         ? data.map((axiom: any) => ({
+            id: axiom.id || axiom.subClass || "",
             value: axiom.value,
             subClass: axiom.subClass || "",
             superClass: axiom.superClass || "",
@@ -4855,7 +4927,30 @@ const Dashboard: React.FC<DashboardProps> = ({
         setExpandedNodes((prev) => (prev.includes(owlThingId) ? prev : [...prev, owlThingId]));
       }
     }
+    const nothingId = "http://www.w3.org/2002/07/owl#Nothing";
+    const nothingNode = inferredClassHierarchy.find((n) => n.id === nothingId);
+    if (nothingNode && (nothingNode.children?.length ?? 0) > 0 && !expandedNodes.includes(nothingId)) {
+      setExpandedNodes((prev) => (prev.includes(nothingId) ? prev : [...prev, nothingId]));
+    }
   }, [inferredClassHierarchy]);
+
+  useEffect(() => {
+    if (!projectId || !showImportClosure) return;
+    const loadImportClosure = async () => {
+      try {
+        const res = await apiClient.get<any>(
+          `/api/ontology/metadata/${encodeProjectId(projectId)}/imports/closure`,
+        );
+        const payload = res?.data || res;
+        if (payload?.closure && typeof payload.closure === "object") {
+          setImportClosureMap(payload.closure);
+        }
+      } catch (error) {
+        console.warn("[Dashboard] Failed to load import closure:", error);
+      }
+    };
+    void loadImportClosure();
+  }, [projectId, showImportClosure, ontologyImports]);
 
   // Fetch projects list on mount (but don't auto-load a file)
   // This populates the file selector dropdown when user clicks it
@@ -4891,9 +4986,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] ✅ Fetching all projects for user email:", resolvedEmail || "(none)");
     fetchProjects();
 
-    // Non-workspace mode: auto-load the last opened file from localStorage
-    if (isNonWorkspaceMode && storedProjectId && !hasUserSelectedFileRef.current) {
-      console.log("[Dashboard] 🔄 Non-workspace mode - restoring last opened file:", storedProjectId);
+    // Desktop / non-workspace: auto-load the last opened ontology from localStorage
+    if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.current) {
+      console.log("[Dashboard] 🔄 Restoring last opened ontology:", storedProjectId);
       hasUserSelectedFileRef.current = true;
       setHasUserSelectedFile(true);
       setActiveFileName(storedProjectId);
@@ -5166,14 +5261,33 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.log(message, "message");
       // CRITICAL: Always handle showLoading even before mount - this is time-sensitive
       // The extension sends showLoading right after file selection, before the webview may be fully ready
+      if (message.type === "uploadProgress") {
+        const targetProject = message.projectId;
+        const isRelevant =
+          targetProject === projectId ||
+          targetProject === pendingImportProjectIdRef.current ||
+          hasUserSelectedFileRef.current;
+        if (isRelevant) {
+          setBackgroundImportProgress(message.percent);
+          setLoadingStatusMessage(message.message || `Uploading: ${message.percent}%`);
+        }
+        return;
+      }
+
       if (message.type === "showLoading") {
         console.log("[Dashboard] showLoading received - file upload starting for project:", message.projectId);
         setHasUserSelectedFile(true);
         hasUserSelectedFileRef.current = true;
         pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
+        setPendingImportProjectId(message.projectId);
         console.log("[Dashboard] Set pendingImportProjectIdRef.current to:", pendingImportProjectIdRef.current);
         setIsExpectingFileReady(true);
         setLoadingProjectName(message.fileName || message.projectId || "Processing file upload...");
+        setBackgroundImportProgress(0);
+        setLoadingStatusMessage("Preparing upload...");
+        if (window.vscode && message.projectId) {
+          window.vscode.postMessage({ type: "getQueueStatus", projectId: message.projectId });
+        }
         if (isDesktop()) {
           // Desktop: block with Protégé-style loading dialog
           setShowLoadingChoice(true);
@@ -5487,18 +5601,13 @@ const Dashboard: React.FC<DashboardProps> = ({
 
             // Update loading status message for user feedback
             if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.message) {
-              setLoadingStatusMessage(message.status.metadata.message);
+              setLoadingStatusMessage(sanitizeImportMessage(message.status.metadata.message as string));
               if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
             } else if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.stage) {
-              const stage = message.status.metadata.stage;
-              const stageMessages: Record<string, string> = {
-                parsing: "Parsing ontology file...",
-                "graphdb-loading": "Loading data into GraphDB (this may take several minutes for large files)...",
-                "graphdb-load-complete": "GraphDB load complete, computing metadata...",
-                "hierarchy-warming": "Loading class tree…",
-                "computing-metadata": "Computing ontology statistics...",
-              };
-              setLoadingStatusMessage(stageMessages[stage] || "Processing...");
+              const stage = message.status.metadata.stage as string;
+              setLoadingStatusMessage(
+                importStageLabel(stage, message.status.metadata?.message as string | undefined),
+              );
               if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
             }
           }
@@ -5550,6 +5659,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               // Clear pending import tracking
               pendingImportProjectIdRef.current = null;
+              setPendingImportProjectId(null);
+              setInImportQueue(false);
+              setQueuePosition(undefined);
+              setTotalInQueue(undefined);
+              setEstimatedWaitTimeMs(undefined);
               console.log("[Dashboard] Cleared pendingImportProjectIdRef");
               setIsExpectingFileReady(false);
 
@@ -5635,7 +5749,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               status: message.status.status,
             });
 
-            const errorMessage = message.status.statusMessage || message.status.metadata?.error || "Import failed";
+            const errorMessage =
+              sanitizeImportMessage(message.status.statusMessage) ||
+              sanitizeImportMessage(message.status.metadata?.error as string) ||
+              "Import failed";
             const projectName = message.status.projectId || "unknown";
 
             // Extract more user-friendly error message
@@ -5644,17 +5761,17 @@ const Dashboard: React.FC<DashboardProps> = ({
               errorMessage.includes("UnknownHostException: graphdb") ||
               errorMessage.includes("UnknownHostException")
             ) {
-              displayError = "Cannot connect to GraphDB. Please ensure GraphDB service is running and accessible.";
+              displayError = "Cannot connect to the ontology service. Please ensure backend services are running.";
               console.log("[Dashboard] 🔄 Translated error to user-friendly message (UnknownHost)");
             } else if (errorMessage.includes("Connection refused") || errorMessage.includes("ConnectException")) {
-              displayError = "GraphDB connection refused. Please verify GraphDB is running on the correct port.";
+              displayError = "Ontology service connection refused. Please verify backend services are running.";
               console.log("[Dashboard] 🔄 Translated error to user-friendly message (Connection refused)");
             } else if (errorMessage.includes("HTTP error code 404")) {
-              displayError = "Repository not found or not initialized. Please check GraphDB configuration.";
+              displayError = "Ontology data store not found or not initialized. Please check service configuration.";
               console.log("[Dashboard] 🔄 Translated error to user-friendly message (404)");
             } else if (errorMessage.includes("unable to start transaction")) {
               displayError =
-                "Unable to start database transaction. Please verify GraphDB is running and the repository exists.";
+                "Unable to start database transaction. Please verify backend services are running.";
               console.log("[Dashboard] 🔄 Translated error to user-friendly message (transaction)");
             }
 
@@ -5736,6 +5853,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           setQueuePosition(undefined);
           setTotalInQueue(undefined);
           setEstimatedWaitTimeMs(undefined);
+          setInImportQueue(false);
+          setPendingImportProjectId(null);
           notificationService.error(
             "Import Timeout",
             "The import operation took too long. Your ontology may still be processing. Please check back later.",
@@ -5751,18 +5870,34 @@ const Dashboard: React.FC<DashboardProps> = ({
           setLoadingStatusMessage(message.message);
           break;
 
-        case "queueStatusUpdate":
-          if (message.status?.projectId === projectId) {
-            setQueuePosition(message.status.queuePosition);
+        case "queueStatusUpdate": {
+          const qProjectId = message.status?.projectId;
+          const isQueueRelevant =
+            qProjectId === projectId ||
+            qProjectId === pendingImportProjectIdRef.current ||
+            isExpectingFileReady;
+          if (isQueueRelevant && message.status) {
+            const status = message.status.status;
+            const position = message.status.queuePosition ?? 0;
+            setQueuePosition(position);
             setTotalInQueue(message.status.totalInQueue);
             setEstimatedWaitTimeMs(message.status.estimatedWaitTimeMs);
-            if (message.status.status === "COMPLETED" || message.status.status === "FAILED") {
+            if (message.status.message) {
+              setLoadingStatusMessage(message.status.message);
+            }
+            if (status === "QUEUED" || status === "PROCESSING") {
+              setInImportQueue(true);
+              setShowQueueStatus(true);
+            }
+            if (status === "COMPLETED" || status === "FAILED") {
               setQueuePosition(undefined);
               setTotalInQueue(undefined);
               setEstimatedWaitTimeMs(undefined);
+              setInImportQueue(false);
             }
           }
           break;
+        }
 
         case "citationFormatted":
           // Handle formatted citation from extension (legacy path)
@@ -5804,6 +5939,18 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
     window.addEventListener("importStatusUpdate", handleImportStatusCustomEvent);
 
+    const handleQueueStatusCustomEvent = (e: Event) => {
+      const status = (e as CustomEvent).detail;
+      handleMessage({ data: { type: "queueStatusUpdate", status } } as MessageEvent);
+    };
+    window.addEventListener("queueStatusUpdate", handleQueueStatusCustomEvent);
+
+    const handleQueueStatsCustomEvent = (e: Event) => {
+      const stats = (e as CustomEvent).detail;
+      handleMessage({ data: { type: "queueStats", stats } } as MessageEvent);
+    };
+    window.addEventListener("queueStatsUpdate", handleQueueStatsCustomEvent);
+
     // Force-close the loading dialog when the preload signals import is done
     // but the normal condition (isCurrentProject || isPendingImport) didn't fire.
     const handleForceClose = () => {
@@ -5814,6 +5961,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       setBackgroundImportActive(false);
       setBackgroundImportProgress(undefined);
       pendingImportProjectIdRef.current = null;
+      setPendingImportProjectId(null);
+      setInImportQueue(false);
+      setQueuePosition(undefined);
+      setTotalInQueue(undefined);
+      setEstimatedWaitTimeMs(undefined);
     };
     window.addEventListener("forceCloseLoadingDialog", handleForceClose);
 
@@ -5829,9 +5981,43 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.log("[Dashboard] 📢 Removing message listener");
       window.removeEventListener("message", handleMessage);
       window.removeEventListener("importStatusUpdate", handleImportStatusCustomEvent);
+      window.removeEventListener("queueStatusUpdate", handleQueueStatusCustomEvent);
+      window.removeEventListener("queueStatsUpdate", handleQueueStatsCustomEvent);
       window.removeEventListener("forceCloseLoadingDialog", handleForceClose);
     };
-  }, [projectId, initialProjectId, isExpectingFileReady]); // Remove fetchData to prevent infinite loop - it's captured in the closure
+  }, [projectId, initialProjectId, isExpectingFileReady, showLoadingChoice]); // Remove fetchData to prevent infinite loop - it's captured in the closure
+
+  // Poll import queue while a file upload/import is in progress (covers desktop/no-auth WS gaps)
+  useEffect(() => {
+    const activeProjectId = pendingImportProjectId || projectId;
+    if (!activeProjectId || (!showLoadingChoice && !isExpectingFileReady)) {
+      return;
+    }
+
+    const pollQueue = async () => {
+      try {
+        const positionData: any = await apiClient.get(`/api/import-queue/position/${activeProjectId}`);
+        if (!positionData?.inQueue) {
+          setInImportQueue(false);
+          return;
+        }
+        setInImportQueue(true);
+        setQueuePosition(positionData.position ?? 0);
+        setTotalInQueue(positionData.totalInQueue ?? 0);
+        setEstimatedWaitTimeMs(positionData.estimatedWaitMs ?? 0);
+        if (positionData.message) {
+          setLoadingStatusMessage(sanitizeImportMessage(positionData.message));
+        }
+        setShowQueueStatus(true);
+      } catch {
+        // Queue endpoint may be unavailable during startup
+      }
+    };
+
+    pollQueue();
+    const intervalId = setInterval(pollQueue, 3000);
+    return () => clearInterval(intervalId);
+  }, [showLoadingChoice, isExpectingFileReady, projectId, pendingImportProjectId]);
 
   const loadChildren = useCallback(
     async (nodeId: string) => {
@@ -5940,13 +6126,19 @@ const Dashboard: React.FC<DashboardProps> = ({
     async (nodeId: string) => {
       if (!projectId) return;
       const inferred = await fetchInferredChildren(nodeId);
+      const nothingIri = "http://www.w3.org/2002/07/owl#Nothing";
       const mappedChildren: TreeNode[] = inferred
-        .filter((item: any) => item?.iri && item.iri !== "http://www.w3.org/2002/07/owl#Nothing")
+        .filter((item: any) => {
+          if (!item?.iri) return false;
+          if (nodeId === nothingIri) return true;
+          return item.iri !== nothingIri;
+        })
         .map((item: any) => ({
           id: item.iri,
           label: item.label || getLocalName(item.iri),
           children: [],
           hasChildren: item.hasChildren !== undefined ? item.hasChildren : true,
+          isUnsatisfiable: nodeId === nothingIri || item.isUnsatisfiable === true,
           subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: getLocalName(nodeId) || "Thing" }],
         }));
 
@@ -6248,10 +6440,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   // On-demand property detail loading: when a property is selected, fetch full details (domains, ranges, etc.)
   useEffect(() => {
     if (!projectId || !selectedItem) return;
-    const isProperty = (selectedItem as any).type === "ObjectProperty" || (selectedItem as any).type === "DatatypeProperty";
+    const isProperty =
+      (selectedItem as any).type === "ObjectProperty" ||
+      (selectedItem as any).type === "DatatypeProperty" ||
+      (selectedItem as any).type === "AnnotationProperty";
     if (!isProperty) return;
-    // Skip if details already loaded (has domains array)
-    if (Array.isArray((selectedItem as any).domains) && (selectedItem as any).domains.length > 0) return;
+    // Skip if full details were already merged from the detail endpoint
+    if ((selectedItem as any)._propertyDetailsLoaded) return;
     // Also skip for built-in top properties
     if (
       selectedItem.id === "http://www.w3.org/2002/07/owl#topObjectProperty" ||
@@ -6264,12 +6459,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     apiClient
       .get<any>(`/api/ontology/properties/detail/${encodedProjectId}?iri=${encodedIri}`)
       .then((res: any) => {
-        const detail = res?.data || res;
+        const payload = res?.data ?? res;
+        const detail = payload?.data ?? payload;
         if (detail && detail.id) {
           // Merge detail fields into the selected item
           setSelectedItem((prev) => {
             if (prev?.id !== detail.id) return prev;
-            return { ...prev, ...detail };
+            return { ...prev, ...detail, _propertyDetailsLoaded: true };
           });
         }
       })
@@ -6856,9 +7052,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     const loadInstalledPlugins = async () => {
       try {
         pluginLoader.loadFromStorage();
-        if (isDesktop()) {
-          pluginLoader.ensureDefaultBuiltInPlugins();
-        }
+        // Protégé parity: ship SPARQL, Reasoner, Graph, SWRL, etc. as built-in tabs (not marketplace-only).
+        pluginLoader.ensureDefaultBuiltInPlugins();
         const installed = pluginLoader.getInstalledPlugins();
 
         // Update state with installed plugin IDs
@@ -7166,7 +7361,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         notificationService.success(
           "Saved to Database",
-          `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? "s" : ""} saved to GraphDB and history recorded.`,
+          `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? "s" : ""} saved and history recorded.`,
         );
         console.log("[Dashboard] Save complete:", data);
 
@@ -7423,6 +7618,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Set project state before dispatching so IMPORT_COMPLETED targets the right project.
         setProjectId(ontologyProjectId);
         pendingImportProjectIdRef.current = ontologyProjectId;
+        setPendingImportProjectId(ontologyProjectId);
 
         const importResult = await apiClient.post<{
           success: boolean;
@@ -7458,6 +7654,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         if ((importResult as any)?.status === "ALREADY_LOADED") {
           console.log("[Dashboard] ✅ Desktop cache hit (ALREADY_LOADED) — fetching data directly");
           pendingImportProjectIdRef.current = null;
+          setPendingImportProjectId(null);
+          setInImportQueue(false);
           setIsInitialLoading(false);
           await fetchData(ontologyProjectId, false, initialProjectId, true);
           return;
@@ -7550,7 +7748,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       : Array.isArray(res?.annotationProperties)
         ? res.annotationProperties
         : [];
-    setAnnotationProperties(mergeAnnotationProperties(rawProperties.map(mapAnnotationProperty)));
+    const merged = mergeAnnotationProperties(rawProperties.map(mapAnnotationProperty));
+    setAnnotationProperties(merged);
+    setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(merged));
   }, [projectId]);
 
   const handleDialogCreateAnnotationProperty = useCallback(
@@ -7856,7 +8056,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         message: `Are you sure you want to delete this General Class Axiom?`,
         onConfirm: async () => {
           try {
-            await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, { value: axiom.value });
+            await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, { value: axiom.id || axiom.value });
 
             // Refresh GCIs
             const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
@@ -7881,18 +8081,19 @@ const Dashboard: React.FC<DashboardProps> = ({
   );
 
   const handleDeleteAnnotation = useCallback(
-    async (key: string) => {
+    async (key: string, explicitValue?: string) => {
       if (!selectedItem || !selectedItem.annotations || !projectId) return;
+
+      const raw = selectedItem.annotations[key];
+      const value = explicitValue ?? (Array.isArray(raw) ? raw[0] : raw);
 
       // Show confirm dialog instead of using confirm()
       setConfirmDialog({
         isOpen: true,
         title: "Delete Annotation",
-        message: `Are you sure you want to delete the annotation "${key}"?`,
+        message: `Are you sure you want to delete this annotation value?`,
         onConfirm: async () => {
           try {
-            const value = selectedItem.annotations[key];
-            // Call backend API
             await ontologyMutationService.deleteAnnotation(
               projectId,
               selectedItem.id,
@@ -7902,9 +8103,17 @@ const Dashboard: React.FC<DashboardProps> = ({
               user?.username || "Anonymous",
             );
 
-            // Update local state
-            const remainingAnnotations = { ...selectedItem.annotations };
-            delete remainingAnnotations[key];
+            const remainingAnnotations = { ...selectedItem.annotations } as Record<string, string | string[]>;
+            if (Array.isArray(raw)) {
+              const nextValues = raw.filter((v) => v !== value);
+              if (nextValues.length > 0) {
+                remainingAnnotations[key] = nextValues;
+              } else {
+                delete remainingAnnotations[key];
+              }
+            } else {
+              delete remainingAnnotations[key];
+            }
             const updatedItem = { ...selectedItem, annotations: remainingAnnotations };
             updateItemInState(updatedItem);
             markAsUnsaved();
@@ -9189,6 +9398,32 @@ const Dashboard: React.FC<DashboardProps> = ({
     [selectedItem, entitiesTab, projectId],
   );
 
+  const handleChangeEntityIri = useCallback(
+    (item: SelectableItem) => {
+      if (isViewOnlyMember) { handleViewOnlyAction(); return; }
+      setEditEntityIRITarget(item);
+      setIsEditEntityIRIDialogOpen(true);
+    },
+    [isViewOnlyMember],
+  );
+
+  const handleSaveEntityIri = useCallback(
+    async (newIri: string) => {
+      if (!projectId || !editEntityIRITarget) return;
+      await ontologyMutationService.renameEntity(
+        projectId,
+        editEntityIRITarget.id,
+        newIri,
+        user?.email || "anonymous",
+        user?.username || "Anonymous",
+      );
+      showNotification("Entity IRI updated successfully", "info");
+      setEditEntityIRITarget(null);
+      await fetchData();
+    },
+    [projectId, editEntityIRITarget, user, fetchData],
+  );
+
   const handleRenameItem = useCallback(
     async (itemId: string, newLabel: string) => {
       if (isViewOnlyMember) { handleViewOnlyAction(); return; }
@@ -9245,6 +9480,60 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     },
     [projectId, selectedItem, updateItemInState],
+  );
+
+  const handleMoveClass = useCallback(
+    async (classId: string, newParentId: string) => {
+      if (isViewOnlyMember) {
+        handleViewOnlyAction();
+        return;
+      }
+      if (!projectId || !classId || !newParentId || classId === newParentId) return;
+
+      const owlThing = "http://www.w3.org/2002/07/owl#Thing";
+      if (classId === owlThing) {
+        showNotification("Cannot move owl:Thing", "warning");
+        return;
+      }
+
+      try {
+        const currentParent = findParentNode(classHierarchy, classId);
+        if (currentParent && currentParent.id !== newParentId) {
+          await ontologyMutationService.deleteSubClassOf(
+            projectId,
+            classId,
+            currentParent.id,
+            user?.email,
+            user?.username || user?.email,
+          );
+        }
+        if (newParentId !== owlThing) {
+          await ontologyMutationService.addSubClassOf(
+            projectId,
+            classId,
+            newParentId,
+            user?.email,
+            user?.username || user?.email,
+          );
+        }
+        await refreshClassHierarchy();
+        setExpandedNodes((prev) => (prev.includes(newParentId) ? prev : [...prev, newParentId]));
+        markAsUnsaved();
+      } catch (error) {
+        console.error("[Dashboard] Failed to move class:", error);
+        showNotification("Failed to move class in hierarchy", "error");
+      }
+    },
+    [
+      projectId,
+      classHierarchy,
+      isViewOnlyMember,
+      user,
+      refreshClassHierarchy,
+      showNotification,
+      handleViewOnlyAction,
+      markAsUnsaved,
+    ],
   );
 
   const handleGraphNodeClick = useCallback(
@@ -9450,6 +9739,44 @@ const Dashboard: React.FC<DashboardProps> = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem, selectedItem]);
+
+  // Undo / Redo (Protégé-style) — rolls back via Change Assistant history API
+  useEffect(() => {
+    if (!projectId) return;
+
+    const handleUndoRedo = async (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+        return;
+      }
+      if (!(e.ctrlKey || e.metaKey)) return;
+
+      const userId = user?.email || "anonymous";
+      const username = user?.username || "Anonymous";
+      const isRedo = e.key === "y" || (e.key === "z" && e.shiftKey);
+
+      if (e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        const result = await undoRedoService.undo(projectId, userId, username);
+        if (result.success) {
+          notificationService.success("Undo", "Undid last change");
+        } else if (result.error) {
+          notificationService.info("Undo", result.error);
+        }
+      } else if (isRedo) {
+        e.preventDefault();
+        const result = await undoRedoService.redo(projectId, userId, username);
+        if (result.success) {
+          notificationService.success("Redo", "Redid change");
+        } else if (result.error) {
+          notificationService.info("Redo", result.error);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleUndoRedo);
+    return () => window.removeEventListener("keydown", handleUndoRedo);
+  }, [projectId, user]);
 
   const handleExecuteDlQuery = () => {
     setIsDlQueryLoading(true);
@@ -12701,13 +13028,22 @@ const Dashboard: React.FC<DashboardProps> = ({
                                       </div>
                                       {showImportClosure && isExpanded && (
                                         <div
-                                          className="mt-2 ml-4 pl-3 border-l-2 text-[10px]"
+                                          className="mt-2 ml-4 pl-3 border-l-2 text-[10px] space-y-1"
                                           style={{ borderColor: "var(--border)", color: "var(--text-tertiary)" }}
                                         >
-                                          <div className="italic">Transitive imports would appear here</div>
-                                          <div className="text-[9px] mt-1" style={{ color: "var(--text-quaternary)" }}>
-                                            (Feature requires backend support)
-                                          </div>
+                                          {(importClosureMap[iri] || []).length === 0 ? (
+                                            <div className="italic">No transitive imports declared</div>
+                                          ) : (
+                                            (importClosureMap[iri] || []).map((child, childIdx) => {
+                                              const renderClosure = (node: { iri: string; children?: any[] }, depth = 0): React.ReactNode => (
+                                                <div key={`${node.iri}-${depth}`} style={{ marginLeft: depth * 12 }}>
+                                                  <div className="font-mono break-all">{node.iri}</div>
+                                                  {(node.children || []).map((c) => renderClosure(c, depth + 1))}
+                                                </div>
+                                              );
+                                              return <div key={`${child.iri}-${childIdx}`}>{renderClosure(child)}</div>;
+                                            })
+                                          )}
                                         </div>
                                       )}
                                     </div>
@@ -12966,6 +13302,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                   onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
                   onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
                   onRenameItem={handleRenameItem}
+                  onChangeEntityIri={handleChangeEntityIri}
+                  onMoveClass={handleMoveClass}
                   viewMode={hierarchyViewModes.Classes || "asserted"}
                   onViewModeChange={(mode) =>
                     setHierarchyViewModes((prev) => ({ ...prev, Classes: mode }))
@@ -13642,37 +13980,71 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!selectedItem || !projectId || !selectorTarget) return;
     const target = selectorTarget as "domain" | "range";
     const editing = selectorEditingItem;
+    const isDataProperty = (selectedItem as any)?.type === "DatatypeProperty";
+    const relationType = target === "domain" ? "Domain" : "Range";
+    const userId = user?.email || "anonymous";
+    const username = user?.username || "Anonymous";
+    const useManchesterApi =
+      !restrictionData &&
+      (isManchesterClassExpression(expression) ||
+        (editing != null && isManchesterClassExpression(editing)));
 
     try {
-      if (editing) {
-        // Replace: single server-side call — delete old + add new atomically
+      if (useManchesterApi) {
+        if (editing) {
+          if (isManchesterClassExpression(editing)) {
+            await expressionService.deletePropertyExpressionAxiom(
+              projectId, selectedItem.id, relationType, editing, isDataProperty, userId, username,
+            );
+          } else if (isSimpleOntologyIri(editing)) {
+            if (target === "domain") {
+              await ontologyMutationService.deletePropertyDomain(projectId, selectedItem.id, editing, userId, username);
+            } else {
+              await ontologyMutationService.deletePropertyRange(projectId, selectedItem.id, editing, userId, username);
+            }
+          }
+        }
+        await expressionService.addPropertyExpressionAxiom(
+          projectId, selectedItem.id, relationType, expression, isDataProperty, userId, username,
+        );
+        const prop = selectedItem as Property;
+        if (editing) {
+          if (target === "domain") {
+            updateItemInState({ ...selectedItem, domains: (prop.domains || []).map((d) => (d === editing ? expression : d)) });
+          } else {
+            updateItemInState({ ...selectedItem, ranges: (prop.ranges || []).map((r) => (r === editing ? expression : r)) });
+          }
+        } else if (target === "domain") {
+          updateItemInState({ ...selectedItem, domains: [...(prop.domains || []), expression] });
+        } else {
+          updateItemInState({ ...selectedItem, ranges: [...(prop.ranges || []), expression] });
+        }
+      } else if (editing) {
         await ontologyMutationService.editRelation(projectId, {
           operation: 'edit',
           entityIri: selectedItem.id,
           relationshipType: target,
           oldTargetIri: editing,
           targetIri: expression,
-          userId: user?.email || "anonymous",
-          username: user?.username || "Anonymous",
+          userId,
+          username,
         });
         const prop = selectedItem as Property;
         if (target === "domain") {
-          updateItemInState({ ...selectedItem, domains: (prop.domains || []).map(d => d === editing ? expression : d) });
+          updateItemInState({ ...selectedItem, domains: (prop.domains || []).map((d) => (d === editing ? expression : d)) });
         } else {
-          updateItemInState({ ...selectedItem, ranges: (prop.ranges || []).map(r => r === editing ? expression : r) });
+          updateItemInState({ ...selectedItem, ranges: (prop.ranges || []).map((r) => (r === editing ? expression : r)) });
         }
+      } else if (target === "domain") {
+        await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, userId, username, restrictionData);
+        updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
       } else {
-        // Pure add
-        if (target === "domain") {
-          await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous", restrictionData);
-          updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
-        } else {
-          await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous", restrictionData);
-          updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
-        }
+        await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, userId, username, restrictionData);
+        updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
       }
     } catch (error) {
       console.error(`Failed to ${editing ? 'replace' : 'add'} ${selectorTarget}`, error);
+      notificationService.error("Property axiom", `Failed to ${editing ? 'update' : 'add'} ${target}`);
     } finally {
       setIsClassExpressionDialogOpen(false);
       setSelectorTarget(null);
@@ -13927,13 +14299,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   return (
     <>
       <LoadingDialog
-        isOpen={isInitialLoading || showLoadingChoice}
+        isOpen={isInitialLoading || showLoadingChoice || isExpectingFileReady}
         projectName={loadingProjectName || undefined}
         loadingStatusMessage={loadingStatusMessage || undefined}
         progress={backgroundImportProgress}
         queuePosition={queuePosition}
         totalInQueue={totalInQueue}
         estimatedWaitTimeMs={estimatedWaitTimeMs}
+        inImportQueue={inImportQueue}
       />
       <CreateIndividualModal
         isOpen={isCreateIndividualModalOpen}
@@ -14073,6 +14446,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           };
           return extractClasses(classHierarchy);
         })()}
+        projectId={projectId}
       />
       <EditOntologyIRIDialog
         isOpen={isEditOntologyIRIDialogOpen}
@@ -14080,6 +14454,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         onSave={handleSaveOntologyIRIs}
         initialOntologyIri={(metadata as any)?.ontologyIRI || ""}
         initialVersionIri={(metadata as any)?.versionIRI || ""}
+      />
+      <EditEntityIRIDialog
+        isOpen={isEditEntityIRIDialogOpen}
+        onClose={() => {
+          setIsEditEntityIRIDialogOpen(false);
+          setEditEntityIRITarget(null);
+        }}
+        onSave={handleSaveEntityIri}
+        currentIri={editEntityIRITarget?.id || ""}
+        entityLabel={editEntityIRITarget?.label}
       />
       <GCIEditorDialog
         isOpen={axiomDialogOpen}
@@ -14112,6 +14496,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           };
           return extractClasses(classHierarchy);
         })()}
+        projectId={projectId}
       />
       <AddAnnotationDialog
         isOpen={isOntologyAnnotationDialogOpen}
@@ -14479,6 +14864,9 @@ const Dashboard: React.FC<DashboardProps> = ({
             <span className="font-medium">
               Loading "{loadingProjectName}" in the background
               {loadingStatusMessage ? ` — ${loadingStatusMessage}` : "..."}
+              {inImportQueue && queuePosition !== undefined && queuePosition > 0
+                ? ` (queue #${queuePosition}${totalInQueue ? `, ${totalInQueue} waiting` : ""}${estimatedWaitTimeMs ? `, est. ${formatQueueWait(estimatedWaitTimeMs)}` : ""})`
+                : ""}
             </span>
             {backgroundImportProgress !== undefined && backgroundImportProgress > 0 && (
               <>
@@ -14752,6 +15140,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                   onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
                   onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
                   onRenameItem={handleRenameItem}
+                  onChangeEntityIri={handleChangeEntityIri}
+                  onMoveClass={entitiesTab === "Classes" ? handleMoveClass : undefined}
                   onQuickSetParent={(item) => {
                     setQuickEditParentItem(item);
                     if (entitiesTab === "Classes") {
@@ -14815,6 +15205,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                     markAsUnsaved={markAsUnsaved}
                     isViewOnly={isViewOnlyMember}
                     onViewOnlyAction={handleViewOnlyAction}
+                    isReasonerRunning={isReasonerRunning}
+                    selectedReasoner={selectedReasoner}
                   />
                 </div>
               </section>
@@ -15253,7 +15645,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               // Show loading screen during the wait
               setIsInitialLoading(true);
-              notificationService.info("Processing Merge", "Waiting for GraphDB to finish importing merged data...");
+              notificationService.info("Processing Merge", "Waiting for merged data to finish importing…");
 
               // Clear ALL current state to ensure fully fresh data
               setClassHierarchy([]);
@@ -15303,7 +15695,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
                   if (status === "ERROR") {
                     console.error("[Dashboard] ❌ Import failed during merge re-import");
-                    notificationService.error("Import Failed", "The merged file failed to import into GraphDB.");
+                    notificationService.error("Import Failed", "The merged file failed to import.");
                     setIsInitialLoading(false);
                     return;
                   }
@@ -15320,7 +15712,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 console.warn("[Dashboard] ⚠️ Timed out waiting for import to complete, attempting to fetch anyway");
                 notificationService.warning(
                   "Import Taking Long",
-                  "GraphDB import is taking longer than expected. Attempting to load current data...",
+                  "Import is taking longer than expected. Attempting to load current data…",
                 );
               }
 
@@ -15478,7 +15870,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       />
 
       {/* Queue Status Indicator */}
-      <QueueStatusIndicator projectId={projectId || ""} visible={showQueueStatus && !!projectId} />
+      <QueueStatusIndicator
+        projectId={projectId || pendingImportProjectId || ""}
+        visible={(showQueueStatus || isExpectingFileReady) && !!(projectId || pendingImportProjectId)}
+      />
 
       {/* Global Queue Stats */}
       <GlobalQueueStats visible={true} />

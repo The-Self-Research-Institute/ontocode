@@ -284,58 +284,9 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
         setError(response.error);
       }
     } catch (err: any) {
-      // Fallback: simulate results for demo purposes if backend not available
-      console.warn('DL Query API not available, using simulated results');
-      
-      // Simple pattern matching for demo
-      const simulatedResults: DLQueryResponse = {
-        success: true,
-        query: query,
-        queryType: selectedTypes,
-        results: {},
-        executionTime: 150
-      };
-      
-      // Find matching classes/individuals based on query
-      const queryLower = query.toLowerCase();
-      
-      if (selectedTypes.includes('subclasses') || selectedTypes.includes('directSubclasses')) {
-        const matchingClasses = classes
-          .filter(c => {
-            const label = c.label.toLowerCase();
-            // Simple heuristic: if query mentions a class, show related classes
-            return queryLower.includes(label) || label.includes(queryLower.split(' ')[0]);
-          })
-          .slice(0, 10)
-          .map(c => ({ type: 'class' as const, iri: c.id, label: c.label }));
-        
-        if (selectedTypes.includes('subclasses')) {
-          simulatedResults.results.subclasses = matchingClasses;
-        }
-        if (selectedTypes.includes('directSubclasses')) {
-          simulatedResults.results.directSubclasses = matchingClasses.slice(0, 5);
-        }
-      }
-      
-      if (selectedTypes.includes('instances') || selectedTypes.includes('directInstances')) {
-        const matchingIndividuals = individuals
-          .filter(i => {
-            const label = i.label.toLowerCase();
-            return queryLower.split(' ').some(word => label.includes(word) || word.includes(label.substring(0, 3)));
-          })
-          .slice(0, 15)
-          .map(i => ({ type: 'individual' as const, iri: i.id, label: i.label }));
-        
-        if (selectedTypes.includes('instances')) {
-          simulatedResults.results.instances = matchingIndividuals;
-        }
-        if (selectedTypes.includes('directInstances')) {
-          simulatedResults.results.directInstances = matchingIndividuals.slice(0, 8);
-        }
-      }
-      
-      setResults(simulatedResults);
-      setError('Note: Using simulated results. Backend DL Query endpoint not available.');
+      console.error('DL Query API failed:', err);
+      setResults(null);
+      setError(err?.response?.data?.error || err?.message || 'DL Query failed. Check that the backend is running.');
     } finally {
       setIsLoading(false);
     }
