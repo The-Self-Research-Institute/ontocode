@@ -15,7 +15,6 @@ import self.research.ontology.owlEditor.hierarchy.OntologyMetricsComputer;
 
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * OWLAPI in-memory hierarchy (desktop + cloud fast-open).
@@ -97,7 +96,6 @@ public class DesktopHierarchyService {
         details.put("id", classIri);
 
         org.semanticweb.owlapi.model.parameters.Imports imp = org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
-        IRI rdfsLabel = IRI.create("http://www.w3.org/2000/01/rdf-schema#label");
         Map<String, Object> annotations = new LinkedHashMap<>();
         ont.annotationAssertionAxioms(cls.getIRI(), imp).forEach(ax -> {
             String prop = ax.getProperty().getIRI().toString();
@@ -108,33 +106,44 @@ public class DesktopHierarchyService {
         });
         details.put("annotations", annotations);
 
-        List<Map<String, String>> subClassOfAxioms = ont.subClassAxiomsForSubClass(cls)
+        // subClassOfAxioms: ALL superclasses (named + restrictions) with Manchester syntax definition
+        List<OWLClassExpression> subClassExprs = ont.subClassAxiomsForSubClass(cls)
             .map(ax -> ax.getSuperClass())
-            .filter(ce -> !ce.isAnonymous() && !ce.isOWLThing() && !ce.isOWLNothing())
-            .map(ce -> labeledEntry(ont, ce.asOWLClass()))
+            .filter(ce -> !ce.isOWLThing() && !ce.isOWLNothing())
             .collect(Collectors.toList());
+        List<Map<String, Object>> subClassOfAxioms = new ArrayList<>();
+        for (int i = 0; i < subClassExprs.size(); i++) {
+            Map<String, Object> m = classExpressionToAxiomMap(ont, subClassExprs.get(i), "sub_" + i);
+            m.put("type", "SubClassOf");
+            subClassOfAxioms.add(m);
+        }
         details.put("subClassOfAxioms", subClassOfAxioms);
 
-        List<Map<String, String>> equivalentClassesAxioms = ont.equivalentClassesAxioms(cls)
+        // equivalentClassesAxioms: named + anonymous (restrictions, complex expressions)
+        List<OWLClassExpression> eqExprs = ont.equivalentClassesAxioms(cls)
             .flatMap(ax -> ax.classExpressions())
-            .filter(ce -> !ce.equals(cls) && !ce.isAnonymous())
-            .map(ce -> labeledEntry(ont, ce.asOWLClass()))
+            .filter(ce -> !ce.equals(cls))
             .collect(Collectors.toList());
+        List<Map<String, Object>> equivalentClassesAxioms = new ArrayList<>();
+        for (int i = 0; i < eqExprs.size(); i++) {
+            Map<String, Object> m = classExpressionToAxiomMap(ont, eqExprs.get(i), "eq_" + i);
+            m.put("type", "EquivalentTo");
+            equivalentClassesAxioms.add(m);
+        }
         details.put("equivalentClassesAxioms", equivalentClassesAxioms);
 
-        List<Map<String, String>> disjointClassesAxioms = ont.disjointClassesAxioms(cls)
+        // disjointClassesAxioms: named disjoint classes only
+        List<OWLClassExpression> disjointExprs = ont.disjointClassesAxioms(cls)
             .flatMap(ax -> ax.classExpressions())
             .filter(ce -> !ce.equals(cls) && !ce.isAnonymous())
-            .map(ce -> labeledEntry(ont, ce.asOWLClass()))
             .collect(Collectors.toList());
+        List<Map<String, Object>> disjointClassesAxioms = new ArrayList<>();
+        for (int i = 0; i < disjointExprs.size(); i++) {
+            Map<String, Object> m = classExpressionToAxiomMap(ont, disjointExprs.get(i), "dis_" + i);
+            m.put("type", "DisjointWith");
+            disjointClassesAxioms.add(m);
+        }
         details.put("disjointClassesAxioms", disjointClassesAxioms);
-
-        List<Map<String, Object>> restrictions = ont.subClassAxiomsForSubClass(cls)
-            .map(ax -> ax.getSuperClass())
-            .filter(OWLClassExpression::isAnonymous)
-            .flatMap(ce -> extractRestrictions(ont, ce))
-            .collect(Collectors.toList());
-        details.put("restrictions", restrictions);
 
         List<Map<String, String>> unionMembers = ont.equivalentClassesAxioms(cls)
             .flatMap(ax -> ax.classExpressions())
@@ -154,7 +163,12 @@ public class DesktopHierarchyService {
             .collect(Collectors.toList());
         details.put("intersectionOfMembers", intersectionMembers);
 
-        List<Map<String, String>> directSubclasses = reasoner.getSubClasses(cls, true)
+        OWLReasoner r = reasoner;
+        if (r == null) {
+            r = new org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory()
+                    .createNonBufferingReasoner(ont);
+        }
+        List<Map<String, String>> directSubclasses = r.getSubClasses(cls, true)
             .entities()
             .filter(c -> !c.isOWLNothing() && !c.isAnonymous())
             .map(c -> labeledEntry(ont, c))
@@ -165,15 +179,197 @@ public class DesktopHierarchyService {
         return details;
     }
 
-    private Stream<Map<String, Object>> extractRestrictions(OWLOntology ont, OWLClassExpression ce) {
-        if (ce instanceof OWLRestriction) {
-            OWLRestriction r = (OWLRestriction) ce;
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("property", r.getProperty().isAnonymous() ? "" : r.getProperty().asOWLObjectProperty().getIRI().toString());
-            m.put("type", ce.getClassExpressionType().getName());
-            return Stream.of(m);
+    private Map<String, Object> classExpressionToAxiomMap(OWLOntology ont, OWLClassExpression ce, String idPrefix) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("definition", classExpressionToManchester(ont, ce));
+        if (!ce.isAnonymous()) {
+            m.put("id", ce.asOWLClass().getIRI().toString());
+            m.put("isRestriction", false);
+        } else if (ce instanceof OWLObjectSomeValuesFrom) {
+            OWLObjectSomeValuesFrom r = (OWLObjectSomeValuesFrom) ce;
+            if (!r.getProperty().isAnonymous()) {
+                String pIri = r.getProperty().asOWLObjectProperty().getIRI().toString();
+                String fIri = r.getFiller().isAnonymous() ? "" : r.getFiller().asOWLClass().getIRI().toString();
+                m.put("id", pIri + "_some_" + fIri); m.put("isRestriction", true);
+                m.put("propertyIri", pIri); m.put("restrictionType", "some"); m.put("fillerIri", fIri);
+            } else { m.put("id", idPrefix); m.put("isRestriction", true); }
+        } else if (ce instanceof OWLObjectAllValuesFrom) {
+            OWLObjectAllValuesFrom r = (OWLObjectAllValuesFrom) ce;
+            if (!r.getProperty().isAnonymous()) {
+                String pIri = r.getProperty().asOWLObjectProperty().getIRI().toString();
+                String fIri = r.getFiller().isAnonymous() ? "" : r.getFiller().asOWLClass().getIRI().toString();
+                m.put("id", pIri + "_only_" + fIri); m.put("isRestriction", true);
+                m.put("propertyIri", pIri); m.put("restrictionType", "only"); m.put("fillerIri", fIri);
+            } else { m.put("id", idPrefix); m.put("isRestriction", true); }
+        } else if (ce instanceof OWLObjectMinCardinality) {
+            OWLObjectMinCardinality r = (OWLObjectMinCardinality) ce;
+            if (!r.getProperty().isAnonymous()) {
+                String pIri = r.getProperty().asOWLObjectProperty().getIRI().toString();
+                String fIri = (!r.getFiller().isAnonymous() && r.getFiller() instanceof OWLClass) ? r.getFiller().asOWLClass().getIRI().toString() : "";
+                m.put("id", pIri + "_min" + r.getCardinality() + "_" + fIri); m.put("isRestriction", true);
+                m.put("propertyIri", pIri); m.put("restrictionType", "min"); m.put("fillerIri", fIri); m.put("cardinality", r.getCardinality());
+            } else { m.put("id", idPrefix); m.put("isRestriction", true); }
+        } else if (ce instanceof OWLObjectMaxCardinality) {
+            OWLObjectMaxCardinality r = (OWLObjectMaxCardinality) ce;
+            if (!r.getProperty().isAnonymous()) {
+                String pIri = r.getProperty().asOWLObjectProperty().getIRI().toString();
+                String fIri = (!r.getFiller().isAnonymous() && r.getFiller() instanceof OWLClass) ? r.getFiller().asOWLClass().getIRI().toString() : "";
+                m.put("id", pIri + "_max" + r.getCardinality() + "_" + fIri); m.put("isRestriction", true);
+                m.put("propertyIri", pIri); m.put("restrictionType", "max"); m.put("fillerIri", fIri); m.put("cardinality", r.getCardinality());
+            } else { m.put("id", idPrefix); m.put("isRestriction", true); }
+        } else if (ce instanceof OWLObjectExactCardinality) {
+            OWLObjectExactCardinality r = (OWLObjectExactCardinality) ce;
+            if (!r.getProperty().isAnonymous()) {
+                String pIri = r.getProperty().asOWLObjectProperty().getIRI().toString();
+                String fIri = (!r.getFiller().isAnonymous() && r.getFiller() instanceof OWLClass) ? r.getFiller().asOWLClass().getIRI().toString() : "";
+                m.put("id", pIri + "_exactly" + r.getCardinality() + "_" + fIri); m.put("isRestriction", true);
+                m.put("propertyIri", pIri); m.put("restrictionType", "exactly"); m.put("fillerIri", fIri); m.put("cardinality", r.getCardinality());
+            } else { m.put("id", idPrefix); m.put("isRestriction", true); }
+        } else if (ce instanceof OWLObjectHasValue) {
+            OWLObjectHasValue r = (OWLObjectHasValue) ce;
+            if (!r.getProperty().isAnonymous()) {
+                String pIri = r.getProperty().asOWLObjectProperty().getIRI().toString();
+                String fIri = r.getFiller().isAnonymous() ? "" : r.getFiller().asOWLNamedIndividual().getIRI().toString();
+                m.put("id", pIri + "_value_" + fIri); m.put("isRestriction", true);
+                m.put("propertyIri", pIri); m.put("restrictionType", "value"); m.put("fillerIri", fIri);
+            } else { m.put("id", idPrefix); m.put("isRestriction", true); }
+        } else if (ce instanceof OWLDataSomeValuesFrom) {
+            OWLDataSomeValuesFrom r = (OWLDataSomeValuesFrom) ce;
+            String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
+            String fStr = dataRangeToString(r.getFiller());
+            m.put("id", pIri + "_data_some_" + fStr); m.put("isRestriction", true);
+            m.put("propertyIri", pIri); m.put("restrictionType", "some"); m.put("fillerIri", fStr);
+        } else if (ce instanceof OWLDataAllValuesFrom) {
+            OWLDataAllValuesFrom r = (OWLDataAllValuesFrom) ce;
+            String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
+            String fStr = dataRangeToString(r.getFiller());
+            m.put("id", pIri + "_data_only_" + fStr); m.put("isRestriction", true);
+            m.put("propertyIri", pIri); m.put("restrictionType", "only"); m.put("fillerIri", fStr);
+        } else if (ce instanceof OWLDataMinCardinality) {
+            OWLDataMinCardinality r = (OWLDataMinCardinality) ce;
+            String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
+            String fStr = dataRangeToString(r.getFiller());
+            m.put("id", pIri + "_data_min" + r.getCardinality() + "_" + fStr); m.put("isRestriction", true);
+            m.put("propertyIri", pIri); m.put("restrictionType", "min"); m.put("fillerIri", fStr); m.put("cardinality", r.getCardinality());
+        } else if (ce instanceof OWLDataMaxCardinality) {
+            OWLDataMaxCardinality r = (OWLDataMaxCardinality) ce;
+            String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
+            String fStr = dataRangeToString(r.getFiller());
+            m.put("id", pIri + "_data_max" + r.getCardinality() + "_" + fStr); m.put("isRestriction", true);
+            m.put("propertyIri", pIri); m.put("restrictionType", "max"); m.put("fillerIri", fStr); m.put("cardinality", r.getCardinality());
+        } else if (ce instanceof OWLDataExactCardinality) {
+            OWLDataExactCardinality r = (OWLDataExactCardinality) ce;
+            String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
+            String fStr = dataRangeToString(r.getFiller());
+            m.put("id", pIri + "_data_exactly" + r.getCardinality() + "_" + fStr); m.put("isRestriction", true);
+            m.put("propertyIri", pIri); m.put("restrictionType", "exactly"); m.put("fillerIri", fStr); m.put("cardinality", r.getCardinality());
+        } else if (ce instanceof OWLDataHasValue) {
+            OWLDataHasValue r = (OWLDataHasValue) ce;
+            String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
+            String fStr = r.getFiller().getLiteral();
+            m.put("id", pIri + "_data_value_" + fStr); m.put("isRestriction", true);
+            m.put("propertyIri", pIri); m.put("restrictionType", "value"); m.put("fillerIri", fStr);
+        } else {
+            // Complex: intersection, union, complement, oneOf
+            m.put("id", idPrefix); m.put("isRestriction", false); m.put("isComplex", true);
         }
-        return Stream.empty();
+        return m;
+    }
+
+    private String classExpressionToManchester(OWLOntology ont, OWLClassExpression ce) {
+        if (!ce.isAnonymous()) {
+            return getLabel(ont, ce.asOWLClass().getIRI());
+        } else if (ce instanceof OWLObjectSomeValuesFrom) {
+            OWLObjectSomeValuesFrom r = (OWLObjectSomeValuesFrom) ce;
+            String p = r.getProperty().isAnonymous() ? "?" : getLabel(ont, r.getProperty().asOWLObjectProperty().getIRI());
+            return p + " some " + classExpressionToManchester(ont, r.getFiller());
+        } else if (ce instanceof OWLObjectAllValuesFrom) {
+            OWLObjectAllValuesFrom r = (OWLObjectAllValuesFrom) ce;
+            String p = r.getProperty().isAnonymous() ? "?" : getLabel(ont, r.getProperty().asOWLObjectProperty().getIRI());
+            return p + " only " + classExpressionToManchester(ont, r.getFiller());
+        } else if (ce instanceof OWLObjectMinCardinality) {
+            OWLObjectMinCardinality r = (OWLObjectMinCardinality) ce;
+            String p = r.getProperty().isAnonymous() ? "?" : getLabel(ont, r.getProperty().asOWLObjectProperty().getIRI());
+            return p + " min " + r.getCardinality() + " " + classExpressionToManchester(ont, r.getFiller());
+        } else if (ce instanceof OWLObjectMaxCardinality) {
+            OWLObjectMaxCardinality r = (OWLObjectMaxCardinality) ce;
+            String p = r.getProperty().isAnonymous() ? "?" : getLabel(ont, r.getProperty().asOWLObjectProperty().getIRI());
+            return p + " max " + r.getCardinality() + " " + classExpressionToManchester(ont, r.getFiller());
+        } else if (ce instanceof OWLObjectExactCardinality) {
+            OWLObjectExactCardinality r = (OWLObjectExactCardinality) ce;
+            String p = r.getProperty().isAnonymous() ? "?" : getLabel(ont, r.getProperty().asOWLObjectProperty().getIRI());
+            return p + " exactly " + r.getCardinality() + " " + classExpressionToManchester(ont, r.getFiller());
+        } else if (ce instanceof OWLObjectHasValue) {
+            OWLObjectHasValue r = (OWLObjectHasValue) ce;
+            String p = r.getProperty().isAnonymous() ? "?" : getLabel(ont, r.getProperty().asOWLObjectProperty().getIRI());
+            String ind = r.getFiller().isAnonymous() ? "?" : getLabel(ont, r.getFiller().asOWLNamedIndividual().getIRI());
+            return p + " value " + ind;
+        } else if (ce instanceof OWLObjectHasSelf) {
+            OWLObjectHasSelf r = (OWLObjectHasSelf) ce;
+            String p = r.getProperty().isAnonymous() ? "?" : getLabel(ont, r.getProperty().asOWLObjectProperty().getIRI());
+            return p + " Self";
+        } else if (ce instanceof OWLDataSomeValuesFrom) {
+            OWLDataSomeValuesFrom r = (OWLDataSomeValuesFrom) ce;
+            String p = (r.getProperty() instanceof OWLDataProperty) ? getLabel(ont, ((OWLDataProperty) r.getProperty()).getIRI()) : "?";
+            return p + " some " + dataRangeToString(r.getFiller());
+        } else if (ce instanceof OWLDataAllValuesFrom) {
+            OWLDataAllValuesFrom r = (OWLDataAllValuesFrom) ce;
+            String p = (r.getProperty() instanceof OWLDataProperty) ? getLabel(ont, ((OWLDataProperty) r.getProperty()).getIRI()) : "?";
+            return p + " only " + dataRangeToString(r.getFiller());
+        } else if (ce instanceof OWLDataMinCardinality) {
+            OWLDataMinCardinality r = (OWLDataMinCardinality) ce;
+            String p = (r.getProperty() instanceof OWLDataProperty) ? getLabel(ont, ((OWLDataProperty) r.getProperty()).getIRI()) : "?";
+            return p + " min " + r.getCardinality() + " " + dataRangeToString(r.getFiller());
+        } else if (ce instanceof OWLDataMaxCardinality) {
+            OWLDataMaxCardinality r = (OWLDataMaxCardinality) ce;
+            String p = (r.getProperty() instanceof OWLDataProperty) ? getLabel(ont, ((OWLDataProperty) r.getProperty()).getIRI()) : "?";
+            return p + " max " + r.getCardinality() + " " + dataRangeToString(r.getFiller());
+        } else if (ce instanceof OWLDataExactCardinality) {
+            OWLDataExactCardinality r = (OWLDataExactCardinality) ce;
+            String p = (r.getProperty() instanceof OWLDataProperty) ? getLabel(ont, ((OWLDataProperty) r.getProperty()).getIRI()) : "?";
+            return p + " exactly " + r.getCardinality() + " " + dataRangeToString(r.getFiller());
+        } else if (ce instanceof OWLDataHasValue) {
+            OWLDataHasValue r = (OWLDataHasValue) ce;
+            String p = (r.getProperty() instanceof OWLDataProperty) ? getLabel(ont, ((OWLDataProperty) r.getProperty()).getIRI()) : "?";
+            return p + " value " + r.getFiller().getLiteral();
+        } else if (ce instanceof OWLObjectIntersectionOf) {
+            return ((OWLObjectIntersectionOf) ce).operands()
+                .map(op -> classExpressionToManchester(ont, op))
+                .collect(Collectors.joining(" and "));
+        } else if (ce instanceof OWLObjectUnionOf) {
+            return ((OWLObjectUnionOf) ce).operands()
+                .map(op -> classExpressionToManchester(ont, op))
+                .collect(Collectors.joining(" or "));
+        } else if (ce instanceof OWLObjectComplementOf) {
+            return "not " + classExpressionToManchester(ont, ((OWLObjectComplementOf) ce).getOperand());
+        } else if (ce instanceof OWLObjectOneOf) {
+            String inds = ((OWLObjectOneOf) ce).individuals()
+                .map(i -> i.isAnonymous() ? "?" : getLabel(ont, i.asOWLNamedIndividual().getIRI()))
+                .collect(Collectors.joining(", "));
+            return "{" + inds + "}";
+        }
+        return ce.getClassExpressionType().getName();
+    }
+
+    private String getLabel(OWLOntology ont, IRI iri) {
+        IRI rdfsLabelIri = IRI.create("http://www.w3.org/2000/01/rdf-schema#label");
+        return ont.annotationAssertionAxioms(iri, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED)
+            .filter(ax -> ax.getProperty().getIRI().equals(rdfsLabelIri))
+            .findFirst()
+            .flatMap(ax -> ax.getValue().asLiteral())
+            .map(OWLLiteral::getLiteral)
+            .orElse(iri.getShortForm());
+    }
+
+    private String dataRangeToString(OWLDataRange range) {
+        if (range instanceof OWLDatatype) {
+            IRI dtIri = ((OWLDatatype) range).getIRI();
+            String full = dtIri.toString();
+            String xsdPrefix = "http://www.w3.org/2001/XMLSchema#";
+            if (full.startsWith(xsdPrefix)) return "xsd:" + full.substring(xsdPrefix.length());
+            return dtIri.getShortForm();
+        }
+        return range.getClass().getSimpleName();
     }
 
     private Map<String, Object> buildClassUsage(OWLOntology ont, String classIri) {

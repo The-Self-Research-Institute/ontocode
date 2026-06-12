@@ -380,6 +380,10 @@ const AppContent = () => {
     clearLastOpenedSelection();
   }, [clearLastOpenedSelection]);
 
+  // Capture the URL the user originally navigated to, before any routing changes it.
+  // Used to detect file-editor links that should skip auto-restore.
+  const initialUrlRef = useRef(window.location.pathname);
+
   // Auto-restore last project + file when workspace becomes available (e.g. after login with auto-select)
   const autoRestoredRef = useRef(false);
   useEffect(() => {
@@ -401,6 +405,15 @@ const AppContent = () => {
     const wasRecentlyEditing = Date.now() - lastEditorActiveAt < EDITOR_RESTORE_THRESHOLD_MS;
     const isFreshTab = !sessionStorage.getItem("ontocode_tab_active");
     sessionStorage.setItem("ontocode_tab_active", "true");
+
+    // If the user navigated directly to a file editor URL (/projects/:name/files/:file),
+    // skip auto-restore — a separate effect will resolve the names to IDs and open it.
+    // We use initialUrlRef instead of selectedProjectName/fileName because routing may have
+    // already cleared those state values by the time this effect runs.
+    if (/^\/projects\/[^/]+\/files\/[^/]+/.test(initialUrlRef.current)) {
+      console.log("[App] Initial URL is file editor, skipping auto-restore:", initialUrlRef.current);
+      return;
+    }
 
     const restoreWithIds = async (projectId: string, projectName: string, fileId: string | null, fileName: string | null) => {
       // Validate project still exists
@@ -447,6 +460,56 @@ const AppContent = () => {
         } catch { /* ignore */ }
       });
   }, [clearLastOpenedSelection, user?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When the user navigated directly to /projects/:name/files/:file, resolve names→IDs
+  // and open the editor after login. Uses initialUrlRef so routing state changes can't
+  // invalidate the original intent.
+  const urlResolvedRef = useRef(false);
+  useEffect(() => {
+    if (!user?.workspaceId || isDesktop()) return;
+    if (selectedProjectId && selectedFileId) return; // already resolved
+    if (urlResolvedRef.current) return;
+
+    const match = /^\/projects\/([^/]+)\/files\/([^/]+)$/.exec(initialUrlRef.current);
+    if (!match) return;
+
+    const projectNameFromUrl = decodeURIComponent(match[1]);
+    const fileNameFromUrl = decodeURIComponent(match[2]);
+
+    urlResolvedRef.current = true;
+    let cancelled = false;
+    console.log("[App] Resolving initial URL to IDs:", projectNameFromUrl, "/", fileNameFromUrl);
+
+    apiClient.get<any>(`/api/projects/my`)
+      .then((resp: any) => {
+        if (cancelled) return;
+        const data = resp?.data || resp;
+        const projects: any[] = data?.projects || [];
+        const project = projects.find((p: any) => p.name === projectNameFromUrl);
+        if (!project?.projectId) {
+          console.warn("[App] URL project not found:", projectNameFromUrl);
+          return; // stay on projectDashboard — don't override with wrong nav
+        }
+        return apiClient.get<any>(`/api/projects/${project.projectId}/files`).then((filesResp: any) => {
+          if (cancelled) return;
+          const filesData = filesResp?.data || filesResp;
+          const files: any[] = filesData?.files || [];
+          const file = files.find((f: any) => (f.name || f.fileName) === fileNameFromUrl);
+          if (!file?.id) {
+            console.warn("[App] URL file not found:", fileNameFromUrl);
+            if (!cancelled) navigateTo({ view: "projectLibrary", projectId: project.projectId, projectName: projectNameFromUrl, fileId: null, fileName: "" });
+            return;
+          }
+          console.log("[App] ✅ URL resolved to:", project.projectId, file.id);
+          if (!cancelled) navigateTo({ view: "dashboard", projectId: project.projectId, projectName: projectNameFromUrl, fileId: file.id, fileName: fileNameFromUrl });
+        });
+      })
+      .catch((err: any) => {
+        if (!cancelled) console.warn("[App] URL resolve failed:", err);
+      });
+
+    return () => { cancelled = true; };
+  }, [user?.workspaceId, selectedProjectId, selectedFileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const currentRoute: RouteState = useMemo(() => {

@@ -363,12 +363,13 @@ public class OntologyQueryController {
     public ResponseEntity<?> classDetails(@PathVariable String projectId,
                                          @RequestParam String classIri,
                                          jakarta.servlet.http.HttpServletRequest httpRequest) {
-        // Desktop: OWLAPI in-memory → instant, no SPARQL, nothing to cancel
+        // Desktop fast-path: OWLAPI in-memory. Cache is evicted after mutations so stale
+        // data is never served — after any mutation the OWLAPI cache is cleared and this
+        // falls through to SPARQL until the project is re-opened.
         if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     desktopHierarchyService.classDetails(projectId, classIri)));
         }
-        // Check if client disconnected before starting expensive SPARQL queries
         try {
             if (httpRequest.isAsyncStarted()) {
                 Object ctx = httpRequest.getAttribute("asyncContext");
