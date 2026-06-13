@@ -24,14 +24,14 @@ public record ProjectStatus(
 
     public static ProjectStatus processing(String filename) {
         return new ProjectStatus("PROCESSING",
-                "Bulk import in progress",
+                "Importing…",
                 Instant.now(),
                 filename);
     }
 
     public static ProjectStatus processing(String filename, String message) {
         return new ProjectStatus("PROCESSING",
-                Objects.requireNonNullElse(message, "Bulk import in progress"),
+                Objects.requireNonNullElse(message, "Importing…"),
                 Instant.now(),
                 filename);
     }

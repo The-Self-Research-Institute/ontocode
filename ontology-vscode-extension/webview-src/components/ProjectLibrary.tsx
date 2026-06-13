@@ -92,6 +92,49 @@ const buildImportDisplayMessage = (
   return "Importing…";
 };
 
+type QueueSnapshot = {
+  activeImports?: number;
+  queuedImports?: number;
+  queue?: Array<{ projectId: string; position: number; estimatedWaitTimeMs?: number }>;
+  activeProjectIds?: string[];
+};
+
+const resolveQueueFields = (
+  ontologyProjectId: string,
+  queueData: any,
+  stats: QueueSnapshot | null | undefined,
+): Pick<FileImportState, "inQueue" | "queuePosition" | "totalInQueue" | "estimatedWaitMs"> => {
+  if (queueData?.inQueue) {
+    return {
+      inQueue: true,
+      queuePosition: queueData.position ?? 0,
+      totalInQueue: queueData.totalInQueue ?? stats?.queuedImports ?? 0,
+      estimatedWaitMs: queueData.estimatedWaitMs ?? 0,
+    };
+  }
+
+  if (stats?.activeProjectIds?.includes(ontologyProjectId)) {
+    return {
+      inQueue: true,
+      queuePosition: 0,
+      totalInQueue: stats.queuedImports ?? 0,
+      estimatedWaitMs: 0,
+    };
+  }
+
+  const queued = stats?.queue?.find((q) => q.projectId === ontologyProjectId);
+  if (queued) {
+    return {
+      inQueue: true,
+      queuePosition: queued.position,
+      totalInQueue: stats?.queuedImports ?? 0,
+      estimatedWaitMs: queued.estimatedWaitTimeMs ?? 0,
+    };
+  }
+
+  return {};
+};
+
 const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   projectId,
   projectName,
@@ -136,10 +179,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
   const [fileImportStates, setFileImportStates] = useState<Record<string, FileImportState>>({});
   const importPollingRefs = useRef<Record<string, ReturnType<typeof setInterval>>>({});
-  const [globalQueueStats, setGlobalQueueStats] = useState<{
-    activeImports: number;
-    queuedImports: number;
-  } | null>(null);
+  const [globalQueueStats, setGlobalQueueStats] = useState<QueueSnapshot | null>(null);
+  const globalQueueStatsRef = useRef<QueueSnapshot | null>(null);
 
   const loadStorageUsage = async () => {
     const workspaceId = user?.workspaceId;
@@ -192,9 +233,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
     const pollStatus = async () => {
       try {
-        const [res, queueRes]: any[] = await Promise.all([
+        const [res, queueRes, statsRes]: any[] = await Promise.all([
           apiClient.get(`/api/ontology/status/${encodeURIComponent(ontologyProjectId)}`),
           apiClient.get(`/api/import-queue/position/${encodeURIComponent(ontologyProjectId)}`).catch(() => null),
+          apiClient.get("/api/import-queue/stats").catch(() => null),
         ]);
         // API returns { success: true, data: { status, ... } }; axios wraps that in res.data.
         // Unwrap both layers so we reach the actual status fields.
@@ -210,15 +252,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         const graphSize = typeof data?.graphSize === "number" ? data.graphSize : undefined;
 
         const queueData = queueRes?.data || queueRes;
-        const queueFields: Pick<FileImportState, "inQueue" | "queuePosition" | "totalInQueue" | "estimatedWaitMs"> =
-          queueData?.inQueue
-            ? {
-                inQueue: true,
-                queuePosition: queueData.position ?? 0,
-                totalInQueue: queueData.totalInQueue ?? 0,
-                estimatedWaitMs: queueData.estimatedWaitMs ?? 0,
-              }
-            : {};
+        const stats: QueueSnapshot | null = statsRes?.data || statsRes || null;
+        if (stats && typeof stats.activeImports === "number") {
+          globalQueueStatsRef.current = stats;
+          setGlobalQueueStats(stats);
+        }
+        const queueFields = resolveQueueFields(ontologyProjectId, queueData, stats ?? globalQueueStatsRef.current);
 
         if (!isMountedRef.current) return;
 
@@ -237,7 +276,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             ...prev,
             [file.id]: { status: "FAILED", progress: 0, message: "Import failed", graphSize },
           }));
-        } else if (status) {
+        } else if (status === "PROCESSING" || status === "INDEXING" || status === "UPLOADED" || status) {
           const importingMsg = buildImportDisplayMessage(progress, message, graphSize, queueFields);
           setFileImportStates((prev) => ({
             ...prev,
@@ -404,12 +443,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       setFileImportStates((prev) => {
         const current = prev[fileId];
         if (!current || current.status !== "IMPORTING") return prev;
-        const queueFields = {
-          inQueue: true,
-          queuePosition: status.queuePosition ?? 0,
-          totalInQueue: status.totalInQueue ?? 0,
-          estimatedWaitMs: status.estimatedWaitTimeMs ?? 0,
-        };
+        const queueFields = resolveQueueFields(status.projectId, { inQueue: true, position: status.queuePosition, totalInQueue: status.totalInQueue, estimatedWaitMs: status.estimatedWaitTimeMs }, globalQueueStatsRef.current);
         return {
           ...prev,
           [fileId]: {
@@ -1124,8 +1158,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               const isImportFailed = importState?.status === 'FAILED';
               const importProgress = importState?.progress ?? 0;
               const importMessage = importState?.message || "";
-              const isQueued = isImporting && (importState?.queuePosition ?? 0) > 0;
-              const isProcessingNow = isImporting && importState?.inQueue && importState?.queuePosition === 0;
+              const isQueued = isImporting && !!importState?.inQueue && (importState?.queuePosition ?? 0) > 0;
+              const isProcessingNow = isImporting && !!importState?.inQueue && importState?.queuePosition === 0;
+              const showQueueBadge = isQueued || isProcessingNow;
 
               return (
                 <div
@@ -1287,8 +1322,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   const isImportFailed = importState?.status === 'FAILED';
                   const importProgress = importState?.progress ?? 0;
                   const importMessage = importState?.message || "";
-                  const isQueued = isImporting && (importState?.queuePosition ?? 0) > 0;
-                  const isProcessingNow = isImporting && importState?.inQueue && importState?.queuePosition === 0;
+                  const isQueued = isImporting && !!importState?.inQueue && (importState?.queuePosition ?? 0) > 0;
+                  const isProcessingNow = isImporting && !!importState?.inQueue && importState?.queuePosition === 0;
 
                   return (
                     <tr
