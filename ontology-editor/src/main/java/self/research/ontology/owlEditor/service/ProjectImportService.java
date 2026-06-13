@@ -150,30 +150,9 @@ public class ProjectImportService {
         boolean isSmallFile = fileSizeBytes >= 0 && fileSizeBytes < 100 * 1024; // < 100KB
         
         if (isSmallFile && queueManager.canProcess() && queueManager.isEmpty()) {
-            log.info("[Import] Fast path: small file ({} bytes), processing immediately", fileSizeBytes);
-            final long fSize = fileSizeBytes;
-            owlParsingExecutor.execute(() -> {
-                ImportQueueItem item = ImportQueueItem.builder()
-                        .projectId(projectId)
-                        .filename(filename)
-                        .ownerEmail(ownerEmail)
-                        .owlFile(owlFile)
-                        .importMode(options.getMode())
-                        .partitionStrategy(options.getPartitionStrategy())
-                        .fileSizeBytes(fSize)
-                        .status(ImportQueueItem.ImportStatus.PROCESSING)
-                        .queuedAt(java.time.Instant.now())
-                        .startedAt(java.time.Instant.now())
-                        .build();
-                long startTime = System.currentTimeMillis();
-                try {
-                    runImport(item);
-                    long duration = System.currentTimeMillis() - startTime;
-                    log.info("[Import] Fast path completed in {} ms for project {}", duration, projectId);
-                } catch (Exception e) {
-                    log.error("[Import] Fast path failed for project {}", projectId, e);
-                }
-            });
+            log.info("[Import] Fast path: small file ({} bytes), enqueue + immediate process", fileSizeBytes);
+            queueManager.enqueue(projectId, filename, ownerEmail, owlFile, options);
+            processNextInQueue();
             submitted = true;
             return;
         }
