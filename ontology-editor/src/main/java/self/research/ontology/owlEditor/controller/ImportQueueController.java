@@ -28,7 +28,7 @@ public class ImportQueueController {
     /**
      * Get queue status for a specific project
      */
-    @GetMapping("/status/{projectId}")
+    @GetMapping("/status/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> getQueueStatus(@PathVariable String projectId) {
         try {
             ImportQueueItem item = queueManager.getStatus(projectId);
@@ -83,7 +83,7 @@ public class ImportQueueController {
     /**
      * Get queue position for a project
      */
-    @GetMapping("/position/{projectId}")
+    @GetMapping("/position/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> getQueuePosition(@PathVariable String projectId) {
         try {
             ImportQueueItem item = queueManager.getStatus(projectId);
@@ -115,6 +115,9 @@ public class ImportQueueController {
                         estimatedWait / 60000
                 ));
             } else {
+                QueueStatusMessage.QueueStats stats = queueManager.getQueueStats();
+                response.put("totalInQueue", stats.getQueuedImports());
+                response.put("estimatedWaitMs", 0L);
                 response.put("message", "Processing now");
             }
 

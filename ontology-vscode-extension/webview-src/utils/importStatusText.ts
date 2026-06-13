@@ -24,6 +24,7 @@ export function sanitizeImportMessage(message: string | undefined | null): strin
     .replace(/Loading into GraphDB/gi, "Loading ontology data")
     .replace(/GraphDB load complete, computing metadata\.\.\./gi, "Data loaded, building index…")
     .replace(/GraphDB load complete/gi, "Data loaded")
+    .replace(/Bulk import in progress/gi, "Importing…")
     .replace(/Triple store ready — loading class tree…?/gi, "Loading class hierarchy…")
     .replace(/Loading triples into Fuseki…?/gi, "Loading ontology data…")
     .replace(/Triples loaded, computing stats…?/gi, "Data loaded, computing statistics…")
