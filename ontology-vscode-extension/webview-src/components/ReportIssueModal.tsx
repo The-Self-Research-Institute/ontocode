@@ -752,7 +752,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
               ) : (
                 <>
                   <Bug size={18} />
-                  <span>Submit Issue Report</span>
+                  <span>{issueType === "Task" ? "Submit Feature Request" : "Submit Issue Report"}</span>
                 </>
               )}
             </button>

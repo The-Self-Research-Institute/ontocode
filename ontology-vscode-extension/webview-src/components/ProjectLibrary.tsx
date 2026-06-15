@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { formatQueueWait, sanitizeImportMessage } from "../utils/importStatusText";
+import { FILE_UPLOAD_GUIDANCE, fileImportEtaHint, formatFileSize } from "../utils/fileSizeHints";
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop } from "../utils/desktop";
 import { isAppOnline } from "../utils/connectivity";
@@ -243,7 +244,13 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         const envelope = res?.data || res;
         const data = envelope?.data || envelope;
         const status = data?.status || data?.state || null;
-        const progress = typeof data?.progress === "number" ? data.progress : 0;
+        const progress =
+          typeof data?.progress === "number"
+            ? data.progress
+            : (() => {
+                const m = String(data?.statusMessage || data?.message || "").match(/(\d+)%/);
+                return m ? parseInt(m[1], 10) : 0;
+              })();
         const message =
           data?.statusMessage ||
           data?.message ||
@@ -264,7 +271,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         if (status === "COMPLETED") {
           clearInterval(importPollingRefs.current[file.id]);
           delete importPollingRefs.current[file.id];
-          const doneMsg = graphSize && graphSize > 0 ? `${formatTriples(graphSize)} — ready` : "Ready to open";
+          const doneMsg = graphSize && graphSize > 0
+            ? `${formatTriples(graphSize)} — ready to browse`
+            : "Ready to browse";
           setFileImportStates((prev) => ({
             ...prev,
             [file.id]: { status: "COMPLETED", progress: 100, message: doneMsg, graphSize },
@@ -742,6 +751,13 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       return;
     }
 
+    if (file.size > 50 * 1024 * 1024) {
+      showToast(
+        `${formatFileSize(file.size)} file — ${fileImportEtaHint(file.size)}`,
+        "success",
+      );
+    }
+
     // Check if file already exists in project
     try {
       console.log("[ProjectLibrary] Checking for duplicate file:", file.name);
@@ -942,6 +958,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               </div>
             )}
 
+            <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-3">
               <button
                 onClick={handleCreateNewFile}
@@ -1005,6 +1022,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   />
                 )}
               </label>
+            </div>
+            <p className="text-xs text-gray-500 max-w-xl text-right">
+              {FILE_UPLOAD_GUIDANCE}
+            </p>
             </div>
           </div>
 
