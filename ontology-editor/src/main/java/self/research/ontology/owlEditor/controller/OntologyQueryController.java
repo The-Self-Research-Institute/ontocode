@@ -207,8 +207,14 @@ public class OntologyQueryController {
             // Desktop: once OWLAPI is done (not loading), this is the final answer — always
             // signal hierarchyReady:true so the frontend stops polling even if SPARQL returned
             // empty (avoids infinite re-poll when empty SPARQL result returns hierarchyReady:false).
-            body.put("hierarchyReady", !classes.isEmpty() || (inDesktopMode && !owlapiLoading));
+            boolean desktopFinalAnswer = inDesktopMode && !owlapiLoading;
+            body.put("hierarchyReady", !classes.isEmpty() || desktopFinalAnswer);
             body.put("topLevelReturned", classes.size());
+            // When signalling a final empty answer, explicitly confirm 0 top-level classes
+            // so the frontend retry guard (tlTotal !== 0) does not fire.
+            if (desktopFinalAnswer && classes.isEmpty()) {
+                body.put("topLevelTotal", 0);
+            }
             return ResponseEntity.ok(body);
         } catch (Exception e) {
             return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
