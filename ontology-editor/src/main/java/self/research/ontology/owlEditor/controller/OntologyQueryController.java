@@ -56,6 +56,10 @@ public class OntologyQueryController {
         Map<String, Object> body = new java.util.LinkedHashMap<>(hierarchyIndexService.statusPayload(projectId));
         boolean owlapiReady = desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId);
         body.put("owlapiReady", owlapiReady);
+        body.put("fastOpenAvailable", desktopOntologyLoader != null);
+        if (desktopOntologyLoader != null) {
+            body.put("fastOpenAutoWarm", desktopOntologyLoader.isAutoWarmEnabled());
+        }
         body.put("projectId", projectId);
         if (owlapiReady && desktopHierarchyService != null) {
             body.putAll(desktopHierarchyService.declarationCounts(projectId));
@@ -363,15 +367,13 @@ public class OntologyQueryController {
     public ResponseEntity<?> classDetails(@PathVariable String projectId,
                                          @RequestParam String classIri,
                                          jakarta.servlet.http.HttpServletRequest httpRequest) {
-        // Fast-open: OWLAPI for asserted axioms (~5ms) + targeted SPARQL supplements
-        // for sections the in-memory builder does not yet produce (GCIs, inferred axioms,
-        // hasKey, disjointUnion, multi-valued annotations). Falls through to full SPARQL
-        // when the OWLAPI model is not warmed.
+        // Fast-open: OWLAPI in-memory class details (~5ms) including supplements
+        // (disjointUnion, hasKey, GCIs, inferred axioms, multi-valued annotations).
+        // Falls through to full SPARQL when the OWLAPI model is not warmed.
         if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             Map<String, Object> details = new java.util.LinkedHashMap<>(
                     desktopHierarchyService.classDetails(projectId, classIri));
             if (!details.isEmpty()) {
-                queryService.enrichOwlApiClassDetails(projectId, classIri, details);
                 return ResponseEntity.ok(Map.of("success", true, "data", details));
             }
         }
@@ -393,6 +395,10 @@ public class OntologyQueryController {
     @GetMapping("/classes/annotations/{projectId}")
     public ResponseEntity<?> classAnnotations(@PathVariable String projectId,
                                               @RequestParam String classIri) {
+        if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    desktopHierarchyService.classAnnotations(projectId, classIri)));
+        }
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.classAnnotations(projectId, classIri)));
     }
