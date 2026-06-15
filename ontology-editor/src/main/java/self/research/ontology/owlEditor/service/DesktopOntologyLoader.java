@@ -148,6 +148,11 @@ public class DesktopOntologyLoader {
         return warm;
     }
 
+    /** True while OWLAPI is parsing/loading in the background for this project. */
+    public boolean isLoading(String projectId) {
+        return loadingInProgress.contains(projectId);
+    }
+
     public void triggerLazyLoadIfNeeded(String projectId) {
         if (!autoWarm) {
             return;
