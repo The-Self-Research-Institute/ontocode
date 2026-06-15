@@ -5,8 +5,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.ImportOptions;
+import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.TopLevelClassCacheService;
 import self.research.ontology.owlEditor.model.ImportQueueItem;
 import self.research.ontology.owlEditor.model.ProjectStatus;
@@ -84,6 +87,9 @@ public class ProjectImportService {
     @Autowired(required = false) @Nullable
     private HierarchyIndexService hierarchyIndexService;
 
+    @Autowired(required = false) @Nullable
+    private ProjectRepository projectRepository;
+
     public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
                                 GraphDBDatasetService datasetService,
                                 OntologyIndexService indexService,
@@ -100,6 +106,38 @@ public class ProjectImportService {
         this.messagingTemplate = messagingTemplate;
         this.queueManager = queueManager;
         this.timeEstimator = timeEstimator;
+    }
+
+    /**
+     * On startup, find any projects stuck in PROCESSING or INDEXING from a previous server run
+     * and mark them as ERROR. The in-memory queue is lost on restart so these will never
+     * complete; showing an error lets users re-import rather than waiting forever.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void recoverStuckImports() {
+        if (projectRepository == null) {
+            return;
+        }
+        try {
+            var stuck = projectRepository.findByStatusIn(List.of("PROCESSING", "INDEXING"));
+            if (stuck.isEmpty()) {
+                return;
+            }
+            log.warn("[Import] Found {} project(s) stuck in PROCESSING/INDEXING from a previous run — resetting to ERROR",
+                    stuck.size());
+            for (var doc : stuck) {
+                try {
+                    metadataService.writeStatus(doc.getId(),
+                            ProjectStatus.error(doc.getFilename(),
+                                    "Import was interrupted (server restarted). Please re-import the file."));
+                    log.info("[Import] Reset stuck import for project {}: {}", doc.getId(), doc.getFilename());
+                } catch (Exception e) {
+                    log.warn("[Import] Failed to reset stuck project {}: {}", doc.getId(), e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[Import] Startup stuck-import recovery failed: {}", e.getMessage());
+        }
     }
 
     public void submitImport(String projectId, Path owlFile) {
