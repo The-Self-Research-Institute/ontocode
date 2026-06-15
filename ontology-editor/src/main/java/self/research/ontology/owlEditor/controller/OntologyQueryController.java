@@ -181,7 +181,10 @@ public class OntologyQueryController {
                 } catch (Exception ignored) {
                     /* still warming */
                 }
-                if (topCount == 0 && graphHasTriples(projectId)) {
+                // topCount > 0: ASK says classes exist but SPARQL returned empty — orphan scan
+                // not ready yet (cold Fuseki, stale cache, or still scanning).
+                // topCount == 0 && graphHasTriples: import finished but no classes indexed yet.
+                if (topCount > 0 || graphHasTriples(projectId)) {
                     Map<String, Object> pending = new java.util.LinkedHashMap<>();
                     pending.put("success", false);
                     pending.put("hierarchyReady", false);

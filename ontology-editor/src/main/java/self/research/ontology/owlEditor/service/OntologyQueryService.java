@@ -160,13 +160,16 @@ public class OntologyQueryService {
         return 0;
     }
 
-    @Cacheable(value = "topLevelClasses", key = "#projectId + '_' + #limit")
+    @Cacheable(value = "topLevelClasses", key = "#projectId + '_' + #limit",
+               unless = "#result != null && #result.isEmpty()")
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
         long startTime = System.currentTimeMillis();
 
         // === L2: MongoDB persistent cache ===
+        // Treat a cached empty list as a miss — empty was likely stored during a cold-Fuseki
+        // first call (orphan scan skipped) and would block retries from ever seeing results.
         List<OntologyDto.TreeNode> mongoHit = topLevelCacheService.get(projectId, limit);
-        if (mongoHit != null) {
+        if (mongoHit != null && !mongoHit.isEmpty()) {
             log.info("[PERF] Top-level classes served from MongoDB cache for project={} in {}ms",
                     projectId, System.currentTimeMillis() - startTime);
             return mongoHit;
@@ -236,13 +239,16 @@ public class OntologyQueryService {
         // Both forms are valid in Jena ARQ; we use MINUS for consistency with the
         // two-stage orphan SELECT below, where MINUS pairs well with VALUES-based
         // hydration. See https://www.w3.org/TR/sparql11-query/#neg-minus.
+        // The MINUS must exclude owl:Thing just like orphanIrisQuery does — otherwise a class
+        // whose only parent IS owl:Thing (e.g. an OBO root class like MONDO:0000001) incorrectly
+        // looks like it has a named parent and the ASK returns false, skipping the orphan scan.
         String orphanAsk = PREFIXES + """
             ASK {
               ?c a owl:Class .
               FILTER(isIRI(?c) && ?c != <http://www.w3.org/2002/07/owl#Thing>)
             %s  MINUS {
                 ?c rdfs:subClassOf ?any .
-                FILTER(isIRI(?any))
+                FILTER(isIRI(?any) && ?any != <http://www.w3.org/2002/07/owl#Thing>)
               }
             }
             """.formatted(exclusionValues);
@@ -269,10 +275,13 @@ public class OntologyQueryService {
             merged.sort(java.util.Comparator.comparing(n -> n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
             List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
             enrichWithEquivalentClasses(projectId, result);
-            // Persist to MongoDB even on the fast path — future restarts hit MongoDB not Fuseki
+            // Persist to MongoDB — but never persist an empty result: cold Fuseki skipped the
+            // orphan scan so "empty" just means "not ready yet", not "ontology is empty".
             final List<OntologyDto.TreeNode> toStore = new java.util.ArrayList<>(result);
             final int finalLimit = limit;
-            CompletableFuture.runAsync(() -> topLevelCacheService.put(projectId, toStore, finalLimit));
+            if (!toStore.isEmpty()) {
+                CompletableFuture.runAsync(() -> topLevelCacheService.put(projectId, toStore, finalLimit));
+            }
             return result;
         }
 
@@ -374,10 +383,13 @@ public class OntologyQueryService {
         enrichWithEquivalentClasses(projectId, result);
 
         // Persist fully-enriched result to MongoDB (L2 cache) asynchronously — never blocks response.
-        // On the next restart, this entry is served directly without touching Fuseki.
+        // Skip write if empty: an empty result means the orphan scan is still running or timed out;
+        // persisting it would cause every future call to return empty until server restart.
         final List<OntologyDto.TreeNode> toStore = new java.util.ArrayList<>(result);
         final int finalLimit = limit;
-        CompletableFuture.runAsync(() -> topLevelCacheService.put(projectId, toStore, finalLimit));
+        if (!toStore.isEmpty()) {
+            CompletableFuture.runAsync(() -> topLevelCacheService.put(projectId, toStore, finalLimit));
+        }
 
         return result;
     }
