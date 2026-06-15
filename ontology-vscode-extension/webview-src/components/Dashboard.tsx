@@ -3225,7 +3225,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // AND the server did not explicitly confirm 0 top-level classes (tlTotal === 0 means
         // the ontology is genuinely empty — no point polling for 120 seconds).
         const needsHierarchyRetry =
-          topLevelClassesRes !== null && !hierarchyBuilding && topLevelClasses.length === 0 && tlTotal !== 0 && !isStaleLoad();
+          topLevelClassesRes !== null && !hierarchyBuilding && topLevelClasses.length === 0 && (tlTotal ?? 0) > 0 && !isStaleLoad();
         if (needsHierarchyRetry) {
           setIsHierarchyLoading(true);
           setLoadingStatusMessage("Loading class hierarchy…");

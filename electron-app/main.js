@@ -84,6 +84,16 @@ function createMainWindow() {
     // first render before autoHideMenuBar takes effect.
     mainWindow.setMenu(null);
 
+    // F12 / Ctrl+Shift+I — toggle DevTools in all builds (production + dev).
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        const isF12 = input.type === 'keyDown' && input.key === 'F12';
+        const isCtrlShiftI = input.type === 'keyDown' && input.key === 'I' && input.control && input.shift;
+        if (isF12 || isCtrlShiftI) {
+            mainWindow.webContents.toggleDevTools();
+            event.preventDefault();
+        }
+    });
+
     // In production, the routing proxy merges auth + OWL editor under one URL.
     const editorUrl = IS_DEV ? DEV_API_URL : `http://127.0.0.1:${proxy.PROXY_PORT}`;
 
@@ -96,7 +106,6 @@ function createMainWindow() {
             ? path.join(__dirname, 'renderer', 'dist', 'index.html')
             : path.join(__dirname, '../ontology-vscode-extension/webview-src/dist/index.html');
         mainWindow.loadFile(distIndex);
-        mainWindow.webContents.openDevTools();
     }
 
     mainWindow.webContents.on('did-finish-load', () => {
