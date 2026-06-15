@@ -62,6 +62,14 @@ public class DesktopOntologyLoader {
     @Value("${ontocode.fastopen.skip-reasoner-precompute:true}")
     private boolean skipReasonerPrecompute;
 
+    /** When false (web default), OWLAPI loads only via POST /warm — Fuseki handles reads. */
+    @Value("${ontocode.fastopen.auto-warm:false}")
+    private boolean autoWarm;
+
+    public boolean isAutoWarmEnabled() {
+        return autoWarm;
+    }
+
     private final Set<String> loadingInProgress = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String, CompletableFuture<Boolean>> warmWaiters = new ConcurrentHashMap<>();
 
@@ -141,6 +149,9 @@ public class DesktopOntologyLoader {
     }
 
     public void triggerLazyLoadIfNeeded(String projectId) {
+        if (!autoWarm) {
+            return;
+        }
         if (cache.has(projectId) || loadingInProgress.contains(projectId)) {
             if (cache.has(projectId)) {
                 completeWarmWaiters(projectId, true);
@@ -159,6 +170,9 @@ public class DesktopOntologyLoader {
      * the mutation response.
      */
     public void scheduleRewarm(String projectId) {
+        if (!autoWarm) {
+            return;
+        }
         if (projectId == null || projectId.isBlank()) {
             return;
         }
@@ -171,6 +185,9 @@ public class DesktopOntologyLoader {
 
     /** Start OWLAPI parse in parallel with Fuseki import (Protégé-style fast-open). */
     public void startParallelWarm(String projectId, Path owlFilePath) {
+        if (!autoWarm) {
+            return;
+        }
         if (cache.has(projectId)) {
             completeWarmWaiters(projectId, true);
             return;

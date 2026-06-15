@@ -67,6 +67,27 @@ public class ProjectMetadataService {
 
         mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
     }
+
+    /** Persist import progress for polling clients (Project Library cards). */
+    public void writeImportProgress(String projectId, int progress, String stage, String message) {
+        Instant now = Instant.now();
+        Map<String, Object> progressMeta = new HashMap<>();
+        progressMeta.put("progress", Math.max(0, Math.min(99, progress)));
+        if (stage != null && !stage.isBlank()) {
+            progressMeta.put("stage", stage);
+        }
+        if (message != null && !message.isBlank()) {
+            progressMeta.put("message", message);
+        }
+        progressMeta.put("lastUpdated", now.toString());
+
+        Update update = newProjectUpdate(projectId, now)
+                .set("statusMessage", message != null ? message : "Importing…")
+                .set("metadata.importProgress", progressMeta)
+                .set("updatedAt", now);
+
+        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
+    }
     
     public void setOwnerEmail(String projectId, String ownerEmail) {
         Instant now = Instant.now();
@@ -107,10 +128,8 @@ public class ProjectMetadataService {
         if (filename == null) {
             return Optional.empty();
         }
-        return projectRepository.findAll().stream()
-                .filter(doc -> filename.equals(doc.getFilename()))
-                .map(ProjectDocument::getId)
-                .findFirst();
+        return projectRepository.findFirstByFilenameOrderByUpdatedAtDesc(filename)
+                .map(ProjectDocument::getId);
     }
 
     /**
@@ -171,14 +190,21 @@ public class ProjectMetadataService {
     /**
      * Synchronous version bump — must complete before mutation HTTP response returns
      * so other users' reads never see a stale OWLAPI model with a matching version.
+     * Uses findAndModify so the returned value is the version THIS call wrote, not
+     * a later one that raced in between a write + separate read.
      */
     public long incrementMutationVersion(String projectId) {
         Instant now = Instant.now();
-        Update update = newProjectUpdate(projectId, now)
+        Update update = new Update()
                 .inc("mutationVersion", 1)
                 .set("updatedAt", now);
-        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
-        return getMutationVersion(projectId);
+        ProjectDocument updated = mongoTemplate.findAndModify(
+                projectQuery(projectId),
+                update,
+                org.springframework.data.mongodb.core.FindAndModifyOptions.options().returnNew(true),
+                ProjectDocument.class);
+        return updated != null && updated.getMutationVersion() != null
+                ? updated.getMutationVersion() : 0L;
     }
 
     private Query projectQuery(String projectId) {
