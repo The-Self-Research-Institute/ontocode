@@ -262,19 +262,28 @@ class ApiClient {
     this.axiosClient.interceptors.response.use(
       (resp) => resp,
       (err: AxiosError) => {
+        const status = err.response?.status;
         const data = err.response?.data as any;
-        const msg =
+        let msg =
           (data && (data.message || data.error)) ||
           (typeof data === 'string' ? data : undefined) ||
-          (err.response?.status === 401 ? 'Unauthorized' : err.message || 'Unexpected error');
+          (status === 401 ? 'Unauthorized' : err.message || 'Unexpected error');
+
+        if (status === 504 || status === 502 || status === 503) {
+          msg = 'The server is busy or this request took too long. Please wait a moment and try again.';
+        } else if (status === 408 || err.code === 'ECONNABORTED') {
+          msg = 'Request timed out. Large ontologies may need a retry — your data is still safe.';
+        } else if (!status && (err.code === 'ERR_NETWORK' || err.message?.includes('Network Error'))) {
+          msg = 'Network error. Check your connection and try again.';
+        }
 
         // Check for 401 Unauthorized
-        if (err.response?.status === 401 && this.onUnauthorized) {
+        if (status === 401 && this.onUnauthorized) {
           console.log('[ApiClient] 401 Unauthorized - Token expired');
           this.onUnauthorized();
         }
 
-        throw new ApiError(msg, err.response?.status, data, err.code);
+        throw new ApiError(msg, status, data, err.code);
       }
     );
   }

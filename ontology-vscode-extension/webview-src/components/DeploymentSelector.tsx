@@ -25,19 +25,19 @@ const DeploymentSelector: React.FC<DeploymentSelectorProps> = ({ onSelect }) => 
     };
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="min-h-screen min-h-[100dvh] bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 pb-24 sm:pb-4 overflow-y-auto">
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-pulse"></div>
           <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-pulse delay-1000"></div>
         </div>
 
-        <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-4xl">
-          <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold text-white mb-2">Choose Your Deployment Environment</h2>
+        <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-5 sm:p-8 w-full max-w-4xl mx-auto mb-16 sm:mb-0">
+          <div className="text-center mb-6 sm:mb-8">
+            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Choose Your Deployment Environment</h2>
             <p className="text-gray-300">Select the environment you want to work with</p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mb-6 sm:mb-8">
             {/* Self-Hosted Option */}
             <button
               onClick={() => handleSelect("self-hosted")}
@@ -155,11 +155,12 @@ const DeploymentSelector: React.FC<DeploymentSelectorProps> = ({ onSelect }) => 
         {/* Report Issue floating button */}
         <button
           onClick={() => setIsReportIssueModalOpen(true)}
-          className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"
+          className="fixed bottom-4 right-4 left-4 sm:left-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50 max-w-[10rem] sm:max-w-none ml-auto"
           title="Report an issue"
         >
           <Bug size={14} />
-          Report Issue
+          <span className="sm:hidden">Issue</span>
+          <span className="hidden sm:inline">Report Issue</span>
         </button>
 
         {isReportIssueModalOpen && (

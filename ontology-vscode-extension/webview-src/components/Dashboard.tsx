@@ -198,6 +198,7 @@ const TopMenuBar = ({
   isConsistencyLoading,
   onGoToProjectDashboard,
   onGoToWorkspace,
+  onOpenThemeSettings,
   subscription,
   onExportProAction,
   isViewOnly,
@@ -235,6 +236,7 @@ const TopMenuBar = ({
   isConsistencyLoading?: boolean;
   onGoToProjectDashboard?: () => void;
   onGoToWorkspace?: () => void;
+  onOpenThemeSettings?: () => void;
   subscription?: any;
   onExportProAction?: () => void;
   isViewOnly?: boolean;
@@ -291,24 +293,24 @@ const TopMenuBar = ({
   return (
     <header
       ref={menuRef}
-      className="ontocode-top-menu text-xs flex items-center px-2 relative border-b h-8 flex-shrink-0"
+      className="ontocode-top-menu text-xs flex items-center px-1 sm:px-2 relative border-b h-8 flex-shrink-0 min-w-0 overflow-hidden"
       style={{
         backgroundColor: "var(--color-background)",
         color: "var(--color-text)",
         borderBottomColor: "var(--color-border)",
       }}
     >
-      <div className="flex items-center gap-1 p-2 mr-2">
+      <div className="flex items-center gap-1 p-1 sm:p-2 mr-1 sm:mr-2 flex-shrink-0">
         <Package size={16} className="text-purple-600" />
       </div>
-      <div className="flex items-center">
+      <div className="flex items-center min-w-0 flex-1 overflow-x-auto no-scrollbar">
         {menuItems.map((item) => (
-          <div key={item} className="relative">
+          <div key={item} className="relative flex-shrink-0">
             <button
               onClick={() => {
                 setOpenMenu(openMenu === item ? null : item);
               }}
-              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors relative ${openMenu === item ? "is-open" : ""}`}
+              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-2 sm:px-3 py-1 rounded-sm transition-colors relative whitespace-nowrap ${openMenu === item ? "is-open" : ""}`}
             >
               {item}
               {item === "View" && hasPluginUpdates && (
@@ -326,7 +328,7 @@ const TopMenuBar = ({
             </button>
             {openMenu === item && (
               <div
-                className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === "File" ? "w-[360px]" : "w-48"} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`}
+                className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === "File" ? "w-[min(360px,calc(100vw-1rem))]" : "w-48 max-w-[calc(100vw-1rem)]"} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`}
                 style={{ borderColor: "var(--color-border)" }}
               >
                 {item === "View" ? (
@@ -362,7 +364,7 @@ const TopMenuBar = ({
                         Project Dashboard
                       </button>
                     )}
-                    {onGoToWorkspace && (
+                    {onGoToWorkspace ? (
                       <button
                         onClick={() => {
                           onGoToWorkspace();
@@ -373,8 +375,14 @@ const TopMenuBar = ({
                         <LayoutDashboard size={14} />
                         Workspace Selection
                       </button>
-                    )}
-                    {(onGoToProjectDashboard || onGoToWorkspace) && (
+                    ) : isDesktop() ? (
+                      <div className="w-full text-left px-4 py-2 text-xs flex items-center gap-2 opacity-40 cursor-not-allowed select-none">
+                        <LayoutDashboard size={14} />
+                        <span>Workspace Selection</span>
+                        <span className="ml-auto text-[10px] italic">webapp only</span>
+                      </div>
+                    ) : null}
+                    {(onGoToProjectDashboard || onGoToWorkspace || isDesktop()) && (
                       <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
                     )}
                     {isDesktop() && (
@@ -392,7 +400,16 @@ const TopMenuBar = ({
                         </button>
                       </>
                     )}
-                    <div className="px-3 py-1 text-gray-400 text-xs">Appearance</div>
+                    <button
+                      onClick={() => {
+                        onOpenThemeSettings?.();
+                        setOpenMenu(null);
+                      }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <Palette size={14} />
+                      Appearance
+                    </button>
                   </div>
                 ) : // : item === "Reasoner" ? (
                 // <div className="py-1">
@@ -727,8 +744,8 @@ const TopMenuBar = ({
         ))}
       </div>
 
-      <div className="flex items-center ml-auto mr-4 gap-2">
-        <span className={`text-xs font-medium ${syncMode === "public" ? "text-green-600" : "text-gray-500"}`}>
+      <div className="flex items-center ml-auto mr-1 sm:mr-4 gap-1 sm:gap-2 flex-shrink-0 pl-1">
+        <span className={`hidden sm:inline text-xs font-medium ${syncMode === "public" ? "text-green-600" : "text-gray-500"}`}>
           {syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
         </span>
         <button
@@ -1202,7 +1219,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   );
   const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
   // Desktop always has a workspace id but opens files directly via localStorage (no project library).
-  const shouldRestoreLastOpenedFile = isDesktop() || isNonWorkspaceMode;
+  // Honor explicit editor deep-links/tests that set suppress_workspace_auto_open + lastProjectId.
+  const suppressWorkspaceAutoOpen =
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem("ontocode_suppress_workspace_auto_open") === "true";
+  const shouldRestoreLastOpenedFile = isDesktop() || isNonWorkspaceMode || suppressWorkspaceAutoOpen;
   const storedProjectId = shouldRestoreLastOpenedFile ? localStorage.getItem("ontocode_lastProjectId") : null;
 
   const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || null);
@@ -1443,6 +1464,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [totalInQueue, setTotalInQueue] = useState<number | undefined>(undefined);
   const [estimatedWaitTimeMs, setEstimatedWaitTimeMs] = useState<number | undefined>(undefined);
   const [inImportQueue, setInImportQueue] = useState(false);
+  const [importReadyToBrowse, setImportReadyToBrowse] = useState(false);
   const collaborationPanelRef = useRef<CollaborationPanelRef>(null);
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState("prefixes");
@@ -2996,26 +3018,30 @@ const Dashboard: React.FC<DashboardProps> = ({
         };
 
         let desktopOwlapiReady = false;
-        const warm = await warmOntologyInMemory(currentProjectId, {
-          timeoutMs: 300_000,
-          onStatus: (msg) => {
-            if (!isStaleLoad()) setLoadingStatusMessage(msg);
-          },
-        });
-        if (isStaleLoad()) return null;
-        desktopOwlapiReady = warm.ready;
-        if (warm.ready) {
-          owlapiReadyHandledRef.current = currentProjectId;
-          desktopHierarchyDeferredForProject.current = null;
-          console.log("[Dashboard] OWLAPI fast-open ready — using in-memory hierarchy");
-          applyDeclarationCounts(warm);
-          setLoadingStatusMessage("Loading classes…");
-          desktopDeferredSectionsLoadedRef.current.clear();
-        } else if (!warm.sparqlFallback) {
-          console.warn("[Dashboard] OWLAPI warm in progress — deferring hierarchy until fast-open completes");
-          desktopHierarchyDeferredForProject.current = currentProjectId;
+        if (isDesktop()) {
+          const warm = await warmOntologyInMemory(currentProjectId, {
+            timeoutMs: 300_000,
+            onStatus: (msg) => {
+              if (!isStaleLoad()) setLoadingStatusMessage(msg);
+            },
+          });
+          if (isStaleLoad()) return null;
+          desktopOwlapiReady = warm.ready;
+          if (warm.ready) {
+            owlapiReadyHandledRef.current = currentProjectId;
+            desktopHierarchyDeferredForProject.current = null;
+            console.log("[Dashboard] OWLAPI fast-open ready — using in-memory hierarchy");
+            applyDeclarationCounts(warm);
+            setLoadingStatusMessage("Loading classes…");
+            desktopDeferredSectionsLoadedRef.current.clear();
+          } else if (!warm.sparqlFallback) {
+            console.warn("[Dashboard] OWLAPI warm in progress — deferring hierarchy until fast-open completes");
+            desktopHierarchyDeferredForProject.current = currentProjectId;
+          } else {
+            console.log("[Dashboard] Fast-open unavailable — using snapshot/SPARQL hierarchy path");
+          }
         } else {
-          console.log("[Dashboard] Fast-open unavailable — using snapshot/SPARQL hierarchy path");
+          console.log("[Dashboard] Web mode — Fuseki/Mongo hierarchy (no auto OWLAPI warm)");
         }
 
         // Large graphs: instance-counts is a full-graph SPARQL scan — skip when OWLAPI serves the tree.
@@ -4894,14 +4920,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
         const res = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(projectId)}`);
         const status = res?.data?.status || res?.status;
-        const topLevel = Number(res?.data?.topLevelClasses ?? 0);
-        const hierarchyReady = res?.data?.hierarchyReady ?? topLevel > 0;
         if (status === "ERROR") {
           closeSpinner(`backend status=${status}`);
+          setImportReadyToBrowse(false);
           return;
         }
-        if (status === "COMPLETED" && hierarchyReady) {
-          closeSpinner(`backend status=${status} hierarchy ready`);
+        if (status === "COMPLETED") {
+          setImportReadyToBrowse(true);
+          setLoadingStatusMessage("Ready to browse — class tree and annotations available");
+          closeSpinner(`backend status=${status} — ready to browse`);
           return;
         }
       } catch {
@@ -4991,6 +5018,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.log("[Dashboard] 🔄 Restoring last opened ontology:", storedProjectId);
       hasUserSelectedFileRef.current = true;
       setHasUserSelectedFile(true);
+      setProjectId(storedProjectId);
+      if (!initialProjectId) {
+        setActiveFileId(storedProjectId);
+      }
       setActiveFileName(storedProjectId);
       fetchData(storedProjectId, false)
         .then(() => {
@@ -5282,6 +5313,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setPendingImportProjectId(message.projectId);
         console.log("[Dashboard] Set pendingImportProjectIdRef.current to:", pendingImportProjectIdRef.current);
         setIsExpectingFileReady(true);
+        setImportReadyToBrowse(false);
         setLoadingProjectName(message.fileName || message.projectId || "Processing file upload...");
         setBackgroundImportProgress(0);
         setLoadingStatusMessage("Preparing upload...");
@@ -12523,9 +12555,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       case "ActiveOntology":
         return (
-          <div className="flex h-full" style={{ backgroundColor: "var(--surface-2)" }}>
+          <div className="flex flex-col lg:flex-row h-full min-h-0 overflow-hidden">
             <div
-              className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-hidden"
+              className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-hidden min-w-0 min-h-0"
               style={{ backgroundColor: "var(--bg)", borderColor: "var(--border)" }}
             >
               {isMetadataLoading && (
@@ -13179,7 +13211,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </div>
               </div>
             </div>
-            <div className="w-80 p-4 overflow-y-auto space-y-4" style={{ backgroundColor: "var(--bg)" }}>
+            <div className="w-full lg:w-80 flex-shrink-0 p-4 overflow-y-auto space-y-4 max-h-[40dvh] lg:max-h-none" style={{ backgroundColor: "var(--bg)" }}>
               {[
                 {
                   title: "Ontology metrics",
@@ -13273,8 +13305,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               : filteredInstances;
 
         return (
-          <div className="flex h-full">
-            <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
+          <div className="flex flex-col md:flex-row h-full min-h-0 overflow-hidden">
+            <aside className="w-full md:w-80 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col max-h-[42dvh] md:max-h-none">
               <div className="p-2 border-b text-sm font-semibold text-gray-700 flex items-center justify-between">
                 <span>Class hierarchy</span>
                 {selectedClassForIndividuals && (
@@ -13918,15 +13950,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (editingItem) {
       const isPlainIri = editingItem.startsWith('http://') || editingItem.startsWith('https://') || editingItem.startsWith('urn:');
       if (isPlainIri) {
-        setSelectorAllowedTabs(['hierarchy', 'classExpression']);
+        setSelectorAllowedTabs(['hierarchy', 'dataRestriction', 'classExpression']);
         setSelectorInitialTab('hierarchy');
       } else {
         // Restriction (blank node _: or Manchester expression)
-        setSelectorAllowedTabs(['objectRestriction', 'classExpression']);
+        setSelectorAllowedTabs(['objectRestriction', 'dataRestriction', 'classExpression']);
         setSelectorInitialTab('objectRestriction');
       }
     } else {
-      setSelectorAllowedTabs(['hierarchy', 'objectRestriction', 'classExpression']);
+      setSelectorAllowedTabs(['hierarchy', 'objectRestriction', 'dataRestriction', 'classExpression']);
       setSelectorInitialTab('hierarchy');
     }
 
@@ -14307,6 +14339,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         totalInQueue={totalInQueue}
         estimatedWaitTimeMs={estimatedWaitTimeMs}
         inImportQueue={inImportQueue}
+        readyToBrowse={importReadyToBrowse}
+        onBrowseNow={() => {
+          setImportReadyToBrowse(false);
+          setIsInitialLoading(false);
+          setShowLoadingChoice(false);
+          setIsExpectingFileReady(false);
+          setBackgroundImportActive(false);
+          setShowProjectSelector(false);
+          if (projectId) {
+            void fetchData(projectId);
+          }
+        }}
       />
       <CreateIndividualModal
         isOpen={isCreateIndividualModalOpen}
@@ -14859,9 +14903,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       <div className="h-full bg-gray-50 flex flex-col text-sm overflow-hidden">
         {/* Persistent background import progress banner */}
         {backgroundImportActive && (
-          <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-blue-800 text-xs z-40 shrink-0">
-            <Loader2 size={14} className="animate-spin text-blue-600" />
-            <span className="font-medium">
+          <div className="flex flex-wrap items-center gap-2 px-3 sm:px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-blue-800 text-xs z-40 shrink-0 min-w-0">
+            <Loader2 size={14} className="animate-spin text-blue-600 flex-shrink-0" />
+            <span className="font-medium min-w-0 flex-1 truncate sm:whitespace-normal sm:overflow-visible">
               Loading "{loadingProjectName}" in the background
               {loadingStatusMessage ? ` — ${loadingStatusMessage}` : "..."}
               {inImportQueue && queuePosition !== undefined && queuePosition > 0
@@ -14939,14 +14983,15 @@ const Dashboard: React.FC<DashboardProps> = ({
           isConsistencyLoading={isConsistencyLoading}
           onGoToProjectDashboard={onGoToProjectDashboard}
           onGoToWorkspace={onGoToWorkspace}
+          onOpenThemeSettings={() => setShowThemeSettings(true)}
           subscription={subscription}
           onExportProAction={handleExportProAction}
           isViewOnly={isViewOnlyMember}
         />
 
-        <div className="bg-white border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-start justify-between px-4 py-1.5 gap-4">
-            <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 flex-1">
+        <div className="bg-white border-b border-gray-200 flex-shrink-0 min-w-0 overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between px-2 sm:px-4 py-1.5 gap-2 sm:gap-4 min-w-0">
+            <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 flex-1 min-w-0 overflow-x-auto no-scrollbar">
               {visibleMainTabs.map((tabId) => {
                 const tab = ALL_MAIN_TABS[tabId];
                 if (!tab) return null;
@@ -14961,7 +15006,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 );
               })}
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0 flex-wrap justify-end min-w-0">
               {isCloudDeployment && projectId && (
                 <button
                   onClick={() => {
@@ -15029,7 +15074,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   )}
                 </button>
               )} */}
-              <span className="text-xs text-gray-600">
+              <span className="text-xs text-gray-600 hidden md:inline truncate max-w-[12rem] lg:max-w-none">
                 Welcome, {user?.username || "Guest"}
                 {user?.workspaceName && (
                   <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">

@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Search, ExternalLink, AlertCircle, Edit3, User } from 'lucide-react';
 import { Panel, AnnotationsDisplay, AxiomSubsection, CollaboratorPresenceBar } from './common';
 import { ClassExpressionDialog, MultiClassSelectorDialog, MultiPropertySelectorDialog, IRIEditorDialog, IndividualSelectorDialog, RestrictionData } from '../dialogs';
+import GCIEditorDialog from '../dialogs/GCIEditorDialog';
 import expressionService from '../../services/expressionService';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
+import { friendlyApiErrorMessage } from '../../utils/apiErrors';
 import { useAuth } from '../../custom-hook/useAuth';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual } from '../../types';
 
@@ -246,7 +248,9 @@ const ClassEditor: React.FC<{
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<"annotations" | "usage" | "description">("annotations");
+  const [loadingAnnotations, setLoadingAnnotations] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [axiomsLoaded, setAxiomsLoaded] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
 
   // Manchester Syntax Editor State
@@ -326,6 +330,7 @@ const ClassEditor: React.FC<{
   const [isInstancesOpen, setIsInstancesOpen] = useState(false);
   const [classInstances, setClassInstances] = useState<Individual[]>([]);
   const [loadingInstances, setLoadingInstances] = useState(false);
+  const descriptionAbortRef = useRef<AbortController | null>(null);
   const [editingInstanceId, setEditingInstanceId] = useState<string | undefined>();
 
   // General Class Axioms State (GCAs - SubClassOf with anonymous subclass)
@@ -380,13 +385,15 @@ const ClassEditor: React.FC<{
     // entity's data while the new request is in flight.
     setClassDetails(null);
     setClassInstances([]);
-    setLoadingDetails(true);
-    setLoadingInstances(true);
+    setAxiomsLoaded(false);
+    setLoadingAnnotations(true);
+    setLoadingDetails(false);
+    setLoadingInstances(false);
 
-    // Watchdog: if backend hangs, clear the spinner after 30s so the UI
-    // does not appear permanently "Loading class details...".
+    // Watchdog: if backend hangs, clear all loading spinners after 30s.
     const watchdog = setTimeout(() => {
       if (alive) {
+        setLoadingAnnotations(false);
         setLoadingDetails(false);
         setLoadingInstances(false);
       }
@@ -399,21 +406,11 @@ const ClassEditor: React.FC<{
     }, 200);
 
     const runLoad = () => {
-
     const currentId = item.id;
-    const currentViewMode = viewMode;
-
-    // ─── PERF TIMING ──────────────────────────────────────────────────────
-    // Each stage logs its own start/end wall-clock ms. Compare these in the
-    // browser console to locate the slow link (network vs. backend query vs.
-    // React render). Look for `[perf][ClassEditor] …` lines.
-    const tStart = performance.now();
     const shortIri = currentId.split(/[#/]/).pop() || currentId;
-    console.log(`[perf][ClassEditor] ▶ select "${shortIri}" t0=0ms`);
+    console.log(`[perf][ClassEditor] ▶ select "${shortIri}" — annotations only (axioms on Description tab)`);
 
-    // Stage 1 (FAST, ~100ms): fetch ONLY annotations so the panel paints
-    // immediately. The slower full-details call continues in stage 2 for
-    // axiom lists. Annotations are what users glance at first.
+    // Stage 1 (~100ms): annotations only — browsing the tree should not fire heavy SPARQL.
     (async () => {
       const t1 = performance.now();
       try {
@@ -422,155 +419,40 @@ const ClassEditor: React.FC<{
           undefined,
           { signal },
         );
-        const t1Net = performance.now();
-        console.log(
-          `[perf][ClassEditor] ✓ stage-1 annotations network=${(t1Net - t1).toFixed(0)}ms total=${(t1Net - tStart).toFixed(0)}ms`,
-        );
         if (!alive || currentId !== item.id) return;
         const annData = annResp?.data?.data || annResp?.data || annResp;
         if (annData && typeof annData === "object") {
-          // Merge functionally so stage-2 full details will overwrite on arrival.
           setClassDetails((prev: any) => ({ ...(prev || {}), ...annData }));
-          // Also surface annotations to the rendered item so the Annotations
-          // panel paints without waiting for full details. Stage 2 will merge
-          // axioms into the same item when it resolves.
           if (annData.annotations) {
             onUpdate({ ...item, annotations: annData.annotations } as TreeNode);
           }
-          // Hide the top "Loading … details…" banner — annotations are visible
-          // now. Edit handlers call loadClassDetails() which re-toggles the
-          // spinner only when full data is actually needed.
-          setLoadingDetails(false);
-          console.log(
-            `[perf][ClassEditor] ✓ stage-1 painted at ${(performance.now() - tStart).toFixed(0)}ms (annotations visible)`,
-          );
+          console.log(`[perf][ClassEditor] ✓ annotations in ${(performance.now() - t1).toFixed(0)}ms`);
         }
       } catch (e) {
-        console.warn(`[perf][ClassEditor] ✗ stage-1 failed at ${(performance.now() - tStart).toFixed(0)}ms`, e);
-        // Non-fatal: stage 2 will still populate annotations.
-      }
-    })();
-
-    (async () => {
-      const t2 = performance.now();
-      try {
-        // Fire both details and (if needed) inferred details IN PARALLEL.
-        // Previously inferred was awaited serially after details, doubling
-        // perceived latency in Inferred view mode.
-        const detailsPromise = apiClient.get<any>(
-          `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(currentId)}`,
-          undefined,
-          { signal },
-        );
-        const inferredPromise = currentViewMode === "inferred"
-          ? apiClient.get<any>(
-              `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(currentId)}`,
-              undefined,
-              { signal },
-            ).catch((err) => {
-              console.warn("[ClassEditor] Failed to load inferred details:", err);
-              return null;
-            })
-          : Promise.resolve(null);
-
-        const [detailsResponse, inferredResponse] = await Promise.all([detailsPromise, inferredPromise]);
-        const t2Net = performance.now();
-        console.log(
-          `[perf][ClassEditor] ✓ stage-2 full details network=${(t2Net - t2).toFixed(0)}ms total=${(t2Net - tStart).toFixed(0)}ms (inferred=${currentViewMode === "inferred"})`,
-        );
-        if (!alive || currentId !== item.id) return;
-        let details = detailsResponse?.data?.data || detailsResponse?.data || detailsResponse;
-
-        if (currentViewMode === "inferred" && inferredResponse) {
-          const inferredData = (inferredResponse as any)?.data?.data || (inferredResponse as any)?.data || {};
-          details = {
-            ...details,
-            inferredSubClassOfAxioms: inferredData.inferredSubClassOfAxioms || [],
-            inferredEquivalentClassesAxioms: inferredData.inferredEquivalentClassesAxioms || [],
-            isUnsatisfiable: inferredData.isUnsatisfiable || false,
-          };
-        }
-
-        if (!alive || currentId !== item.id) return;
-        setClassDetails(details);
-
-        const updatedItem: TreeNode = {
-          ...item,
-          annotations: details.annotations || item.annotations,
-          subClassOfAxioms: details.subClassOfAxioms || item.subClassOfAxioms,
-          equivalentClassesAxioms: details.equivalentClassesAxioms || item.equivalentClassesAxioms,
-          disjointClassesAxioms: details.disjointClassesAxioms || item.disjointClassesAxioms,
-          disjointUnionAxioms: details.disjointUnionAxioms || item.disjointUnionAxioms,
-          hasKeyAxioms: details.hasKeyAxioms || item.hasKeyAxioms,
-          inferredSubClassOfAxioms: details.inferredSubClassOfAxioms,
-          inferredEquivalentClassesAxioms: details.inferredEquivalentClassesAxioms,
-          isUnsatisfiable: details.isUnsatisfiable,
-        };
-        onUpdate(updatedItem);
-        console.log(
-          `[perf][ClassEditor] ✓ stage-2 painted at ${(performance.now() - tStart).toFixed(0)}ms (full axioms visible)`,
-        );
-      } catch (error) {
-        if (alive && currentId === item.id) {
-          console.error(
-            `[perf][ClassEditor] ✗ stage-2 failed at ${(performance.now() - tStart).toFixed(0)}ms`,
-            error,
-          );
-        }
+        console.warn(`[perf][ClassEditor] ✗ annotations failed`, e);
       } finally {
-        if (alive && currentId === item.id) setLoadingDetails(false);
+        if (alive && currentId === item.id) setLoadingAnnotations(false);
       }
     })();
 
-    (async () => {
-      const t3 = performance.now();
-      try {
-        const response = await apiClient.get<any>(
-          `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(currentId)}`,
-          undefined,
-          { signal },
-        );
-        console.log(
-          `[perf][ClassEditor] ✓ instances network=${(performance.now() - t3).toFixed(0)}ms total=${(performance.now() - tStart).toFixed(0)}ms`,
-        );
-        if (!alive || currentId !== item.id) return;
-        const instances = response?.data?.data || response?.data || response || [];
-        setClassInstances(Array.isArray(instances) ? instances : []);
-      } catch (error) {
-        if (alive && currentId === item.id) {
-          console.error("Failed to load class instances:", error);
-          setClassInstances([]);
-        }
-      } finally {
-        if (alive && currentId === item.id) setLoadingInstances(false);
-      }
-    })();
-
-    // Properties (object/data) are not entity-scoped; load lazily on first mount.
     loadProperties();
     }; // end runLoad
 
     return () => {
       alive = false;
       abortController.abort(); // cancels in-flight HTTP requests immediately
+      descriptionAbortRef.current?.abort(); // cancel any pending description load when class changes
       clearTimeout(watchdog);
       clearTimeout(debounceTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, projectId, viewMode]);
 
-  // Load instances only when the Instances panel is opened (lazy loading for better performance)
-  // useEffect(() => {
-  //   if (isInstancesOpen && item.id && projectId && classInstances.length === 0) {
-  //     loadInstances();
-  //   }
-  // }, [isInstancesOpen, item.id, projectId]);
-
   // Pre-load all-classes lookup when editor dialog opens so Manchester expressions can resolve labels
   useEffect(() => {
-    if (isEditorOpen) loadAllClassesLookup();
+    if (isEditorOpen || isGCAEditorOpen) loadAllClassesLookup();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEditorOpen]);
+  }, [isEditorOpen, isGCAEditorOpen]);
 
   // Auto-reload when a collaborator modifies this class
   useEffect(() => {
@@ -714,11 +596,13 @@ const ClassEditor: React.FC<{
     }
   };
 
-  const loadClassDetails = async () => {
+  const loadClassDetails = async (signal?: AbortSignal) => {
     setLoadingDetails(true);
     try {
       const response = await apiClient.get<any>(
         `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}`,
+        undefined,
+        signal ? { signal } : undefined,
       );
       // Backend returns {success: true, data: {...}}
       let details = response?.data?.data || response?.data || response;
@@ -745,18 +629,7 @@ const ClassEditor: React.FC<{
       }
 
       setClassDetails(details);
-
-      // Update the item with all loaded details (annotations, axioms, etc.)
-      // Debug logging for axioms
-      console.log("[ClassEditor] Axioms from backend:", {
-        subClassOf: details.subClassOfAxioms?.length || 0,
-        equivalentTo: details.equivalentClassesAxioms?.length || 0,
-        disjointWith: details.disjointClassesAxioms?.length || 0,
-        disjointUnion: details.disjointUnionAxioms?.length || 0,
-        hasKey: details.hasKeyAxioms?.length || 0,
-        inferredSubClassOf: details.inferredSubClassOfAxioms?.length || 0,
-        inferredEquivalentTo: details.inferredEquivalentClassesAxioms?.length || 0,
-      });
+      setAxiomsLoaded(true);
 
       const updatedItem: TreeNode = {
         ...item,
@@ -774,16 +647,29 @@ const ClassEditor: React.FC<{
       onUpdate(updatedItem);
     } catch (error) {
       console.error("Failed to load class details:", error);
+      notificationService.error(
+        "Description not ready",
+        friendlyApiErrorMessage(error, "Could not load class axioms"),
+      );
     } finally {
       setLoadingDetails(false);
     }
   };
 
-  const loadInstances = async () => {
+  const loadDescription = async () => {
+    descriptionAbortRef.current?.abort();
+    const controller = new AbortController();
+    descriptionAbortRef.current = controller;
+    await Promise.all([loadClassDetails(controller.signal), loadInstances(controller.signal)]);
+  };
+
+  const loadInstances = async (signal?: AbortSignal) => {
     setLoadingInstances(true);
     try {
       const response = await apiClient.get<any>(
         `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(item.id)}`,
+        undefined,
+        signal ? { signal } : undefined,
       );
       // Backend returns {success: true, data: [...]} or just the array
       const instances = response?.data?.data || response?.data || response || [];
@@ -1818,62 +1704,25 @@ const ClassEditor: React.FC<{
     }
   };
 
-  const handleGCAConfirm = async (expression: string) => {
-    console.log("[ClassEditor] GCA confirm:", { expression, editing: editingGCAId });
+  const handleGCAConfirm = async (subExpr: string, superExpr: string) => {
+    console.log("[ClassEditor] GCA confirm:", { subExpr, superExpr, editing: editingGCAId });
     try {
       if (editingGCAId) {
         await ontologyMutationService.deleteAxiom(projectId, editingGCAId);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      // Support "Subject EquivalentTo Object" pattern — becomes a regular equivalentClass axiom
-      const equivMatch = expression.trim().match(/^(.+?)\s+EquivalentTo\s+(.+)$/i);
-      if (equivMatch) {
-        const subjectIri = findClassIriByLabelOrIri(equivMatch[1].trim(), classHierarchy);
-        const objectIri = findClassIriByLabelOrIri(equivMatch[2].trim(), classHierarchy);
-        if (!subjectIri || !objectIri) {
-          notificationService.warning("Class Not Found",
-            `Cannot resolve "${!subjectIri ? equivMatch[1].trim() : equivMatch[2].trim()}" to a class IRI. Check that the class name matches a label in the hierarchy.`
-          );
-          return;
-        }
-        await ontologyMutationService.addEquivalentClass(projectId, subjectIri, objectIri, user?.email, user?.username || user?.email);
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        await loadClassDetails();
-        return;
-      }
-
-      // Parse expression: supports "A and B" (intersection) or "A or B" (union)
-      // These create GCAs of the form: (A and B) rdfs:subClassOf <classIri>
-      const subClassOfMatch = expression.trim().match(/^(.+?)\s+SubClassOf\s+(.+)$/i);
-      if (subClassOfMatch) {
-        const subExpr = subClassOfMatch[1].trim();
-        const superExpr = subClassOfMatch[2].trim();
-        const superIri = findClassIriByLabelOrIri(superExpr, classHierarchy) || superExpr;
-        const parsedSub = parseManchesterExpression(subExpr);
-        if (parsedSub?.expressionType === "intersection") {
-          await ontologyMutationService.addGCAIntersection(projectId, superIri, parsedSub.iris);
-        } else if (parsedSub?.expressionType === "union") {
-          await ontologyMutationService.addGCAUnion(projectId, superIri, parsedSub.iris);
-        } else {
-          await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/expression/add-gca`, {
-            subClassExpression: subExpr,
-            superClassExpression: superIri,
-          });
-        }
+      const superIri = findClassIriByLabelOrIri(superExpr, classHierarchy) || superExpr;
+      const parsedSub = parseManchesterExpression(subExpr);
+      if (parsedSub?.expressionType === "intersection") {
+        await ontologyMutationService.addGCAIntersection(projectId, superIri, parsedSub.iris);
+      } else if (parsedSub?.expressionType === "union") {
+        await ontologyMutationService.addGCAUnion(projectId, superIri, parsedSub.iris);
       } else {
-        const parsed = parseManchesterExpression(expression);
-        if (parsed?.expressionType === "intersection") {
-          await ontologyMutationService.addGCAIntersection(projectId, item.id, parsed.iris);
-        } else if (parsed?.expressionType === "union") {
-          await ontologyMutationService.addGCAUnion(projectId, item.id, parsed.iris);
-        } else {
-          const superIri = item.id;
-          await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/expression/add-gca`, {
-            subClassExpression: expression.trim(),
-            superClassExpression: superIri,
-          });
-        }
+        await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/expression/add-gca`, {
+          subClassExpression: subExpr.trim(),
+          superClassExpression: superIri,
+        });
       }
 
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1933,14 +1782,28 @@ const ClassEditor: React.FC<{
   };
 
   const annotationCount = Object.keys(item.annotations || {}).length;
-  const displayAnnotations = loadingDetails ? {} : item.annotations || {};
+  const displayAnnotations = item.annotations || {};
+
+  const editingGCADefinition = editingGCAId
+    ? (classDetails?.generalClassAxioms?.find((a: Axiom) => a.id === editingGCAId)?.definition ?? '')
+    : '';
+  const gcaSubClassOfParts = editingGCADefinition.match(/^(.+?)\s+SubClassOf\s+(.+)$/i);
+  const gcaInitialSubClass = gcaSubClassOfParts ? gcaSubClassOfParts[1] : editingGCADefinition;
+  const gcaInitialSuperClass = gcaSubClassOfParts ? gcaSubClassOfParts[2] : (editingGCAId ? '' : item.label);
+  const gcaAvailableClasses = [...allClassesLookup.entries()].map(([label, id]) => ({ id, label }));
 
   return (
     <div className="flex flex-col h-full bg-white">
-      {loadingDetails && (
+      {loadingAnnotations && (
         <div className="sticky top-0 left-0 right-0 bg-blue-50 border-b border-blue-200 text-xs text-blue-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm">
           <div className="animate-spin mr-2 h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-          Loading <span className="font-semibold mx-1">{item.label || "class"}</span> details…
+          Loading annotations for <span className="font-semibold mx-1">{item.label || "class"}</span>…
+        </div>
+      )}
+      {loadingDetails && (
+        <div className="sticky top-0 left-0 right-0 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm">
+          <div className="animate-spin mr-2 h-3 w-3 border-2 border-amber-600 border-t-transparent rounded-full"></div>
+          Loading description for <span className="font-semibold mx-1">{item.label || "class"}</span>…
         </div>
       )}
 
@@ -2017,11 +1880,38 @@ const ClassEditor: React.FC<{
 
         {activeTab === "description" && (
           <div className="space-y-0">
-            {/* Description Panel Header - Clean minimal style */}
             <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5">
               <span className="text-xs font-medium text-stone-700">Description: {item.label}</span>
             </div>
-            {/* Description Content */}
+
+            {!axiomsLoaded && !loadingDetails && (
+              <div className="flex flex-col items-center justify-center min-h-[220px] py-10 px-6 text-center bg-white border border-t-0 border-gray-200 rounded-b-sm">
+                <p className="text-sm text-gray-600 mb-1">
+                  Full class description (SubClassOf, EquivalentTo, restrictions, instances)
+                  matches Protégé once loaded.
+                </p>
+                <p className="text-xs text-gray-500 mb-4">
+                  On large ontologies this can take up to a minute — annotations are already available in the other tab.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void loadDescription()}
+                  data-testid="load-description-btn"
+                  className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700 shadow-sm"
+                >
+                  Load description
+                </button>
+              </div>
+            )}
+
+            {loadingDetails && !axiomsLoaded && (
+              <div className="flex items-center justify-center min-h-[160px] py-8 bg-white border border-t-0 border-gray-200 rounded-b-sm text-sm text-gray-500">
+                <div className="animate-spin mr-2 h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full" />
+                Loading axioms and restrictions…
+              </div>
+            )}
+
+            {axiomsLoaded && (
             <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-4">
               {/* Equivalent To Section */}
               <AxiomSubsection
@@ -2071,8 +1961,8 @@ const ClassEditor: React.FC<{
               <AxiomSubsection
                 title="General class axioms"
                 axioms={classDetails?.generalClassAxioms || []}
-                onAdd={(def) => handleGCAConfirm(def)}
-                onEdit={(id, newDef) => handleGCAConfirm(newDef)}
+                onAdd={(def) => handleGCAConfirm(def, item.id)}
+                onEdit={(id, newDef) => handleGCAConfirm(newDef, item.id)}
                 onDelete={(id) => handleDeleteGCA(id)}
                 onAddClick={handleAddGCA}
                 onEditClick={(axiom) => handleEditGCA(axiom.id)}
@@ -2213,6 +2103,7 @@ const ClassEditor: React.FC<{
                 parentEntityIri={item.id}
               />
             </div>
+            )}
           </div>
         )}
       </div>
@@ -2338,33 +2229,19 @@ const ClassEditor: React.FC<{
         onDeleteIndividual={onDeleteIndividual}
       />
 
-      {/* General Class Axiom (GCA) Editor Dialog - Simple text area like Protégé */}
-      <ClassExpressionDialog
+      {/* General Class Axiom (GCA) Editor Dialog - two separate fields */}
+      <GCIEditorDialog
         isOpen={isGCAEditorOpen}
         onClose={() => {
           setIsGCAEditorOpen(false);
           setEditingGCAId(undefined);
         }}
-        onConfirm={handleGCAConfirm}
-        title={editingGCAId ? "Edit General Class Axiom" : "Add General Class Axiom"}
-        classHierarchy={classHierarchy}
-        expandedNodes={expandedNodes}
-        onToggleNode={onToggleNode}
-        objectProperties={properties || []}
-        dataProperties={dataProperties || []}
-        objectPropertiesTree={objectPropertyHierarchy}
-        dataPropertiesTree={dataPropertyHierarchy}
+        onSave={handleGCAConfirm}
+        editMode={!!editingGCAId}
         projectId={projectId}
-        onAddClass={onAddClass}
-        onDeleteClass={onDeleteClass}
-        onRefreshClasses={onRefreshClasses}
-        initialTab="classExpression"
-        allowedTabs={["classExpression"]}
-        initialValue={
-          editingGCAId
-            ? classDetails?.generalClassAxioms?.find((a: Axiom) => a.id === editingGCAId)?.definition
-            : undefined
-        }
+        availableClasses={gcaAvailableClasses}
+        initialSubClass={gcaInitialSubClass}
+        initialSuperClass={gcaInitialSuperClass}
       />
 
       {/* IRI Editor Dialog */}

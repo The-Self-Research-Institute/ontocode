@@ -14,11 +14,14 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     private final PerformanceLoggingInterceptor performanceLoggingInterceptor;
     private final FreeViewOnlyInterceptor freeViewOnlyInterceptor;
+    private final EditorApiAuthInterceptor editorApiAuthInterceptor;
 
     public WebMvcConfig(PerformanceLoggingInterceptor performanceLoggingInterceptor,
-                        FreeViewOnlyInterceptor freeViewOnlyInterceptor) {
+                        FreeViewOnlyInterceptor freeViewOnlyInterceptor,
+                        EditorApiAuthInterceptor editorApiAuthInterceptor) {
         this.performanceLoggingInterceptor = performanceLoggingInterceptor;
         this.freeViewOnlyInterceptor = freeViewOnlyInterceptor;
+        this.editorApiAuthInterceptor = editorApiAuthInterceptor;
     }
 
     @Override
@@ -30,6 +33,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(editorApiAuthInterceptor)
+                .addPathPatterns("/api/**")
+                .order(0);
         registry.addInterceptor(performanceLoggingInterceptor)
                 .addPathPatterns("/api/**");
         registry.addInterceptor(freeViewOnlyInterceptor)

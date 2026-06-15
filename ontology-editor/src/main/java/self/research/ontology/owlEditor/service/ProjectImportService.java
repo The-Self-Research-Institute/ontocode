@@ -79,6 +79,9 @@ public class ProjectImportService {
     private org.springframework.cache.CacheManager cacheManager;
 
     @Autowired(required = false) @Nullable
+    private OntologySpringCacheEvictionService cacheEvictionService;
+
+    @Autowired(required = false) @Nullable
     private HierarchyIndexService hierarchyIndexService;
 
     public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
@@ -350,11 +353,14 @@ public class ProjectImportService {
                     "PROCESSING", "Loading ontology data…", filename, bulkLoadStartMeta);
             // Also update status.json so polling clients get the progress message
             metadataService.writeStatus(projectId, ProjectStatus.processing(filename, "Loading ontology data…"));
+            metadataService.writeImportProgress(projectId, 60, "graphdb-loading", "Loading ontology data…");
 
-            // Protégé-style: parse OWL into memory in parallel with Fuseki ingest
-            if (desktopOntologyLoader != null) {
-                final Path parallelParseSource = owlFile;
-                desktopOntologyLoader.startParallelWarm(projectId, parallelParseSource);
+            // OWLAPI warm competes with Fuseki ingest for heap on large files — defer until after load.
+            if (desktopOntologyLoader != null && fileSizeBytes < 50L * 1024 * 1024) {
+                desktopOntologyLoader.startParallelWarm(projectId, owlFile);
+            } else if (desktopOntologyLoader != null) {
+                log.info("[Import {}] Deferring OWLAPI warm until after Fuseki load ({} MB) — protects editor heap",
+                        projectId, fileSizeBytes / (1024 * 1024));
             }
             
             ImportOptions options = ImportOptions.builder()
@@ -412,13 +418,25 @@ public class ProjectImportService {
             GraphDBDatasetService.ProgressListener importProgressListener = progress -> {
                 long totalBytes = progress.getTotalBytes();
                 long bytesRead = progress.getBytesRead();
-                if (totalBytes <= 0) return;
-                int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
+                long elapsedMs = progress.getElapsedMs();
+                int percent;
+                String message;
+                if (totalBytes > 0 && bytesRead > 0) {
+                    percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
+                    message = String.format("Importing... (%d%%)", percent);
+                } else if (elapsedMs > 0) {
+                    long elapsedSec = elapsedMs / 1000;
+                    percent = (int) Math.min(85, 10 + (elapsedSec / 30));
+                    message = String.format("Loading ontology data… (%dm %02ds elapsed)",
+                            elapsedSec / 60, elapsedSec % 60);
+                } else {
+                    percent = 5;
+                    message = "Loading ontology data…";
+                }
                 lastProgressPercent.set(percent);
-                String message = String.format("Importing... (%d%%)", percent);
                 sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
                         "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
-                metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                metadataService.writeImportProgress(projectId, percent, "graphdb-loading", message);
             };
 
             if (largeFile) {
@@ -618,25 +636,11 @@ public class ProjectImportService {
             // hierarchy request recomputes from fresh Fuseki data (not a cached wrong tree).
             try {
                 if (topLevelClassCacheService != null) topLevelClassCacheService.evict(projectId);
-                // Evict only this project's entries — cache.clear() would drop other
-                // projects' warm trees and cause unnecessary Fuseki round-trips for them.
-                // Key format mirrors @Cacheable(key="#projectId+'_'+#limit") and
-                // @Cacheable(key="#projectId+'_'+#parentIri+'_'+#limit+'_'+#offset").
-                if (cacheManager != null) {
-                    org.springframework.cache.Cache tlCache = cacheManager.getCache("topLevelClasses");
-                    if (tlCache != null) {
-                        for (int lim : new int[]{100, 200, 500, 1000, 2000, 5000}) {
-                            tlCache.evict(projectId + "_" + lim);
-                        }
-                    }
-                    org.springframework.cache.Cache chCache = cacheManager.getCache("classChildren");
-                    if (chCache != null) {
-                        // Children keys include parentIri — clear the whole cache for this project
-                        // by iterating is not supported by Caffeine's Cache abstraction; use
-                        // a project-prefixed eviction via the native cache if available,
-                        // otherwise accept the broader clear only for children (much smaller than top-level).
-                        chCache.clear();
-                    }
+                // Evict only this project's entries via the dedicated eviction service,
+                // which iterates Caffeine's native key set with a project prefix.
+                // This avoids the prior chCache.clear() which flushed all projects.
+                if (cacheEvictionService != null) {
+                    cacheEvictionService.evictForProject(projectId);
                 }
                 log.info("[Import {}] Evicted hierarchy caches (topLevelClasses, classChildren, Mongo)", projectId);
             } catch (Exception cacheEx) {

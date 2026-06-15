@@ -82,7 +82,10 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         }
 
         String[] jwtClaims = JwtClaimUtils.extractPlanAndUserId(request.getHeader("Authorization"));
-        if (jwtClaims == null) return true; // unauthenticated — let security filters handle it
+        if (jwtClaims == null) {
+            // Unauthenticated writes are blocked when editor JWT enforcement is on (see EditorApiAuthInterceptor).
+            return true;
+        }
 
         String plan = jwtClaims[0];
         String userId = jwtClaims[1];

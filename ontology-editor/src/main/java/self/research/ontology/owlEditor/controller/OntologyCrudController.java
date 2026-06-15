@@ -18,6 +18,9 @@ import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditS
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @RestController
 @RequestMapping("/api/ontology")
@@ -25,6 +28,11 @@ import java.util.UUID;
 public class OntologyCrudController {
 
     private static final Logger log = LoggerFactory.getLogger(OntologyCrudController.class);
+
+    // Dedicated pool for async history recording + collaboration broadcast.
+    // Isolated from the ForkJoinPool.commonPool used by SPARQL query parallelism.
+    // 4 threads: enough for burst concurrent mutations without unbounded growth.
+    private static final ExecutorService historyExecutor = Executors.newFixedThreadPool(4);
 
     private final OntologyMutationService mutationService;
     private final DraftTrackingService draftTrackingService;
@@ -74,31 +82,27 @@ public class OntologyCrudController {
 
                 mutationService.apply(projectId, request.ops());
 
-                // Record each operation to GraphDB history and broadcast to collaborators
-                for (OntologyMutationService.MutationOp op : request.ops()) {
-                    String entityIRI = op.iri();
-                    String entityLabel = op.label();
-                    String oldValue = op.oldValue();
-                    String newValue = op.value();
-                    String annotationProperty = op.property();
-
-                    historyService.recordEdit(
-                        projectId,
-                        userId,
-                        username,
-                        op.type(),
-                        entityIRI,
-                        entityLabel,
-                        oldValue,
-                        newValue,
-                        op.type() + " operation",
-                        annotationProperty
-                    );
-
-                    collaborativeEditService.broadcastMutation(projectId, op, userId, username);
-                }
-
-                log.info("[MUTATION] Recorded {} changes to GraphDB history", request.ops().size());
+                // Record history and broadcast asynchronously — mutation is already applied and
+                // committed; history/broadcast are best-effort and must not block the response.
+                final String finalUserId = userId;
+                final String finalUsername = username;
+                final List<OntologyMutationService.MutationOp> ops = request.ops();
+                CompletableFuture.runAsync(() -> {
+                    for (OntologyMutationService.MutationOp op : ops) {
+                        try {
+                            historyService.recordEdit(
+                                projectId, finalUserId, finalUsername,
+                                op.type(), op.iri(), op.label(),
+                                op.oldValue(), op.value(),
+                                op.type() + " operation", op.property()
+                            );
+                            collaborativeEditService.broadcastMutation(projectId, op, finalUserId, finalUsername);
+                        } catch (Exception e) {
+                            log.warn("[MUTATION] Async history/broadcast failed for op {}: {}", op.type(), e.getMessage());
+                        }
+                    }
+                    log.info("[MUTATION] Recorded {} changes to GraphDB history (async)", ops.size());
+                }, historyExecutor);
 
                 return ResponseEntity.ok(Map.of(
                     "success", true,

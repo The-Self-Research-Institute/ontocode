@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Loader2, Clock, Users } from "lucide-react";
+import { Loader2, Clock, Users, CheckCircle2 } from "lucide-react";
 import { formatQueueWait, sanitizeImportMessage } from "../../utils/importStatusText";
 
 const MODAL_FADE_MS = 220;
@@ -14,6 +14,8 @@ export const LoadingDialog = ({
   totalInQueue,
   estimatedWaitTimeMs,
   inImportQueue,
+  readyToBrowse,
+  onBrowseNow,
 }: {
   isOpen: boolean;
   message?: string;
@@ -24,6 +26,9 @@ export const LoadingDialog = ({
   totalInQueue?: number;
   estimatedWaitTimeMs?: number;
   inImportQueue?: boolean;
+  /** Fuseki load finished — user can open editor while index builds in background */
+  readyToBrowse?: boolean;
+  onBrowseNow?: () => void;
 }) => {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [mounted, setMounted] = useState(isOpen);
@@ -174,8 +179,38 @@ export const LoadingDialog = ({
                 </span>
               </span>
             </div>
-            {!showQueueInfo && <span className="text-[10px] opacity-60">Large files may take 1–3 min</span>}
+            {!showQueueInfo && !readyToBrowse && (
+              <span className="text-[10px] opacity-60">Small files: ~1 min · Large (100MB+): 15–40 min</span>
+            )}
           </div>
+
+          {readyToBrowse && (
+            <div
+              className="mt-3 rounded-lg border px-3 py-3 text-center"
+              style={{
+                backgroundColor: "rgba(34,197,94,0.08)",
+                borderColor: "rgba(34,197,94,0.25)",
+              }}
+            >
+              <div className="mb-2 flex items-center justify-center gap-1.5 text-sm font-medium text-green-400">
+                <CheckCircle2 size={16} />
+                Ready to browse
+              </div>
+              <p className="mb-3 text-xs text-green-300/90">
+                Class tree and annotations are available. Full axioms load when you click{" "}
+                <span className="font-semibold">Load description</span> on a class.
+              </p>
+              {onBrowseNow && (
+                <button
+                  type="button"
+                  onClick={onBrowseNow}
+                  className="w-full rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-500 transition-colors"
+                >
+                  Open editor
+                </button>
+              )}
+            </div>
+          )}
 
           {showQueueInfo && (
             <div

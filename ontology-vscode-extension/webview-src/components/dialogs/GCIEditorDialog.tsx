@@ -84,18 +84,6 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
     setIsSubmitting(true);
     setParseError(null);
     try {
-      if (projectId) {
-        const subError = await validateExpression(subClass);
-        if (subError) {
-          setParseError(`Sub-class expression: ${subError}`);
-          return;
-        }
-        const superError = await validateExpression(superClass);
-        if (superError) {
-          setParseError(`Super-class expression: ${superError}`);
-          return;
-        }
-      }
       await onSave(subClass.trim(), superClass.trim());
       onClose();
     } catch (error) {

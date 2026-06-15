@@ -50,10 +50,25 @@ public class ReasonerController {
     @Value("${ontology.editor.url:http://owl-editor:8083}")
     private String editorServiceUrl;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = buildRestTemplate();
 
-    // Cache for loaded ontologies
-    private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
+    private static RestTemplate buildRestTemplate() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory f =
+            new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        f.setConnectTimeout(5_000);
+        f.setReadTimeout(30_000);
+        return new RestTemplate(f);
+    }
+
+    // Cache for loaded ontologies — bounded LRU, max 20 entries, thread-safe
+    private final Map<String, OWLOntology> ontologyCache = java.util.Collections.synchronizedMap(
+        new java.util.LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, OWLOntology> eldest) {
+                return size() > 20;
+            }
+        }
+    );
 
     // Async classification task tracking
     private final ConcurrentHashMap<String, Map<String, Object>> classifyTasks = new ConcurrentHashMap<>();
