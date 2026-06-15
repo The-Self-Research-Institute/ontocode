@@ -13,4 +13,5 @@ public interface ProjectRepository extends MongoRepository<ProjectDocument, Stri
     Optional<ProjectDocument> findFirstByFilenameAndOwnerEmailOrderByUpdatedAtDesc(String filename, String ownerEmail);
     List<ProjectDocument> findByFilenameAndOwnerEmail(String filename, String ownerEmail);
     Optional<ProjectDocument> findFirstByFilenameOrderByUpdatedAtDesc(String filename);
+    List<ProjectDocument> findByStatusIn(List<String> statuses);
 }
