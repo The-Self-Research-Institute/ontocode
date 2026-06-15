@@ -38,6 +38,7 @@ public class GatewayAuthFilter implements GlobalFilter, Ordered {
             "/api/auth/reset-password",
             "/api/auth/desktop/**",
             "/api/downloads/**",
+            "/api/plugins/*/download",
             "/actuator/health"
     );
 
