@@ -73,6 +73,7 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 public class ProjectLoadController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectLoadController.class);
+    private static final java.util.regex.Pattern PCT_PATTERN = java.util.regex.Pattern.compile("(\\d+)%");
     
     // Project-level locks to prevent concurrent saves
     private final ConcurrentHashMap<String, Object> projectSaveLocks = new ConcurrentHashMap<>();
@@ -844,6 +845,25 @@ public class ProjectLoadController {
                     data.put("statusMessage", status.statusMessage());
                     data.put("updatedAt", status.updatedAt());
                     data.put("filename", status.filename());
+                    metadataService.readMeta(projectId).ifPresent(meta -> {
+                        Object ip = meta.get("importProgress");
+                        if (ip instanceof Map<?, ?> progressMap) {
+                            Object p = progressMap.get("progress");
+                            if (p instanceof Number n) {
+                                data.put("progress", n.intValue());
+                            }
+                            Object stage = progressMap.get("stage");
+                            if (stage != null) {
+                                data.put("stage", stage.toString());
+                            }
+                        }
+                    });
+                    if (!data.containsKey("progress") && status.statusMessage() != null) {
+                        java.util.regex.Matcher m = PCT_PATTERN.matcher(status.statusMessage());
+                        if (m.find()) {
+                            data.put("progress", Integer.parseInt(m.group(1)));
+                        }
+                    }
                     boolean owlapiReady = ontologyCache != null && ontologyCache.has(projectId);
                     data.put("owlapiReady", owlapiReady);
 

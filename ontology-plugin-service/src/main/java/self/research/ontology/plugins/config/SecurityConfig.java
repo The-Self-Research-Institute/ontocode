@@ -42,30 +42,15 @@ public class SecurityConfig {
                 // Public endpoints - browsing, downloading, and stats
                 .requestMatchers(HttpMethod.GET, "/api/plugins/**").permitAll()
 
-                // Public endpoints - rating (for development - add auth in production)
-                .requestMatchers(HttpMethod.POST, "/api/plugins/*/rate").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/plugins/*/helpful").permitAll()
-                .requestMatchers(HttpMethod.DELETE, "/api/plugins/ratings/*").permitAll()
-
-                // Public endpoints - installation tracking (for development)
-                .requestMatchers(HttpMethod.POST, "/api/plugins/*/install").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/plugins/*/uninstall").permitAll()
-
-                // Plugin publishing - allow without auth for development (SECURE IN PRODUCTION)
-                .requestMatchers(HttpMethod.POST, "/api/plugins").permitAll()
-                .requestMatchers(HttpMethod.PUT, "/api/plugins/**").permitAll()
-                .requestMatchers(HttpMethod.DELETE, "/api/plugins/**").permitAll()
-
-                // NOTE: For production, change the above to:
-                // .requestMatchers(HttpMethod.POST, "/api/plugins").authenticated()
-                // .requestMatchers(HttpMethod.PUT, "/api/plugins/**").authenticated()
-                // .requestMatchers(HttpMethod.DELETE, "/api/plugins/**").authenticated()
+                // Plugin publishing — authenticated (browse/download remain public GET)
+                .requestMatchers(HttpMethod.POST, "/api/plugins").authenticated()
+                .requestMatchers(HttpMethod.PUT, "/api/plugins/**").authenticated()
+                .requestMatchers(HttpMethod.DELETE, "/api/plugins/**").authenticated()
 
                 // Health check
                 .requestMatchers("/actuator/health").permitAll()
 
-                // Default - allow all for development (CHANGE IN PRODUCTION)
-                .anyRequest().permitAll()
+                .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 

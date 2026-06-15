@@ -838,7 +838,10 @@ public class GraphDBDatasetService {
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long connMs = (System.nanoTime() - totalStart) / 1_000_000;
             
-            // Inject FROM clause if not present
+            // Scope query to this project's graph only — strip user-supplied FROM to prevent cross-project reads.
+            if (sparqlQuery.toUpperCase().contains("FROM")) {
+                sparqlQuery = sparqlQuery.replaceAll("(?i)\\s+FROM\\s*<[^>]+>", " ");
+            }
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
                 sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
                     buildFromClause(conn, projectId) + " WHERE");
@@ -1602,8 +1605,36 @@ public class GraphDBDatasetService {
                 progressListener.onProgress(new ImportProgress(0, fileSizeBytes, 0, 0));
             }
 
+            java.util.concurrent.atomic.AtomicBoolean uploadDone = new java.util.concurrent.atomic.AtomicBoolean(false);
+            Thread progressHeartbeat = null;
+            if (progressListener != null) {
+                progressHeartbeat = Thread.ofVirtual().name("direct-upload-progress").start(() -> {
+                    long heartbeatStart = System.nanoTime();
+                    while (!uploadDone.get()) {
+                        try {
+                            Thread.sleep(5000);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                        if (uploadDone.get()) {
+                            return;
+                        }
+                        progressListener.onProgress(new ImportProgress(0, fileSizeBytes, 0, elapsedMillis(heartbeatStart)));
+                    }
+                });
+            }
+
             long uploadStart = System.nanoTime();
-            HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response;
+            try {
+                response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+            } finally {
+                uploadDone.set(true);
+                if (progressHeartbeat != null) {
+                    progressHeartbeat.interrupt();
+                }
+            }
             long uploadMs = elapsedMillis(uploadStart);
 
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
@@ -1615,10 +1646,8 @@ public class GraphDBDatasetService {
             }
 
             long verifyStart = System.nanoTime();
-            long verifiedSize;
-            try (RepositoryConnection conn = binding.repository().getConnection()) {
-                verifiedSize = countGraphTriplesSparql(conn, graphUri);
-            }
+            long verifiedSize = waitForGraphTriplesAfterDirectUpload(
+                    binding.repository(), graphUri, projectId, fileSizeBytes);
             long verifyMs = elapsedMillis(verifyStart);
             long totalMs = elapsedMillis(start);
 
@@ -1872,6 +1901,7 @@ public class GraphDBDatasetService {
                 log.info("Opened GraphDB connection for {} (autoCommit={}, transaction active, isolation={})",
                         projectId, conn.isAutoCommit(), safeIsolationLevel(conn));
 
+                java.io.File tempFile = null;
                 try {
                     // Record current dataset size if possible
                     long sizeBeforeClear = safeGraphSize(conn, graphIri, "before-clear", projectId);
@@ -1891,7 +1921,7 @@ public class GraphDBDatasetService {
                     // WORKAROUND for "Connection reset by peer" errors:
                     // Save stream to temp file first, then load from file
                     // This makes the request repeatable if connection fails
-                    java.io.File tempFile = java.io.File.createTempFile("graphdb-upload-", ".rdf");
+                    tempFile = java.io.File.createTempFile("graphdb-upload-", ".rdf");
                     tempFile.deleteOnExit();
                     
                     log.info("Copying stream to temp file: {}", tempFile.getAbsolutePath());
@@ -1945,9 +1975,6 @@ public class GraphDBDatasetService {
                     log.info("✓ Parsing & uploading completed in {} ms ({} sec) - {} triples at {} triples/sec", 
                             parseDuration, parseDuration / 1000, tripleCounter.get(), (long) parseRate);
                     
-                    // Clean up temp file
-                    tempFile.delete();
-
                     // Get size after loading (SPARQL COUNT is much faster than conn.size())
                     long sizeQueryStart = System.nanoTime();
                     long tripleCount = countGraphTriplesSparql(conn, graphUri);
@@ -1988,6 +2015,8 @@ public class GraphDBDatasetService {
                         log.error("Failed to rollback transaction", rollbackEx);
                     }
                     throw e; // Re-throw to outer catch blocks
+                } finally {
+                    if (tempFile != null) tempFile.delete();
                 }
             }
             
@@ -2388,6 +2417,39 @@ public class GraphDBDatasetService {
             return java.time.Duration.ofMinutes(60);
         }
         return java.time.Duration.ofMinutes(30);
+    }
+
+    /**
+     * Fuseki may return HTTP 200 from GSP PUT before TDB2 finishes indexing large RDF/XML.
+     * Poll briefly before falling back to slow client-side chunked parse.
+     */
+    private long waitForGraphTriplesAfterDirectUpload(Repository repository,
+                                                      String graphUri,
+                                                      String projectId,
+                                                      long fileSizeBytes) throws Exception {
+        long mb = fileSizeBytes > 0 ? fileSizeBytes / (1024 * 1024) : 0;
+        int maxAttempts = mb >= 200 ? 90 : (mb >= 50 ? 60 : 30);
+        long pollMs = mb >= 200 ? 10_000L : 5_000L;
+
+        long verifiedSize = 0;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try (RepositoryConnection conn = repository.getConnection()) {
+                verifiedSize = countGraphTriplesSparql(conn, graphUri);
+            }
+            if (verifiedSize > 0) {
+                if (attempt > 1) {
+                    log.info("[DirectUpload] Graph populated after {} verification polls ({} triples) for {}",
+                            attempt, verifiedSize, projectId);
+                }
+                return verifiedSize;
+            }
+            if (attempt < maxAttempts) {
+                log.info("[DirectUpload] Waiting for Fuseki indexing (poll {}/{}, project={})",
+                        attempt, maxAttempts, projectId);
+                Thread.sleep(pollMs);
+            }
+        }
+        return verifiedSize;
     }
 
     // Triple counts only change on import/mutation, but the UI polls status every ~2s.

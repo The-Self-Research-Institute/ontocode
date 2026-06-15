@@ -618,7 +618,8 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -918,6 +919,12 @@ textarea.code-editor-textarea {
 
   /* --- Global layout tweaks --- */
   .max-w-7xl { max-width: 100% !important; padding-left: 0.75rem; padding-right: 0.75rem; }
+
+  /* Top menu: scroll horizontally instead of clipping */
+  .ontocode-top-menu {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 
   /* --- ProjectDashboard header --- */
   /* Stack header vertically: title row + actions row */
