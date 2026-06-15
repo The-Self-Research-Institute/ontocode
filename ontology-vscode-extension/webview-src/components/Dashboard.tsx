@@ -293,7 +293,7 @@ const TopMenuBar = ({
   return (
     <header
       ref={menuRef}
-      className="ontocode-top-menu text-xs flex items-center px-1 sm:px-2 relative border-b h-8 flex-shrink-0 min-w-0 overflow-hidden"
+      className="ontocode-top-menu text-xs flex items-center px-1 sm:px-2 relative border-b h-8 flex-shrink-0 min-w-0"
       style={{
         backgroundColor: "var(--color-background)",
         color: "var(--color-text)",
