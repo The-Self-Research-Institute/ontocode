@@ -174,6 +174,8 @@ public class OntologyQueryController {
             }
             // SPARQL fallback when OWLAPI/snapshot unavailable (e.g. heap-skipped large files)
             var classes = queryService.topLevelClasses(projectId, limit);
+            boolean owlapiLoading = desktopOntologyLoader != null && desktopOntologyLoader.isLoading(projectId);
+            boolean inDesktopMode = desktopOntologyLoader != null;
             if (offset == 0 && classes.isEmpty()) {
                 int topCount = 0;
                 try {
@@ -181,13 +183,9 @@ public class OntologyQueryController {
                 } catch (Exception ignored) {
                     /* still warming */
                 }
-                // topCount > 0: ASK says classes exist but SPARQL returned empty — orphan scan
-                // not ready yet (cold Fuseki, stale cache, or still scanning).
-                // topCount == 0 && graphHasTriples: import finished but no classes indexed yet.
                 // In desktop mode, only return 202 while OWLAPI is actively loading; once it's
-                // done (succeeded, failed, or skipped), trust SPARQL's result and stop spinning.
-                boolean owlapiLoading = desktopOntologyLoader != null && desktopOntologyLoader.isLoading(projectId);
-                boolean inDesktopMode = desktopOntologyLoader != null;
+                // done (succeeded, failed, or skipped), fall through so we can return a final answer.
+                // In cloud mode, keep the original topCount/graphHasTriples heuristic.
                 boolean shouldReturn202 = owlapiLoading || (!inDesktopMode && (topCount > 0 || graphHasTriples(projectId)));
                 if (shouldReturn202) {
                     Map<String, Object> pending = new java.util.LinkedHashMap<>();
@@ -206,7 +204,10 @@ public class OntologyQueryController {
             body.put("success", true);
             body.put("classes", classes);
             body.put("hierarchyEngine", "sparql");
-            body.put("hierarchyReady", !classes.isEmpty());
+            // Desktop: once OWLAPI is done (not loading), this is the final answer — always
+            // signal hierarchyReady:true so the frontend stops polling even if SPARQL returned
+            // empty (avoids infinite re-poll when empty SPARQL result returns hierarchyReady:false).
+            body.put("hierarchyReady", !classes.isEmpty() || (inDesktopMode && !owlapiLoading));
             body.put("topLevelReturned", classes.size());
             return ResponseEntity.ok(body);
         } catch (Exception e) {
