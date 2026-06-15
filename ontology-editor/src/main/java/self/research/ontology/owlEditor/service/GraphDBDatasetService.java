@@ -114,6 +114,9 @@ public class GraphDBDatasetService {
     @Autowired(required = false)
     private OwlApiMutationCoordinator mutationCoordinator;
 
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.repository.ProjectRepository projectRepository;
+
     // Shared repository connection (legacy / fallback for existing data)
     private Repository repository;
 
@@ -290,6 +293,24 @@ public class GraphDBDatasetService {
      */
     @EventListener(ApplicationReadyEvent.class)
     public void warmupFusekiAsync() {
+        // Seed tripleCountCache from MongoDB metadata immediately — avoids the first
+        // status poll per project running a slow COUNT(*) on cold TDB2.
+        if (projectRepository != null) {
+            try {
+                projectRepository.findByStatusIn(java.util.List.of("COMPLETED")).forEach(p -> {
+                    if (p.getMetadata() != null) {
+                        Object stored = p.getMetadata().get("tripleCount");
+                        if (stored instanceof Number n && n.longValue() > 0) {
+                            tripleCountCache.put(p.getId(), n.longValue());
+                        }
+                    }
+                });
+                log.info("[WARMUP] Seeded tripleCountCache for {} COMPLETED projects from MongoDB",
+                    tripleCountCache.size());
+            } catch (Exception e) {
+                log.warn("[WARMUP] tripleCountCache seed failed (non-fatal): {}", e.getMessage());
+            }
+        }
         CompletableFuture.runAsync(() -> {
             try {
                 log.info("[WARMUP] Starting background Fuseki/TDB2 warmup...");
