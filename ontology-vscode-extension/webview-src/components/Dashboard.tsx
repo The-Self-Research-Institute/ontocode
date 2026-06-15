@@ -1441,6 +1441,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [loadingStatusMessage, setLoadingStatusMessage] = useState<string>(""); // Track import progress message
   const loadingPromiseRef = useRef<Promise<void> | null>(null);
   const userLoadingChoice = useRef<"wait" | "continue" | null>(null);
+  // Stable ref so async callbacks always call the latest navigation function.
+  const onGoToProjectDashboardRef = useRef(onGoToProjectDashboard);
+  useEffect(() => { onGoToProjectDashboardRef.current = onGoToProjectDashboard; }, [onGoToProjectDashboard]);
   const autoLoadNewFileRef = useRef(false); // Set when user clicks "Create New File" — skip loading dialog on fileReady
   const codeViewDirtyRef = useRef(false);
   const metadataRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3227,7 +3230,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setIsHierarchyLoading(true);
           setLoadingStatusMessage("Loading class hierarchy…");
           void (async () => {
-            for (let i = 0; i < 60 && !signal.aborted; i++) {
+            for (let i = 0; i < 300 && !signal.aborted; i++) {
               await new Promise((r) => setTimeout(r, 2000));
               try {
                 const retry = await apiClient.get<any>(
@@ -3253,9 +3256,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                 /* retry */
               }
             }
-            setLoadingStatusMessage("Class hierarchy is still loading. Try expanding owl:Thing or refresh.");
             setIsHierarchyLoading(false);
             setIsInitialLoading(false);
+            showToast("Could not load the class hierarchy. The ontology may be too large or the server timed out.", "error");
+            onGoToProjectDashboardRef.current?.();
           })();
         } else if (!isDesktop() && hierarchyBuilding && !isStaleLoad()) {
           void (async () => {
@@ -3288,9 +3292,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                 /* retry */
               }
             }
-            setLoadingStatusMessage("Class hierarchy index is still building. Try refresh in a moment.");
             setIsHierarchyLoading(false);
             setIsInitialLoading(false);
+            showToast("Ontology index build timed out. The file may be too large for the current configuration.", "error");
+            onGoToProjectDashboardRef.current?.();
           })();
         }
         if (isDesktop() && !isStaleLoad()) {
@@ -4898,7 +4903,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const startedAt = Date.now();
-    const HARD_CAP_MS = 120000; // 2 min absolute backstop — never spin longer
+    const HARD_CAP_MS = 600000; // 10 min hard cap — large ontologies (Mondo, SNOMED) can take several minutes
 
     const closeSpinner = (reason: string) => {
       if (cancelled) return;
@@ -4911,17 +4916,25 @@ const Dashboard: React.FC<DashboardProps> = ({
       loadingPromiseRef.current = null;
     };
 
+    const failAndRedirect = (msg: string) => {
+      if (cancelled) return;
+      closeSpinner(msg);
+      showToast(msg, "error");
+      onGoToProjectDashboardRef.current?.();
+    };
+
     const tick = async () => {
       if (cancelled) return;
       if (Date.now() - startedAt > HARD_CAP_MS) {
-        closeSpinner("hard timeout (2m) — backend never signalled completion");
+        failAndRedirect("Loading timed out. The ontology may be too large or the server is busy. Please try again.");
         return;
       }
       try {
         const res = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(projectId)}`);
         const status = res?.data?.status || res?.status;
         if (status === "ERROR") {
-          closeSpinner(`backend status=${status}`);
+          const errMsg = res?.data?.error || res?.error || "Failed to load ontology. Please check the file and try again.";
+          failAndRedirect(errMsg);
           setImportReadyToBrowse(false);
           return;
         }
@@ -4942,7 +4955,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [isInitialLoading, showLoadingChoice, projectId]);
+  }, [isInitialLoading, showLoadingChoice, projectId, showToast]);
 
   useEffect(() => {
     if (inferredClassHierarchy.length > 0 && inferredClassHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
