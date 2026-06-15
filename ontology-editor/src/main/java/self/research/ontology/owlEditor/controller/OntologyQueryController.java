@@ -184,14 +184,21 @@ public class OntologyQueryController {
                 // topCount > 0: ASK says classes exist but SPARQL returned empty — orphan scan
                 // not ready yet (cold Fuseki, stale cache, or still scanning).
                 // topCount == 0 && graphHasTriples: import finished but no classes indexed yet.
-                if (topCount > 0 || graphHasTriples(projectId)) {
+                // In desktop mode, only return 202 while OWLAPI is actively loading; once it's
+                // done (succeeded, failed, or skipped), trust SPARQL's result and stop spinning.
+                boolean owlapiLoading = desktopOntologyLoader != null && desktopOntologyLoader.isLoading(projectId);
+                boolean inDesktopMode = desktopOntologyLoader != null;
+                boolean shouldReturn202 = owlapiLoading || (!inDesktopMode && (topCount > 0 || graphHasTriples(projectId)));
+                if (shouldReturn202) {
                     Map<String, Object> pending = new java.util.LinkedHashMap<>();
                     pending.put("success", false);
                     pending.put("hierarchyReady", false);
                     pending.put("classes", List.of());
                     pending.put("hierarchyEngine", "sparql");
                     pending.put("sparqlFallback", true);
-                    pending.put("message", "Triple store ready — loading class tree…");
+                    pending.put("message", owlapiLoading
+                        ? "Loading ontology into memory…"
+                        : "Triple store ready — loading class tree…");
                     return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
                 }
             }

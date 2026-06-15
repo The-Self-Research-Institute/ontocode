@@ -303,7 +303,7 @@ const TopMenuBar = ({
       <div className="flex items-center gap-1 p-1 sm:p-2 mr-1 sm:mr-2 flex-shrink-0">
         <Package size={16} className="text-purple-600" />
       </div>
-      <div className="flex items-center min-w-0 flex-1 overflow-x-auto no-scrollbar">
+      <div className="flex items-center">
         {menuItems.map((item) => (
           <div key={item} className="relative flex-shrink-0">
             <button
