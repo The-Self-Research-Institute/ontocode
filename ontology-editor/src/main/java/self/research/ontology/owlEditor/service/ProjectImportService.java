@@ -474,7 +474,11 @@ public class ProjectImportService {
                 lastProgressPercent.set(percent);
                 sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
                         "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
-                metadataService.writeImportProgress(projectId, percent, "graphdb-loading", message);
+                try {
+                    metadataService.writeImportProgress(projectId, percent, "graphdb-loading", message);
+                } catch (Exception mongoEx) {
+                    log.warn("[Import {}] Progress write to MongoDB failed (non-fatal, Fuseki upload continues): {}", projectId, mongoEx.getMessage());
+                }
             };
 
             if (largeFile) {
@@ -501,7 +505,11 @@ public class ProjectImportService {
                         String message = String.format("Importing... (%d%%)", percent);
                         sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
                                 "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
-                        metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                        try {
+                            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                        } catch (Exception mongoEx) {
+                            log.warn("[Import {}] Progress write to MongoDB failed (non-fatal): {}", projectId, mongoEx.getMessage());
+                        }
                     });
                 } catch (Exception serverEx) {
                     log.info("[Import {}] [TIMING] Server-side import failed after {} ms: {}", projectId, elapsedMillis(stageStart), serverEx.getMessage());
@@ -521,7 +529,11 @@ public class ProjectImportService {
                         String message = String.format("Importing... (%d%%)", percent);
                         sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
                                 "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
-                        metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                        try {
+                            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                        } catch (Exception mongoEx) {
+                            log.warn("[Import {}] Progress write to MongoDB failed (non-fatal): {}", projectId, mongoEx.getMessage());
+                        }
                     });
                 } catch (Exception directEx) {
                     log.info("[Import {}] [TIMING] Direct HTTP upload failed after {} ms: {}", projectId, elapsedMillis(stageStart), directEx.getMessage());
@@ -588,7 +600,11 @@ public class ProjectImportService {
                                     "PROCESSING", message, filename, progressMeta);
 
                             // Persist progress message for polling clients
-                            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                            try {
+                                metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                            } catch (Exception mongoEx) {
+                                log.warn("[Import {}] Progress write to MongoDB failed (non-fatal, chunked upload continues): {}", projectId, mongoEx.getMessage());
+                            }
                         }
                     }
                 });
