@@ -19,6 +19,19 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs   = require('fs');
 const http = require('http');
+const os   = require('os');
+
+// Compute JVM heap sizes based on available system RAM.
+// Desktop jar (OWLAPI + Spring): 40% of RAM, 2g–12g
+// Fuseki (TDB2 triple store):    28% of RAM, 1500m–8g
+// A 1 GB OWL file expands to ~5-8x in OWLAPI heap, so machines with
+// less than 16 GB will warn in logs but still try with what they have.
+function jvmHeaps() {
+    const totalGb = os.totalmem() / (1024 ** 3);
+    const desktopGb = Math.min(Math.max(Math.floor(totalGb * 0.40), 2), 12);
+    const fusekiGb  = Math.min(Math.max(Math.floor(totalGb * 0.28), 2), 8);
+    return { desktopXmx: `${desktopGb}g`, fusekiXmx: `${fusekiGb}g`, totalGb: Math.round(totalGb) };
+}
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -225,9 +238,12 @@ async function startFuseki() {
     fs.writeFileSync(configFile, fusekiConfig, 'utf8');
     log('info', `Fuseki config written to ${configFile}`);
 
+    const fusekiHeaps = jvmHeaps();
+    log('info', `[Fuseki] JVM heap: ${fusekiHeaps.fusekiXmx} (system RAM: ${fusekiHeaps.totalGb} GB)`);
+
     const args = [
-        '-Xmx2g',            // 2 GB heap for large ontologies like GO-plus (~1M+ triples)
-        '-Xms256m',          // start small, grow as needed
+        `-Xmx${fusekiHeaps.fusekiXmx}`,
+        '-Xms256m',
         '-jar', jar,
         '--port', String(FUSEKI_PORT),
         '--config', configFile,
@@ -255,8 +271,12 @@ async function startDesktop() {
     log('info', `[Desktop] Exists: ${fs.existsSync(jar)}`);
     log('info', `[Desktop] Java:   ${java}`);
 
+    const heaps = jvmHeaps();
+    log('info', `[Desktop] JVM heap: ${heaps.desktopXmx} (system RAM: ${heaps.totalGb} GB)`);
+
     const args = [
-        '-Xmx1500m',   // 1.5GB — enough for Spring Boot + OWLAPI for ontologies up to ~80MB
+        `-Xmx${heaps.desktopXmx}`,
+        '-XX:+UseG1GC', '-XX:MaxGCPauseMillis=200',
         `-DLOG_DIR=${LOGS_DIR}`,
         '-jar', jar,
         `--server.port=${DESKTOP_PORT}`,

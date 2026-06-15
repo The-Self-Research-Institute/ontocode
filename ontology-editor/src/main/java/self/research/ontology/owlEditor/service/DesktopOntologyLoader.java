@@ -9,12 +9,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.config.FastOpenCondition;
+import self.research.ontology.owlEditor.document.ProjectDocument;
+import self.research.ontology.owlEditor.repository.ProjectRepository;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -55,6 +59,9 @@ public class DesktopOntologyLoader {
     @Autowired(required = false) @Lazy
     private HierarchyIndexService hierarchyIndexService;
 
+    @Autowired(required = false)
+    private ProjectRepository projectRepository;
+
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
@@ -68,6 +75,40 @@ public class DesktopOntologyLoader {
 
     public boolean isAutoWarmEnabled() {
         return autoWarm;
+    }
+
+    /**
+     * At startup, kick off OWLAPI loading for the most recently accessed projects
+     * (up to 3) so the first project the user opens is already warm — like Protégé.
+     * Uses the existing desktopModelExecutor thread pool (max 2 concurrent loads).
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void preWarmRecentProjectsAsync() {
+        if (!autoWarm || projectRepository == null) {
+            return;
+        }
+        CompletableFuture.runAsync(() -> {
+            try {
+                List<ProjectDocument> recent = projectRepository.findByStatusIn(List.of("COMPLETED"));
+                recent.stream()
+                    .filter(p -> p.getMetadata() != null)
+                    .sorted((a, b) -> {
+                        java.time.Instant ta = a.getUpdatedAt() != null ? a.getUpdatedAt() : java.time.Instant.EPOCH;
+                        java.time.Instant tb = b.getUpdatedAt() != null ? b.getUpdatedAt() : java.time.Instant.EPOCH;
+                        return tb.compareTo(ta);
+                    })
+                    .limit(3)
+                    .forEach(p -> {
+                        try {
+                            triggerLazyLoadIfNeeded(p.getId());
+                        } catch (Exception e) {
+                            log.debug("[Desktop] Pre-warm skipped for {}: {}", p.getId(), e.getMessage());
+                        }
+                    });
+            } catch (Exception e) {
+                log.warn("[Desktop] Startup pre-warm failed (non-fatal): {}", e.getMessage());
+            }
+        });
     }
 
     private final Set<String> loadingInProgress = ConcurrentHashMap.newKeySet();
@@ -276,7 +317,10 @@ public class DesktopOntologyLoader {
         Runtime rt = Runtime.getRuntime();
         long maxHeapMb = rt.maxMemory() / (1024 * 1024);
         long estimatedModelMb = Math.max(64, fileSizeMb * 3);
-        long heapReserveMb = 384;
+        // Reserve for Spring Boot runtime + Fuseki client + other beans (~700MB observed).
+        // usedNow tells us the actual current usage so we don't evict live data.
+        long usedNowMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
+        long heapReserveMb = Math.max(768, usedNowMb + 256);
         if (estimatedModelMb > maxHeapMb - heapReserveMb) {
             log.info("[Desktop] File {} MB (~{} MB model) exceeds heap budget ({} MB heap) — using Fuseki SPARQL/snapshot for project {}",
                 fileSizeMb, estimatedModelMb, maxHeapMb, projectId);
