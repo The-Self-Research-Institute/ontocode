@@ -129,6 +129,9 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     type: 'success' | 'error' | 'info';
     message: string;
   }>({ show: false, type: 'info', message: '' });
+
+  const [rollbackLoading, setRollbackLoading] = useState<string | null>(null);
+  const [rollbackError, setRollbackError] = useState<string | null>(null);
   
   const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotification({ show: true, type, message });
@@ -521,9 +524,6 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       showNotification('Failed to add comment', 'error');
     }
   };
-
-  const [rollbackLoading, setRollbackLoading] = useState<string | null>(null);
-  const [rollbackError, setRollbackError] = useState<string | null>(null);
 
   const rollbackChange = (changeId: string, change: OntologyChange) => {
     // Show custom confirmation dialog
