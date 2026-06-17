@@ -2,6 +2,7 @@ import React, { createContext, useState, useEffect, useCallback, useMemo, useRef
 import { Client, StompSubscription } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 import { getBaseUrl } from "../services/apiClient";
+import { getAuthHeaders } from "../utils/authenticatedFetch";
 import { useAuth } from "../custom-hook/useAuth";
 
 // Types matching the collaboration types from extension
@@ -343,9 +344,11 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         }),
       });
 
-      // Fetch existing active users
+      // Fetch existing active users (requires JWT on production gateway)
       const baseUrl = getBaseUrl();
-      fetch(`${baseUrl}/api/collab-graph/${projectId}/active-users`)
+      fetch(`${baseUrl}/api/collab-graph/${projectId}/active-users`, {
+        headers: getAuthHeaders(),
+      })
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (data?.users) {

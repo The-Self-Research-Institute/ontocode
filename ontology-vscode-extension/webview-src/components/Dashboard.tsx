@@ -73,6 +73,7 @@ import type {
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from "../utils/desktop";
+import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
 import { normalizeRole, parseWorkspaceRole, isWorkspaceViewerRole } from "../utils/roles";
@@ -9920,6 +9921,65 @@ const Dashboard: React.FC<DashboardProps> = ({
     },
     [classHierarchy],
   );
+
+  const flattenTree = useCallback((nodes: TreeNode[]): TreeNode[] => {
+    return nodes.flatMap((n) => [n, ...(n.children ? flattenTree(n.children) : [])]);
+  }, []);
+
+  useEffect(() => {
+    const handleCollaborationNavigate = (event: Event) => {
+      const detail = (event as CustomEvent<CollaborationNavigateDetail>).detail;
+      if (!detail?.entityIRI) return;
+      if (detail.projectId && projectId && detail.projectId !== projectId) return;
+
+      const tab = resolveEntitiesTab(detail.entityType, detail.changeType);
+      setMainTab("Entities");
+      setEntitiesTab(tab);
+
+      const label =
+        detail.entityLabel || detail.entityIRI.split(/[#/]/).pop() || detail.entityIRI;
+
+      let item: SelectableItem | null = null;
+      if (tab === "Classes") {
+        item = findClassNodeById(detail.entityIRI);
+      } else if (tab === "Individuals") {
+        item = individuals.find((i) => i.id === detail.entityIRI) || null;
+      } else if (tab === "ObjectProperties") {
+        item = flattenTree(objectPropertyHierarchy).find((n) => n.id === detail.entityIRI) || null;
+        if (!item) item = objectProperties.find((p) => p.id === detail.entityIRI) || null;
+      } else if (tab === "DataProperties") {
+        item = flattenTree(dataPropertyHierarchy).find((n) => n.id === detail.entityIRI) || null;
+        if (!item) item = dataProperties.find((p) => p.id === detail.entityIRI) || null;
+      } else if (tab === "AnnotationProperties") {
+        item = flattenTree(annotationPropertyHierarchy).find((n) => n.id === detail.entityIRI) || null;
+        if (!item) item = annotationProperties.find((p) => p.id === detail.entityIRI) || null;
+      } else if (tab === "Datatypes") {
+        item = datatypes.find((d) => d.id === detail.entityIRI) || null;
+      }
+
+      if (!item) {
+        item = { id: detail.entityIRI, label, children: [], hasChildren: false } as TreeNode;
+      }
+
+      setSelectedItem(item);
+      notificationService.info("Navigated", `Opened ${label} in ${tab}`);
+    };
+
+    window.addEventListener(COLLABORATION_NAVIGATE_EVENT, handleCollaborationNavigate as EventListener);
+    return () => window.removeEventListener(COLLABORATION_NAVIGATE_EVENT, handleCollaborationNavigate as EventListener);
+  }, [
+    projectId,
+    findClassNodeById,
+    flattenTree,
+    individuals,
+    objectPropertyHierarchy,
+    dataPropertyHierarchy,
+    annotationPropertyHierarchy,
+    objectProperties,
+    dataProperties,
+    annotationProperties,
+    datatypes,
+  ]);
 
   useEffect(() => {
     const handleGraphAddClass = (event: Event) => {

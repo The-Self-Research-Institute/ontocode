@@ -38,6 +38,21 @@ import type {
   ReasonerStats
 } from './types';
 
+/** fetch with JWT — uses window.authenticatedFetch when host app provides it. */
+async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const hostFetch = (window as any).authenticatedFetch;
+  if (typeof hostFetch === 'function') {
+    return hostFetch(input, init);
+  }
+  const headers = new Headers(init?.headers);
+  const token = localStorage.getItem('authToken');
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return fetch(input, { ...init, headers });
+}
+
 interface ReasonerPluginProps {
   projectId: string;
   ontologyIri?: string;
@@ -121,7 +136,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
           throw new Error(`Unknown task: ${task}`);
       }
 
-      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+      const response = await authFetch(`${apiBaseUrl}${endpoint}`, {
         method: method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reasonerType: config.reasonerType.toUpperCase() })
@@ -141,7 +156,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         const deadline = Date.now() + MAX_POLL_TIME;
         while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-          const statusRes = await fetch(
+          const statusRes = await authFetch(
             `${apiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
           );
           if (!statusRes.ok) throw new Error(`Poll failed: ${statusRes.statusText}`);
@@ -175,7 +190,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
           // Get inferred axioms if consistent
           if (result.consistent) {
             try {
-              const axiomsRes = await fetch(`${apiBaseUrl}/plugin-service/api/reasoner/${projectId}/inferred-axioms?reasonerType=${config.reasonerType.toUpperCase()}`);
+              const axiomsRes = await authFetch(`${apiBaseUrl}/plugin-service/api/reasoner/${projectId}/inferred-axioms?reasonerType=${config.reasonerType.toUpperCase()}`);
               if (axiomsRes.ok) {
                 const axiomsData = await axiomsRes.json();
                 if (axiomsData.axioms) {
@@ -226,7 +241,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
       // Get stats
       try {
-        const statsRes = await fetch(`${apiBaseUrl}/plugin-service/api/reasoner/${projectId}/stats?reasonerType=${config.reasonerType.toUpperCase()}`);
+        const statsRes = await authFetch(`${apiBaseUrl}/plugin-service/api/reasoner/${projectId}/stats?reasonerType=${config.reasonerType.toUpperCase()}`);
         if (statsRes.ok) {
           const statsData = await statsRes.json();
           console.log('Stats data received:', statsData); // Debug log
@@ -270,7 +285,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     try {
       const endpoint = `/plugin-service/api/reasoner/${projectId}/explain-inconsistency`;
 
-      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+      const response = await authFetch(`${apiBaseUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reasonerType: config.reasonerType.toUpperCase() })

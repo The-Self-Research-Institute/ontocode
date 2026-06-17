@@ -10,6 +10,21 @@ import ChangeGraph from './components/ChangeGraph';
 import ConflictResolver from './components/ConflictResolver';
 import AuthorActivityChart from './components/AuthorActivityChart';
 
+/** fetch with JWT — uses window.authenticatedFetch when host app provides it. */
+async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const hostFetch = (window as any).authenticatedFetch;
+  if (typeof hostFetch === 'function') {
+    return hostFetch(input, init);
+  }
+  const headers = new Headers(init?.headers);
+  const token = localStorage.getItem('authToken');
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return fetch(input, { ...init, headers });
+}
+
 // Change types
 type ChangeType = 'class' | 'property' | 'individual' | 'axiom' | 'annotation' | 'import';
 type ChangeAction = 'added' | 'deleted' | 'modified';
@@ -181,7 +196,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       console.log('[ChangeAssistant] Loading drafts for projectId:', projectId);
       console.log('[ChangeAssistant] API_BASE_URL:', apiBase);
       
-      const response = await fetch(`${apiBase}/api/ontology/${projectId}/drafts/stats`);
+      const response = await authFetch(`${apiBase}/api/ontology/${projectId}/drafts/stats`);
       console.log('[ChangeAssistant] Draft stats response status:', response.status);
       if (!response.ok) return;
       
@@ -189,7 +204,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       console.log('[ChangeAssistant] Draft stats:', data);
       
       // Also get draft list
-      const draftsResponse = await fetch(`${apiBase}/api/ontology/${projectId}/drafts`);
+      const draftsResponse = await authFetch(`${apiBase}/api/ontology/${projectId}/drafts`);
       console.log('[ChangeAssistant] Drafts response status:', draftsResponse.status);
       if (draftsResponse.ok) {
         const draftsData = await draftsResponse.json();
@@ -317,7 +332,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       const url = `${apiBase}/api/ontology/${projectId}/changes/recent?count=100`;
       console.log('[ChangeAssistant] Loading changes from MongoDB:', url);
       
-      const response = await fetch(url);
+      const response = await authFetch(url);
       const data = await response.json();
       
       console.log('[ChangeAssistant] Response:', data);
@@ -437,7 +452,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const approveChange = async (changeId: string) => {
     try {
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
-      await fetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/approve`, { method: 'POST' });
+      await authFetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/approve`, { method: 'POST' });
       loadChanges();
     } catch (error) {
       console.error('Failed to approve change:', error);
@@ -447,7 +462,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const rejectChange = async (changeId: string) => {
     try {
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
-      await fetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/reject`, { method: 'POST' });
+      await authFetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/reject`, { method: 'POST' });
       loadChanges();
     } catch (error) {
       console.error('Failed to reject change:', error);
@@ -460,7 +475,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     setShowDetailsDialog(true);
     try {
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
-      const response = await fetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/details`);
+      const response = await authFetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/details`);
       const data = await response.json();
       
       if (data.success && data.change) {
@@ -501,7 +516,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       const username = currentUser?.username || 'Anonymous';
       
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
-      const response = await fetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/comments`, {
+      const response = await authFetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -575,7 +590,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       const username = currentUser?.username || 'Anonymous';
       
       // Use a simpler endpoint that accepts changeId in the body instead of URL path
-      const response = await fetch(`${apiBase}/api/ontology/${projectId}/changes/rollback`, { 
+      const response = await authFetch(`${apiBase}/api/ontology/${projectId}/changes/rollback`, { 
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -655,7 +670,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     
     try {
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
-      await fetch(`${apiBase}/api/ontology/${projectId}/changes/${selectedChange.id}/comments`, {
+      await authFetch(`${apiBase}/api/ontology/${projectId}/changes/${selectedChange.id}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: newComment })
@@ -671,7 +686,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const resolveConflict = async (changeId: string, resolution: string) => {
     try {
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
-      await fetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/resolve-conflict`, {
+      await authFetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/resolve-conflict`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resolution })
