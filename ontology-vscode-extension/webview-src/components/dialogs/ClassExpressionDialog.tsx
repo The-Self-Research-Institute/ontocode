@@ -566,30 +566,28 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
   // Handle toggle for object properties
   const handleObjectPropertyToggle = async (nodeId: string) => {
-    if (onToggleObjectProperty) {
-      await onToggleObjectProperty(nodeId);
-    }
-    // Also update local expanded state
     const isExpanded = propertyExpandedNodes.includes(nodeId);
     setPropertyExpandedNodes(
       isExpanded
         ? propertyExpandedNodes.filter(id => id !== nodeId)
         : [...propertyExpandedNodes, nodeId]
     );
+    if (onToggleObjectProperty) {
+      await onToggleObjectProperty(nodeId);
+    }
   };
 
   // Handle toggle for data properties
   const handleDataPropertyToggle = async (nodeId: string) => {
-    if (onToggleDataProperty) {
-      await onToggleDataProperty(nodeId);
-    }
-    // Also update local expanded state
     const isExpanded = dataPropertyExpandedNodes.includes(nodeId);
     setDataPropertyExpandedNodes(
       isExpanded
         ? dataPropertyExpandedNodes.filter(id => id !== nodeId)
         : [...dataPropertyExpandedNodes, nodeId]
     );
+    if (onToggleDataProperty) {
+      await onToggleDataProperty(nodeId);
+    }
   };
 
   // Handle toggle for restriction filler
