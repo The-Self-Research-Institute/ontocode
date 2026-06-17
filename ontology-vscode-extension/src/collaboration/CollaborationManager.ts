@@ -35,7 +35,8 @@ export class CollaborationManager implements ICollaborationManager {
     constructor(
         private serverUrl: string,
         private userId: string,
-        private username: string
+        private username: string,
+        private getAuthToken?: () => string | null | Promise<string | null>
     ) {
         this.state = {
             connected: false,
@@ -180,10 +181,14 @@ export class CollaborationManager implements ICollaborationManager {
         // Send USER_JOINED presence (will be broadcast back to us)
         await this.sendPresence(PresenceType.USER_JOINED);
         
-        // Fetch currently active users in this project
+        // Fetch currently active users in this project (requires JWT on production gateway)
         try {
-            // Use global fetch (Node.js 18+ or polyfill)
-            const response = await fetch(`${this.serverUrl}/api/collab-graph/${projectId}/active-users`);
+            const headers: Record<string, string> = {};
+            if (this.getAuthToken) {
+                const token = await Promise.resolve(this.getAuthToken());
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+            }
+            const response = await fetch(`${this.serverUrl}/api/collab-graph/${projectId}/active-users`, { headers });
             if (response.ok) {
                 const data: any = await response.json();
                 if (data.users && Array.isArray(data.users)) {

@@ -44,6 +44,21 @@ import {
   Zap
 } from 'lucide-react';
 
+/** fetch with JWT — uses window.authenticatedFetch when host app provides it. */
+async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const hostFetch = (window as any).authenticatedFetch;
+  if (typeof hostFetch === 'function') {
+    return hostFetch(input, init);
+  }
+  const headers = new Headers(init?.headers);
+  const token = localStorage.getItem('authToken');
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return fetch(input, { ...init, headers });
+}
+
 interface ReasonerPluginProps {
   projectId: string;
   apiBaseUrl?: string;
@@ -350,7 +365,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   const fetchInferredAxioms = useCallback(async (reasonerType: string) => {
     try {
       const encodedProjectId = encodeURIComponent(projectId);
-      const response = await fetch(
+      const response = await authFetch(
         `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/inferred-axioms?reasonerType=${reasonerType}`,
       );
       if (!response.ok) return;
@@ -403,7 +418,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         fullUrl: `${normalizedApiBaseUrl}${endpoint}`
       });
 
-      const response = await fetch(`${normalizedApiBaseUrl}${endpoint}`, {
+      const response = await authFetch(`${normalizedApiBaseUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reasonerType })
@@ -428,7 +443,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         const deadline = Date.now() + MAX_POLL_TIME;
         while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-          const statusRes = await fetch(
+          const statusRes = await authFetch(
             `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
           );
           if (!statusRes.ok) throw new Error(`Poll failed: ${statusRes.statusText}`);
@@ -473,7 +488,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       }
 
       // Get stats
-      const statsRes = await fetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`);
+      const statsRes = await authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`);
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         setStats(statsData);
@@ -561,7 +576,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       const reasonerType = reasonerMap[selectedReasoner.toLowerCase()] || 'HERMIT';
 
       const encodedProjectId = encodeURIComponent(projectId);
-      const response = await fetch(
+      const response = await authFetch(
         `${resolvedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/explain-inconsistency`,
         {
           method: 'POST',
@@ -972,7 +987,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
   const clearCache = async () => {
     try {
-      const response = await fetch(
+      const response = await authFetch(
         `${resolvedApiBaseUrl}/plugin-service/api/reasoner/clear-cache`,
         { method: 'POST' }
       );
