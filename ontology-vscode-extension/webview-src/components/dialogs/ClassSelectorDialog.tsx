@@ -47,8 +47,6 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
     setTreeData(classHierarchy);
   }, [classHierarchy]);
 
-  if (!isOpen) return null;
-
   const loadChildren = useCallback(async (nodeId: string) => {
     if (!projectId) return;
     try {
@@ -80,6 +78,8 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
       console.error(`Failed to load children for ${nodeId}`, error);
     }
   }, [projectId]);
+
+  if (!isOpen) return null;
 
   const handleToggleNode = async (nodeId: string) => {
     const isExpanded = (externalExpandedNodes || expandedNodes).includes(nodeId);

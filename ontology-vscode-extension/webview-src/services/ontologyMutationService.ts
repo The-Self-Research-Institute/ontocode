@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { isDesktop } from '../utils/desktop';
 
 export interface MutationOp {
   type: string;
@@ -21,6 +22,35 @@ export interface MutationOp {
 // When false: changes save as drafts (for private files)
 let realTimeSyncEnabled = false;
 
+const DESKTOP_USER_ID = 'desktop-user-local';
+
+/** Resolve user id for draft graph writes — must match JWT / SparqlQueryContext on read. */
+function resolveMutationActor(userId?: string, username?: string): { userId: string; username: string } {
+  if (userId && userId !== 'anonymous') {
+    return { userId, username: username || 'Anonymous' };
+  }
+  if (isDesktop()) {
+    return { userId: DESKTOP_USER_ID, username: username || 'Desktop User' };
+  }
+  try {
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const resolvedId = payload.userId || payload.id || payload.email || payload.sub;
+        const resolvedName = payload.sub || payload.email || username || 'Anonymous';
+        if (resolvedId) {
+          return { userId: resolvedId, username: resolvedName };
+        }
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return { userId: userId || 'anonymous', username: username || 'Anonymous' };
+}
+
 export const ontologyMutationService = {
   setRealTimeSync(enabled: boolean) {
     realTimeSyncEnabled = enabled;
@@ -41,6 +71,7 @@ export const ontologyMutationService = {
     // Private mode (realTimeSyncEnabled=false): write to per-user draft named graph in Fuseki.
     // Public/shared mode: write directly to the project main graph.
     const useDraft = draft !== undefined ? draft : !realTimeSyncEnabled;
+    const actor = resolveMutationActor(userId, username);
 
     console.log(`[MutationService] 🔄 Applying mutations to ${projectId}`,ops, {
       opsCount: ops.length,
@@ -52,8 +83,8 @@ export const ontologyMutationService = {
     try {
       await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${useDraft}`, {
         ops,
-        userId: userId || 'anonymous',
-        username: username || 'Anonymous',
+        userId: actor.userId,
+        username: actor.username,
         sessionId: sessionId || `session_${Date.now()}`
       });
     } catch (err: any) {
