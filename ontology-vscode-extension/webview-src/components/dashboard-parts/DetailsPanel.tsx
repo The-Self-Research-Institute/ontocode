@@ -196,6 +196,9 @@ export const DetailsPanel = ({
           selectedReasoner={selectedReasoner}
           expandedNodes={expandedNodes}
           onToggleNode={onToggleNode}
+          classHierarchy={classHierarchy}
+          objectProperties={objectProperties}
+          dataProperties={dataProperties}
           objectPropertyHierarchy={objectPropertyHierarchy}
           dataPropertyHierarchy={dataPropertyHierarchy}
         />

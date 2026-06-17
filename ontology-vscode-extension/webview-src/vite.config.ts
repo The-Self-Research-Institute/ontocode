@@ -1,11 +1,23 @@
 import path from 'path';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const extensionPackage = JSON.parse(
-  readFileSync(path.resolve(__dirname, '../package.json'), 'utf8'),
-);
+function readExtensionPackage(): { version: string } {
+  const candidates = [
+    path.resolve(__dirname, '../package.json'),
+    path.resolve(__dirname, 'extension-package.json'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return JSON.parse(readFileSync(candidate, 'utf8'));
+    }
+  }
+  return JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'));
+}
+
+const extensionPackage = readExtensionPackage();
+const zlibShimPath = path.resolve(__dirname, '../src/zlib-shim.js');
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
@@ -48,7 +60,7 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
-        'zlib': path.resolve(__dirname, '../src/zlib-shim.js')
+        ...(existsSync(zlibShimPath) ? { zlib: zlibShimPath } : {}),
       }
     },
     build: {

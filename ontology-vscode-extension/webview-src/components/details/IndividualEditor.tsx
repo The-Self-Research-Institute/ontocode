@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Loader2, Search } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection, CollaboratorPresenceBar } from './common';
-import type { Individual, PropertyAssertion, TreeNode } from '../../types';
+import type { Individual, Property, PropertyAssertion, TreeNode } from '../../types';
 import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDialog, ClassExpressionDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
@@ -136,6 +136,9 @@ const IndividualEditor: React.FC<{
   username?: string;
   objectPropertyHierarchy?: TreeNode[];
   dataPropertyHierarchy?: TreeNode[];
+  classHierarchy?: TreeNode[];
+  objectProperties?: Property[];
+  dataProperties?: Property[];
   expandedNodes?: string[];
   onToggleNode?: (nodeId: string) => Promise<void> | void;
   isViewOnly?: boolean;
@@ -143,7 +146,7 @@ const IndividualEditor: React.FC<{
   onNavigate?: (iri: string, type: string) => void;
   isReasonerRunning?: boolean;
   selectedReasoner?: string;
-}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy, dataPropertyHierarchy, expandedNodes, onToggleNode, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT' }) => {
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy = [], dataPropertyHierarchy = [], classHierarchy = [], objectProperties = [], dataProperties = [], expandedNodes, onToggleNode, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT' }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [isNegativeAssertion, setIsNegativeAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
@@ -154,7 +157,6 @@ const IndividualEditor: React.FC<{
   const [sameDiffDialog, setSameDiffDialog] = useState<null | { mode: 'same' | 'different'; editingIri?: string }>(null);
   const [allIndividuals, setAllIndividuals] = useState<Individual[]>([]);
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
-  const [typeClassHierarchy, setTypeClassHierarchy] = useState<TreeNode[]>([]);
   const [inferredTypes, setInferredTypes] = useState<Array<{ iri: string; label: string }>>([]);
 
   const loadIndividualDetails = async () => {
@@ -388,17 +390,8 @@ const IndividualEditor: React.FC<{
     }
   };
 
-  const openTypeDialog = async () => {
+  const openTypeDialog = () => {
     setTypeDialogOpen(true);
-    try {
-      if (!projectId) return;
-      const res = await apiClient.get<any>(`/api/ontology/classes/top-level/${projectId}`);
-      const classes = Array.isArray(res?.data) ? res.data : res?.data?.classes || res?.classes || [];
-      setTypeClassHierarchy(classes);
-    } catch (e) {
-      console.error('[IndividualEditor] Failed to load top-level classes for type dialog:', e);
-      setTypeClassHierarchy([]);
-    }
   };
 
   const handleAddType = async (expression: string) => {
@@ -839,14 +832,16 @@ const IndividualEditor: React.FC<{
           isOpen={true}
           onClose={() => setTypeDialogOpen(false)}
           title={`Types: ${item.label}`}
-          classHierarchy={typeClassHierarchy}
+          classHierarchy={classHierarchy}
           projectId={projectId}
           onConfirm={(expression) => {
             handleAddType(expression);
             setTypeDialogOpen(false);
           }}
-          objectProperties={[]}
-          dataProperties={[]}
+          objectProperties={objectProperties}
+          dataProperties={dataProperties}
+          objectPropertiesTree={objectPropertyHierarchy}
+          dataPropertiesTree={dataPropertyHierarchy}
           expandedNodes={expandedNodes}
           onToggleNode={onToggleNode}
           allowedTabs={['hierarchy', 'classExpression', 'objectRestriction', 'dataRestriction']}
