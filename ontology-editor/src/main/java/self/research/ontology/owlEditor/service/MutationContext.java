@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * Thread-local carrier for structured {@link OntologyMutationService.MutationOp}s
- * while {@link GraphDBDatasetService#execUpdate} runs, so the OWLAPI patcher can
+ * while {@link SparqlDatasetService#execUpdate} runs, so the OWLAPI patcher can
  * apply in-memory updates instead of evicting the whole parsed model.
  */
 public final class MutationContext {

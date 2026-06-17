@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.model.SparqlQueryEntity;
 import self.research.ontology.owlEditor.repository.SparqlQueryRepository;
-import self.research.ontology.owlEditor.service.GraphDBDatasetService;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
 
 import java.util.ArrayList;
 import java.util.Date;
@@ -30,11 +30,11 @@ import java.util.Map;
 @CrossOrigin
 public class SparqlQueryController {
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final SimpMessagingTemplate messagingTemplate;
     private final SparqlQueryRepository queryRepository;
 
-    public SparqlQueryController(GraphDBDatasetService datasetService,
+    public SparqlQueryController(SparqlDatasetService datasetService,
                                 SimpMessagingTemplate messagingTemplate,
                                 SparqlQueryRepository queryRepository) {
         this.datasetService = datasetService;

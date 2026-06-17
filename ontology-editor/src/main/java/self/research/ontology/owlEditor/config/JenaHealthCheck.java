@@ -6,7 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
-import self.research.ontology.owlEditor.service.GraphDBDatasetService;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -20,7 +20,7 @@ public class JenaHealthCheck {
 
     private static final Logger log = LoggerFactory.getLogger(JenaHealthCheck.class);
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
 
     @Value("${ontocode.fuseki.queryEndpoint:http://localhost:3030/ontocode/query}")
     private String fusekiQueryEndpoint;
@@ -28,7 +28,7 @@ public class JenaHealthCheck {
     @Value("${ontocode.data.dir:./data}")
     private String dataDir;
 
-    public JenaHealthCheck(GraphDBDatasetService datasetService) {
+    public JenaHealthCheck(SparqlDatasetService datasetService) {
         this.datasetService = datasetService;
     }
 

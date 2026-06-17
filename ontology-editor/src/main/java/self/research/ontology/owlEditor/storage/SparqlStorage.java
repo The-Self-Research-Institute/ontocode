@@ -20,16 +20,16 @@ import java.util.*;
  * GraphDB storage implementation using RDF4J API.
  * Handles large ontologies (millions of triples) with SPARQL support.
  */
-public class GraphDBStorage implements OntologyStorage {
+public class SparqlStorage implements OntologyStorage {
 
-    private static final Logger log = LoggerFactory.getLogger(GraphDBStorage.class);
+    private static final Logger log = LoggerFactory.getLogger(SparqlStorage.class);
 
     private final String queryEndpoint;
     private final String updateEndpoint;
     private final Repository repository;
     private final long maxTripleCount;
 
-    public GraphDBStorage(String queryEndpoint, String updateEndpoint) {
+    public SparqlStorage(String queryEndpoint, String updateEndpoint) {
         this.queryEndpoint = queryEndpoint;
         this.updateEndpoint = updateEndpoint;
         this.maxTripleCount = 100_000_000;
@@ -51,10 +51,10 @@ public class GraphDBStorage implements OntologyStorage {
     }
 
     @Override
-    public String store(OWLOntology ontology, String ontologyId, Map<String, Object> metadata) 
+    public String store(OWLOntology ontology, String ontologyId, Map<String, Object> metadata)
             throws StorageException {
         try {
-            log.info("Storing ontology {} in GraphDB ({} axioms)", 
+            log.info("Storing ontology {} in GraphDB ({} axioms)",
                 ontologyId, ontology.getAxiomCount());
 
             // Convert OWL to RDF
@@ -72,7 +72,7 @@ public class GraphDBStorage implements OntologyStorage {
 
                 // Load new data into named graph
                 try (InputStream inputStream = new ByteArrayInputStream(baos.toByteArray())) {
-                    conn.add(inputStream, graphUri, RDFFormat.RDFXML, 
+                    conn.add(inputStream, graphUri, RDFFormat.RDFXML,
                             conn.getValueFactory().createIRI(graphUri));
                 }
 
@@ -98,7 +98,7 @@ public class GraphDBStorage implements OntologyStorage {
 
             // Fetch RDF data from GraphDB
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            
+
             try (RepositoryConnection conn = repository.getConnection()) {
                 RDFWriter writer = Rio.createWriter(RDFFormat.RDFXML, baos);
                 conn.export(writer, conn.getValueFactory().createIRI(graphUri));
@@ -113,7 +113,7 @@ public class GraphDBStorage implements OntologyStorage {
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
                 new ByteArrayInputStream(baos.toByteArray()));
 
-            log.info("Successfully loaded ontology {} with {} axioms", 
+            log.info("Successfully loaded ontology {} with {} axioms",
                 ontologyId, ontology.getAxiomCount());
 
             return ontology;
@@ -127,7 +127,7 @@ public class GraphDBStorage implements OntologyStorage {
     public boolean exists(String ontologyId) {
         try {
             String graphUri = getGraphUri(ontologyId);
-            
+
             try (RepositoryConnection conn = repository.getConnection()) {
                 String query = "ASK { GRAPH <" + graphUri + "> { ?s ?p ?o } }";
                 BooleanQuery booleanQuery = conn.prepareBooleanQuery(query);
@@ -149,7 +149,7 @@ public class GraphDBStorage implements OntologyStorage {
             try (RepositoryConnection conn = repository.getConnection()) {
                 // Delete the named graph
                 conn.clear(conn.getValueFactory().createIRI(graphUri));
-                
+
                 // Delete metadata
                 deleteMetadata(conn, ontologyId);
             }
@@ -165,7 +165,7 @@ public class GraphDBStorage implements OntologyStorage {
     public Map<String, Object> getMetadata(String ontologyId) throws StorageException {
         try {
             Map<String, Object> metadata = new HashMap<>();
-            
+
             try (RepositoryConnection conn = repository.getConnection()) {
                 String query = String.format("""
                     PREFIX meta: <http://ontocode.org/metadata/>
@@ -200,7 +200,7 @@ public class GraphDBStorage implements OntologyStorage {
 
             try (RepositoryConnection conn = repository.getConnection()) {
                 String query = "SELECT (COUNT(*) as ?count) WHERE { GRAPH <" + graphUri + "> { ?s ?p ?o } }";
-                
+
                 TupleQuery tupleQuery = conn.prepareTupleQuery(query);
                 try (TupleQueryResult result = tupleQuery.evaluate()) {
                     if (result.hasNext()) {
@@ -223,7 +223,7 @@ public class GraphDBStorage implements OntologyStorage {
 
         try (RepositoryConnection conn = repository.getConnection()) {
             String query = "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(STRSTARTS(STR(?g), 'http://ontocode.org/')) }";
-            
+
             TupleQuery tupleQuery = conn.prepareTupleQuery(query);
             try (TupleQueryResult result = tupleQuery.evaluate()) {
                 while (result.hasNext()) {
@@ -244,7 +244,7 @@ public class GraphDBStorage implements OntologyStorage {
     public String executeSparql(String ontologyId, String query) throws StorageException {
         try {
             String graphUri = getGraphUri(ontologyId);
-            
+
             // Inject FROM clause if not present
             if (!query.toUpperCase().contains("FROM")) {
                 query = query.replaceFirst("(?i)WHERE", "FROM <" + graphUri + "> WHERE");
@@ -255,7 +255,7 @@ public class GraphDBStorage implements OntologyStorage {
                     TupleQuery tupleQuery = conn.prepareTupleQuery(query);
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     SPARQLResultsTSVWriter writer = new SPARQLResultsTSVWriter(baos);
-                    
+
                     try (TupleQueryResult result = tupleQuery.evaluate()) {
                         writer.startQueryResult(result.getBindingNames());
                         while (result.hasNext()) {
@@ -263,14 +263,14 @@ public class GraphDBStorage implements OntologyStorage {
                         }
                         writer.endQueryResult();
                     }
-                    
+
                     return baos.toString();
-                    
+
                 } else if (query.toUpperCase().contains("CONSTRUCT") || query.toUpperCase().contains("DESCRIBE")) {
                     GraphQuery graphQuery = conn.prepareGraphQuery(query);
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     RDFWriter writer = Rio.createWriter(RDFFormat.TURTLE, baos);
-                    
+
                     try (GraphQueryResult result = graphQuery.evaluate()) {
                         writer.startRDF();
                         while (result.hasNext()) {
@@ -278,9 +278,9 @@ public class GraphDBStorage implements OntologyStorage {
                         }
                         writer.endRDF();
                     }
-                    
+
                     return baos.toString();
-                    
+
                 } else if (query.toUpperCase().contains("ASK")) {
                     BooleanQuery booleanQuery = conn.prepareBooleanQuery(query);
                     boolean result = booleanQuery.evaluate();
@@ -296,12 +296,12 @@ public class GraphDBStorage implements OntologyStorage {
     }
 
     @Override
-    public void export(String ontologyId, OutputStream outputStream, String format) 
+    public void export(String ontologyId, OutputStream outputStream, String format)
             throws StorageException {
         try {
             OWLOntology ontology = load(ontologyId);
             OWLOntologyManager manager = ontology.getOWLOntologyManager();
-            
+
             // Determine format
             OWLDocumentFormat documentFormat = getOWLFormat(format);
             manager.saveOntology(ontology, documentFormat, outputStream);
@@ -312,7 +312,7 @@ public class GraphDBStorage implements OntologyStorage {
     }
 
     @Override
-    public String importOntology(InputStream inputStream, String ontologyId, Map<String, Object> metadata) 
+    public String importOntology(InputStream inputStream, String ontologyId, Map<String, Object> metadata)
             throws StorageException {
         try {
             // Load ontology from stream
@@ -356,7 +356,7 @@ public class GraphDBStorage implements OntologyStorage {
         try (RepositoryConnection conn = repository.getConnection()) {
             String pattern = "http://ontocode.org/" + ontologyId + "_v";
             String query = "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(STRSTARTS(STR(?g), '" + pattern + "')) }";
-            
+
             TupleQuery tupleQuery = conn.prepareTupleQuery(query);
             try (TupleQueryResult result = tupleQuery.evaluate()) {
                 while (result.hasNext()) {
@@ -424,20 +424,20 @@ public class GraphDBStorage implements OntologyStorage {
     private void storeMetadata(RepositoryConnection conn, String ontologyId, Map<String, Object> metadata, int axiomCount) {
         // Store metadata as RDF triples
         String metadataUri = "http://ontocode.org/metadata/" + ontologyId;
-        
+
         StringBuilder update = new StringBuilder("INSERT DATA { ");
         update.append("<").append(metadataUri).append("> ");
-        
+
         // Add provided metadata
         for (Map.Entry<String, Object> entry : metadata.entrySet()) {
             update.append("<http://ontocode.org/meta/").append(entry.getKey()).append("> ");
             update.append("\"").append(entry.getValue().toString()).append("\" ; ");
         }
-        
+
         // Add axiom count
         update.append("<http://ontocode.org/meta/axiomCount> ").append(axiomCount).append(" . ");
         update.append("}");
-        
+
         Update updateQuery = conn.prepareUpdate(update.toString());
         updateQuery.execute();
     }
@@ -464,7 +464,7 @@ public class GraphDBStorage implements OntologyStorage {
     public void shutdown() {
         if (repository != null && repository.isInitialized()) {
             repository.shutDown();
-            log.info("GraphDB repository connection closed");
+            log.info("SPARQL repository connection closed");
         }
     }
 }

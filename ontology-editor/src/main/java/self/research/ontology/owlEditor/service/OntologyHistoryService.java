@@ -26,15 +26,15 @@ import java.util.*;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class GraphDBHistoryService {
+public class OntologyHistoryService {
 
-    private final GraphDBDatasetService graphDBDatasetService;
-    
+    private final SparqlDatasetService datasetService;
+
     @Autowired
     @Lazy
     private HistorySyncService historySyncService;
     private static final ValueFactory vf = SimpleValueFactory.getInstance();
-    
+
     // History vocabulary
     private static final String HISTORY_NS = "http://ontology.research/history#";
     private static final IRI EDIT_OPERATION = vf.createIRI(HISTORY_NS, "EditOperation");
@@ -51,35 +51,35 @@ public class GraphDBHistoryService {
     /**
      * Record an edit operation to GraphDB history graph.
      */
-    public void recordEdit(String projectId, String userId, String username, 
+    public void recordEdit(String projectId, String userId, String username,
                           String operationType, String entityIRI, String entityLabel,
                           String oldValue, String newValue, String description) {
-        recordEdit(projectId, userId, username, operationType, entityIRI, entityLabel, 
+        recordEdit(projectId, userId, username, operationType, entityIRI, entityLabel,
                    oldValue, newValue, description, null);
     }
-    
+
     /**
      * Record an edit operation with annotation property
      */
-    public void recordEdit(String projectId, String userId, String username, 
+    public void recordEdit(String projectId, String userId, String username,
                           String operationType, String entityIRI, String entityLabel,
                           String oldValue, String newValue, String description, String annotationProperty) {
-        
+
         IRI historyGraph = vf.createIRI(HISTORY_NS + "graph/" + projectId);
         String editId = UUID.randomUUID().toString();
         IRI editIRI = vf.createIRI(HISTORY_NS + "edit/" + editId);
         long timestamp = System.currentTimeMillis();
-        
-        try (RepositoryConnection conn = graphDBDatasetService.getRepository().getConnection()) {
+
+        try (RepositoryConnection conn = datasetService.getRepository().getConnection()) {
             conn.begin();
-            
+
             // Add edit operation as RDF triples
             conn.add(editIRI, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE, EDIT_OPERATION, historyGraph);
             conn.add(editIRI, HAS_USER_ID, vf.createLiteral(userId), historyGraph);
             conn.add(editIRI, HAS_USERNAME, vf.createLiteral(username), historyGraph);
             conn.add(editIRI, HAS_TIMESTAMP, vf.createLiteral(timestamp), historyGraph);
             conn.add(editIRI, HAS_OPERATION_TYPE, vf.createLiteral(operationType), historyGraph);
-            
+
             if (entityIRI != null) {
                 conn.add(editIRI, HAS_ENTITY_IRI, vf.createLiteral(entityIRI), historyGraph);
             }
@@ -96,13 +96,13 @@ public class GraphDBHistoryService {
                 conn.add(editIRI, HAS_DESCRIPTION, vf.createLiteral(description), historyGraph);
             }
             if (annotationProperty != null) {
-                conn.add(editIRI, vf.createIRI(HISTORY_NS + "hasAnnotationProperty"), 
+                conn.add(editIRI, vf.createIRI(HISTORY_NS + "hasAnnotationProperty"),
                         vf.createLiteral(annotationProperty), historyGraph);
             }
-            
+
             conn.commit();
-            log.debug("[GraphDBHistory] Recorded edit: {} by {} on {}", operationType, username, entityIRI);
-            
+            log.debug("[OntologyHistory] Recorded edit: {} by {} on {}", operationType, username, entityIRI);
+
             // Sync to MongoDB for collaboration features
             try {
                 Map<String, Object> changeData = new HashMap<>();
@@ -110,40 +110,40 @@ public class GraphDBHistoryService {
                 changeData.put("username", username);
                 changeData.put("operationType", operationType);
                 changeData.put("timestamp", timestamp);
-                
+
                 if (entityIRI != null) changeData.put("entityIRI", entityIRI);
                 if (entityLabel != null) changeData.put("entityLabel", entityLabel);
                 if (oldValue != null) changeData.put("oldValue", oldValue);
                 if (newValue != null) changeData.put("newValue", newValue);
                 if (description != null) changeData.put("description", description);
                 if (annotationProperty != null) changeData.put("annotationProperty", annotationProperty);
-                
+
                 // Determine entity type from operation
                 String entityType = determineEntityType(operationType);
                 changeData.put("entityType", entityType);
-                
+
                 historySyncService.syncChange(projectId, editId, changeData);
             } catch (Exception e) {
-                log.error("[GraphDBHistory] Failed to sync change to MongoDB", e);
+                log.error("[OntologyHistory] Failed to sync change to MongoDB", e);
             }
         } catch (Exception e) {
-            log.error("[GraphDBHistory] Failed to record edit history", e);
+            log.error("[OntologyHistory] Failed to record edit history", e);
         }
     }
-    
+
     /**
      * Determine entity type from operation type.
      */
     private String determineEntityType(String operationType) {
         if (operationType == null) return "OTHER";
-        
+
         String upper = operationType.toUpperCase();
         if (upper.contains("CLASS")) return "CLASS";
         if (upper.contains("PROPERTY")) return "PROPERTY";
         if (upper.contains("INDIVIDUAL")) return "INDIVIDUAL";
         if (upper.contains("ANNOTATION")) return "ANNOTATION";
         if (upper.contains("AXIOM")) return "AXIOM";
-        
+
         return "OTHER";
     }
 
@@ -153,12 +153,12 @@ public class GraphDBHistoryService {
     public List<Map<String, Object>> getHistory(String projectId, int limit) {
         IRI historyGraph = vf.createIRI(HISTORY_NS + "graph/" + projectId);
         List<Map<String, Object>> results = new ArrayList<>();
-        
+
         String queryString = """
             PREFIX hist: <%s>
             PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-            
-            SELECT ?edit ?userId ?username ?timestamp ?operationType 
+
+            SELECT ?edit ?userId ?username ?timestamp ?operationType
                    ?entityIRI ?entityLabel ?oldValue ?newValue ?description
             WHERE {
                 GRAPH <%s> {
@@ -177,32 +177,32 @@ public class GraphDBHistoryService {
             ORDER BY DESC(?timestamp)
             LIMIT %d
             """.formatted(HISTORY_NS, historyGraph.toString(), limit);
-        
-        try (RepositoryConnection conn = graphDBDatasetService.getRepository().getConnection()) {
+
+        try (RepositoryConnection conn = datasetService.getRepository().getConnection()) {
             TupleQuery query = conn.prepareTupleQuery(queryString);
-            
+
             try (TupleQueryResult queryResult = query.evaluate()) {
                 while (queryResult.hasNext()) {
                     BindingSet bindings = queryResult.next();
-                    
+
                     Map<String, Object> edit = new HashMap<>();
-                    
+
                     // Generate unique ID from edit IRI
                     String editIRI = bindings.getValue("edit").stringValue();
                     edit.put("id", editIRI);
-                    
+
                     // Add projectId
                     edit.put("projectId", projectId);
-                    
+
                     edit.put("userId", bindings.getValue("userId").stringValue());
                     edit.put("username", bindings.getValue("username").stringValue());
-                    
+
                     long timestamp = Long.parseLong(bindings.getValue("timestamp").stringValue());
                     edit.put("timestamp", timestamp); // Keep as number for JavaScript
-                    
+
                     String operationType = bindings.getValue("operationType").stringValue();
                     edit.put("changeType", operationType);
-                    
+
                     // Determine category from operation type
                     String category = "OTHER";
                     if (operationType.contains("Class") || operationType.contains("CLASS")) {
@@ -215,38 +215,38 @@ public class GraphDBHistoryService {
                         category = "ANNOTATION";
                     }
                     edit.put("changeCategory", category);
-                    
+
                     if (bindings.hasBinding("entityIRI")) {
                         edit.put("entityIRI", bindings.getValue("entityIRI").stringValue());
                     }
-                    
+
                     if (bindings.hasBinding("entityLabel")) {
                         edit.put("entityLabel", bindings.getValue("entityLabel").stringValue());
                     }
-                    
+
                     if (bindings.hasBinding("oldValue")) {
                         edit.put("oldValue", bindings.getValue("oldValue").stringValue());
                     }
-                    
+
                     if (bindings.hasBinding("newValue")) {
                         edit.put("newValue", bindings.getValue("newValue").stringValue());
                     }
-                    
+
                     if (bindings.hasBinding("description")) {
                         edit.put("description", bindings.getValue("description").stringValue());
                     }
-                    
+
                     edit.put("reverted", false);
-                    
+
                     results.add(edit);
                 }
             }
-            
-            log.info("[GraphDBHistory] Retrieved {} edit operations from history", results.size());
+
+            log.info("[OntologyHistory] Retrieved {} edit operations from history", results.size());
         } catch (Exception e) {
-            log.error("[GraphDBHistory] Failed to retrieve history", e);
+            log.error("[OntologyHistory] Failed to retrieve history", e);
         }
-        
+
         return results;
     }
 
@@ -255,14 +255,14 @@ public class GraphDBHistoryService {
      */
     public void clearHistory(String projectId) {
         IRI historyGraph = vf.createIRI(HISTORY_NS + "graph/" + projectId);
-        
-        try (RepositoryConnection conn = graphDBDatasetService.getRepository().getConnection()) {
+
+        try (RepositoryConnection conn = datasetService.getRepository().getConnection()) {
             conn.begin();
             conn.clear(historyGraph);
             conn.commit();
-            log.info("[GraphDBHistory] Cleared history for project: {}", projectId);
+            log.info("[OntologyHistory] Cleared history for project: {}", projectId);
         } catch (Exception e) {
-            log.error("[GraphDBHistory] Failed to clear history", e);
+            log.error("[OntologyHistory] Failed to clear history", e);
         }
     }
 }

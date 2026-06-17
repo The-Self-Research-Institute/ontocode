@@ -17,7 +17,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
-import self.research.ontology.owlEditor.service.GraphDBDatasetService;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -51,7 +51,7 @@ public class ReasonerController {
     private ReasonerService reasonerService;
 
     @Autowired
-    private GraphDBDatasetService datasetService;
+    private SparqlDatasetService datasetService;
 
     // Caffeine cache: max 5 ontologies, evict after 20 min idle
     // Each OWL ontology can hold hundreds of MB — eviction is critical for heap health

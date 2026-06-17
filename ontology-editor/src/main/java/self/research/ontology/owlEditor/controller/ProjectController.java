@@ -9,7 +9,7 @@ import self.research.ontology.owlEditor.document.ProjectShare;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.ChangeTrackingService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.GraphDBDatasetService;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.ProjectShareService;
 import self.research.ontology.owlEditor.service.StorageManager;
 import self.research.ontology.owlEditor.service.GridFSFileService;
@@ -34,7 +34,7 @@ public class ProjectController {
     private final ProjectShareService shareService;
     private final StorageManager storageManager;
     private final GridFSFileService gridFsFileService;
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final DraftTrackingService draftTrackingService;
     private final ChangeTrackingService changeTrackingService;
 
@@ -42,7 +42,7 @@ public class ProjectController {
                              ProjectShareService shareService,
                              StorageManager storageManager,
                              GridFSFileService gridFsFileService,
-                             GraphDBDatasetService datasetService,
+                             SparqlDatasetService datasetService,
                              DraftTrackingService draftTrackingService,
                              ChangeTrackingService changeTrackingService) {
         this.projectRepository = projectRepository;

@@ -194,6 +194,10 @@ export const DetailsPanel = ({
           {...sharedProps}
           isReasonerRunning={isReasonerRunning}
           selectedReasoner={selectedReasoner}
+          expandedNodes={expandedNodes}
+          onToggleNode={onToggleNode}
+          objectPropertyHierarchy={objectPropertyHierarchy}
+          dataPropertyHierarchy={dataPropertyHierarchy}
         />
       );
     case "AnnotationProperties": {

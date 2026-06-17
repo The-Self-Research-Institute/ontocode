@@ -85,15 +85,22 @@ function copyIfExists(src, dest, label) {
     return false;
 }
 
-// ── Step 1: OWL Editor JAR ────────────────────────────────────────────────────
+// ── Step 1: Desktop JAR (auth + editor + plugin) ─────────────────────────────
+function copyDesktopJar() {
+    console.log('\n[1/4] Desktop JAR (ontology-desktop)');
+    const src = path.join(REPO_ROOT, 'ontology-desktop', 'target', 'ontology-desktop-1.0.0.jar');
+    const dest = path.join(JARS_DIR, 'desktop.jar');
+    const ok = copyIfExists(src, dest, 'desktop.jar');
+    if (!ok) {
+        console.log('       Build:  mvn -pl ontology-desktop package -DskipTests');
+        console.log('       Or:     node scripts/build-desktop.js --java');
+    }
+    return ok;
+}
+
+// Legacy name kept for older docs — owl-editor is no longer started by ServiceManager.
 function copyOwlEditorJar() {
-    console.log('\n[1/4] OWL Editor JAR');
-    const ok = copyIfExists(
-        path.join(REPO_ROOT, 'ontology-editor', 'target', 'owl-editor.jar'),
-        path.join(JARS_DIR, 'owl-editor.jar'),
-        'owl-editor.jar',
-    );
-    if (!ok) console.log('       Build:  mvn -pl ontology-editor package -DskipTests');
+    copyDesktopJar();
 }
 
 // ── Step 2: Fuseki JAR ────────────────────────────────────────────────────────
@@ -284,7 +291,7 @@ async function main() {
 
     console.log('\n=== Summary ===');
     const checks = {
-        'owl-editor.jar':    path.join(JARS_DIR, 'owl-editor.jar'),
+        'desktop.jar':       path.join(JARS_DIR, 'desktop.jar'),
         'fuseki-server.jar': path.join(JARS_DIR, 'fuseki-server.jar'),
         'JRE':               path.join(JRE_DIR, 'bin', process.platform === 'win32' ? 'java.exe' : 'java'),
     };

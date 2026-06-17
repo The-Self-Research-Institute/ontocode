@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Loader2, Clock, Users, CheckCircle2 } from "lucide-react";
+import { Loader2, Clock, Users, CheckCircle2, AlertCircle, RefreshCw, FolderOpen } from "lucide-react";
 import { formatQueueWait, sanitizeImportMessage } from "../../utils/importStatusText";
 
 const MODAL_FADE_MS = 220;
@@ -16,6 +16,10 @@ export const LoadingDialog = ({
   inImportQueue,
   readyToBrowse,
   onBrowseNow,
+  failed,
+  failureMessage,
+  onRetry,
+  onOpenAnotherFile,
 }: {
   isOpen: boolean;
   message?: string;
@@ -29,6 +33,10 @@ export const LoadingDialog = ({
   /** Fuseki load finished — user can open editor while index builds in background */
   readyToBrowse?: boolean;
   onBrowseNow?: () => void;
+  failed?: boolean;
+  failureMessage?: string;
+  onRetry?: () => void;
+  onOpenAnotherFile?: () => void;
 }) => {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [mounted, setMounted] = useState(isOpen);
@@ -66,8 +74,10 @@ export const LoadingDialog = ({
   const isProcessingNow =
     inImportQueue && queuePosition === 0;
   const showQueueInfo = isQueued || isProcessingNow;
+  const showFailed = !!failed;
 
   const phaseLabel = (() => {
+    if (showFailed) return sanitizeImportMessage(failureMessage) || "Could not open this ontology.";
     const msg = (loadingStatusMessage || "").toLowerCase();
     if (msg.includes("upload")) return sanitizeImportMessage(loadingStatusMessage) || "Uploading file…";
     if (msg.includes("detect") || msg.includes("format")) return "Detecting format…";
@@ -90,8 +100,8 @@ export const LoadingDialog = ({
       style={{ transitionDuration: `${MODAL_FADE_MS}ms` }}
       role="dialog"
       aria-modal="true"
-      aria-busy="true"
-      aria-label={message || "Loading ontology"}
+      aria-busy={!showFailed}
+      aria-label={showFailed ? "Load failed" : message || "Loading ontology"}
     >
       <div
         className={`mx-4 w-full max-w-sm overflow-hidden rounded-2xl border shadow-2xl transition-all ease-out ${
@@ -100,9 +110,10 @@ export const LoadingDialog = ({
         style={{
           transitionDuration: `${MODAL_FADE_MS}ms`,
           backgroundColor: "var(--color-surface, #1e1e2e)",
-          borderColor: "var(--color-border, #3b3b5c)",
+          borderColor: showFailed ? "rgba(239,68,68,0.35)" : "var(--color-border, #3b3b5c)",
         }}
       >
+        {!showFailed && (
         <div className="relative h-1.5 overflow-hidden bg-gray-700">
           {hasProgress ? (
             <div
@@ -115,12 +126,21 @@ export const LoadingDialog = ({
             />
           )}
         </div>
+        )}
 
         <div className="p-6">
           <div className="mb-4 flex flex-col items-center text-center">
             <div className="relative mb-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-purple-900 to-indigo-900">
-                <Loader2 size={22} className="animate-spin text-purple-400" />
+              <div className={`flex h-12 w-12 items-center justify-center rounded-full ${
+                showFailed
+                  ? "bg-gradient-to-br from-red-950 to-orange-950"
+                  : "bg-gradient-to-br from-purple-900 to-indigo-900"
+              }`}>
+                {showFailed ? (
+                  <AlertCircle size={22} className="text-red-400" />
+                ) : (
+                  <Loader2 size={22} className="animate-spin text-purple-400" />
+                )}
               </div>
               {hasProgress && (
                 <div className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-purple-600 text-[9px] font-bold text-white shadow">
@@ -130,7 +150,7 @@ export const LoadingDialog = ({
             </div>
 
             <h3 className="text-base font-semibold" style={{ color: "var(--color-text, #e2e8f0)" }}>
-              {message || "Loading Ontology"}
+              {showFailed ? "Could not open ontology" : message || "Loading Ontology"}
             </h3>
             {projectName && (
               <p
@@ -142,6 +162,48 @@ export const LoadingDialog = ({
             )}
           </div>
 
+          {showFailed ? (
+            <div className="space-y-3">
+              <div
+                className="rounded-lg px-3 py-2 text-center text-xs"
+                style={{ backgroundColor: "rgba(239,68,68,0.1)", color: "rgb(252,165,165)" }}
+              >
+                {phaseLabel}
+              </div>
+              <p className="text-center text-xs" style={{ color: "var(--color-text-secondary, #94a3b8)" }}>
+                {isDesktop()
+                  ? "Desktop uses OWLAPI for fast editing. If loading stalls, retry or pick another file."
+                  : "If this keeps happening, try importing the file again."}
+              </p>
+              <div className="flex flex-col gap-2">
+                {onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-500 transition-colors"
+                  >
+                    <RefreshCw size={14} />
+                    Try again
+                  </button>
+                )}
+                {onOpenAnotherFile && (
+                  <button
+                    type="button"
+                    onClick={onOpenAnotherFile}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors"
+                    style={{
+                      borderColor: "var(--color-border, #3b3b5c)",
+                      color: "var(--color-text, #e2e8f0)",
+                    }}
+                  >
+                    <FolderOpen size={14} />
+                    Open another file
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
           {hasProgress && (
             <div className="mb-3">
               <div className="mb-1 flex justify-between">
@@ -252,8 +314,14 @@ export const LoadingDialog = ({
               )}
             </div>
           )}
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 };
+
+function isDesktop(): boolean {
+  return typeof window !== "undefined" && !!(window as any).electronAPI;
+}

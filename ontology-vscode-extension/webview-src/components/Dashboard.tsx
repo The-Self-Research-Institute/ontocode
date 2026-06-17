@@ -55,7 +55,7 @@ import {
   AlertTriangle,
   Monitor,
 } from "lucide-react";
-import apiClient, { getBaseUrl } from "../services/apiClient";
+import apiClient, { ApiError, getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
 import expressionService, { isManchesterClassExpression, isSimpleOntologyIri } from "../services/expressionService";
 import undoRedoService from "../services/undoRedoService";
@@ -72,7 +72,7 @@ import type {
   Datatype,
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
-import { isDesktop, warmOntologyInMemory } from "../utils/desktop";
+import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from "../utils/desktop";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
 import { normalizeRole, parseWorkspaceRole, isWorkspaceViewerRole } from "../utils/roles";
@@ -1468,6 +1468,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [estimatedWaitTimeMs, setEstimatedWaitTimeMs] = useState<number | undefined>(undefined);
   const [inImportQueue, setInImportQueue] = useState(false);
   const [importReadyToBrowse, setImportReadyToBrowse] = useState(false);
+  const [loadFailure, setLoadFailure] = useState<{ message: string; projectId?: string } | null>(null);
   const collaborationPanelRef = useRef<CollaborationPanelRef>(null);
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState("prefixes");
@@ -1533,6 +1534,21 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Data Property Range Dialog (Protégé-style - shows datatypes)
   const [isDataPropertyRangeDialogOpen, setIsDataPropertyRangeDialogOpen] = useState(false);
+
+  // Publish conflict dialog (three-way merge vs force publish)
+  const [publishConflictDialog, setPublishConflictDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onMerge: () => void;
+    onForce: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onMerge: () => {},
+    onForce: () => {},
+  });
 
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -2759,6 +2775,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const fetchData = useCallback(
     async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string, forceRefresh = false) => {
+      setLoadFailure(null);
       // Skip re-fetching if this project is already loaded and no force refresh requested
       if (!forceRefresh && currentProjectId === projectId && classHierarchy.length > 0 && metadata) {
         console.log("[Dashboard] ⚡ Project already loaded, skipping re-fetch:", currentProjectId);
@@ -3037,11 +3054,20 @@ const Dashboard: React.FC<DashboardProps> = ({
             applyDeclarationCounts(warm);
             setLoadingStatusMessage("Loading classes…");
             desktopDeferredSectionsLoadedRef.current.clear();
-          } else if (!warm.sparqlFallback) {
-            console.warn("[Dashboard] OWLAPI warm in progress — deferring hierarchy until fast-open completes");
-            desktopHierarchyDeferredForProject.current = currentProjectId;
+          } else if (warm.sparqlFallback) {
+            console.warn(
+              "[Dashboard] OWLAPI fast-open unavailable (no on-disk file or insufficient heap) — SPARQL/snapshot fallback",
+            );
+            if (isDesktop()) {
+              desktopHierarchyDeferredForProject.current = currentProjectId;
+              setIsHierarchyLoading(true);
+              setLoadingStatusMessage("Opening ontology (fast path)…");
+            }
           } else {
-            console.log("[Dashboard] Fast-open unavailable — using snapshot/SPARQL hierarchy path");
+            console.log("[Dashboard] OWLAPI warm in progress — deferring hierarchy until fast-open completes");
+            desktopHierarchyDeferredForProject.current = currentProjectId;
+            setIsHierarchyLoading(true);
+            setLoadingStatusMessage("Opening ontology (fast path)…");
           }
         } else {
           console.log("[Dashboard] Web mode — Fuseki/Mongo hierarchy (no auto OWLAPI warm)");
@@ -3206,16 +3232,20 @@ const Dashboard: React.FC<DashboardProps> = ({
         };
 
         if (!hierarchyBuilding) {
-          applyTopLevelToHierarchy(topLevelClasses, isTruncated, tlTotal ?? 0);
-          if (!isStaleLoad()) {
-            if (topLevelClasses.length > 0) {
-              setLoadingStatusMessage("");
-              setIsHierarchyLoading(false);
-              notificationService.success("Ready", "Class tree is available.");
-            } else if (tlTotal === 0) {
-              // Server confirmed empty ontology — stop loading immediately
-              setLoadingStatusMessage("");
-              setIsHierarchyLoading(false);
+          const hierarchyDeferred =
+            isDesktop() && desktopHierarchyDeferredForProject.current === currentProjectId;
+          if (!hierarchyDeferred) {
+            applyTopLevelToHierarchy(topLevelClasses, isTruncated, tlTotal ?? 0);
+            if (!isStaleLoad()) {
+              if (topLevelClasses.length > 0) {
+                setLoadingStatusMessage("");
+                setIsHierarchyLoading(false);
+                notificationService.success("Ready", "Class tree is available.");
+              } else if (tlTotal === 0) {
+                // Server confirmed empty ontology — stop loading immediately
+                setLoadingStatusMessage("");
+                setIsHierarchyLoading(false);
+              }
             }
           }
         }
@@ -3261,9 +3291,13 @@ const Dashboard: React.FC<DashboardProps> = ({
             showToast("Could not load the class hierarchy. The ontology may be too large or the server timed out.", "error");
             onGoToProjectDashboardRef.current?.();
           })();
-        } else if (!isDesktop() && hierarchyBuilding && !isStaleLoad()) {
+        } else if (hierarchyBuilding && !isStaleLoad()) {
           void (async () => {
-            for (let i = 0; i < 120 && !signal.aborted; i++) {
+            // Desktop: OWLAPI may still be loading the OWL file (top-level returned 202).
+            // Poll cache-status for owlapiReady; cloud: poll for hierarchyReady.
+            // Desktop gets a longer timeout (300 * 2s = 10 min) for large OWL files.
+            const maxIter = isDesktop() ? 300 : 120;
+            for (let i = 0; i < maxIter && !signal.aborted; i++) {
               await new Promise((r) => setTimeout(r, 2000));
               try {
                 const cs = await apiClient.get<any>(
@@ -3294,8 +3328,15 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
             setIsHierarchyLoading(false);
             setIsInitialLoading(false);
-            showToast("Ontology index build timed out. The file may be too large for the current configuration.", "error");
-            onGoToProjectDashboardRef.current?.();
+            if (isDesktop()) {
+              setLoadFailure({
+                message: "Ontology index build timed out. The file may be too large for this machine.",
+                projectId: currentProjectId,
+              });
+            } else {
+              showToast("Ontology index build timed out. The file may be too large for the current configuration.", "error");
+              onGoToProjectDashboardRef.current?.();
+            }
           })();
         }
         if (isDesktop() && !isStaleLoad()) {
@@ -3315,15 +3356,50 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         const desktopDeferredHierarchy = isDesktop() && !desktopOwlapiReady;
         const hierarchyVisible = topLevelClasses.length > 0 || tlTotal === 0;
+        // Do not block the full-screen modal on OWLAPI warm — entity tabs wait in the
+        // background (desktopOwlApiGate). Blocking here left users stuck with no error.
         keepInitialLoadingForHierarchy =
-          !hierarchyVisible || hierarchyBuilding || needsHierarchyRetry || desktopDeferredHierarchy;
-        if (!hierarchyBuilding && !desktopDeferredHierarchy && !needsHierarchyRetry && hierarchyVisible) {
-          setLoadingStatusMessage("");
+          !hierarchyVisible || hierarchyBuilding || needsHierarchyRetry;
+        if (!hierarchyBuilding && !needsHierarchyRetry && hierarchyVisible) {
+          setLoadingStatusMessage(desktopDeferredHierarchy ? "Loading ontology into memory…" : "");
           setIsHierarchyLoading(false);
           setIsInitialLoading(false);
         } else if (!hierarchyVisible && !isStaleLoad()) {
           setIsHierarchyLoading(true);
           setLoadingStatusMessage((prev) => prev || "Loading class tree…");
+        }
+
+        // Desktop: if class tree is already visible but OWLAPI still warming, close the
+        // modal as soon as the in-memory model is ready (or show failure after timeout).
+        if (desktopDeferredHierarchy && hierarchyVisible && !isStaleLoad()) {
+          void (async () => {
+            for (let i = 0; i < 90 && !signal.aborted; i++) {
+              await new Promise((r) => setTimeout(r, 2000));
+              try {
+                const cs = await apiClient.get<any>(
+                  `/api/ontology/cache-status/${encodedProjectId}${cacheBuster}`,
+                  undefined,
+                  { signal },
+                );
+                applyDeclarationCounts(cs);
+                if (cs?.owlapiReady ?? cs?.data?.owlapiReady) {
+                  setLoadingStatusMessage("");
+                  setIsInitialLoading(false);
+                  return;
+                }
+                if (i === 2) {
+                  void warmOntologyInMemory(currentProjectId, {
+                    timeoutMs: 120_000,
+                    onStatus: (m) => setLoadingStatusMessage(m || "Opening ontology (fast path)…"),
+                  });
+                }
+              } catch {
+                /* retry */
+              }
+            }
+            setLoadingStatusMessage("");
+            setIsInitialLoading(false);
+          })();
         }
 
         // Phase 2: load other entity sections in background (tab spinners + bottom bar).
@@ -3335,7 +3411,34 @@ const Dashboard: React.FC<DashboardProps> = ({
           setIsDatatypesLoading(true);
         }
 
+        // Desktop owlapi-first: Fuseki may not be synced yet — wait for OWLAPI before
+        // properties/individuals/etc. (otherwise they 503 on SPARQL fallback).
+        const desktopOwlApiGate: Promise<void> = (async () => {
+          if (!isDesktop() || signal.aborted) return;
+          let warmTriggered = false;
+          for (let i = 0; i < 90 && !signal.aborted; i++) {
+            try {
+              const cs = await apiClient.get<any>(
+                `/api/ontology/cache-status/${encodedProjectId}${cacheBuster}`,
+                undefined,
+                { signal },
+              );
+              if (!isStaleLoad()) applyDeclarationCounts(cs);
+              if (cs?.owlapiReady ?? cs?.data?.owlapiReady) return;
+              if (!warmTriggered && i >= 2) {
+                warmTriggered = true;
+                void warmOntologyInMemory(currentProjectId, { timeoutMs: 120_000 });
+              }
+            } catch {
+              /* retry */
+            }
+            if (i < 89) await new Promise((r) => setTimeout(r, 2000));
+          }
+        })();
+
         void (async () => {
+          await desktopOwlApiGate;
+          if (isStaleLoad()) return;
           try {
             if (isDesktop()) {
               try {
@@ -3365,13 +3468,21 @@ const Dashboard: React.FC<DashboardProps> = ({
         })();
 
         void (async () => {
+          await desktopOwlApiGate;
+          if (isStaleLoad()) return;
           try {
             const res = await apiClient.get<any>(
               `/api/ontology/properties/${encodedProjectId}${cacheBuster}`,
               undefined,
               { signal },
             );
-            if (!isStaleLoad()) applyPropertiesResponse(res);
+            if (!isStaleLoad()) {
+              if (isOwlApiWarmingResponse(res)) {
+                console.debug("[Dashboard] Properties still warming — will retry when tab is opened");
+              } else {
+                applyPropertiesResponse(res);
+              }
+            }
           } catch (e: any) {
             if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
               console.error("[Dashboard] Properties load failed:", e?.message || e);
@@ -3382,6 +3493,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         })();
 
         void (async () => {
+          await desktopOwlApiGate;
+          if (isStaleLoad()) return;
           try {
             const res = await apiClient.get<any>(
               `/api/ontology/individuals/${encodedProjectId}${cacheBuster}`,
@@ -3407,6 +3520,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         })();
 
         void (async () => {
+          await desktopOwlApiGate;
+          if (isStaleLoad()) return;
           try {
             const res = await apiClient.get<any>(
               `/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`,
@@ -3435,6 +3550,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         })();
 
         void (async () => {
+          await desktopOwlApiGate;
+          if (isStaleLoad()) return;
           try {
             const res = await apiClient.get<any>(
               `/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`,
@@ -3586,6 +3703,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           await fetchProjectFiles(parentProjectId);
         } else {
           console.log("[Dashboard] ℹ️ Regular user flow - files already loaded from user email query");
+        }
+
+        if (isDesktop() && !isStaleLoad()) {
+          scheduleSilentDesktopFusekiSync(currentProjectId);
         }
 
         // Class-tree notification fires when top-level classes are applied (see hierarchy block above).
@@ -4864,6 +4985,45 @@ const Dashboard: React.FC<DashboardProps> = ({
     setShowProjectSelector(true);
   }, [fetchProjects]);
 
+  const handleLoadOpenAnother = useCallback(() => {
+    setLoadFailure(null);
+    setIsInitialLoading(false);
+    setShowLoadingChoice(false);
+    setIsExpectingFileReady(false);
+    loadingPromiseRef.current = null;
+    fetchProjects();
+    if (isDesktop()) {
+      setShowOpenDialog(true);
+    } else {
+      setShowProjectSelector(true);
+    }
+  }, [fetchProjects]);
+
+  const handleLoadRetry = useCallback(async () => {
+    const pid = loadFailure?.projectId || projectId;
+    if (!pid) return;
+    setLoadFailure(null);
+    setIsInitialLoading(true);
+    setIsExpectingFileReady(false);
+    setLoadingStatusMessage("Retrying…");
+    loadingPromiseRef.current = null;
+    try {
+      if (pid.includes("--")) {
+        await apiClient.post(`/api/ontology/reload/${encodeProjectId(pid)}`, {});
+        const poll = (window as any).electronAPI?.pollImportStatus;
+        if (isDesktop() && poll) poll(pid);
+      }
+      loadingPromiseRef.current = fetchData(pid, true, initialProjectId, true);
+      await loadingPromiseRef.current;
+    } catch (e: any) {
+      setLoadFailure({
+        message: e?.message || "Retry failed. Try opening the file again.",
+        projectId: pid,
+      });
+      setIsInitialLoading(false);
+    }
+  }, [loadFailure, projectId, fetchData, initialProjectId]);
+
   useEffect(() => {
     if (classHierarchy.length > 0 && classHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
       const owlThingId = classHierarchy[0].id;
@@ -4903,7 +5063,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const startedAt = Date.now();
-    const HARD_CAP_MS = 600000; // 10 min hard cap — large ontologies (Mondo, SNOMED) can take several minutes
+    const HARD_CAP_MS = isDesktop() ? 180_000 : 600_000;
 
     const closeSpinner = (reason: string) => {
       if (cancelled) return;
@@ -4919,17 +5079,34 @@ const Dashboard: React.FC<DashboardProps> = ({
     const failAndRedirect = (msg: string) => {
       if (cancelled) return;
       closeSpinner(msg);
-      showToast(msg, "error");
-      onGoToProjectDashboardRef.current?.();
+      if (isDesktop()) {
+        setLoadFailure({ message: msg, projectId: projectId || undefined });
+      } else {
+        showToast(msg, "error");
+        onGoToProjectDashboardRef.current?.();
+      }
     };
 
     const tick = async () => {
       if (cancelled) return;
       if (Date.now() - startedAt > HARD_CAP_MS) {
-        failAndRedirect("Loading timed out. The ontology may be too large or the server is busy. Please try again.");
+        failAndRedirect(
+          isDesktop()
+            ? "Loading timed out. OWLAPI could not open this file in time. Try again or choose another file."
+            : "Loading timed out. The ontology may be too large or the server is busy. Please try again.",
+        );
         return;
       }
       try {
+        if (isDesktop()) {
+          const cs = await apiClient.get<any>(`/api/ontology/cache-status/${encodeProjectId(projectId)}`);
+          if (cs?.owlapiReady ?? cs?.data?.owlapiReady) {
+            setImportReadyToBrowse(true);
+            setLoadingStatusMessage("OWLAPI ready — opening editor…");
+            closeSpinner("desktop owlapi ready");
+            return;
+          }
+        }
         const res = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(projectId)}`);
         const status = res?.data?.status || res?.status;
         if (status === "ERROR") {
@@ -5828,15 +6005,17 @@ const Dashboard: React.FC<DashboardProps> = ({
             // Close dialogs and clear background progress if this is the current project
             if (message.status.projectId === projectId) {
               console.log("[Dashboard] Closing dialogs for current project");
-              setTimeout(() => {
-                setShowLoadingChoice(false);
-                setShowQueueStatus(false);
-                setQueuePosition(undefined);
-                setTotalInQueue(undefined);
-                setEstimatedWaitTimeMs(undefined);
-                setBackgroundImportActive(false);
-                setBackgroundImportProgress(undefined);
-              }, 2000);
+              setLoadFailure({ message: displayError, projectId: message.status.projectId });
+              setShowLoadingChoice(false);
+              setShowQueueStatus(false);
+              setIsInitialLoading(false);
+              setIsExpectingFileReady(false);
+              setQueuePosition(undefined);
+              setTotalInQueue(undefined);
+              setEstimatedWaitTimeMs(undefined);
+              setBackgroundImportActive(false);
+              setBackgroundImportProgress(undefined);
+              loadingPromiseRef.current = null;
             }
           }
 
@@ -5880,11 +6059,19 @@ const Dashboard: React.FC<DashboardProps> = ({
           setShowLoadingChoice(false);
           setShowQueueStatus(false);
           setIsInitialLoading(false);
+          setIsExpectingFileReady(false);
           setBackgroundImportActive(false);
           setBackgroundImportProgress(undefined);
           setQueuePosition(undefined);
           setTotalInQueue(undefined);
           setEstimatedWaitTimeMs(undefined);
+          loadingPromiseRef.current = null;
+          if (message.projectId === projectId || !projectId) {
+            setLoadFailure({
+              message: sanitizeImportMessage(message.error) || "Import failed",
+              projectId: message.projectId,
+            });
+          }
           notificationService.error("Import Failed", `Failed to import ontology: ${message.error || "Unknown error"}`);
           break;
 
@@ -6379,6 +6566,20 @@ const Dashboard: React.FC<DashboardProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode]);
 
+  // Desktop: lazy Fuseki when user opens SPARQL or Graph (OWLAPI handles everything else).
+  useEffect(() => {
+    if (!isDesktop() || !projectId) return;
+    if (mainTab !== "SPARQL" && mainTab !== "Graph" && mainTab !== "WebVOWL") return;
+    void ensureDesktopFusekiSync(projectId).then((r) => {
+      if (!r.synced && r.error) {
+        notificationService.warning(
+          "Triple store preparing",
+          "SPARQL and graph views need a background index. Try again in a moment.",
+        );
+      }
+    });
+  }, [mainTab, projectId]);
+
   // ── Desktop OWLAPI deferred-hierarchy resolver ────────────────────────────
   // Single responsibility: when fetchData deferred the hierarchy render because
   // warmOntologyInMemory returned ready=false, this effect polls cache-status
@@ -6404,7 +6605,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     let cancelled = false;
     let elapsedMs = 0;
-    const POLL_INTERVAL_MS = 5_000;
+    const POLL_INTERVAL_MS = 1_500;
     const TIMEOUT_MS = 300_000; // 5 min — matches warmOntologyInMemory timeout
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -6419,12 +6620,28 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
 
     const fallbackToSparql = () => {
-      console.warn("[Dashboard] Desktop: OWLAPI did not load within timeout — falling back to SPARQL hierarchy");
-      owlapiReadyHandledRef.current = projectId;
-      desktopHierarchyDeferredForProject.current = null;
-      lastClassHierarchyRefreshAt.current = 0;
-      setIsHierarchyLoading(false); // clear skeleton — hierarchy will show SPARQL result
-      refreshClassHierarchy();      // fetches from SPARQL (knownLarge may cap at 5000)
+      // Desktop owlapi-first: Fuseki is often not running on open — SPARQL hierarchy hangs forever.
+      console.warn("[Dashboard] Desktop: OWLAPI warm slow — retrying warm POST (no SPARQL fallback)");
+      void warmOntologyInMemory(projectId, { timeoutMs: 120_000 }).then((warm) => {
+        if (warm.ready) {
+          applyOwlapiReady(warm);
+          return;
+        }
+        if (!warm.sparqlFallback) {
+          setLoadingStatusMessage("Still opening ontology (fast path)…");
+          elapsedMs = 0;
+          timer = setTimeout(poll, POLL_INTERVAL_MS);
+          return;
+        }
+        console.warn("[Dashboard] Desktop: OWLAPI unavailable — last-resort SPARQL hierarchy");
+        owlapiReadyHandledRef.current = projectId;
+        desktopHierarchyDeferredForProject.current = null;
+        lastClassHierarchyRefreshAt.current = 0;
+        setIsHierarchyLoading(false);
+        setIsInitialLoading(false);
+        setLoadingStatusMessage("");
+        refreshClassHierarchy();
+      });
     };
 
     const poll = async () => {
@@ -7199,14 +7416,33 @@ const Dashboard: React.FC<DashboardProps> = ({
                 ? inferredDataPropertyHierarchy
                 : dataPropertyHierarchy;
 
-        const node = findNode(currentHierarchy as TreeNode[], nodeId);
+        // Primary search in the tab's own hierarchy; fall back to classHierarchy so
+        // that domain/range/types dialogs (open while on a non-Classes tab) can still
+        // expand class nodes.
+        let node = findNode(currentHierarchy as TreeNode[], nodeId);
+        const isClassNodeFromDialog = !node && currentHierarchy !== classHierarchy
+          ? findNode(classHierarchy, nodeId)
+          : null;
 
         setExpandedNodes((prev) => {
           if (prev.includes(nodeId)) return prev; // prevent duplicates → stops repeated children fetches
           return [...prev, nodeId];
         });
 
-        if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
+        // Load class children when a class node is expanded from a dialog on a non-Classes tab
+        if (isClassNodeFromDialog) {
+          const classNode = isClassNodeFromDialog;
+          if (classNode.hasChildren && (!classNode.children || classNode.children.length === 0)) {
+            setLoadingNodes((prev) => new Set([...prev, nodeId]));
+            try {
+              await loadChildren(nodeId);
+            } catch (err: any) {
+              console.warn(`[toggleNode] Failed to load class children for ${nodeId}:`, err);
+            } finally {
+              setLoadingNodes((prev) => { const n = new Set(prev); n.delete(nodeId); return n; });
+            }
+          }
+        } else if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
           if (entitiesTab === "Classes" || mainTab === "IndividualsByClass") {
             setLoadingNodes((prev) => new Set([...prev, nodeId]));
             // Spinner timeout: stop the spinner after 30s but keep the node expanded.
@@ -7372,58 +7608,94 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, selectedReasoner, fetchReasonerBundle]);
 
-  // Save changes to backend (applies drafts to GraphDB)
-  const handleSave = useCallback(async () => {
-    console.log("[DEBUG] handleSave called");
+  // Save changes to backend (publishes only this user's draft to main graph)
+  const handleSave = useCallback(async (options?: { force?: boolean; merge?: boolean }) => {
+    const forcePublish = options?.force ?? false;
+    const mergePublish = options?.merge ?? false;
+    console.log("[DEBUG] handleSave called", { forcePublish, mergePublish });
     if (!projectId || isSaving) return;
 
-    try {
+    const effectiveUserId = user?.userId || "anonymous";
+
+    const performSave = async (force: boolean, merge: boolean) => {
       setIsSaving(true);
       console.log("[Dashboard] 💾 Saving changes to backend...");
 
-      // Notify sync service about local save to avoid triggering refresh for current user
       syncService.notifyLocalSave(projectId);
 
-      // Save will apply all drafts to GraphDB and export
       const startTime = Date.now();
-      const saveUrl = `/api/ontology/save/${projectId}?userId=${user?.userId || "anonymous"}&username=${encodeURIComponent(user?.username || "Anonymous")}`;
+      const params = new URLSearchParams({
+        userId: effectiveUserId,
+        username: user?.username || "Anonymous",
+      });
+      if (force) params.set("force", "true");
+      if (merge) params.set("merge", "true");
+      const saveUrl = `/api/ontology/save/${projectId}?${params.toString()}`;
       console.log("[Dashboard] 📤 Save URL:", saveUrl);
       const response = await apiClient.post(saveUrl);
       const duration = Date.now() - startTime;
 
       console.log(`[Dashboard] Save response received after ${duration}ms:`, response);
 
-      // Handle both direct response and response.data (VS Code proxy vs direct HTTP)
       const data = response.data || response;
 
       if (data && data.success) {
         setHasUnsavedChanges(false);
         setDraftCount(0);
 
-        console.log("[Dashboard] ✅ Changes saved to GraphDB database!");
-        console.log("[Dashboard] 📊 Applied drafts:", data.appliedDrafts || 0);
-        console.log("[Dashboard] 📝 History recorded in database");
-
         notificationService.success(
           "Saved to Database",
-          `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? "s" : ""} saved and history recorded.`,
+          `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? "s" : ""} saved${merge ? " with three-way merge" : ""}.`,
         );
-        console.log("[Dashboard] Save complete:", data);
 
-        // Refresh the current file to show saved changes
-        console.log("[Dashboard] 🔄 Refreshing current file after save...");
         await fetchData(projectId, false, undefined, true);
-
-        // Monitoring is automatically restarted by fetchData
-
-        // Refresh collaboration panel to show recent changes
         collaborationPanelRef.current?.refreshChanges();
       } else {
         const errorMsg = (data && data.error) || "Save failed - no response from server";
-        console.error("[Dashboard] Save response was invalid:", response);
         throw new Error(errorMsg);
       }
+    };
+
+    try {
+      await performSave(forcePublish, mergePublish);
     } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && error.data) {
+        const conflictType = error.data.conflictType as string | undefined;
+        const conflicts = (error.data.conflicts as Array<Record<string, string>>) || [];
+        const mainChanged = Boolean(error.data.mainChangedSinceDraft);
+
+        let message = error.message || "Your draft conflicts with changes on the shared ontology.";
+        if (conflictType === "IRI_OVERLAP" && conflicts.length > 0) {
+          const lines = conflicts.slice(0, 8).map((c) => {
+            const label = c.entityLabel || c.entityIRI || "Unknown entity";
+            const by = c.changedBy ? ` (changed by ${c.changedBy})` : "";
+            return `• ${label}${by}`;
+          });
+          if (conflicts.length > 8) {
+            lines.push(`• …and ${conflicts.length - 8} more`);
+          }
+          message = `These entities were changed by someone else since you started your draft:\n\n${lines.join("\n")}\n\nUse Merge & publish for OWLAPI three-way merge, or Publish anyway to overwrite blindly.`;
+        } else if (conflictType === "MAIN_CHANGED" || mainChanged) {
+          message =
+            "The shared ontology was updated while you were editing.\n\nMerge & publish rebases your changes onto the current main graph. Publish anyway uses a simple graph union.";
+        }
+
+        setPublishConflictDialog({
+          isOpen: true,
+          title: conflictType === "IRI_OVERLAP" ? "Publish conflict" : "Shared ontology changed",
+          message,
+          onMerge: () => {
+            setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }));
+            void handleSave({ merge: true });
+          },
+          onForce: () => {
+            setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }));
+            void handleSave({ force: true });
+          },
+        });
+        return;
+      }
+
       console.error("[Dashboard] Save failed with error:", error);
       const errorMessage = error instanceof Error ? error.message : "Could not save changes. Please try again.";
       notificationService.error("Save Failed", errorMessage);
@@ -8179,7 +8451,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       console.log("[refreshProperties] Starting property refresh...");
-      const propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
+      if (isDesktop()) {
+        await waitForDesktopOwlApiReady(projectId);
+      }
+      let propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
+      if (isOwlApiWarmingResponse(propertiesRes)) {
+        await waitForDesktopOwlApiReady(projectId);
+        propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
+      }
 
       const allProps = Array.isArray(propertiesRes?.data)
         ? propertiesRes.data
@@ -8193,7 +8472,18 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const opList = allProps.filter((p: any) => p.type === "ObjectProperty");
       console.log("[refreshProperties] Object properties:", opList.length);
-      setObjectProperties(opList);
+      setObjectProperties((prev: Property[]) => {
+        const prevMap = new Map(prev.map((p: Property) => [p.id, p]));
+        return opList.map((freshProp: Property) => {
+          const existing = prevMap.get(freshProp.id) as any;
+          // Preserve locally loaded details (incl. draft-mode annotations) so tab switches
+          // don't wipe optimistic updates that haven't been flushed to Fuseki yet.
+          if (existing?._propertyDetailsLoaded) {
+            return { ...existing, superProperties: freshProp.superProperties, label: freshProp.label || existing.label };
+          }
+          return freshProp;
+        });
+      });
 
       console.log("[Dashboard] ✅ Properties refreshed");
       // Build object property hierarchy
@@ -8248,7 +8538,16 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Build data property hierarchy
       const dpList = allProps.filter((p: any) => p.type === "DatatypeProperty");
       console.log("[refreshProperties] Data properties:", dpList.length);
-      setDataProperties(dpList);
+      setDataProperties((prev: Property[]) => {
+        const prevMap = new Map(prev.map((p: Property) => [p.id, p]));
+        return dpList.map((freshProp: Property) => {
+          const existing = prevMap.get(freshProp.id) as any;
+          if (existing?._propertyDetailsLoaded) {
+            return { ...existing, superProperties: freshProp.superProperties, label: freshProp.label || existing.label };
+          }
+          return freshProp;
+        });
+      });
 
       const dpMap = new Map<string, TreeNode>();
       dpList.forEach((p: any) => {
@@ -14344,7 +14643,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   return (
     <>
       <LoadingDialog
-        isOpen={isInitialLoading || showLoadingChoice || isExpectingFileReady}
+        isOpen={isInitialLoading || showLoadingChoice || isExpectingFileReady || !!loadFailure}
         projectName={loadingProjectName || undefined}
         loadingStatusMessage={loadingStatusMessage || undefined}
         progress={backgroundImportProgress}
@@ -14353,8 +14652,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         estimatedWaitTimeMs={estimatedWaitTimeMs}
         inImportQueue={inImportQueue}
         readyToBrowse={importReadyToBrowse}
+        failed={!!loadFailure}
+        failureMessage={loadFailure?.message}
+        onRetry={handleLoadRetry}
+        onOpenAnotherFile={handleLoadOpenAnother}
         onBrowseNow={() => {
           setImportReadyToBrowse(false);
+          setLoadFailure(null);
           setIsInitialLoading(false);
           setShowLoadingChoice(false);
           setIsExpectingFileReady(false);
@@ -14836,9 +15140,44 @@ const Dashboard: React.FC<DashboardProps> = ({
         onCancel={confirmDialog.onCancel}
         title={confirmDialog.title}
         message={confirmDialog.message}
-        confirmLabel={confirmDialog.confirmLabel}
-        cancelLabel={confirmDialog.cancelLabel}
+        confirmText={confirmDialog.confirmLabel}
+        cancelText={confirmDialog.cancelLabel}
       />
+      {publishConflictDialog.isOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">{publishConflictDialog.title}</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-6 whitespace-pre-line">{publishConflictDialog.message}</p>
+            <div className="flex flex-wrap justify-end gap-3">
+              <button
+                onClick={() => setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={publishConflictDialog.onForce}
+                className="px-4 py-2 text-sm font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100"
+              >
+                Publish anyway
+              </button>
+              <button
+                onClick={publishConflictDialog.onMerge}
+                className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700"
+              >
+                Merge &amp; publish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Dedicated Unsaved Changes Warning Dialog */}
       {unsavedChangesDialog.isOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">
@@ -14977,7 +15316,19 @@ const Dashboard: React.FC<DashboardProps> = ({
             setSyncMode(newMode);
             ontologyMutationService.setRealTimeSync(newMode === "public");
             if (newMode === "public") {
-              notificationService.success("Live Mode Enabled", "Changes will be broadcast immediately.");
+              // Auto-apply any pending drafts so structural changes are live immediately
+              if (projectId && hasUnsavedChanges) {
+                apiClient.post(`/api/ontology/${projectId}/drafts/apply`, {})
+                  .then(() => {
+                    setHasUnsavedChanges(false);
+                    notificationService.success("Live Mode Enabled", "Pending changes applied and live.");
+                  })
+                  .catch(() => {
+                    notificationService.success("Live Mode Enabled", "Changes will be broadcast immediately.");
+                  });
+              } else {
+                notificationService.success("Live Mode Enabled", "Changes will be broadcast immediately.");
+              }
             } else {
               notificationService.info("Draft Mode Enabled", "Changes will be saved locally until you save.");
             }

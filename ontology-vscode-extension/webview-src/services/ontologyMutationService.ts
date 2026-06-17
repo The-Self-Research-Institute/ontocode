@@ -38,7 +38,8 @@ export const ontologyMutationService = {
    */
   async applyMutations(projectId: string, ops: MutationOp[], draft?: boolean,
                       userId?: string, username?: string, sessionId?: string): Promise<void> {
-    // Use the draft parameter if explicitly provided, otherwise use the inverse of realTimeSyncEnabled
+    // Private mode (realTimeSyncEnabled=false): write to per-user draft named graph in Fuseki.
+    // Public/shared mode: write directly to the project main graph.
     const useDraft = draft !== undefined ? draft : !realTimeSyncEnabled;
 
     console.log(`[MutationService] 🔄 Applying mutations to ${projectId}`,ops, {
@@ -106,7 +107,9 @@ export const ontologyMutationService = {
   },
 
   /**
-   * Add annotation to an entity
+   * Add annotation to an entity.
+   * Always applied directly (draft=false) so annotations persist through tab switches
+   * and re-fetches regardless of private/public sync mode.
    */
   async addAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string,
                      userId?: string, username?: string, language?: string, datatype?: string): Promise<void> {
@@ -117,11 +120,12 @@ export const ontologyMutationService = {
       value,
       language,
       datatype,
-    }], undefined, userId, username);
+    }], false, userId, username);
   },
 
   /**
-   * Delete annotation from an entity
+   * Delete annotation from an entity.
+   * Always applied directly (draft=false) — see addAnnotation.
    */
   async deleteAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string,
                         userId?: string, username?: string, language?: string, datatype?: string): Promise<void> {
@@ -132,11 +136,12 @@ export const ontologyMutationService = {
       value,
       language,
       datatype,
-    }], undefined, userId, username);
+    }], false, userId, username);
   },
 
   /**
-   * Update annotation value (atomic operation)
+   * Update annotation value (atomic operation).
+   * Always applied directly (draft=false) — see addAnnotation.
    */
   async updateAnnotation(projectId: string, entityIri: string, propertyIri: string, newValue: string,
                         userId?: string, username?: string, oldValue?: string, language?: string, datatype?: string): Promise<void> {
@@ -148,7 +153,7 @@ export const ontologyMutationService = {
       oldValue,
       language,
       datatype,
-    }], undefined, userId, username);
+    }], false, userId, username);
   },
 
   /**

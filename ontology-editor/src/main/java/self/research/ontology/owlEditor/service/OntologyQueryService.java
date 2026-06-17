@@ -78,13 +78,22 @@ public class OntologyQueryService {
         return iri;
     }
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final TopLevelClassCacheService topLevelCacheService;
 
-    public OntologyQueryService(GraphDBDatasetService datasetService,
+    public OntologyQueryService(SparqlDatasetService datasetService,
                                 TopLevelClassCacheService topLevelCacheService) {
         this.datasetService = datasetService;
         this.topLevelCacheService = topLevelCacheService;
+    }
+
+    private String draftEntityHiddenFilter(String projectId, String entityVar) {
+        String userId = SparqlQueryContext.getUserId();
+        if (userId == null || userId.isBlank()) {
+            return "";
+        }
+        return SparqlGraphUris.excludeDraftDeletedFilter(
+                SparqlGraphUris.userDraftGraph(projectId, userId), entityVar);
     }
 
     /**
@@ -118,14 +127,15 @@ public class OntologyQueryService {
      * Cached in the "topLevelClasses" cache so the 2s status poll costs one query, not one
      * per poll; the cache is evicted on every mutation and import.
      */
-    @Cacheable(value = "topLevelClasses", key = "#projectId + '_statusCount'", sync = true)
+    @Cacheable(value = "topLevelClasses", key = "#projectId + '_statusCount_' + (T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId() ?: 'public')", sync = true)
     public int topLevelClassCount(String projectId) {
         String countQuery = PREFIXES + """
             SELECT (COUNT(DISTINCT ?c) AS ?count) WHERE {
               ?c rdfs:subClassOf <http://www.w3.org/2002/07/owl#Thing> .
               FILTER(isIRI(?c))
+              %s
             }
-            """;
+            """.formatted(draftEntityHiddenFilter(projectId, "?c"));
         try {
             TupleQueryResult rs = datasetService.execSelect(projectId, countQuery);
             if (rs.hasNext()) {
@@ -160,7 +170,7 @@ public class OntologyQueryService {
         return 0;
     }
 
-    @Cacheable(value = "topLevelClasses", key = "#projectId + '_' + #limit",
+    @Cacheable(value = "topLevelClasses", key = "#projectId + '_' + #limit + '_' + (T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId() ?: 'public')",
                unless = "#result != null && #result.isEmpty()")
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
         long startTime = System.currentTimeMillis();
@@ -186,10 +196,11 @@ public class OntologyQueryService {
             SELECT ?c WHERE {
               ?c rdfs:subClassOf <http://www.w3.org/2002/07/owl#Thing> .
               FILTER(isIRI(?c))
+              %s
             }
             ORDER BY ?c
             LIMIT %d
-            """.formatted(Math.max(1, limit));
+            """.formatted(draftEntityHiddenFilter(projectId, "?c"), Math.max(1, limit));
 
         List<String> p1Iris = new java.util.ArrayList<>();
         TupleQueryResult p1aRs = datasetService.execSelect(projectId, phase1aQuery);
@@ -473,7 +484,7 @@ public class OntologyQueryService {
      * OPTIMIZED: Results are cached for faster subsequent access.
      * hasChildren is checked via EXISTS in the SPARQL query for accurate expand icons.
      */
-    @Cacheable(value = "classChildren", key = "#projectId + '_' + #parentIri + '_' + #limit + '_' + #offset")
+    @Cacheable(value = "classChildren", key = "#projectId + '_' + #parentIri + '_' + #limit + '_' + #offset + '_' + (T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId() ?: 'public')")
     public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset) {
         safeIri(parentIri);
         long startTime = System.currentTimeMillis();
@@ -496,6 +507,7 @@ public class OntologyQueryService {
             WHERE {
               ?child rdfs:subClassOf <%s> .
               FILTER(isIRI(?child) && ?child != <%s>)
+              %s
               # Exclude union members: <%s> owl:equivalentClass/owl:unionOf/.../child
               FILTER NOT EXISTS {
                 { <%s> owl:unionOf/rdf:rest*/rdf:first ?child . }
@@ -507,7 +519,8 @@ public class OntologyQueryService {
               BIND(EXISTS { ?grandchild rdfs:subClassOf ?child . FILTER(?grandchild != ?child && isIRI(?grandchild)) } AS ?hasChildren)
             }
             LIMIT %d OFFSET %d
-            """.formatted(parentIri, parentIri, parentIri, parentIri, parentIri, Math.max(1, limit), Math.max(0, offset));
+            """.formatted(parentIri, parentIri, draftEntityHiddenFilter(projectId, "?child"),
+                    parentIri, parentIri, parentIri, Math.max(1, limit), Math.max(0, offset));
 
         List<OntologyDto.TreeNode> result = mapTreeNodes(projectId, query, parentIri);
         result.sort(Comparator.comparing(n -> n.getLabel() == null ? "" : n.getLabel().toLowerCase(java.util.Locale.ROOT)));

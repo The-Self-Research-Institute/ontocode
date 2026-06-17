@@ -20,6 +20,7 @@ const Store    = require('electron-store');
 const svcMgr   = require('./services/ServiceManager');
 const syncMgr  = require('./services/SyncManager');
 const proxy    = require('./services/ProxyServer');
+const autoUpdater = require('./services/AutoUpdater');
 const detectJava = require('./scripts/detect-java');
 
 // ── Dev mode ─────────────────────────────────────────────────────────────────
@@ -28,6 +29,161 @@ const detectJava = require('./scripts/detect-java');
 const IS_DEV = process.env.ELECTRON_IS_DEV === '1' || (!app.isPackaged && process.env.ELECTRON_IS_DEV !== '0');
 const DEV_API_URL = process.env.ELECTRON_DEV_API_URL || 'http://localhost:8083';
 const VITE_URL    = process.env.ELECTRON_VITE_URL    || 'http://localhost:5173';
+
+// ── Single instance (VS Code–style: second launch focuses existing window) ───
+// Without this, a second OntoCode process tries to bind Mongo/Fuseki/desktop ports
+// and fails with "Startup failed" / address already in use.
+const ONTOLOGY_EXTENSIONS = new Set(['owl', 'rdf', 'ttl', 'n3', 'nt', 'jsonld', 'ofn']);
+let pendingOpenFile = null;
+let pendingFocusFile = null;
+let lastDeliveredFilePath = '';
+let lastDeliveredAt = 0;
+let activeOntologyFilePath = '';
+
+function isOntologyFilePath(filePath) {
+    if (!filePath || typeof filePath !== 'string') return false;
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    return ONTOLOGY_EXTENSIONS.has(ext);
+}
+
+function extractOntologyPathFromArgv(argv) {
+    for (let i = argv.length - 1; i >= 0; i--) {
+        const arg = argv[i];
+        if (!arg || arg.startsWith('-')) continue;
+        try {
+            const resolved = path.resolve(arg);
+            if (isOntologyFilePath(resolved) && fs.existsSync(resolved)) {
+                return resolved;
+            }
+        } catch (_) { /* ignore bad paths */ }
+    }
+    return null;
+}
+
+function normalizeFilePath(filePath) {
+    try {
+        return path.resolve(filePath).toLowerCase();
+    } catch (_) {
+        return '';
+    }
+}
+
+function sendFocusExistingFile(filePath) {
+    const resolved = path.resolve(filePath);
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const payload = {
+        focusOnly: true,
+        filePath: resolved,
+        fileName: path.basename(resolved),
+    };
+    if (!win?.webContents || win.webContents.isLoading()) {
+        pendingFocusFile = payload;
+        return;
+    }
+    focusExistingWindow();
+    win.webContents.send('desktop:focus-file', payload);
+}
+
+function flushPendingFocusFile() {
+    if (!pendingFocusFile) return;
+    const payload = pendingFocusFile;
+    pendingFocusFile = null;
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    if (!win?.webContents) return;
+    focusExistingWindow();
+    win.webContents.send('desktop:focus-file', payload);
+}
+
+function isActiveOntologyFile(filePath) {
+    const normalized = normalizeFilePath(filePath);
+    return !!normalized && normalized === activeOntologyFilePath;
+}
+
+function openOntologyFileFromPath(filePath) {
+    const resolved = path.resolve(filePath);
+    if (!isOntologyFilePath(resolved) || !fs.existsSync(resolved)) return;
+
+    if (isActiveOntologyFile(resolved)) {
+        sendFocusExistingFile(resolved);
+        return;
+    }
+
+    try {
+        deliverOpenFileToRenderer(readOntologyFilePayload(resolved));
+    } catch (err) {
+        dialog.showErrorBox('Open ontology file', `Could not open:\n${resolved}\n\n${err.message}`);
+    }
+}
+
+function readOntologyFilePayload(filePath) {
+    const resolved = path.resolve(filePath);
+    const fileContent = fs.readFileSync(resolved, 'utf8');
+    return {
+        fileName: path.basename(resolved),
+        fileContent,
+        fileSize: Buffer.byteLength(fileContent, 'utf8'),
+        filePath: resolved,
+    };
+}
+
+function focusExistingWindow() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+}
+
+function deliverOpenFileToRenderer(payload) {
+    const normalized = payload.filePath ? normalizeFilePath(payload.filePath) : '';
+    if (normalized && normalized === activeOntologyFilePath) {
+        sendFocusExistingFile(payload.filePath);
+        return;
+    }
+
+    const now = Date.now();
+    if (payload.filePath && payload.filePath === lastDeliveredFilePath && now - lastDeliveredAt < 2000) {
+        focusExistingWindow();
+        return;
+    }
+    lastDeliveredFilePath = payload.filePath || '';
+    lastDeliveredAt = now;
+
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    if (!win?.webContents || win.webContents.isLoading()) {
+        pendingOpenFile = payload;
+        return;
+    }
+    if (normalized) {
+        activeOntologyFilePath = normalized;
+    }
+    focusExistingWindow();
+    win.webContents.send('menu:open-file', payload);
+}
+
+function flushPendingOpenFile() {
+    if (!pendingOpenFile) return;
+    const payload = pendingOpenFile;
+    pendingOpenFile = null;
+    deliverOpenFileToRenderer(payload);
+}
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+    app.quit();
+} else {
+    app.on('second-instance', (_event, argv) => {
+        focusExistingWindow();
+        const filePath = extractOntologyPathFromArgv(argv);
+        if (!filePath) return;
+        openOntologyFileFromPath(filePath);
+    });
+}
+
+// macOS: double-click .owl in Finder
+app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    openOntologyFileFromPath(filePath);
+});
 
 // ── Auth token store (encrypted at rest) ────────────────────────────────────
 const store = new Store({ encryptionKey: 'ontocode-desktop-v1' });
@@ -114,6 +270,12 @@ function createMainWindow() {
             window.__DESKTOP_MODE__ = true;
             window.__IS_DEV__ = ${IS_DEV};
         `);
+        flushPendingOpenFile();
+        flushPendingFocusFile();
+        const initialFile = extractOntologyPathFromArgv(process.argv);
+        if (initialFile) {
+            openOntologyFileFromPath(initialFile);
+        }
     });
 
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -134,7 +296,10 @@ function createMainWindow() {
     mainWindow.webContents.once('did-finish-load', () => setTimeout(showMain, 500));
     setTimeout(showMain, 8000);
 
-    mainWindow.on('closed', () => { mainWindow = null; });
+    mainWindow.on('closed', () => {
+        autoUpdater.stop();
+        mainWindow = null;
+    });
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -196,6 +361,7 @@ app.whenReady().then(async () => {
 
         servicesRunning = true;
         createMainWindow();
+        if (mainWindow) autoUpdater.start(mainWindow);
         setupTray();
     }
 
@@ -228,6 +394,15 @@ app.on('window-all-closed', () => {
 
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
+/** Track the ontology file currently open in the editor (focus-only on re-open). */
+ipcMain.handle('file:getActivePath', () => activeOntologyFilePath);
+ipcMain.handle('file:setActivePath', (_event, filePath) => {
+    activeOntologyFilePath = filePath ? normalizeFilePath(filePath) : '';
+});
+ipcMain.handle('file:clearActivePath', () => {
+    activeOntologyFilePath = '';
+});
+
 /** Auth token storage (used by the React app via preload bridge) */
 ipcMain.handle('auth:get',   ()         => store.get('authToken', null));
 ipcMain.handle('auth:save',  (_, token) => store.set('authToken', token));
@@ -244,6 +419,7 @@ function getConfig() {
         fusekiUrl:  IS_DEV ? `http://localhost:${svcMgr.FUSEKI_PORT}` : `http://127.0.0.1:${svcMgr.FUSEKI_PORT}`,
         isDesktop:  true,
         isDev:      IS_DEV,
+        appVersion: app.getVersion(),
     };
 }
 ipcMain.handle('config:get', () => getConfig());
@@ -296,11 +472,18 @@ ipcMain.handle('file:open', async () => {
     });
     if (result.canceled || !result.filePaths.length) return null;
 
-    const filePath  = result.filePaths[0];
+    const filePath = result.filePaths[0];
+    if (isActiveOntologyFile(filePath)) {
+        sendFocusExistingFile(filePath);
+        return { focusOnly: true, filePath: path.resolve(filePath), fileName: path.basename(filePath) };
+    }
+
     const fileName  = path.basename(filePath);
     const fileContent = fs.readFileSync(filePath, 'utf8');
     const fileSize  = Buffer.byteLength(fileContent, 'utf8');
-    return { fileName, fileContent, fileSize, filePath };
+    const resolved = path.resolve(filePath);
+    activeOntologyFilePath = normalizeFilePath(resolved);
+    return { fileName, fileContent, fileSize, filePath: resolved };
 });
 
 /** Save a file via native Save As dialog */
@@ -330,11 +513,24 @@ ipcMain.handle('notification:show', (_, { title, message }) => {
 
 /** Service status (used by status bar in renderer) */
 ipcMain.handle('services:status', () => svcMgr.status());
+ipcMain.handle('services:ensureFuseki', () => svcMgr.ensureFuseki());
+
+/** Toggle DevTools from renderer menu button */
+ipcMain.on('devtools:toggle', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.toggleDevTools();
+    }
+});
 
 /** Open logs directory in file manager */
 ipcMain.handle('logs:open', () => {
     shell.openPath(path.join(app.getPath('userData'), 'logs'));
 });
+
+// ── App updates (electron-updater) ────────────────────────────────────────────
+ipcMain.handle('update:getStatus', () => autoUpdater.getStatus());
+ipcMain.handle('update:check', () => autoUpdater.checkForUpdates(true));
+ipcMain.handle('update:install', () => autoUpdater.installUpdate());
 
 // ── Sync / Share IPC ──────────────────────────────────────────────────────────
 
@@ -371,13 +567,13 @@ function setupTray() {
     tray = new Tray(iconFile);
     tray.setToolTip('OntoCode');
     tray.setContextMenu(Menu.buildFromTemplate([
-        { label: 'Open OntoCode', click: () => { if (mainWindow) mainWindow.show(); else createMainWindow(); } },
+        { label: 'Open OntoCode', click: () => { focusExistingWindow(); if (!mainWindow) createMainWindow(); } },
         { type: 'separator' },
         { label: 'Open Logs…', click: () => shell.openPath(path.join(app.getPath('userData'), 'logs')) },
         { type: 'separator' },
         { label: 'Quit', click: () => app.quit() },
     ]));
-    tray.on('double-click', () => { if (mainWindow) mainWindow.show(); });
+    tray.on('double-click', () => { focusExistingWindow(); });
 }
 
 // ── App menu ──────────────────────────────────────────────────────────────────
@@ -445,6 +641,39 @@ function setupMenu(win) {
         {
             role: 'help',
             submenu: [
+                {
+                    label: 'About OntoCode',
+                    click: () => {
+                        dialog.showMessageBox(win, {
+                            title: 'About OntoCode',
+                            message: 'OntoCode Desktop',
+                            detail: `Version ${app.getVersion()}\n\nOWL ontology editor — offline capable.\n\nUninstall via Windows Settings → Apps → OntoCode.`,
+                            buttons: ['OK'],
+                        });
+                    },
+                },
+                {
+                    label: 'Check for Updates…',
+                    click: async () => {
+                        const result = await autoUpdater.checkForUpdates(true);
+                        if (result.status === 'dev-skipped') {
+                            dialog.showMessageBox(win, {
+                                title: 'Updates',
+                                message: 'Updates are only checked in the packaged desktop app.',
+                                buttons: ['OK'],
+                            });
+                            return;
+                        }
+                        if (result.status === 'up-to-date') {
+                            dialog.showMessageBox(win, {
+                                title: 'No updates',
+                                message: `OntoCode ${app.getVersion()} is up to date.`,
+                                buttons: ['OK'],
+                            });
+                        }
+                    },
+                },
+                { type: 'separator' },
                 { label: 'Documentation', click: () => shell.openExternal('https://ontocode.selfresearch.org/docs') },
                 { label: 'Report Issue…', click: () => shell.openExternal('https://github.com/kkpranesh/ontocode/issues') },
             ],

@@ -21,10 +21,17 @@ import ResetPasswordForm from "./components/ResetPasswordForm";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
 import { clearLastOpenedProjectState, SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "./utils/sessionCleanup";
+import {
+  loadDesktopActiveFile,
+  saveDesktopActiveFile,
+  clearDesktopActiveFile,
+  pathsEqual,
+} from "./utils/desktopActiveFile";
 import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from "./utils/desktop";
 import AdminSettingsModal from "./components/AdminSettingsModal";
 const BillingManagement = lazy(() => import("./components/BillingManagement"));
 const DesktopDownloadPage = lazy(() => import("./components/DesktopDownloadPage"));
+const DesktopUpdateBanner = lazy(() => import("./components/DesktopUpdateBanner"));
 const PaymentSetupModal = lazy(() => import("./components/PaymentSetupModal"));
 
 const getInitialInvitationFromLocation = (): { token: string | null; email: string | null } => {
@@ -122,9 +129,13 @@ const AppContent = () => {
   const [subscriptionReturnRoute, setSubscriptionReturnRoute] = useState<"billing" | null>(null);
   const [inviteToken, setInviteToken] = useState<string | null>(initialInvitation.token);
   const [inviteEmail, setInviteEmail] = useState<string | null>(initialInvitation.email);
-  const [pendingFile, setPendingFile] = useState<{ fileName: string; fileContent: string; fileSize: number } | null>(
-    null,
-  );
+  const [pendingFile, setPendingFile] = useState<{
+    fileName: string;
+    fileContent: string;
+    fileSize: number;
+    filePath?: string;
+  } | null>(null);
+  const pendingDesktopFilePathRef = useRef<string | null>(null);
   const [showAuthForInvitation, setShowAuthForInvitation] = useState(false); // Show login/signup form while keeping invite token
   const [needsDeploymentSelection, setNeedsDeploymentSelection] = useState(false);
   const [deploymentType, setDeploymentType] = useState<"self-hosted" | "cloud" | null>(() => {
@@ -1006,6 +1017,40 @@ const AppContent = () => {
     return () => window.removeEventListener("message", handleMessage);
   }, [openAccountSubscription]);
 
+  const tryFocusExistingDesktopFile = useCallback(
+    async (filePath: string, fileName: string): Promise<boolean> => {
+      if (!isDesktop() || !filePath) return false;
+
+      const api = (window as any).electronAPI;
+      const mainActive: string = api?.getActiveFilePath ? await api.getActiveFilePath() : "";
+      const stored = loadDesktopActiveFile();
+      const isSamePath =
+        pathsEqual(filePath, mainActive) || pathsEqual(filePath, stored?.filePath);
+
+      if (!isSamePath) return false;
+
+      setPendingFile(null);
+      pendingDesktopFilePathRef.current = null;
+
+      if (stored?.projectId && stored?.fileId) {
+        setSelectedProjectId(stored.projectId);
+        setSelectedProjectName(stored.projectName || "");
+        setSelectedFileId(stored.fileId);
+        setSelectedFileName(stored.fileName || fileName);
+        navigateTo({
+          view: "dashboard",
+          projectId: stored.projectId,
+          projectName: stored.projectName || "",
+          fileId: stored.fileId,
+          fileName: stored.fileName || fileName,
+        });
+      }
+
+      return true;
+    },
+    [navigateTo],
+  );
+
   // Browser-mode: upload a file directly via the API (no extension proxy needed)
   const uploadFileBrowserMode = useCallback(
     async (projectId: string, fileName: string, fileContent: string, fileSize: number) => {
@@ -1028,33 +1073,46 @@ const AppContent = () => {
   // Open a local file in browser/cloud/Electron mode (no VS Code extension)
   const handleOpenLocalFile = useCallback(async () => {
     const fileData = await openOntologyFile();
-    if (fileData) {
-      console.log("[App] 📂 File picked:", fileData.fileName);
-      setPendingFile(fileData);
-      setSelectedProjectId(null);
-      setSelectedFileId(null);
-      setSelectedFileName("");
-      navigateTo({
-        view: "projectDashboard",
-        projectId: null,
-        projectName: "",
-        fileId: null,
-        fileName: "",
-      });
+    if (!fileData) return;
+    if (fileData.filePath && (await tryFocusExistingDesktopFile(fileData.filePath, fileData.fileName))) {
+      return;
     }
-  }, [navigateTo]);
+    console.log("[App] 📂 File picked:", fileData.fileName);
+    pendingDesktopFilePathRef.current = fileData.filePath || null;
+    setPendingFile(fileData);
+    setSelectedProjectId(null);
+    setSelectedFileId(null);
+    setSelectedFileName("");
+    navigateTo({
+      view: "projectDashboard",
+      projectId: null,
+      projectName: "",
+      fileId: null,
+      fileName: "",
+    });
+  }, [navigateTo, tryFocusExistingDesktopFile]);
 
   // Windows / macOS menu: File → Open Ontology File…
   useEffect(() => {
     if (!isDesktop()) return;
     const api = (window as any).electronAPI;
     if (!api?.onMenuOpenFile) return;
-    const applyMenuFile = (data: { fileName: string; fileContent: string; fileSize: number }) => {
+    const applyMenuFile = async (data: {
+      fileName: string;
+      fileContent: string;
+      fileSize: number;
+      filePath?: string;
+    }) => {
       if (!data?.fileName || data.fileContent == null) return;
+      if (data.filePath && (await tryFocusExistingDesktopFile(data.filePath, data.fileName))) {
+        return;
+      }
+      pendingDesktopFilePathRef.current = data.filePath || null;
       setPendingFile({
         fileName: data.fileName,
         fileContent: data.fileContent,
         fileSize: data.fileSize ?? 0,
+        filePath: data.filePath,
       });
       setSelectedProjectId(null);
       setSelectedFileId(null);
@@ -1068,7 +1126,19 @@ const AppContent = () => {
       });
     };
     api.onMenuOpenFile(applyMenuFile);
-  }, [navigateTo]);
+  }, [navigateTo, tryFocusExistingDesktopFile]);
+
+  // Second-instance / Finder: focus existing file without re-importing
+  useEffect(() => {
+    if (!isDesktop()) return;
+    const api = (window as any).electronAPI;
+    if (!api?.onFocusExistingFile) return;
+    const onFocus = (data: { filePath?: string; fileName?: string }) => {
+      if (!data?.filePath) return;
+      void tryFocusExistingDesktopFile(data.filePath, data.fileName || "");
+    };
+    api.onFocusExistingFile(onFocus);
+  }, [tryFocusExistingDesktopFile]);
 
   // Desktop startup: ensure My projects is the home screen (hash routing may restore a stale editor route).
   const desktopHomeRoutedRef = useRef(false);
@@ -1200,6 +1270,18 @@ const AppContent = () => {
 
   const handleFileSelected = (fileId: string, fileName: string) => {
     console.log("[App] File selected:", fileId, fileName);
+
+    if (isDesktop() && pendingDesktopFilePathRef.current) {
+      saveDesktopActiveFile({
+        filePath: pendingDesktopFilePathRef.current,
+        fileName,
+        projectId: selectedProjectId || undefined,
+        projectName: selectedProjectName || undefined,
+        fileId,
+      });
+      (window as any).electronAPI?.setActiveFilePath?.(pendingDesktopFilePathRef.current);
+      pendingDesktopFilePathRef.current = null;
+    }
 
     // Persist last selected file for auto-restore on next login
     try {
@@ -1536,6 +1618,9 @@ const AppContent = () => {
     setForceShowWorkspace(false); // Reset workspace view state
     setSkipWorkspaceRequested(false);
     autoRestoredRef.current = false; // Allow auto-restore on next login
+    pendingDesktopFilePathRef.current = null;
+    clearDesktopActiveFile();
+    (window as any).electronAPI?.clearActiveFilePath?.();
     // Clear route history
     clearHistory();
     // Keep deployment type so user doesn't need to select again
@@ -2213,6 +2298,9 @@ const App = () => {
     <ThemeProvider>
       <CollaborationProvider>
         <EntityPreferencesProvider>
+          <Suspense fallback={null}>
+            <DesktopUpdateBanner />
+          </Suspense>
           <AppContent />
         </EntityPreferencesProvider>
       </CollaborationProvider>

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2, KeyRound, Upload } from 'lucide-react';
+import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2, KeyRound, Upload, Info } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from '../utils/desktop';
+import { fetchLatestDesktopInstallerVersion, getAppVersion } from '../utils/appVersion';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -44,10 +45,20 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
     const [license, setLicense] = useState<DesktopLicense | null>(null);
     const [licenseImporting, setLicenseImporting] = useState(false);
     const [licenseMessage, setLicenseMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    const [appVersion, setAppVersion] = useState<string>('');
+    const [latestDesktopVersion, setLatestDesktopVersion] = useState<string | null>(null);
 
     useEffect(() => {
         if (!desktop || !isOpen) return;
         getDesktopLicense().then(setLicense).catch(() => setLicense(null));
+    }, [desktop, isOpen]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        getAppVersion().then(setAppVersion).catch(() => setAppVersion(''));
+        if (!desktop) {
+            fetchLatestDesktopInstallerVersion().then(setLatestDesktopVersion).catch(() => setLatestDesktopVersion(null));
+        }
     }, [desktop, isOpen]);
 
     const handleLicenseFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -129,6 +140,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         // { id: 'notifications', label: 'Notifications', icon: Bell },
         // { id: 'appearance', label: 'Appearance', icon: Palette },
         // { id: 'preferences', label: 'Preferences', icon: Globe }
+        { id: 'about', label: 'About', icon: Info },
     ];
 
     const showMessage = (type: 'success' | 'error', text: string) => {
@@ -534,6 +546,39 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 </div>
               )}
 
+              {activeTab === "about" && (
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-1">About OntoCode</h4>
+                    <p className="text-sm text-gray-500 mb-4">
+                      Version information for the app you are running now.
+                    </p>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Edition</span>
+                        <span className="font-medium text-gray-900">{desktop ? "Desktop" : "Web"}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">App version</span>
+                        <span className="font-medium text-gray-900">{appVersion ? `v${appVersion}` : "…"}</span>
+                      </div>
+                      {!desktop && latestDesktopVersion && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Latest desktop installer</span>
+                          <span className="font-medium text-gray-900">v{latestDesktopVersion}</span>
+                        </div>
+                      )}
+                    </div>
+                    {!desktop && (
+                      <p className="text-xs text-gray-500 mt-4 leading-relaxed">
+                        Desktop download analytics use a privacy-friendly hashed IP (never stored in plain text).
+                        See the download page for details.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Appearance tab - commented out
                         {activeTab === 'appearance' && (
                             <div className="space-y-6">
@@ -604,7 +649,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 </div>
               )}
             </div>
-            {activeTab !== "profile" && activeTab !== "security" && (
+            {activeTab !== "profile" && activeTab !== "security" && activeTab !== "about" && (
               <div className="flex items-center gap-3">
                 <button
                   onClick={onClose}

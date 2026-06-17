@@ -33,8 +33,8 @@ import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.GraphDBDatasetService;
-import self.research.ontology.owlEditor.service.GraphDBHistoryService;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.GridFSFileService;
 import self.research.ontology.owlEditor.service.OntologyPreparseService;
 import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
@@ -91,10 +91,10 @@ public class ProjectLoadController {
     private final GridFSFileService gridFSFileService;
     private final ProjectShareService shareService;
     private final DraftTrackingService draftTrackingService;
-    private final GraphDBHistoryService historyService;
+    private final OntologyHistoryService historyService;
     private final DraftChangeRepository draftChangeRepository;
     private final SimpMessagingTemplate messagingTemplate;
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final ProjectRepository projectRepository;
 
     // Desktop-only — null in cloud
@@ -118,6 +118,10 @@ public class ProjectLoadController {
     @org.springframework.lang.Nullable
     private self.research.ontology.owlEditor.service.HierarchyIndexService hierarchyIndexService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.DesktopFusekiSyncScheduler fusekiSyncScheduler;
+
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
     private final MongoTemplate mongoTemplate;
@@ -128,10 +132,10 @@ public class ProjectLoadController {
                                  GridFSFileService gridFSFileService,
                                  ProjectShareService shareService,
                                  DraftTrackingService draftTrackingService,
-                                 GraphDBHistoryService historyService,
+                                 OntologyHistoryService historyService,
                                  DraftChangeRepository draftChangeRepository,
                                  SimpMessagingTemplate messagingTemplate,
-                                 GraphDBDatasetService datasetService,
+                                 SparqlDatasetService datasetService,
                                  ProjectRepository projectRepository,
                                  OntologyPreparseService preparseService,
                                  ImportWorkerDispatcher importWorkerDispatcher,
@@ -492,13 +496,26 @@ public class ProjectLoadController {
 
                 if (shouldSkip) {
                     log.info("[ProjectLoadController] Desktop shortcut — skipping re-import for {}", projectId);
-                    if (!owlapiReady && desktopOntologyLoader != null) {
-                        desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
+                    if (!owlapiReady && storageManager.findCurrentOntology(projectId).isEmpty()) {
+                        materializeOntologyFromFileRef(projectId, fileId);
                     }
-                    return ResponseEntity.ok(Map.of(
-                        "success", true, "projectId", projectId,
-                        "status", "ALREADY_LOADED", "source", "desktop-cache-skip"
-                    ));
+                    Map<String, Object> body = new java.util.LinkedHashMap<>();
+                    body.put("success", true);
+                    body.put("projectId", projectId);
+                    body.put("status", "ALREADY_LOADED");
+                    body.put("source", "desktop-cache-skip");
+                    // Block until OWLAPI is warm on reopen — logs show many ALREADY_LOADED returns
+                    // with owlapi=false while the UI fell through to SPARQL (Fuseki often down).
+                    if (!owlapiReady && desktopOntologyLoader != null) {
+                        log.info("[ProjectLoadController] ALREADY_LOADED — blocking OWLAPI warm for {}", projectId);
+                        body.putAll(desktopOntologyLoader.warmProject(projectId, 120_000));
+                    } else {
+                        body.put("owlapiReady", owlapiReady);
+                    }
+                    if (fusekiSyncScheduler != null) {
+                        fusekiSyncScheduler.scheduleAfterOpen(projectId);
+                    }
+                    return ResponseEntity.ok(body);
                 }
             }
 
@@ -870,8 +887,14 @@ public class ProjectLoadController {
                     long graphSize = -1;
                     boolean graphReady = false;
                     if ("COMPLETED".equals(status.status())) {
-                        graphSize = datasetService.getGraphTripleCount(projectId);
-                        graphReady = graphSize > 0;
+                        if (desktopHierarchyService != null) {
+                            // Desktop: trust the COMPLETED status — OWLAPI is authoritative.
+                            // Skip the Fuseki COUNT which can block 60+ seconds on cold TDB2.
+                            graphReady = true;
+                        } else {
+                            graphSize = datasetService.getGraphTripleCount(projectId);
+                            graphReady = graphSize > 0;
+                        }
                     }
                     // During PROCESSING, skip synchronous triple COUNT — Fuseki may block for
                     // minutes on large graphs and stall status polls (gateway 504/500).
@@ -971,7 +994,9 @@ public class ProjectLoadController {
     public ResponseEntity<Map<String, Object>> save(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId,
-            @RequestParam(required = false) String username) {
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false, defaultValue = "false") boolean force,
+            @RequestParam(required = false, defaultValue = "false") boolean merge) {
         
         // Get or create a lock object for this project
         Object lock = projectSaveLocks.computeIfAbsent(projectId, k -> new Object());
@@ -979,17 +1004,34 @@ public class ProjectLoadController {
         // Synchronize on the project-specific lock to prevent concurrent saves
         synchronized (lock) {
             try {
-                log.info("[SAVE] Save requested for project: {} by user: {} (acquiring lock)", projectId, username);
+                String effectiveUserId = (userId != null && !userId.isBlank()) ? userId : "anonymous";
+                log.info("[SAVE] Save requested for project: {} by user: {} (acquiring lock, force={}, merge={})",
+                        projectId, username, force, merge);
 
-                // STEP 1: Get all unapplied drafts BEFORE applying them (for history recording)
+                // STEP 1: Get this user's unapplied drafts BEFORE applying them (for history recording)
                 log.info("[SAVE] Fetching drafts to record in history...");
-                java.util.List<DraftChange> drafts = draftChangeRepository.findByProjectIdAndAppliedFalseOrderByTimestampAsc(projectId);
-                log.info("[SAVE] Found {} unapplied drafts", drafts.size());
+                java.util.List<DraftChange> drafts = draftChangeRepository
+                        .findByProjectIdAndUserIdAndAppliedFalseOrderByTimestampAsc(projectId, effectiveUserId);
+                log.info("[SAVE] Found {} unapplied drafts for user {}", drafts.size(), effectiveUserId);
 
-                // STEP 2: Apply all unapplied drafts to GraphDB
+                // STEP 2: Publish only this user's draft graph to main
                 log.info("[SAVE] Applying drafts to GraphDB...");
-                DraftTrackingService.ApplyDraftsResult draftResult = draftTrackingService.applyDrafts(projectId);
-                
+                DraftTrackingService.ApplyDraftsResult draftResult =
+                        draftTrackingService.applyDrafts(projectId, effectiveUserId, force, merge);
+
+                if (draftResult.isConflictBlocked()) {
+                    log.warn("[SAVE] Publish blocked for project {} user {}: {}",
+                            projectId, effectiveUserId, draftResult.getMessage());
+                    Map<String, Object> body = new java.util.HashMap<>();
+                    body.put("success", false);
+                    body.put("error", draftResult.getMessage());
+                    body.put("conflictBlocked", true);
+                    if (draftResult.getPublishAnalysis() != null) {
+                        body.putAll(draftResult.getPublishAnalysis().toResponseMap());
+                    }
+                    return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+                }
+
                 if (!draftResult.isSuccess()) {
                     log.error("[SAVE] Failed to apply drafts: {}", draftResult.getMessage());
                     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -1635,6 +1677,40 @@ public class ProjectLoadController {
         } catch (Exception e) {
             log.error("[ProjectLoadController] Delete failed for {}: {}", projectId, e.getMessage(), e);
             return ResponseEntity.status(500).body(Map.of("success", false, "error", "Failed to delete project"));
+        }
+    }
+
+    /**
+     * ALREADY_LOADED fast path: OWLAPI warm needs an on-disk OWL file after app restart
+     * even when Mongo/Fuseki still have the ontology.
+     */
+    private void materializeOntologyFromFileRef(String projectId, String fileId) {
+        try {
+            Document fileMeta = mongoTemplate.getDb()
+                    .getCollection("file_metadata")
+                    .find(new Document("fileId", fileId)
+                            .append("isDeleted", new Document("$ne", true)))
+                    .first();
+            if (fileMeta == null) {
+                log.warn("[ProjectLoadController] Cannot materialize {} — file_metadata missing for fileId {}", projectId, fileId);
+                return;
+            }
+            String gridfsId = fileMeta.getString("gridfsId");
+            Optional<GridFsResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
+            if (resourceOpt.isEmpty()) {
+                log.warn("[ProjectLoadController] Cannot materialize {} — GridFS missing for {}", projectId, gridfsId);
+                return;
+            }
+            Path projectDir = storageManager.prepareProjectDir(projectId);
+            Path original = projectDir.resolve("ontology.original.owl");
+            Path current = projectDir.resolve("ontology.current.owl");
+            try (InputStream in = resourceOpt.get().getInputStream()) {
+                Files.copy(in, original, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            Files.copy(original, current, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            log.info("[ProjectLoadController] Materialized ontology on disk for OWLAPI warm: {}", projectId);
+        } catch (Exception e) {
+            log.warn("[ProjectLoadController] Failed to materialize ontology for {}: {}", projectId, e.getMessage());
         }
     }
 }

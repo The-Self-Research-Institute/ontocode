@@ -28,13 +28,13 @@ public class OntologyMetadataService {
     private static final Pattern AND_SPLIT = Pattern.compile("(?i)\\s+and\\s+");
     private static final Pattern OR_SPLIT = Pattern.compile("(?i)\\s+or\\s+");
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final ProjectMetadataService projectMetadataService;
     private final OntologyMutationService mutationService;
     private final GeneralClassAxiomService generalClassAxiomService;
     private final Map<String, String> ontologyIriCache = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public OntologyMetadataService(GraphDBDatasetService datasetService,
+    public OntologyMetadataService(SparqlDatasetService datasetService,
                                    ProjectMetadataService projectMetadataService,
                                    @Lazy OntologyMutationService mutationService,
                                    GeneralClassAxiomService generalClassAxiomService) {

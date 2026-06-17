@@ -1,0 +1,62 @@
+[
+  {
+    "pluginId": "fuzzy-ontology-plugin",
+    "name": "Fuzzy Ontology",
+    "shortDescription": "Fuzzy ontology editor with modifiers, membership functions, and visual canvas",
+    "description": "Fuzzy ontology editor with fuzzy modifiers, membership functions, visual canvas, and SPARQL integration.",
+    "version": "1.1.0",
+    "category": "Reasoning",
+    "keywords": ["fuzzy", "ontology", "reasoning"],
+    "featured": true
+  },
+  {
+    "pluginId": "graph-view-plugin",
+    "name": "Ontology Graph Visualization",
+    "shortDescription": "D3.js graph visualization with hierarchical lazy loading",
+    "description": "D3.js-powered graph visualization with expand/collapse, search, and export.",
+    "version": "2.0.0",
+    "category": "Visualization",
+    "keywords": ["graph", "visualization", "d3"],
+    "featured": true
+  },
+  {
+    "pluginId": "swrl-editor-plugin",
+    "name": "SWRL Rule Editor",
+    "shortDescription": "Create and execute SWRL rules",
+    "description": "SWRL editor with syntax validation, templates, and inference results.",
+    "version": "1.2.0",
+    "category": "Reasoning",
+    "keywords": ["swrl", "rules", "reasoning"],
+    "featured": true
+  },
+  {
+    "pluginId": "change-assistant-plugin",
+    "name": "Ontology Change Assistant",
+    "shortDescription": "Track and manage collaborative ontology edits",
+    "description": "Change tracking with conflict detection and diff visualization.",
+    "version": "1.0.0",
+    "category": "Collaboration",
+    "keywords": ["change-tracking", "collaboration"],
+    "featured": true
+  },
+  {
+    "pluginId": "sparql-query-plugin",
+    "name": "SPARQL Query Editor",
+    "shortDescription": "Execute SPARQL queries with syntax highlighting",
+    "description": "SPARQL editor with syntax highlighting and query history.",
+    "version": "1.0.0",
+    "category": "Query",
+    "keywords": ["sparql", "query"],
+    "featured": true
+  },
+  {
+    "pluginId": "reasoner-plugin",
+    "name": "OWL Reasoner",
+    "shortDescription": "OWL 2 reasoning with HermiT, ELK, and Pellet",
+    "description": "OWL 2 reasoning with consistency checking and classification.",
+    "version": "1.0.0",
+    "category": "Reasoning",
+    "keywords": ["reasoner", "owl", "inference"],
+    "featured": true
+  }
+]
