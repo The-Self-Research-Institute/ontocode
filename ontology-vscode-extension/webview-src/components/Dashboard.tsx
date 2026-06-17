@@ -7615,7 +7615,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[DEBUG] handleSave called", { forcePublish, mergePublish });
     if (!projectId || isSaving) return;
 
-    const effectiveUserId = user?.userId || "anonymous";
+    const effectiveUserId = user?.userId || user?.email || (isDesktop() ? 'desktop-user-local' : 'anonymous');
 
     const performSave = async (force: boolean, merge: boolean) => {
       setIsSaving(true);
@@ -13737,6 +13737,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                       ind.id,
                                       selectedClassForIndividuals.id,
                                     );
+                                    markAsUnsaved();
                                     await loadClassInstances();
                                   } catch (error) {
                                     console.error("[Dashboard] Failed to remove class assertion:", error);
@@ -13858,6 +13859,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                             selectedClassIndividualDetails.id,
                                             type,
                                           );
+                                          markAsUnsaved();
                                           if (selectedClassForIndividuals?.id === type) {
                                             await loadClassInstances();
                                           }
@@ -14954,6 +14956,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               propertyIri,
               value,
             );
+            markAsUnsaved();
             await refreshSelectedClassIndividualDetails();
           } catch (error) {
             console.error("[Dashboard] Failed to add annotation:", error);
@@ -14969,6 +14972,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           if (!projectId || !selectedClassIndividualDetails) return;
           try {
             await ontologyMutationService.addClassAssertion(projectId, selectedClassIndividualDetails.id, node.id);
+            markAsUnsaved();
             if (selectedClassForIndividuals?.id === node.id) {
               await loadClassInstances();
             }
