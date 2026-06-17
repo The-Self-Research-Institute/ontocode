@@ -86,7 +86,7 @@ async function checkImportStatus(projectId) {
         }
     } catch (_) {}
 
-    // Check 2: OWLAPI cache — if model is cached, import is definitely done
+    // Check 2: OWLAPI cache — primary signal on desktop (Protégé-style fast path)
     try {
         const res2 = await fetch(`${DESKTOP_API}/api/ontology/cache-status/${encodeURIComponent(projectId)}`, { headers });
         if (res2.ok) {
@@ -95,7 +95,18 @@ async function checkImportStatus(projectId) {
         }
     } catch (_) {}
 
-    // Check 3: hierarchy data available — if top-level classes load, Fuseki has the data
+    // Check 3: import/ontology status ERROR
+    try {
+        const resStatus = await fetch(`${DESKTOP_API}/api/ontology/status/${encodeURIComponent(projectId)}`, { headers });
+        if (resStatus.ok) {
+            const st = await resStatus.json();
+            const status = st?.data?.status || st?.status;
+            if (status === 'ERROR' || status === 'FAILED') return 'failed';
+            if (status === 'COMPLETED') return 'done';
+        }
+    } catch (_) {}
+
+    // Check 4: hierarchy data available (SPARQL fallback path)
     try {
         const res3 = await fetch(
             `${DESKTOP_API}/api/ontology/classes/top-level/${encodeURIComponent(projectId)}?limit=5`,
@@ -157,9 +168,16 @@ function schedulePoller(projectId) {
                         metadata: { message: result.message || 'Importing…' }
                     }
                 }));
-            } else if (ticks > 120) {
-                // 120 × 1.5s = 3 min absolute max — force dismiss regardless
-                dispatchImportCompleted(projectId);
+            } else if (ticks > 400) {
+                // 400 × 1.5s = 10 min — mark failed instead of faking success
+                window.dispatchEvent(new CustomEvent('importStatusUpdate', {
+                    detail: {
+                        type: 'IMPORT_FAILED',
+                        status: 'FAILED',
+                        projectId,
+                        statusMessage: 'Import timed out after 10 minutes. The file may be too large or the editor is busy.',
+                    },
+                }));
                 clearInterval(poll);
                 _importPollers.delete(projectId);
             }
@@ -344,6 +362,10 @@ contextBridge.exposeInMainWorld('vscode', {
                 window.dispatchEvent(new MessageEvent('message', { data: { type: 'showSubscriptionPlans' } }));
                 break;
 
+            case 'toggleDevTools':
+                ipcRenderer.send('devtools:toggle');
+                break;
+
             case 'duplicateFilePromptResponse':
                 break;
 
@@ -388,12 +410,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Service health
     getServiceStatus: ()             => ipcRenderer.invoke('services:status'),
+    ensureFuseki: ()                 => ipcRenderer.invoke('services:ensureFuseki'),
 
     // Open log folder in file manager
     openLogs: ()                     => ipcRenderer.invoke('logs:open'),
 
+    // App version & updates (electron-updater)
+    getAppVersion: ()                => ipcRenderer.invoke('config:get').then((c) => c?.appVersion || '0.0.0'),
+    updateGetStatus: ()              => ipcRenderer.invoke('update:getStatus'),
+    updateCheck: ()                  => ipcRenderer.invoke('update:check'),
+    updateInstall: ()                => ipcRenderer.invoke('update:install'),
+    onUpdateStatus: (callback) => {
+        const handler = (_evt, data) => callback(data);
+        ipcRenderer.on('update:status', handler);
+        return () => ipcRenderer.removeListener('update:status', handler);
+    },
+
     // Listen for file-open from the native menu (File → Open Ontology File…)
     onMenuOpenFile: (callback)       => ipcRenderer.on('menu:open-file', (_evt, data) => callback(data)),
+    onFocusExistingFile: (callback) => ipcRenderer.on('desktop:focus-file', (_evt, data) => callback(data)),
+
+    getActiveFilePath: ()            => ipcRenderer.invoke('file:getActivePath'),
+    setActiveFilePath: (filePath)    => ipcRenderer.invoke('file:setActivePath', filePath),
+    clearActiveFilePath: ()          => ipcRenderer.invoke('file:clearActivePath'),
 
     // License management
     getLicense:      ()              => ipcRenderer.invoke('license:get'),

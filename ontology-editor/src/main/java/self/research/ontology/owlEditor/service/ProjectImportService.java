@@ -16,6 +16,7 @@ import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.model.collaboration.ImportStatusMessage;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 
 import org.eclipse.rdf4j.query.BindingSet;
@@ -26,6 +27,7 @@ import org.eclipse.rdf4j.rio.Rio;
 import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
 
 import java.io.BufferedInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
@@ -33,12 +35,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -62,7 +66,7 @@ public class ProjectImportService {
     private final Set<String> importReservations = ConcurrentHashMap.newKeySet();
 
     private final Executor owlParsingExecutor;
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final StorageManager storageManager;
@@ -73,6 +77,9 @@ public class ProjectImportService {
     // Desktop-only — null in cloud deployments (optional injection)
     @Autowired(required = false) @Nullable
     private DesktopOntologyLoader desktopOntologyLoader;
+
+    @Autowired(required = false) @Nullable
+    private DesktopOpenMetricsService openMetricsService;
 
     // Evict stale top-level and children caches after import so next open gets fresh SPARQL results
     @Autowired(required = false) @Nullable
@@ -90,8 +97,14 @@ public class ProjectImportService {
     @Autowired(required = false) @Nullable
     private ProjectRepository projectRepository;
 
+    @Autowired(required = false) @Nullable
+    private DesktopFusekiSyncScheduler fusekiSyncScheduler;
+
+    @Value("${ontocode.desktop.owlapi-first:false}")
+    private boolean owlApiFirst;
+
     public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
-                                GraphDBDatasetService datasetService,
+                                SparqlDatasetService datasetService,
                                 OntologyIndexService indexService,
                                 ProjectMetadataService metadataService,
                                 StorageManager storageManager,
@@ -330,10 +343,8 @@ public class ProjectImportService {
                 .map(ProjectStatus::filename)
                 .orElse(owlFile.getFileName().toString());
 
-        // Desktop: start OWLAPI parsing in parallel with Fuseki import.
-        // OWLAPI reads the ORIGINAL file (OFN/TTL) — much faster than RDF/XML.
-        // By the time Fuseki import finishes, OWLAPI model is usually already cached.
-        if (desktopOntologyLoader != null) {
+        // Cloud / legacy: warm OWLAPI in parallel with Fuseki. OWLAPI-first desktop handles warm separately.
+        if (desktopOntologyLoader != null && !owlApiFirst) {
             desktopOntologyLoader.loadAndCacheAsync(projectId, owlFile);
         }
 
@@ -370,6 +381,14 @@ public class ProjectImportService {
             } catch (Exception sanitizeEx) {
                 log.warn("[Import {}] File sanitization failed: {}", projectId, sanitizeEx.getMessage());
                 // Continue anyway - sanitization is best-effort
+            }
+
+            // Protégé-style desktop: parse OWLAPI from disk, mark ready immediately, sync Fuseki later.
+            if (owlApiFirst && desktopOntologyLoader != null) {
+                if (completeOwlApiFirstImport(projectId, owlFile, filename, format, importStart, importMarkedCompleted)) {
+                    return;
+                }
+                throw new RuntimeException("OWLAPI failed to load ontology — file may be too large or invalid");
             }
 
             stage = "bulk-load";
@@ -453,7 +472,7 @@ public class ProjectImportService {
             boolean serverImportDone = false;
             boolean largeFile = actualFileSize >= 50L * 1024 * 1024;
 
-            GraphDBDatasetService.ProgressListener importProgressListener = progress -> {
+            SparqlDatasetService.ProgressListener importProgressListener = progress -> {
                 long totalBytes = progress.getTotalBytes();
                 long bytesRead = progress.getBytesRead();
                 long elapsedMs = progress.getElapsedMs();
@@ -1396,6 +1415,148 @@ public class ProjectImportService {
 
     private long elapsedMillis(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    /**
+     * Protégé-style import: persist file, warm OWLAPI, complete without blocking on Fuseki.
+     * Fuseki sync runs lazily when SPARQL/graph features need it.
+     */
+    private boolean completeOwlApiFirstImport(String projectId,
+                                             Path owlFile,
+                                             String filename,
+                                             RDFFormat format,
+                                             long importStart,
+                                             AtomicBoolean importMarkedCompleted) throws IOException {
+        log.info("[Import {}] OWLAPI-first desktop import (Protégé-style)", projectId);
+
+        Map<String, Object> warmMeta = new HashMap<>();
+        warmMeta.put("progress", 40);
+        warmMeta.put("stage", "owlapi-loading");
+        warmMeta.put("message", "Opening ontology (OWLAPI)…");
+        sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                "PROCESSING", "Opening ontology (OWLAPI)…", filename, warmMeta);
+        metadataService.writeImportProgress(projectId, 40, "owlapi-loading", "Opening ontology (OWLAPI)…");
+
+        Path current = storageManager.resolveProjectFile(projectId, "ontology.current." + extensionFor(format));
+        Files.createDirectories(current.getParent());
+        Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
+
+        desktopOntologyLoader.startParallelWarm(projectId, current);
+        Map<String, Object> warm = desktopOntologyLoader.warmProject(projectId, 600_000L);
+        boolean ready = Boolean.TRUE.equals(warm.get("ready")) || Boolean.TRUE.equals(warm.get("owlapiReady"));
+
+        if (!ready) {
+            log.warn("[Import {}] OWLAPI-first import failed: {}", projectId, warm.get("error"));
+            return false;
+        }
+
+        markFusekiSyncPending(projectId);
+
+        long durationMs = elapsedMillis(importStart);
+        metadataService.writeStatus(projectId, ProjectStatus.hierarchyReady(filename));
+        importMarkedCompleted.set(true);
+
+        Map<String, Object> completionMeta = new HashMap<>();
+        completionMeta.put("stage", "owlapi-ready");
+        completionMeta.put("durationMs", durationMs);
+        completionMeta.put("hierarchyReady", true);
+        completionMeta.put("fusekiSynced", false);
+        completionMeta.put("message", "Ontology ready — class tree available");
+        sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_COMPLETED,
+                "COMPLETED", "Ontology ready — class tree available", filename, completionMeta);
+
+        log.info("[Import {}] OWLAPI-first import completed in {} ms (Fuseki sync deferred)", projectId, durationMs);
+        if (openMetricsService != null) {
+            openMetricsService.recordImportComplete(projectId, durationMs, true, false);
+        }
+        if (fusekiSyncScheduler != null) {
+            fusekiSyncScheduler.scheduleAfterOpen(projectId);
+        }
+        return true;
+    }
+
+    /** Lazy Fuseki sync for OWLAPI-first desktop (SPARQL tab, graph view, etc.). */
+    public Map<String, Object> syncProjectToFuseki(String projectId) {
+        Map<String, Object> result = new HashMap<>();
+        if (!owlApiFirst) {
+            result.put("synced", true);
+            result.put("skipped", true);
+            return result;
+        }
+        try {
+            Optional<Path> file = storageManager.findCurrentOntology(projectId);
+            if (file.isEmpty() || !Files.exists(file.get())) {
+                result.put("synced", false);
+                result.put("error", "No ontology file on disk");
+                return result;
+            }
+            Path owlFile = file.get();
+            if (datasetService.hasGraphData(projectId) && !isFusekiSyncPending(projectId)) {
+                result.put("synced", true);
+                result.put("alreadyLoaded", true);
+                return result;
+            }
+
+            RDFFormat format = detectFormat(owlFile);
+            long size = Files.size(owlFile);
+            ImportOptions options = ImportOptions.builder()
+                    .mode(ImportOptions.ImportMode.FULL)
+                    .partitionStrategy(ImportOptions.PartitionStrategy.NONE)
+                    .build();
+
+            log.info("[Import {}] Lazy Fuseki sync starting ({} bytes)", projectId, size);
+            boolean done = datasetService.directHttpUpload(projectId, owlFile, format, size, options, null);
+            if (!done) {
+                done = datasetService.serverSideImport(projectId, owlFile, format, size, options, null);
+            }
+            if (!done) {
+                result.put("synced", false);
+                result.put("error", "Fuseki sync failed — is the triple store running?");
+                return result;
+            }
+
+            clearFusekiSyncPending(projectId);
+            if (topLevelClassCacheService != null) {
+                topLevelClassCacheService.evict(projectId);
+            }
+            if (cacheEvictionService != null) {
+                cacheEvictionService.evictForProject(projectId);
+            }
+            result.put("synced", true);
+            return result;
+        } catch (Exception e) {
+            log.warn("[Import {}] Lazy Fuseki sync failed: {}", projectId, e.getMessage());
+            result.put("synced", false);
+            result.put("error", e.getMessage());
+            return result;
+        }
+    }
+
+    public boolean isFusekiSyncPending(String projectId) {
+        return Files.exists(fusekiSyncPendingPath(projectId));
+    }
+
+    public void markFusekiSyncPendingPublic(String projectId) {
+        markFusekiSyncPending(projectId);
+    }
+
+    private void markFusekiSyncPending(String projectId) {
+        try {
+            Files.writeString(fusekiSyncPendingPath(projectId), Instant.now().toString());
+        } catch (IOException e) {
+            log.warn("[Import {}] Could not write fuseki-sync-pending marker: {}", projectId, e.getMessage());
+        }
+    }
+
+    private void clearFusekiSyncPending(String projectId) {
+        try {
+            Files.deleteIfExists(fusekiSyncPendingPath(projectId));
+        } catch (IOException ignored) {
+        }
+    }
+
+    private Path fusekiSyncPendingPath(String projectId) {
+        return storageManager.projectDir(projectId).resolve("fuseki-sync-pending");
     }
 
     private Integer toInteger(Object value) {

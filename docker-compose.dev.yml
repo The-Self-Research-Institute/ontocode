@@ -13,7 +13,7 @@ services:
     container_name: ontocode-mongo
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "127.0.0.1:${MONGO_HOST_PORT:-27017}:27017"
     volumes:
       - mongo-data:/data/db
     environment:
@@ -49,7 +49,8 @@ services:
       - "3030:3030"
     environment:
       ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
-      JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xmx2g -XX:+UseG1GC}"
+      # Large OWL files (mondo/go-plus) need headroom for CONSTRUCT + concurrent imports
+      JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xms1g -Xmx6g -XX:+UseG1GC -XX:MaxGCPauseMillis=200}"
     command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
     volumes:
       - ./fuseki-config.ttl:/config.ttl:ro
@@ -59,7 +60,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3g
+          memory: 8g
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3030/$/ping"]
       interval: 15s
@@ -167,12 +168,15 @@ services:
       FUSEKI_ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
       DATA_DIR: /app/data
       SPRING_PROFILES_ACTIVE: dev
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ONTOCODE_EDITOR_REQUIRE_JWT: "false"
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
       ONTOLOGY_HTTP_TIMEOUT_MS: ${ONTOLOGY_HTTP_TIMEOUT_MS:-7200000}
       ONTOLOGY_HTTP_TIMEOUT_SECONDS: ${ONTOLOGY_HTTP_TIMEOUT_SECONDS:-7200s}
+      ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-1}
       JAVA_OPTS: >-
-        -Xms512m -Xmx1200m
+        -Xms1g -Xmx3g
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
         -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
         -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m
@@ -198,7 +202,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1536m
+          memory: 4096m
     healthcheck:
       test: ["CMD-SHELL", "pgrep java || exit 1"]
       interval: 15s
@@ -296,11 +300,14 @@ services:
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      MONGODB_USERNAME: ${MONGO_ROOT_USER:-admin}
+      MONGODB_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
+      MONGODB_AUTH_SOURCE: admin
     depends_on:
       mongo:
         condition: service_healthy
       plugin-service:
-        condition: service_healthy
+        condition: service_started
     networks:
       - ontology-net
 

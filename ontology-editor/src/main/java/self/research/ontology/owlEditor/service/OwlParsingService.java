@@ -46,7 +46,7 @@ public class OwlParsingService {
     private SparqlProperties props;
     
     @Autowired
-    private GraphDBDatasetService datasetService;
+    private SparqlDatasetService datasetService;
     
     private final WebClient updateClient;
 

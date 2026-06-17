@@ -42,12 +42,12 @@ public class StorageManager {
 
     private static final Logger log = LoggerFactory.getLogger(StorageManager.class);
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final Path projectsRoot;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public StorageManager(@Value("${ontocode.data.dir:./data}") String rootDir,
-                          GraphDBDatasetService datasetService) throws IOException {
+                          SparqlDatasetService datasetService) throws IOException {
         this.datasetService = datasetService;
         this.projectsRoot = Path.of(rootDir).toAbsolutePath().normalize().resolve("projects");
         Files.createDirectories(this.projectsRoot);

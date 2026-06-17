@@ -13,6 +13,8 @@ export interface OntologyFileData {
     fileContent: string; // raw text
     fileSize: number;    // bytes
     isBase64?: boolean;  // true for binary package uploads such as .zip
+    filePath?: string;
+    focusOnly?: boolean;
 }
 
 /**

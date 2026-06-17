@@ -40,6 +40,11 @@ public class RateLimitingFilter extends OncePerRequestFilter {
     private static final Duration AUTH_REFILL_DURATION = Duration.ofMinutes(1);
 
     @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return request.getRequestURI().startsWith("/actuator/");
+    }
+
+    @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         

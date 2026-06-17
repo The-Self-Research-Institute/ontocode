@@ -8,6 +8,7 @@ import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import { friendlyApiErrorMessage } from '../../utils/apiErrors';
+import { isDesktop } from '../../utils/desktop';
 import { useAuth } from '../../custom-hook/useAuth';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual } from '../../types';
 
@@ -337,6 +338,8 @@ const ClassEditor: React.FC<{
   const [isGCAEditorOpen, setIsGCAEditorOpen] = useState(false);
   const [editingGCAId, setEditingGCAId] = useState<string | undefined>();
 
+  const [isSavingAxiom, setIsSavingAxiom] = useState(false);
+
   // IRI Editor State
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
 
@@ -608,11 +611,19 @@ const ClassEditor: React.FC<{
       let details = response?.data?.data || response?.data || response;
       console.log("[ClassEditor] Class details loaded:", details);
 
-      // If in inferred mode, fetch inferred details from reasoner
-      if (viewMode === "inferred") {
+      // Desktop / OWLAPI fast-open already embeds structural-reasoner inferred axioms
+      // (~5ms). Do NOT call Openllet here — it precomputes the whole ontology and
+      // can hang for minutes, freezing the UI.
+      const hasOwlApiInferred =
+        details?.inferredFromOwlApi === true ||
+        (details != null && "inferredEquivalentClassesAxioms" in details);
+
+      if (viewMode === "inferred" && !hasOwlApiInferred) {
         try {
           const inferredResponse = await apiClient.get<any>(
-            `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}`,
+            `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}&reasonerType=STRUCTURAL`,
+            undefined,
+            { signal, timeout: isDesktop() ? 15_000 : 45_000 },
           );
           const inferredData = inferredResponse?.data?.data || inferredResponse?.data || {};
           console.log("[ClassEditor] Inferred class details loaded:", inferredData);
@@ -621,10 +632,17 @@ const ClassEditor: React.FC<{
             ...details,
             inferredSubClassOfAxioms: inferredData.inferredSubClassOfAxioms || [],
             inferredEquivalentClassesAxioms: inferredData.inferredEquivalentClassesAxioms || [],
+            inferredDisjointClassesAxioms: inferredData.inferredDisjointClassesAxioms || [],
             isUnsatisfiable: inferredData.isUnsatisfiable || false,
           };
         } catch (err) {
           console.warn("[ClassEditor] Failed to load inferred details:", err);
+          if (viewMode === "inferred") {
+            notificationService.warning(
+              "Inferred axioms unavailable",
+              friendlyApiErrorMessage(err, "Reasoner timed out — showing asserted axioms only."),
+            );
+          }
         }
       }
 
@@ -660,7 +678,20 @@ const ClassEditor: React.FC<{
     descriptionAbortRef.current?.abort();
     const controller = new AbortController();
     descriptionAbortRef.current = controller;
-    await Promise.all([loadClassDetails(controller.signal), loadInstances(controller.signal)]);
+    const watchdog = setTimeout(() => {
+      controller.abort();
+      setLoadingDetails(false);
+      setLoadingInstances(false);
+      notificationService.warning(
+        "Description load timed out",
+        "The server took too long. Try Asserted mode or a smaller ontology.",
+      );
+    }, isDesktop() ? 45_000 : 90_000);
+    try {
+      await Promise.all([loadClassDetails(controller.signal), loadInstances(controller.signal)]);
+    } finally {
+      clearTimeout(watchdog);
+    }
   };
 
   const loadInstances = async (signal?: AbortSignal) => {
@@ -950,6 +981,7 @@ const ClassEditor: React.FC<{
       restrictionData,
       classHierarchyLength: classHierarchy.length,
     });
+    setIsSavingAxiom(true);
     try {
       // If we have structured restriction data, use the specific restriction methods
       // NOTE: DisjointWith does NOT support restrictions - it's only for class-to-class disjointness
@@ -1118,6 +1150,8 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("[ClassEditor] Failed to add axiom:", error);
       notificationService.error("Add Axiom Failed", `Failed to add axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
     }
   };
 
@@ -1795,13 +1829,13 @@ const ClassEditor: React.FC<{
   return (
     <div className="flex flex-col h-full bg-white">
       {loadingAnnotations && (
-        <div className="sticky top-0 left-0 right-0 bg-blue-50 border-b border-blue-200 text-xs text-blue-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm">
+        <div className="sticky top-0 left-0 right-0 bg-blue-50 border-b border-blue-200 text-xs text-blue-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm pointer-events-none">
           <div className="animate-spin mr-2 h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full"></div>
           Loading annotations for <span className="font-semibold mx-1">{item.label || "class"}</span>…
         </div>
       )}
       {loadingDetails && (
-        <div className="sticky top-0 left-0 right-0 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm">
+        <div className="sticky top-0 left-0 right-0 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm pointer-events-none">
           <div className="animate-spin mr-2 h-3 w-3 border-2 border-amber-600 border-t-transparent rounded-full"></div>
           Loading description for <span className="font-semibold mx-1">{item.label || "class"}</span>…
         </div>
@@ -1911,11 +1945,19 @@ const ClassEditor: React.FC<{
               </div>
             )}
 
+            {isSavingAxiom && (
+              <div className="flex items-center gap-2 px-4 py-2 text-sm text-purple-700 bg-purple-50 border border-purple-200 rounded">
+                <div className="animate-spin h-3.5 w-3.5 border-2 border-purple-600 border-t-transparent rounded-full flex-shrink-0" />
+                Saving axiom…
+              </div>
+            )}
+
             {axiomsLoaded && (
             <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-4">
               {/* Equivalent To Section */}
               <AxiomSubsection
                 title="Equivalent To"
+                viewMode={viewMode}
                 axioms={classDetails?.equivalentClassesAxioms || item.equivalentClassesAxioms}
                 inferredAxioms={classDetails?.inferredEquivalentClassesAxioms}
                 onAdd={(def) => handleAddAxiom("EquivalentTo", def)}
@@ -1938,6 +1980,7 @@ const ClassEditor: React.FC<{
               {/* SubClass Of Section */}
               <AxiomSubsection
                 title="SubClass Of"
+                viewMode={viewMode}
                 axioms={classDetails?.subClassOfAxioms || item.subClassOfAxioms}
                 inferredAxioms={classDetails?.inferredSubClassOfAxioms}
                 onAdd={(def) => handleAddAxiom("SubClassOf", def)}
@@ -2017,6 +2060,7 @@ const ClassEditor: React.FC<{
               {/* Instances Section */}
               <AxiomSubsection
                 title="Instances"
+                viewMode={viewMode}
                 axioms={classInstances
                   .filter((instance) => !(instance as { isInferred?: boolean }).isInferred)
                   .map((instance) => ({
@@ -2066,6 +2110,7 @@ const ClassEditor: React.FC<{
               {/* Disjoint With Section */}
               <AxiomSubsection
                 title="Disjoint With"
+                viewMode={viewMode}
                 axioms={classDetails?.disjointClassesAxioms || item.disjointClassesAxioms}
                 inferredAxioms={classDetails?.inferredDisjointClassesAxioms}
                 onAdd={(def) => handleAddAxiom("DisjointWith", def)}

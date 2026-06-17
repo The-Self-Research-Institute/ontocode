@@ -1,6 +1,11 @@
 import path from 'path';
+import { readFileSync } from 'fs';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+
+const extensionPackage = JSON.parse(
+  readFileSync(path.resolve(__dirname, '../package.json'), 'utf8'),
+);
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
@@ -12,11 +17,11 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       proxy: {
         '/api': {
-          target: 'http://localhost:80',
+          target: env.VITE_API_PROXY_TARGET || 'http://localhost:80',
           changeOrigin: true,
         },
         '/ws': {
-          target: 'http://localhost:80',
+          target: env.VITE_API_PROXY_TARGET || 'http://localhost:80',
           changeOrigin: true,
           ws: true,
         },
@@ -24,6 +29,7 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [react()],
     define: {
+      __APP_VERSION__: JSON.stringify(extensionPackage.version),
       'global': 'globalThis',
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),

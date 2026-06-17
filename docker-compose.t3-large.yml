@@ -43,6 +43,7 @@ services:
     environment:
       JAVA_OPTS: "-Xms512m -Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
       ONTOCODE_IMPORT_MAX_CONCURRENT: 1
+      ONTOCODE_FASTOPEN_AUTO_WARM: "false"
       # Tighter reasoner limit on 8 GB tier — prevents OOM from in-memory export of large ontologies
       ONTOCODE_REASONER_MAX_TRIPLES: 500000
     deploy:

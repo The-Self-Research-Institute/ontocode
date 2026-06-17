@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { isDesktop } from "../utils/desktop";
 import {
   X,
   BookOpen,
@@ -40,6 +41,8 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
   });
 
   if (!isOpen) return null;
+
+  const desktop = isDesktop();
 
   const toggleSection = (section: string) => {
     setExpandedSections((prev) => ({
@@ -140,30 +143,40 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
           <div style={styles.tableOfContents}>
             <h3 style={styles.tocTitle}>Quick Navigation</h3>
             <div style={styles.tocGrid}>
-              <div style={styles.tocItem} onClick={() => scrollToSection("section-workspace")}>
-                <Building2 size={18} style={{ color: "#f59e0b" }} />
-                <span>1. Create a Workspace</span>
-              </div>
-              <div style={styles.tocItem} onClick={() => scrollToSection("section-billing")}>
-                <CreditCard size={18} style={{ color: "#10b981" }} />
-                <span>2. Subscription &amp; Billing</span>
-              </div>
-              <div style={styles.tocItem} onClick={() => scrollToSection("section-invite")}>
-                <UserPlus size={18} style={{ color: "#8b5cf6" }} />
-                <span>3. Invite Members</span>
-              </div>
-              <div style={styles.tocItem} onClick={() => scrollToSection("section-accept")}>
-                <Mail size={18} style={{ color: "#06b6d4" }} />
-                <span>4. Accept Invitation</span>
-              </div>
+              {!desktop && (
+                <div style={styles.tocItem} onClick={() => scrollToSection("section-workspace")}>
+                  <Building2 size={18} style={{ color: "#f59e0b" }} />
+                  <span>1. Create a Workspace</span>
+                </div>
+              )}
+              {!desktop && (
+                <div style={styles.tocItem} onClick={() => scrollToSection("section-billing")}>
+                  <CreditCard size={18} style={{ color: "#10b981" }} />
+                  <span>2. Subscription &amp; Billing</span>
+                </div>
+              )}
+              {!desktop && (
+                <div style={styles.tocItem} onClick={() => scrollToSection("section-invite")}>
+                  <UserPlus size={18} style={{ color: "#8b5cf6" }} />
+                  <span>3. Invite Members</span>
+                </div>
+              )}
+              {!desktop && (
+                <div style={styles.tocItem} onClick={() => scrollToSection("section-accept")}>
+                  <Mail size={18} style={{ color: "#06b6d4" }} />
+                  <span>4. Accept Invitation</span>
+                </div>
+              )}
               <div style={styles.tocItem} onClick={() => scrollToSection("section-project")}>
                 <FolderPlus size={18} style={{ color: "#10b981" }} />
                 <span>5. Create a Project</span>
               </div>
-              <div style={styles.tocItem} onClick={() => scrollToSection("section-assign")}>
-                <Users size={18} style={{ color: "#ec4899" }} />
-                <span>6. Assign Project Members</span>
-              </div>
+              {!desktop && (
+                <div style={styles.tocItem} onClick={() => scrollToSection("section-assign")}>
+                  <Users size={18} style={{ color: "#ec4899" }} />
+                  <span>6. Assign Project Members</span>
+                </div>
+              )}
               <div style={styles.tocItem} onClick={() => scrollToSection("section-file")}>
                 <FileText size={18} style={{ color: "#3b82f6" }} />
                 <span>7. Create a New File</span>
@@ -183,7 +196,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             </div>
           </div>
 
-          {/* Section 1: How to Create a Workspace */}
+          {!desktop && (
           <div id="section-workspace" style={styles.section}>
             <button onClick={() => toggleSection("workspace")} style={styles.sectionHeader}>
               {expandedSections.workspace ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -275,8 +288,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
               </div>
             )}
           </div>
+          )}
 
-          {/* Section 2: Subscription & Billing */}
+          {!desktop && (
           <div id="section-billing" style={styles.section}>
             <button onClick={() => toggleSection("billing")} style={styles.sectionHeader}>
               {expandedSections.billing ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -431,8 +445,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
               </div>
             )}
           </div>
+          )}
 
-          {/* Section 3: How to Invite Members */}
+          {!desktop && (
           <div id="section-invite" style={styles.section}>
             <button onClick={() => toggleSection("inviteMembers")} style={styles.sectionHeader}>
               {expandedSections.inviteMembers ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -539,8 +554,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
               </div>
             )}
           </div>
+          )}
 
-          {/* Section 3: How to Accept Invitation */}
+          {!desktop && (
           <div id="section-accept" style={styles.section}>
             <button onClick={() => toggleSection("acceptInvitation")} style={styles.sectionHeader}>
               {expandedSections.acceptInvitation ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -651,6 +667,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
               </div>
             )}
           </div>
+          )}
 
           {/* Section 4: How to Create a Project */}
           <div id="section-project" style={styles.section}>
@@ -756,7 +773,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             )}
           </div>
 
-          {/* Section 5: How to Assign Project Members */}
+          {!desktop && (
           <div id="section-assign" style={styles.section}>
             <button onClick={() => toggleSection("assignMembers")} style={styles.sectionHeader}>
               {expandedSections.assignMembers ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -860,6 +877,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
               </div>
             )}
           </div>
+          )}
 
           {/* Section 6: How to Create a New File */}
           <div id="section-file" style={styles.section}>

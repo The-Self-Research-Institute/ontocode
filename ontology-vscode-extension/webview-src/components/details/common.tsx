@@ -433,12 +433,12 @@ export const AxiomRow: React.FC<{
 
   return (
     <div
-      className={`group border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors ${
-        isInferred ? 'bg-yellow-50' : 'bg-white'
-      } ${isFocused ? 'ring-2' : ''} ${!isInferred ? 'cursor-pointer' : ''}`}
+      className={`group border-b last:border-0 transition-colors ${isFocused ? 'ring-2' : ''} ${!isInferred ? 'cursor-pointer' : ''}`}
       data-axiom-id={axiom.id}
       data-axiom-type={axiom.type}
       style={{
+        borderColor: 'var(--border)',
+        backgroundColor: isInferred ? 'var(--warning-tint)' : 'var(--surface-1)',
         borderLeft: isInActiveOntology ? '3px solid #D97706' : 'none',
       }}
     >
@@ -473,7 +473,12 @@ export const AxiomRow: React.FC<{
                 onNavigate={onNavigate}
               />
               {isInferred && (
-                <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
+                <span
+                  className="ml-2 text-[10px] px-1.5 py-0.5 rounded font-medium"
+                  style={{ backgroundColor: 'var(--warning-tint)', color: 'var(--warning)' }}
+                >
+                  Inferred
+                </span>
               )}
             </div>
           </div>
@@ -635,6 +640,8 @@ export const AxiomSubsection: React.FC<{
   title: string;
   axioms: Axiom[] | undefined;
   inferredAxioms?: Axiom[];
+  /** Protégé-style: inferred rows only when hierarchy/view is in inferred mode */
+  viewMode?: 'asserted' | 'inferred';
   onAdd: (definition: string) => void;
   onEdit?: (id: string, newDefinition: string) => void;
   onEditClick?: (axiom: Axiom, initialTab?: 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression', restrictionData?: any) => void;
@@ -650,7 +657,7 @@ export const AxiomSubsection: React.FC<{
   onViewOnlyAction?: () => void;
   projectId?: string;
   parentEntityIri?: string;
-}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri }) => {
+}> = ({ title, axioms, inferredAxioms, viewMode = 'asserted', onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -681,7 +688,8 @@ export const AxiomSubsection: React.FC<{
     }
   };
 
-  const allAxioms = [...(axioms || []), ...(inferredAxioms || [])];
+  const visibleInferred = viewMode === 'inferred' ? (inferredAxioms || []) : [];
+  const allAxioms = [...(axioms || []), ...visibleInferred];
   const hasContent = allAxioms.length > 0;
 
   // Clean minimal theme colors - subtle and professional
@@ -804,8 +812,8 @@ export const AxiomSubsection: React.FC<{
                 sectionName={title}
               />
             ))}
-            {/* Inferred axioms */}
-            {inferredAxioms?.map(axiom => (
+            {/* Inferred axioms (Protégé: only in inferred view) */}
+            {visibleInferred.map(axiom => (
               <AxiomRow
                 key={`inferred-${axiom.id}`}
                 axiom={axiom}

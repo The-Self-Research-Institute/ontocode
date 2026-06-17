@@ -77,18 +77,38 @@ export const draftTrackingService = {
   },
   
   /**
-   * Apply all drafts to GraphDB (used during save)
+   * Preview publish conflicts before save.
    */
-  async applyDrafts(projectId: string): Promise<{ success: boolean; appliedCount: number; message: string }> {
-    const response = await apiClient.post(`/api/ontology/${projectId}/drafts/apply`);
+  async getPublishPreview(projectId: string, userId: string): Promise<Record<string, unknown>> {
+    const response = await apiClient.get(`/api/ontology/${projectId}/drafts/publish-preview`, { userId });
+    return (response.data || response) as Record<string, unknown>;
+  },
+
+  /**
+   * Apply drafts for one user to GraphDB (used during save)
+   */
+  async applyDrafts(
+    projectId: string,
+    userId: string,
+    force = false,
+  ): Promise<{ success: boolean; appliedCount: number; message: string }> {
+    const response = await apiClient.post(
+      `/api/ontology/${projectId}/drafts/apply?userId=${encodeURIComponent(userId)}${force ? "&force=true" : ""}`,
+    );
     return response.data;
   },
-  
+
   /**
-   * Discard all unapplied drafts
+   * Discard unapplied drafts (optionally for one user only)
    */
-  async discardDrafts(projectId: string): Promise<{ success: boolean; discardedCount: number; message: string }> {
-    const response = await apiClient.delete(`/api/ontology/${projectId}/drafts`);
+  async discardDrafts(
+    projectId: string,
+    userId?: string,
+  ): Promise<{ success: boolean; discardedCount: number; message: string }> {
+    const url = userId
+      ? `/api/ontology/${projectId}/drafts?userId=${encodeURIComponent(userId)}`
+      : `/api/ontology/${projectId}/drafts`;
+    const response = await apiClient.delete(url);
     return response.data;
   },
   

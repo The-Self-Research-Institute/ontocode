@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.GraphDBHistoryService;
+import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
 
@@ -36,12 +36,12 @@ public class OntologyCrudController {
 
     private final OntologyMutationService mutationService;
     private final DraftTrackingService draftTrackingService;
-    private final GraphDBHistoryService historyService;
+    private final OntologyHistoryService historyService;
     private final CollaborativeEditService collaborativeEditService;
 
     public OntologyCrudController(OntologyMutationService mutationService,
                                  DraftTrackingService draftTrackingService,
-                                 GraphDBHistoryService historyService,
+                                 OntologyHistoryService historyService,
                                  CollaborativeEditService collaborativeEditService) {
         this.mutationService = mutationService;
         this.draftTrackingService = draftTrackingService;
@@ -55,21 +55,22 @@ public class OntologyCrudController {
                                     @RequestParam(required = false, defaultValue = "true") boolean draft) {
         
         if (draft) {
-            // Record as draft - don't apply to GraphDB yet
-            log.info("[MUTATION] Recording {} operations as draft for project {}", 
+            // Private mode: persist to per-user draft named graph + MongoDB audit trail
+            log.info("[MUTATION] Applying {} operations to draft graph for project {}",
                 request.ops().size(), projectId);
-            
+
             String userId = request.userId() != null ? request.userId() : "anonymous";
             String username = request.username() != null ? request.username() : "Anonymous";
-            String sessionId = request.sessionId() != null ? request.sessionId() : 
+            String sessionId = request.sessionId() != null ? request.sessionId() :
                 UUID.randomUUID().toString();
-            
+
+            mutationService.applyDraft(projectId, userId, request.ops());
             draftTrackingService.recordDrafts(projectId, userId, username, request.ops(), sessionId);
-            
+
             return ResponseEntity.ok(Map.of(
-                "success", true, 
+                "success", true,
                 "draft", true,
-                "message", "Changes recorded as draft"
+                "message", "Changes saved to your private draft"
             ));
         } else {
             try {

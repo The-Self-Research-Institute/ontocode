@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeTrackingService;
-import self.research.ontology.owlEditor.service.GraphDBHistoryService;
+import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.HistorySyncService;
 
 import java.time.LocalDateTime;
@@ -31,7 +31,7 @@ public class ChangeTrackingController {
     private ChangeTrackingService changeTrackingService;
     
     @Autowired
-    private GraphDBHistoryService graphDBHistoryService;
+    private OntologyHistoryService historyService;
     
     @Autowired
     private HistorySyncService historySyncService;
@@ -566,7 +566,7 @@ public class ChangeTrackingController {
                 }
                 
                 // Always record the rollback in GraphDB history
-                graphDBHistoryService.recordEdit(
+                historyService.recordEdit(
                     projectId,
                     userId,
                     username,

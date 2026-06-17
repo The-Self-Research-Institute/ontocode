@@ -18,11 +18,11 @@ import java.util.stream.Collectors;
 public class AxiomAnnotationService {
 
     private final StorageManager storageManager;
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final AxiomLookupService axiomLookupService;
 
     public AxiomAnnotationService(StorageManager storageManager,
-                                  GraphDBDatasetService datasetService,
+                                  SparqlDatasetService datasetService,
                                   AxiomLookupService axiomLookupService) {
         this.storageManager = storageManager;
         this.datasetService = datasetService;

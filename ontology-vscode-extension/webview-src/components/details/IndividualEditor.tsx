@@ -136,12 +136,14 @@ const IndividualEditor: React.FC<{
   username?: string;
   objectPropertyHierarchy?: TreeNode[];
   dataPropertyHierarchy?: TreeNode[];
+  expandedNodes?: string[];
+  onToggleNode?: (nodeId: string) => Promise<void> | void;
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
   onNavigate?: (iri: string, type: string) => void;
   isReasonerRunning?: boolean;
   selectedReasoner?: string;
-}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy, dataPropertyHierarchy, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT' }) => {
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy, dataPropertyHierarchy, expandedNodes, onToggleNode, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT' }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [isNegativeAssertion, setIsNegativeAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
@@ -843,8 +845,10 @@ const IndividualEditor: React.FC<{
             handleAddType(expression);
             setTypeDialogOpen(false);
           }}
-          objectProperties={[]} // We can pass these if needed for restrictions
+          objectProperties={[]}
           dataProperties={[]}
+          expandedNodes={expandedNodes}
+          onToggleNode={onToggleNode}
           allowedTabs={['hierarchy', 'classExpression', 'objectRestriction', 'dataRestriction']}
         />
       )}

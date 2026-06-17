@@ -64,16 +64,13 @@ export function isLicenseExpired(license: DesktopLicense | null | undefined): bo
 /** Fired after a successful license import so the app can re-derive the user. */
 export const DESKTOP_LICENSE_UPDATED_EVENT = 'desktop-license-updated';
 
-/**
- * Load ontology into OWLAPI memory (Protégé-style fast-open) before SPARQL/snapshot-heavy UI fetch.
- * Works on desktop and cloud when {@code ontocode.fastopen.enabled=true}.
- */
 export async function warmOntologyInMemory(
     projectId: string,
     options?: { timeoutMs?: number; onStatus?: (message: string) => void },
 ): Promise<{
     ready: boolean;
     sparqlFallback: boolean;
+    pending?: boolean;
     classCount?: number;
     objectPropertyCount?: number;
     dataPropertyCount?: number;
@@ -91,9 +88,13 @@ export async function warmOntologyInMemory(
         );
         const data = res?.data ?? res;
         const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+        const ready = !!(data?.ready ?? data?.owlapiReady);
+        const sparqlFallback = data?.sparqlFallback === true;
+        const pending = data?.pending === true || (!ready && !sparqlFallback);
         return {
-            ready: !!(data?.ready ?? data?.owlapiReady),
-            sparqlFallback: !!(data?.sparqlFallback ?? !data?.ready),
+            ready,
+            sparqlFallback,
+            pending,
             classCount: num(data?.classCount),
             objectPropertyCount: num(data?.objectPropertyCount),
             dataPropertyCount: num(data?.dataPropertyCount),
@@ -101,7 +102,76 @@ export async function warmOntologyInMemory(
             annotationPropertyCount: num(data?.annotationPropertyCount),
         };
     } catch (e) {
-        console.warn('[desktop] warmOntologyInMemory failed, using SPARQL fallback', e);
-        return { ready: false, sparqlFallback: true };
+        console.warn('[desktop] warmOntologyInMemory failed — will retry via cache-status', e);
+        return { ready: false, sparqlFallback: false, pending: true };
     }
+}
+
+/** Poll cache-status until the OWLAPI in-memory model is ready (desktop owlapi-first). */
+export async function waitForDesktopOwlApiReady(
+    projectId: string,
+    options?: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal },
+): Promise<boolean> {
+    if (!isDesktop()) return true;
+    const timeoutMs = options?.timeoutMs ?? 120_000;
+    const pollMs = options?.pollMs ?? 1500;
+    const encoded = encodeURIComponent(projectId);
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+        if (options?.signal?.aborted) return false;
+        try {
+            const cs: any = await apiClient.get(`/api/ontology/cache-status/${encoded}`);
+            if (cs?.owlapiReady ?? cs?.data?.owlapiReady) return true;
+        } catch {
+            /* retry */
+        }
+        await new Promise((r) => setTimeout(r, pollMs));
+    }
+    return false;
+}
+
+export function isOwlApiWarmingResponse(res: unknown): boolean {
+    const r = res as Record<string, unknown> | null | undefined;
+    return !!(r?.warming || (r?.data as Record<string, unknown> | undefined)?.warming);
+}
+
+/**
+ * Start Fuseki (if deferred) and sync the ontology for SPARQL/graph features.
+ * Core editing uses OWLAPI only — this is only needed for Fuseki-dependent tabs.
+ */
+export async function ensureDesktopFusekiSync(projectId: string): Promise<{ synced: boolean; error?: string }> {
+    if (!isDesktop()) return { synced: true };
+    try {
+        const api = (window as any).electronAPI;
+        if (api?.ensureFuseki) {
+            await api.ensureFuseki();
+        }
+        const encoded = encodeURIComponent(projectId);
+        const res: any = await apiClient.post(`/api/desktop/sync-fuseki/${encoded}`, {});
+        const data = res?.data ?? res;
+        return { synced: !!data?.synced, error: data?.error };
+    } catch (e: any) {
+        console.warn('[desktop] ensureDesktopFusekiSync failed', e);
+        return { synced: false, error: e?.message || 'Fuseki sync failed' };
+    }
+}
+
+/**
+ * Fire-and-forget: start Fuseki if needed and queue a background triple-store sync.
+ * Does not block the editor — OWLAPI remains the source of truth for open/edit.
+ */
+export function scheduleSilentDesktopFusekiSync(projectId: string): void {
+    if (!isDesktop() || !projectId) return;
+    void (async () => {
+        try {
+            const api = (window as any).electronAPI;
+            if (api?.ensureFuseki) {
+                await api.ensureFuseki();
+            }
+            const encoded = encodeURIComponent(projectId);
+            await apiClient.post(`/api/desktop/schedule-fuseki-sync/${encoded}`, {});
+        } catch (e) {
+            console.debug('[desktop] silent Fuseki sync schedule failed (will retry on mutation)', e);
+        }
+    })();
 }

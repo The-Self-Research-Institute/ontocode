@@ -6,7 +6,7 @@ import org.eclipse.rdf4j.model.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
-import self.research.ontology.owlEditor.service.GraphDBDatasetService;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
 
 import java.util.*;
 import java.util.regex.Matcher;
@@ -17,9 +17,9 @@ import java.util.regex.Pattern;
 @CrossOrigin(originPatterns = "*")
 public class SqwrlController {
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
 
-    public SqwrlController(GraphDBDatasetService datasetService) {
+    public SqwrlController(SparqlDatasetService datasetService) {
         this.datasetService = datasetService;
     }
 

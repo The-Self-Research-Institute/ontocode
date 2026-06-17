@@ -63,7 +63,11 @@ let SWRL_PORT    = DEFAULT_PORTS.swrl;
 
 // ── State ────────────────────────────────────────────────────────────────────
 let mongoProcess   = null;
+// Lazy Fuseki: skip at startup (OWLAPI-first desktop). Started on demand for SPARQL/graph.
+const LAZY_FUSEKI = process.env.ONTOCODE_LAZY_FUSEKI !== '0';
+
 let fusekiProcess  = null;
+let fusekiStartPromise = null;
 let desktopProcess = null;
 let swrlProcess    = null;
 let _logCallback   = null;
@@ -113,11 +117,32 @@ module.exports = {
 
     async startAll() {
         ensureDirs();
+        validateBackendBundles();
         await resolveAllPorts();
         await startMongo();
-        await startFuseki();
+        if (!LAZY_FUSEKI) {
+            await startFuseki();
+        } else {
+            log('info', 'Fuseki deferred (OWLAPI-first desktop — starts when SPARQL/graph needs it)');
+        }
         await startDesktop();
         await startSwrl();   // optional — skipped silently if swrl.jar absent
+    },
+
+    async ensureFuseki() {
+        if (fusekiProcess && !fusekiProcess.killed) {
+            return { running: true, port: FUSEKI_PORT };
+        }
+        if (!fusekiStartPromise) {
+            fusekiStartPromise = startFuseki().then(() => {
+                fusekiStartPromise = null;
+                return { running: true, port: FUSEKI_PORT };
+            }).catch((err) => {
+                fusekiStartPromise = null;
+                throw err;
+            });
+        }
+        return fusekiStartPromise;
     },
 
     async stopAll() {
@@ -173,10 +198,41 @@ function javaBin() {
     return 'java';
 }
 
+function requiredJarPath(name) {
+    return path.join(RESOURCES_DIR, 'jars', name);
+}
+
+function validateBackendBundles() {
+    const required = ['desktop.jar', 'fuseki-server.jar'];
+    const missing = required.filter((name) => !fs.existsSync(requiredJarPath(name)));
+    if (missing.length === 0) return;
+
+    const lines = [
+        'OntoCode Desktop is missing backend JAR files:',
+        ...missing.map((name) => `  • ${path.join(RESOURCES_DIR, 'jars', name)}`),
+        '',
+        'Your packaged app was built before desktop.jar was copied into resources.',
+        'Fix (from electron-app):',
+        '  node scripts/build-desktop.js --java --resources',
+        '  node scripts/sync-packaged-backend.js',
+        'Or rebuild: npm run dist:win',
+    ];
+    throw new Error(lines.join('\n'));
+}
+
 // ── Service starters ─────────────────────────────────────────────────────────
 
 async function startMongo() {
     log('info', 'Starting MongoDB…');
+    // Remove stale lock file left by a previous forced shutdown (SIGKILL).
+    // WiredTiger has its own crash-recovery; the lockfile is advisory only.
+    const mongoLock = path.join(MONGO_DATA_DIR, 'mongod.lock');
+    try {
+        if (fs.existsSync(mongoLock) && fs.readFileSync(mongoLock, 'utf8').trim()) {
+            fs.unlinkSync(mongoLock);
+            log('info', `Removed stale MongoDB lock: ${mongoLock}`);
+        }
+    } catch (_) {}
     const logFile = path.join(LOGS_DIR, 'mongo.log');
     mongoProcess = spawnService('MongoDB', mongoBin(), [
         '--dbpath', MONGO_DATA_DIR,
@@ -353,7 +409,7 @@ async function startSwrl() {
         _JAVA_OPTIONS: '',
     }, logFile);
 
-    await waitForHttp(`http://127.0.0.1:${SWRL_PORT}/actuator/health`, 60000, 'SWRL');
+    await waitForHttp(`http://127.0.0.1:${SWRL_PORT}/actuator/health`, 120000, 'SWRL');
     log('ok', `SWRL reasoner ready on port ${SWRL_PORT}`);
 }
 

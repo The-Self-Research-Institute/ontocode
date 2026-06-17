@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li><b>Named-graph fidelity:</b> triples are loaded into the same
  *       {@code http://ontocode.org/project/{id}} context that GraphDB
  *       uses, so existing {@code FROM <graph>} injection in
- *       {@link GraphDBDatasetService} works unchanged against the cache.</li>
+ *       {@link SparqlDatasetService} works unchanged against the cache.</li>
  *   <li><b>LRU eviction:</b> bounded number of projects live in RAM at a
  *       time ({@code ontocode.cache.memstore.max-projects}, default 3).</li>
  * </ul>
@@ -288,7 +288,7 @@ public class ProjectRepoCache {
         return m;
     }
 
-    /** Supplied by GraphDBDatasetService so the cache doesn't know about HTTP itself. */
+    /** Supplied by SparqlDatasetService so the cache doesn't know about HTTP itself. */
     public interface Loader {
         GraphQueryResult streamTriples(String projectId) throws Exception;
         String graphUri(String projectId);
