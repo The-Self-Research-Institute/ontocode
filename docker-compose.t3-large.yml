@@ -46,6 +46,8 @@ services:
       ONTOCODE_FASTOPEN_AUTO_WARM: "false"
       # Tighter reasoner limit on 8 GB tier — prevents OOM from in-memory export of large ontologies
       ONTOCODE_REASONER_MAX_TRIPLES: 500000
+      ONTOCODE_DLQUERY_MAX_CONCURRENT: 1
+      ONTOCODE_DLQUERY_SLOT_BUDGET: 1
     deploy:
       resources:
         limits:

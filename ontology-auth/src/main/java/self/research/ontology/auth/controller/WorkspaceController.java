@@ -61,10 +61,16 @@ public class WorkspaceController {
             User user = userOpt.get();
             
             // Model C Self-Healing: Sync workspaces to owner's account plan on fetch
-            // This ensures previous data is automatically migrated to the new sync model.
             workspaceService.syncWorkspacesToOwnerPlan(user);
 
             List<Workspace> workspaces = workspaceService.getUserWorkspaces(user.getId());
+
+            // Sync each workspace from its owner (members inherit owner enterprise bypass / billing).
+            workspaces.stream()
+                    .map(Workspace::getOwnerId)
+                    .distinct()
+                    .forEach(ownerId -> userRepository.findById(ownerId).ifPresent(workspaceService::syncWorkspacesToOwnerPlan));
+            workspaces = workspaceService.getUserWorkspaces(user.getId());
 
             // Convert to DTO to avoid sending sensitive info
             List<Map<String, Object>> workspaceDTOs = workspaces.stream()
@@ -399,16 +405,20 @@ public class WorkspaceController {
 
             Workspace workspace = workspaceOpt.get();
 
-            // Owner: refresh account from DB and push plan/period/billing to workspace (self-heal webhook lag
-            // or missing subscriptionCurrentPeriodEnd after subscribe/update API).
+            // Always sync workspace billing from the owner's account (enterprise bypass, Stripe, etc.)
+            // so members see the correct plan and are not blocked by stale EXPIRED status.
+            userRepository.findById(workspace.getOwnerId()).ifPresent(owner -> {
+                userRepository.findById(owner.getId()).ifPresent(workspaceService::syncWorkspacesToOwnerPlan);
+            });
+            workspaceOpt = workspaceService.getWorkspace(workspaceId);
+            if (workspaceOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+            }
+            workspace = workspaceOpt.get();
+
+            // Owner: refresh account from DB before token issue (self-heal webhook lag).
             if (user.getId().equals(workspace.getOwnerId())) {
                 user = userRepository.findById(user.getId()).orElse(user);
-                workspaceService.syncWorkspacesToOwnerPlan(user);
-                workspaceOpt = workspaceService.getWorkspace(workspaceId);
-                if (workspaceOpt.isEmpty()) {
-                    return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
-                }
-                workspace = workspaceOpt.get();
             }
 
             // If the user is still PENDING, they must explicitly accept or reject before entering.
@@ -457,9 +467,12 @@ public class WorkspaceController {
                     || "PAYMENT_ACTION_REQUIRED".equalsIgnoreCase(billingStatus);
 
             // Block access only when the plan has truly expired (canceled, unpaid, expired).
-            // Enterprise domain bypass users are exempt — their access is managed externally.
+            // Enterprise domain bypass on the workspace owner grants full access to all members.
+            User workspaceOwner = userRepository.findById(workspace.getOwnerId()).orElse(null);
+            boolean ownerEnterpriseBypass = workspaceOwner != null
+                    && systemSettingsService.isEnterpriseDomain(workspaceOwner.getEmail());
             boolean isEnterpriseDomainUser = systemSettingsService.isEnterpriseDomain(user.getEmail());
-            if (isPaidPlan && !hasValidBilling && !isEnterpriseDomainUser) {
+            if (isPaidPlan && !hasValidBilling && !isEnterpriseDomainUser && !ownerEnterpriseBypass) {
                 log.warn("[Workspace] Access blocked for workspace {} due to {} billing status", workspaceId, billingStatus);
                 return ResponseEntity.status(402).body(Map.of(
                     "error", "Plan validity has ended. Please update your subscription to restore access.",
@@ -469,7 +482,13 @@ public class WorkspaceController {
             }
 
             boolean canUsePaidFeatures = Boolean.TRUE.equals(workspace.getCollaborationEnabled()) && hasValidBilling;
+            if (ownerEnterpriseBypass) {
+                canUsePaidFeatures = true;
+            }
             String effectivePlan = canUsePaidFeatures ? workspacePlan : "FREE";
+            if (ownerEnterpriseBypass) {
+                effectivePlan = "ENTERPRISE";
+            }
 
             // Generate workspace-scoped JWT token with effective subscription plan
             Map<String, Object> claims = new HashMap<>();
@@ -714,6 +733,45 @@ public class WorkspaceController {
     }
 
     /**
+     * Leave a workspace (any member except the owner).
+     */
+    @PostMapping("/{workspaceId}/leave")
+    public ResponseEntity<?> leaveWorkspace(@PathVariable String workspaceId) {
+        try {
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+            User user = userOpt.get();
+
+            Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
+            if (workspaceOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+            }
+            Workspace workspace = workspaceOpt.get();
+
+            if (user.getId().equals(workspace.getOwnerId())) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Workspace owner cannot leave. Transfer ownership or delete the workspace."
+                ));
+            }
+            if (!workspaceService.hasAccess(workspaceId, user.getId())) {
+                return ResponseEntity.status(403).body(Map.of("error", "You are not a member of this workspace"));
+            }
+
+            workspaceService.leaveWorkspace(workspaceId, user.getId());
+            log.info("User {} left workspace {}", user.getId(), workspaceId);
+            return ResponseEntity.ok(Map.of("message", "You have left the workspace", "workspaceId", workspaceId));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Error leaving workspace", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
      * Remove a member from a workspace (owner or admin)
      */
     @DeleteMapping("/{workspaceId}/members/{userId}")
@@ -767,10 +825,21 @@ public class WorkspaceController {
                 ));
             }
 
-            // Prevent owner from removing themselves
-            if (targetUserId.equals(user.getId()) || (targetEmail != null && targetEmail.equals(user.getEmail()))) {
+            // Prevent workspace owner from removing themselves (must transfer ownership or delete)
+            boolean isSelf = targetUserId.equals(user.getId())
+                    || (targetEmail != null && targetEmail.equalsIgnoreCase(user.getEmail()));
+            if (isSelf && (user.getId().equals(workspace.getOwnerId()) || targetUserId.equals(workspace.getOwnerId()))) {
                 return ResponseEntity.badRequest().body(Map.of(
                     "error", "Workspace owner cannot be removed. Please transfer ownership or delete the workspace."
+                ));
+            }
+
+            // Non-owner members/admins may remove themselves
+            if (isSelf) {
+                workspaceService.leaveWorkspace(workspaceId, user.getId());
+                return ResponseEntity.ok(Map.of(
+                    "message", "You have left the workspace",
+                    "workspaceId", workspaceId
                 ));
             }
 
@@ -934,6 +1003,12 @@ public class WorkspaceController {
 
         // FREE workspaces are always active
         if ("FREE".equalsIgnoreCase(plan)) {
+            return "ACTIVE";
+        }
+
+        // Enterprise-domain owners: billing is managed externally — always active.
+        Optional<User> ownerOpt = userRepository.findById(workspace.getOwnerId());
+        if (ownerOpt.isPresent() && systemSettingsService.isEnterpriseDomain(ownerOpt.get().getEmail())) {
             return "ACTIVE";
         }
 

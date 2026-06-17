@@ -12,7 +12,7 @@
  * - https://oboacademy.github.io/obook/tutorial/basic-dl-query/
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { 
   Play, Plus, Loader2, AlertCircle, CheckCircle, 
   ChevronDown, ChevronRight, HelpCircle, BookOpen,
@@ -31,9 +31,14 @@ interface DLQueryResult {
 
 interface DLQueryResponse {
   success: boolean;
-  query: string;
-  queryType: string[];
-  results: {
+  async?: boolean;
+  jobId?: string;
+  status?: string;
+  queuePosition?: number;
+  estimatedWaitTimeMs?: number;
+  query?: string;
+  queryType?: string[];
+  results?: {
     superclasses?: DLQueryResult[];
     directSuperclasses?: DLQueryResult[];
     subclasses?: DLQueryResult[];
@@ -42,9 +47,83 @@ interface DLQueryResponse {
     instances?: DLQueryResult[];
     directInstances?: DLQueryResult[];
   };
-  executionTime: number;
+  executionTime?: number;
+  executionTimeMs?: number;
   error?: string;
 }
+
+interface DLQueryJobUpdate {
+  jobId: string;
+  projectId: string;
+  status: string;
+  queuePosition?: number;
+  estimatedWaitTimeMs?: number;
+  message?: string;
+  executionTimeMs?: number;
+  result?: DLQueryResponse['results'];
+  error?: string;
+}
+
+const formatDlQueryProgress = (detail: DLQueryJobUpdate): string => {
+  const waitSec = detail.estimatedWaitTimeMs
+    ? Math.max(1, Math.ceil(detail.estimatedWaitTimeMs / 1000))
+    : 0;
+  if (detail.status === 'PROCESSING') {
+    return 'Running your query…';
+  }
+  if (detail.status === 'QUEUED') {
+    const pos = detail.queuePosition ?? 0;
+    if (pos <= 1) {
+      return waitSec > 0
+        ? `Your query is next in line (about ${waitSec} sec)`
+        : 'Your query is next in line';
+    }
+    const ahead = Math.max(0, pos - 1);
+    return waitSec > 0
+      ? `Your query is queued — position ${pos} (${ahead} ahead, about ${waitSec} sec)`
+      : `Your query is queued — position ${pos}`;
+  }
+  return 'Working on your query…';
+};
+
+const friendlyDlQueryError = (raw?: string): string => {
+  if (!raw) return 'Could not run this query. Please try again.';
+  const lower = raw.toLowerCase();
+  if (lower.includes('too large') || lower.includes('out of memory') || lower.includes('triples')) {
+    return 'This ontology is too large for DL Query. Try a simpler expression or use the SPARQL tab instead.';
+  }
+  return raw;
+};
+
+const waitForDlQueryJob = (jobId: string): Promise<DLQueryJobUpdate> =>
+  new Promise((resolve, reject) => {
+    const timeoutMs = 45 * 60 * 1000;
+    const timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('This query is taking longer than expected. Please try again.'));
+    }, timeoutMs);
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('dlQueryJobUpdate', onUpdate);
+      window.dispatchEvent(new CustomEvent('dlQueryUnsubscribe', { detail: { jobId } }));
+    };
+
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<DLQueryJobUpdate>).detail;
+      if (!detail || detail.jobId !== jobId) return;
+      if (detail.status === 'COMPLETED') {
+        cleanup();
+        resolve(detail);
+      } else if (detail.status === 'FAILED') {
+        cleanup();
+        reject(new Error(friendlyDlQueryError(detail.error)));
+      }
+    };
+
+    window.addEventListener('dlQueryJobUpdate', onUpdate);
+    window.dispatchEvent(new CustomEvent('dlQuerySubscribe', { detail: { jobId } }));
+  });
 
 interface OntologyMetrics {
   classCount?: number;
@@ -202,6 +281,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
   // State
   const [query, setQuery] = useState(initialQuery);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
   const [results, setResults] = useState<DLQueryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedTypes, setSelectedTypes] = useState<string[]>(['subclasses', 'instances']);
@@ -253,6 +333,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     return allSuggestions.slice(0, 10);
   }, [query, classes, objectProperties, dataProperties]);
 
+  const pendingJobListenerRef = useRef<((event: Event) => void) | null>(null);
+
   // Execute query
   const handleExecuteQuery = useCallback(async () => {
     if (!query.trim()) {
@@ -266,31 +348,76 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     }
     
     setIsLoading(true);
+    setLoadingMessage(null);
     setError(null);
     setResults(null);
+
+    if (pendingJobListenerRef.current) {
+      window.removeEventListener('dlQueryJobUpdate', pendingJobListenerRef.current);
+      pendingJobListenerRef.current = null;
+    }
     
     try {
-      const response = await apiClient.post<DLQueryResponse>(
+      const submit = await apiClient.post<DLQueryResponse>(
         `/api/ontology/${projectId}/dl-query`,
         { 
           expression: query,
           queryTypes: selectedTypes
         }
       );
-      
-      setResults(response);
-      
-      if (!response.success && response.error) {
-        setError(response.error);
+
+      if (submit.async && submit.jobId) {
+        const progressListener = (event: Event) => {
+          const detail = (event as CustomEvent<DLQueryJobUpdate>).detail;
+          if (!detail || detail.jobId !== submit.jobId) return;
+          setLoadingMessage(formatDlQueryProgress(detail));
+        };
+        pendingJobListenerRef.current = progressListener;
+        window.addEventListener('dlQueryJobUpdate', progressListener);
+
+        let jobUpdate: DLQueryJobUpdate;
+        try {
+          jobUpdate = await waitForDlQueryJob(submit.jobId);
+        } catch (wsError) {
+          // WebSocket fallback (e.g. extension host without STOMP)
+          const polled = await apiClient.get<DLQueryResponse>(`/api/dl-query/jobs/${submit.jobId}`);
+          if (polled.status === 'FAILED' || polled.success === false) {
+            throw new Error(polled.error || (wsError as Error).message);
+          }
+          setResults(polled);
+          return;
+        } finally {
+          if (pendingJobListenerRef.current) {
+            window.removeEventListener('dlQueryJobUpdate', pendingJobListenerRef.current);
+            pendingJobListenerRef.current = null;
+          }
+        }
+
+        const resultPayload = jobUpdate.result as Record<string, unknown> | undefined;
+        const response: DLQueryResponse = {
+          success: true,
+          query: (resultPayload?.query as string) || submit.query || query,
+          queryType: (resultPayload?.queryType as string[]) || selectedTypes,
+          results: resultPayload?.results as DLQueryResponse['results'],
+          executionTime: jobUpdate.executionTimeMs ?? (resultPayload?.executionTime as number),
+        };
+        setResults(response);
+        return;
+      }
+
+      setResults(submit);
+      if (!submit.success && submit.error) {
+        setError(submit.error);
       }
     } catch (err: any) {
       console.error('DL Query API failed:', err);
       setResults(null);
-      setError(err?.response?.data?.error || err?.message || 'DL Query failed. Check that the backend is running.');
+      setError(friendlyDlQueryError(err?.response?.data?.error || err?.message) || 'Could not run this query. Please try again.');
     } finally {
       setIsLoading(false);
+      setLoadingMessage(null);
     }
-  }, [query, selectedTypes, projectId, apiClient, classes, individuals]);
+  }, [query, selectedTypes, projectId, apiClient]);
 
   // Toggle query type selection
   const toggleQueryType = (typeId: string) => {
@@ -663,11 +790,11 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
             {isLoading ? (
               <div className="flex items-center justify-center h-full text-gray-600">
                 <Loader2 size={24} className="animate-spin mr-2" />
-                <span>Executing query...</span>
+                <span>{loadingMessage || 'Running your query…'}</span>
               </div>
             ) : results ? (
               <div className="space-y-4">
-                {Object.entries(results.results).map(([type, items]) => {
+                {Object.entries(results.results || {}).map(([type, items]) => {
                   const filteredItems = filterResults(items);
                   if (!filteredItems || filteredItems.length === 0) return null;
                   

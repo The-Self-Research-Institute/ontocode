@@ -224,7 +224,7 @@ function Upload-Installer {
     $filename = [System.IO.Path]::GetFileName($FilePath)
     $pkgJson = Get-Content "$Root\electron-app\package.json" -Raw | ConvertFrom-Json
     $version = $pkgJson.version
-    $releaseNotes = "Beta $version — in-app update testing"
+    $releaseNotes = "Beta $version - in-app update testing"
     Write-Host ">> Upload $filename for platform=$Platform version=$version"
     curl.exe -f -X POST "$ApiBase/api/downloads/upload" `
         -H "Authorization: Bearer $token" `

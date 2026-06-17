@@ -561,7 +561,7 @@ const AppContent = () => {
     if (user && showSubscriptionPlan) {
       return { view: "subscription", showSubscriptionPlan };
     }
-    if (!isDesktop() && user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending)) {
+    if (!isDesktop() && user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending) && !selectedFileId) {
       return { view: "workspace" };
     }
     if (user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile)) {
@@ -2061,7 +2061,7 @@ const AppContent = () => {
 
   // Show workspace selection if user is logged in but hasn't selected a workspace
   const showWorkspaceSelectionScreen =
-    !isDesktop() && user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending);
+    !isDesktop() && user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending) && !selectedFileId;
   console.log("[App] Render decision - showWorkspaceSelectionScreen:", showWorkspaceSelectionScreen);
 
   if (showWorkspaceSelectionScreen) {

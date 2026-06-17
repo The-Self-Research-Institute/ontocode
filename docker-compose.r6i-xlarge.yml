@@ -41,6 +41,9 @@ services:
     environment:
       JAVA_OPTS: "-Xms2g -Xmx6g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
       ONTOCODE_IMPORT_MAX_CONCURRENT: 1
+      ONTOCODE_DLQUERY_MAX_CONCURRENT: 2
+      ONTOCODE_DLQUERY_SLOT_BUDGET: 2
+      ONTOCODE_REASONER_MAX_TRIPLES: 1000000
     deploy:
       resources:
         limits:
