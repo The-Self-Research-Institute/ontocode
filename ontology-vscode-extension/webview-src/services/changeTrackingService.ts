@@ -2,12 +2,14 @@ import apiClient from './apiClient';
 
 export interface OntologyChange {
   id: string;
-  projectId: string;
+  projectId?: string;
   userId: string;
   username: string;
   timestamp: string;
   changeType: string;
-  changeCategory: string;
+  changeCategory?: string;
+  entityType?: string;
+  operationType?: string;
   entityIRI?: string;
   entityLabel?: string;
   oldValue?: string;
@@ -15,7 +17,28 @@ export interface OntologyChange {
   description?: string;
   comment?: string;
   sessionId?: string;
-  reverted: boolean;
+  reverted?: boolean;
+  status?: string;
+  hasConflict?: boolean;
+  commentCount?: number;
+}
+
+function resolveActor(): { userId: string; username: string } {
+  try {
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const userId = payload.userId || payload.id || payload.email || payload.sub || 'anonymous';
+        const username = payload.sub || payload.email || 'Anonymous';
+        return { userId, username };
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { userId: 'anonymous', username: 'Anonymous' };
 }
 
 /**
@@ -118,6 +141,86 @@ export const changeTrackingService = {
     } catch (error) {
       console.error('[changeTrackingService] rollbackChange failed:', error);
       return { success: false, error: 'Rollback request failed' };
+    }
+  },
+
+  async approveChange(projectId: string, changeId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const actor = resolveActor();
+      const response = await apiClient.post(
+        `/api/ontology/${encodeURIComponent(projectId)}/changes/${encodeURIComponent(changeId)}/approve`,
+        { userId: actor.userId, username: actor.username },
+      );
+      const data = response.data || response;
+      return { success: data.success !== false, error: data.error };
+    } catch (error) {
+      console.error('[changeTrackingService] approveChange failed:', error);
+      return { success: false, error: 'Approve request failed' };
+    }
+  },
+
+  async rejectChange(projectId: string, changeId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const actor = resolveActor();
+      const response = await apiClient.post(
+        `/api/ontology/${encodeURIComponent(projectId)}/changes/${encodeURIComponent(changeId)}/reject`,
+        { userId: actor.userId, username: actor.username },
+      );
+      const data = response.data || response;
+      return { success: data.success !== false, error: data.error };
+    } catch (error) {
+      console.error('[changeTrackingService] rejectChange failed:', error);
+      return { success: false, error: 'Reject request failed' };
+    }
+  },
+
+  async revertChange(
+    projectId: string,
+    changeId: string,
+  ): Promise<{ success: boolean; error?: string; message?: string }> {
+    try {
+      const actor = resolveActor();
+      const response = await apiClient.post(
+        `/api/ontology/${encodeURIComponent(projectId)}/changes/${encodeURIComponent(changeId)}/revert`,
+        { userId: actor.userId, username: actor.username },
+      );
+      const data = response.data || response;
+      return { success: data.success !== false, error: data.error, message: data.message };
+    } catch (error) {
+      console.error('[changeTrackingService] revertChange failed:', error);
+      return { success: false, error: 'Revert request failed' };
+    }
+  },
+
+  async addComment(
+    projectId: string,
+    changeId: string,
+    text: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const actor = resolveActor();
+      const response = await apiClient.post(
+        `/api/ontology/${encodeURIComponent(projectId)}/changes/${encodeURIComponent(changeId)}/comments`,
+        { text, userId: actor.userId, username: actor.username },
+      );
+      const data = response.data || response;
+      return { success: data.success !== false, error: data.error };
+    } catch (error) {
+      console.error('[changeTrackingService] addComment failed:', error);
+      return { success: false, error: 'Comment request failed' };
+    }
+  },
+
+  async getChangeDetails(projectId: string, changeId: string): Promise<Record<string, unknown> | null> {
+    try {
+      const response = await apiClient.get(
+        `/api/ontology/${encodeURIComponent(projectId)}/changes/${encodeURIComponent(changeId)}/details`,
+      );
+      const data = response.data || response;
+      return data.success ? (data.change as Record<string, unknown>) : null;
+    } catch (error) {
+      console.error('[changeTrackingService] getChangeDetails failed:', error);
+      return null;
     }
   },
 };

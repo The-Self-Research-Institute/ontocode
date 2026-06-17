@@ -9,6 +9,7 @@ import ReactDOM from 'react-dom/client';
 // Import lucide-react - we need to ensure this isn't tree-shaken
 // Using dynamic access to prevent static analysis from removing unused exports
 import * as LucideIcons from 'lucide-react';
+import { authenticatedFetch, getAuthHeaders } from './utils/authenticatedFetch';
 
 // Expose React globally for UMD plugins
 (window as any).React = React;
@@ -35,3 +36,7 @@ if (typeof window !== 'undefined' && lucide) {
 }
 
 export { React, ReactDOM, lucide as LucideReact };
+
+// Authenticated fetch for UMD plugins (Change Assistant, Graph View, etc.)
+(window as any).authenticatedFetch = authenticatedFetch;
+(window as any).getAuthHeaders = getAuthHeaders;

@@ -3732,7 +3732,12 @@ class OntoCodePanel {
             console.log('[OntoCode] ========================================');
 
             // Create collaboration manager (connects to OWL Editor WebSocket)
-            this.collaborationManager = new CollaborationManager(OWL_EDITOR_URL, userId, username);
+            this.collaborationManager = new CollaborationManager(
+                OWL_EDITOR_URL,
+                userId,
+                username,
+                async () => (await (this._context as any).secrets.get(TOKEN_KEY)) ?? null,
+            );
             this.editCapture.setCollaborationManager(this.collaborationManager);
 
             // Set up event handlers
