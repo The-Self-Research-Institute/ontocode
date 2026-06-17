@@ -3,7 +3,8 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Copy webview-src package files
+# Extension manifest (app version for __APP_VERSION__) + webview package files
+COPY ontology-vscode-extension/package.json ./extension-package.json
 COPY ontology-vscode-extension/webview-src/package*.json ./
 
 # Install dependencies
