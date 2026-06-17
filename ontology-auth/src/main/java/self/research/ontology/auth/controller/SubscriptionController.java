@@ -427,6 +427,15 @@ public class SubscriptionController {
             User owner = userRepository.findById(workspace.getOwnerId())
                     .orElseThrow(() -> new IllegalStateException("Workspace owner not found"));
 
+            if (systemSettingsService.isEnterpriseDomain(owner.getEmail())) {
+                return ResponseEntity.ok(Map.of(
+                    "planName", "ENTERPRISE",
+                    "status", "active",
+                    "isExpired", false,
+                    "enterpriseDomainBypass", true
+                ));
+            }
+
             String planName = owner.getSubscriptionPlanName() != null ? owner.getSubscriptionPlanName() : "FREE";
             String status   = owner.getSubscriptionStatus()   != null ? owner.getSubscriptionStatus()   : "";
             boolean subscriptionAccessOk = status.equalsIgnoreCase("active")

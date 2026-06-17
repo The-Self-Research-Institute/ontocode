@@ -237,6 +237,73 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     };
   }, [user?.token]);
 
+  // Dynamic DL Query job subscriptions (one topic per job)
+  useEffect(() => {
+    const jobSubscriptions = new Map<string, StompSubscription>();
+
+    const subscribeToJob = (jobId: string) => {
+      const client = stompClientRef.current;
+      if (!client?.connected || jobSubscriptions.has(jobId)) {
+        return;
+      }
+      const sub = client.subscribe(`/topic/dlquery/${jobId}`, (msg) => {
+        try {
+          const payload = JSON.parse(msg.body);
+          window.dispatchEvent(new CustomEvent("dlQueryJobUpdate", { detail: payload }));
+          if (payload.status === "COMPLETED" || payload.status === "FAILED") {
+            sub.unsubscribe();
+            jobSubscriptions.delete(jobId);
+          }
+        } catch (e) {
+          console.error("[CollaborationContext] DL Query job parse error:", e);
+        }
+      });
+      jobSubscriptions.set(jobId, sub);
+    };
+
+    const handleSubscribe = (event: Event) => {
+      const jobId = (event as CustomEvent).detail?.jobId as string | undefined;
+      if (!jobId) return;
+
+      const trySubscribe = () => {
+        if (stompClientRef.current?.connected) {
+          subscribeToJob(jobId);
+          return true;
+        }
+        return false;
+      };
+
+      if (!trySubscribe()) {
+        const retryId = window.setInterval(() => {
+          if (trySubscribe()) {
+            window.clearInterval(retryId);
+          }
+        }, 500);
+        window.setTimeout(() => window.clearInterval(retryId), 30_000);
+      }
+    };
+
+    const handleUnsubscribe = (event: Event) => {
+      const jobId = (event as CustomEvent).detail?.jobId as string | undefined;
+      if (!jobId) return;
+      const sub = jobSubscriptions.get(jobId);
+      if (sub) {
+        sub.unsubscribe();
+        jobSubscriptions.delete(jobId);
+      }
+    };
+
+    window.addEventListener("dlQuerySubscribe", handleSubscribe);
+    window.addEventListener("dlQueryUnsubscribe", handleUnsubscribe);
+
+    return () => {
+      window.removeEventListener("dlQuerySubscribe", handleSubscribe);
+      window.removeEventListener("dlQueryUnsubscribe", handleUnsubscribe);
+      jobSubscriptions.forEach((sub) => sub.unsubscribe());
+      jobSubscriptions.clear();
+    };
+  }, [user?.token]);
+
   // Helper: subscribe to project-specific STOMP topics
   const joinProjectTopics = useCallback(
     (client: Client, projectId: string) => {

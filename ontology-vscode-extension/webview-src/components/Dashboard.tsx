@@ -1133,20 +1133,23 @@ const Dashboard: React.FC<DashboardProps> = ({
       .catch(() => {});
   }, []);
 
-  // If the current workspace's owner has an expired paid plan, redirect back to workspace selection.
+  // If the workspace owner's paid plan expired, redirect owners back to workspace selection.
+  // Members are not blocked — they may still view until the owner renews.
   useEffect(() => {
     if (isDesktop()) return;
     const wid = user?.workspaceId;
     if (!wid) return;
+    const isOwner = !user?.workspaceRole || normalizeRole(user.workspaceRole) === "OWNER";
+    if (!isOwner) return;
     apiClient.get(`/api/billing/workspace-owner-status/${wid}`)
       .then((res: any) => {
         const d = res?.data || res;
-        if (d.isExpired) {
+        if (d.isExpired && !d.enterpriseDomainBypass) {
           onGoToWorkspace?.();
         }
       })
       .catch(() => {});
-  }, [user?.workspaceId]);
+  }, [user?.workspaceId, user?.workspaceRole]);
 
   const applyInstanceCountsToTree = useCallback(
     (nodes: TreeNode[], counts: Record<string, { direct?: number; inferred?: number; total?: number }>): TreeNode[] => {

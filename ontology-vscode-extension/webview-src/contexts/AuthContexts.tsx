@@ -765,6 +765,38 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.log('[AuthContext] ✅ Email verified and auto-logged in as', data?.username);
     };
 
+    const applyWorkspaceSession = (workspaceData: any) => {
+        if (!workspaceData?.jwt) {
+            throw new Error('No token received from workspace selection');
+        }
+        if (workspaceData.workspaceId) {
+            localStorage.setItem('lastWorkspaceId', workspaceData.workspaceId);
+        }
+        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
+        localStorage.removeItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY);
+        localStorage.setItem('authToken', workspaceData.jwt);
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'saveAuthToken', token: workspaceData.jwt });
+        }
+        const userInfo = decodeToken(workspaceData.jwt);
+        const roles = userInfo.roles || user?.roles || [];
+        const isAdmin = userInfo.isAdmin || user?.isAdmin || roles.includes('ROLE_ADMIN');
+        setUser({
+            token: workspaceData.jwt,
+            userId: userInfo.userId || user?.userId,
+            username: workspaceData.username || userInfo.username,
+            email: userInfo.email || user?.email,
+            roles,
+            isAdmin,
+            workspaceId: workspaceData.workspaceId,
+            workspaceName: workspaceData.workspaceName,
+            workspaceRole: workspaceData.role,
+            subscriptionPlan: workspaceData.subscriptionPlan || userInfo.subscriptionPlan || 'FREE',
+            enterpriseDomainBypass: user?.enterpriseDomainBypass || getStoredEnterpriseDomainBypass(),
+        });
+        setNeedsWorkspaceSelection(false);
+    };
+
     const selectWorkspace = (workspaceData: any) => {
         console.log('[AuthContext] 📥 selectWorkspace called with:', workspaceData);
         console.log('[AuthContext] Current user before selection:', user);
@@ -804,44 +836,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             throw new Error('No token received from workspace selection');
         }
 
-        // Save workspace ID for auto-selection on next login
-        if (workspaceData.workspaceId) {
-            localStorage.setItem('lastWorkspaceId', workspaceData.workspaceId);
-            console.log('[AuthContext] 💾 Saved workspace for future auto-login:', workspaceData.workspaceId);
-        }
-        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
-        localStorage.removeItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY);
-
-        // Save new workspace-scoped token
-        // Always save to localStorage for webview API client
-        localStorage.setItem('authToken', workspaceData.jwt);
-        
-        if (window.vscode) {
-            // Also save to VS Code secure storage
-            window.vscode.postMessage({ type: 'saveAuthToken', token: workspaceData.jwt });
-        }
-
-        // Decode JWT to get all user info
-        const userInfo = decodeToken(workspaceData.jwt);
-        
-        // Preserve roles and isAdmin from current user or use decoded values
-        const roles = userInfo.roles || user?.roles || [];
-        const isAdmin = userInfo.isAdmin || user?.isAdmin || roles.includes('ROLE_ADMIN');
-        
-        setUser({
-            token: workspaceData.jwt,
-            userId: userInfo.userId || user?.userId,
-            username: workspaceData.username || userInfo.username,
-            email: userInfo.email || user?.email,
-            roles: roles,
-            isAdmin: isAdmin,
-            workspaceId: workspaceData.workspaceId,
-            workspaceName: workspaceData.workspaceName,
-            workspaceRole: workspaceData.role,
-            subscriptionPlan: workspaceData.subscriptionPlan || 'FREE',
-            enterpriseDomainBypass: user?.enterpriseDomainBypass || getStoredEnterpriseDomainBypass()
-        });
-        setNeedsWorkspaceSelection(false);
+        console.log('[AuthContext] 💾 Applying workspace session');
+        applyWorkspaceSession(workspaceData);
         console.log('[AuthContext]  Workspace selection complete');
     };
 
@@ -907,18 +903,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const refreshPermissions = async () => {
         try {
-            // Desktop has no JWT session — refresh is a cloud/web-only endpoint.
             if (isDesktop()) {
                 return;
             }
-            // Skip the network call if the token is already expired locally.
-            // The 60-second interval will handle logout; no need to race the backend.
             const storedToken = localStorage.getItem('authToken');
             if (!storedToken || isTokenExpired(storedToken)) {
                 console.log('[AuthContext] ⏭ Skipping refresh — token expired or missing');
                 return;
             }
             console.log('[AuthContext] 🔄 Refreshing permissions from server...');
+
+            // Re-issue workspace-scoped JWT so members keep the workspace plan (not account plan).
+            if (user?.workspaceId) {
+                const response = await apiClient.post(`/api/workspaces/${user.workspaceId}/select`);
+                const workspaceData = response?.data || response;
+                if (workspaceData?.jwt) {
+                    applyWorkspaceSession(workspaceData);
+                    return;
+                }
+            }
+
             const response = await apiClient.get('/api/auth/refresh');
             const data = response?.data || response;
             
@@ -945,7 +949,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     enterpriseDomainBypass: user?.enterpriseDomainBypass || getStoredEnterpriseDomainBypass()
                 });
                 
-                // Update needsWorkspaceSelection based on new token info
                 const deploymentType = getStoredDeploymentType();
                 const requiresWorkspace = shouldRequireWorkspaceSelection(
                     deploymentType,
@@ -956,7 +959,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
         } catch (error) {
             console.error('[AuthContext] ❌ Failed to refresh permissions:', error);
-            // Don't throw here, just log it. If the refresh fails, we keep the current state.
         }
     };
 
@@ -1013,7 +1015,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const patchEnterpriseBypass = (bypass: boolean) => {
         try { localStorage.setItem('enterpriseDomainBypass', String(bypass)); } catch {}
-        setUser(prev => prev ? { ...prev, enterpriseDomainBypass: bypass } : prev);
+        setUser(prev => {
+            if (!prev) return prev;
+            // Account-level bypass flag only — do not overwrite workspace effective plan in JWT.
+            return { ...prev, enterpriseDomainBypass: bypass };
+        });
     };
 
     const value = {
