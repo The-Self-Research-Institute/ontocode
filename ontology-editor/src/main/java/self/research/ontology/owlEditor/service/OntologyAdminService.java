@@ -27,11 +27,11 @@ public class OntologyAdminService {
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
         """;
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
 
-    public OntologyAdminService(GraphDBDatasetService datasetService,
+    public OntologyAdminService(SparqlDatasetService datasetService,
                                 OntologyIndexService indexService,
                                 ProjectMetadataService metadataService) {
         this.datasetService = datasetService;

@@ -58,12 +58,31 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  allowElevation: true
+  uninstallDisplayName: OntoCode
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
   installerIcon: build-assets/icon.ico
   uninstallerIcon: build-assets/icon.ico
   installerHeaderIcon: build-assets/icon.ico
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: OntoCode
+
+# Open .owl / RDF files in the existing app instance (second launch focuses window).
+fileAssociations:
+  - ext: owl
+    name: OWL Ontology
+    description: Web Ontology Language file
+    role: Editor
+  - ext: ttl
+    name: Turtle Ontology
+    description: Turtle RDF ontology
+    role: Editor
+  - ext: rdf
+    name: RDF Ontology
+    description: RDF/XML ontology
+    role: Editor
 
 # ── macOS ──────────────────────────────────────────────────────────────────────
 mac:
@@ -108,11 +127,10 @@ linux:
     Comment: OWL Ontology Editor
     Categories: Development;Science;
 
-# ── Auto-update (electron-updater) ────────────────────────────────────────────
-# publish:
-#   provider: github
-#   owner: kkpranesh
-#   repo: ontocode-desktop
+# ── Auto-update (electron-updater generic provider) ─────────────────────────────
+publish:
+  provider: generic
+  url: https://ontocodeapi.selfresearch.org/api/downloads/updates/win
 
 # ── Build meta ────────────────────────────────────────────────────────────────
 electronVersion: "29.0.0"

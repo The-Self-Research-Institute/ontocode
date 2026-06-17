@@ -56,8 +56,20 @@ try {
 // =============================================================================
 
 const MONGO_URL = process.env.MONGODB_URI || process.env.MONGO_URL || 'mongodb://localhost:27017';
-const MONGO_USERNAME = process.env.MONGODB_USERNAME || process.env.MONGO_USERNAME || process.env.MONGO_USER || "admin";
-const MONGO_PASSWORD = process.env.MONGODB_PASSWORD || process.env.MONGO_PASSWORD || process.env.MONGO_PASS || "changeme123";
+
+function credentialsFromMongoUri(uri) {
+  if (!uri || typeof uri !== 'string') return {};
+  const match = uri.match(/^mongodb:\/\/([^:@/]+):([^@/]+)@/);
+  if (!match) return {};
+  return {
+    username: decodeURIComponent(match[1]),
+    password: decodeURIComponent(match[2]),
+  };
+}
+
+const uriCreds = credentialsFromMongoUri(MONGO_URL);
+const MONGO_USERNAME = process.env.MONGODB_USERNAME || process.env.MONGO_USERNAME || process.env.MONGO_USER || uriCreds.username || '';
+const MONGO_PASSWORD = process.env.MONGODB_PASSWORD || process.env.MONGO_PASSWORD || process.env.MONGO_PASS || uriCreds.password || '';
 const MONGO_AUTH_SOURCE = process.env.MONGODB_AUTH_SOURCE || process.env.MONGO_AUTH_SOURCE || 'admin';
 const DB_NAME = process.env.MONGODB_DATABASE || process.env.MONGO_DB_NAME || 'ontology';
 // Use /app/plugins in Docker, otherwise use local path

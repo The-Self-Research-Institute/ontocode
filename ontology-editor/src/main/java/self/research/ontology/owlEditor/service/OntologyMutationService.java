@@ -35,7 +35,7 @@ public class OntologyMutationService {
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
         """;
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final GraphGeneratingService graphGeneratingService;
@@ -51,7 +51,13 @@ public class OntologyMutationService {
     @Autowired(required = false) @Nullable
     private ProjectOntologyCache ontologyCache;
 
-    public OntologyMutationService(GraphDBDatasetService datasetService,
+    @Autowired(required = false) @Nullable
+    private DesktopOwlApiMutationService desktopOwlApiMutationService;
+
+    @Autowired @Lazy
+    private MainGraphRevisionService mainGraphRevisionService;
+
+    public OntologyMutationService(SparqlDatasetService datasetService,
                                    OntologyIndexService indexService,
                                    ProjectMetadataService metadataService,
                                    GraphGeneratingService graphGeneratingService,
@@ -67,9 +73,20 @@ public class OntologyMutationService {
 
     /**
      * Apply ontology mutations. Spring cache eviction is centralized in
-     * {@link GraphDBDatasetService#execUpdate} via {@link OntologySpringCacheEvictionService}.
+     * {@link SparqlDatasetService#execUpdate} via {@link OntologySpringCacheEvictionService}.
      */
     public void apply(String projectId, List<MutationOp> ops) {
+        apply(projectId, ops, false, null);
+    }
+
+    /**
+     * Apply mutations to the user's draft named graph (private editing — not visible to other users).
+     */
+    public void applyDraft(String projectId, String userId, List<MutationOp> ops) {
+        apply(projectId, ops, true, userId);
+    }
+
+    private void apply(String projectId, List<MutationOp> ops, boolean draft, String userId) {
         if (ops == null || ops.isEmpty()) {
             log.warn("[MUTATION] No operations to apply for project: {}", projectId);
             return;
@@ -93,9 +110,35 @@ public class OntologyMutationService {
         log.info("[MUTATION] {}", sparql);
         
         try {
+            // Protégé-style desktop: OWLAPI patch or in-memory SPARQL; defer Fuseki until SPARQL/graph.
+            if (!draft && desktopOwlApiMutationService != null
+                    && desktopOwlApiMutationService.tryApply(projectId, ops, sparql)) {
+                long version = metadataService.incrementMutationVersion(projectId);
+                if (ontologyCache != null) {
+                    ontologyCache.updateCachedVersion(projectId, version);
+                }
+                topLevelCacheService.evict(projectId);
+                if (hierarchyIndexService != null) {
+                    hierarchyIndexService.markStale(projectId);
+                }
+                graphGeneratingService.clearGraphCache();
+                if (visualizationController != null) {
+                    visualizationController.clearCache(projectId);
+                }
+                return;
+            }
+
             MutationContext.setOps(ops);
             long sparqlStart = System.currentTimeMillis();
-            datasetService.execUpdate(projectId, sparql);
+            if (draft) {
+                datasetService.execDraftUpdate(projectId, userId, sparql);
+                markDraftDeletions(projectId, userId, ops);
+            } else {
+                datasetService.execUpdate(projectId, sparql);
+                if (mainGraphRevisionService != null) {
+                    mainGraphRevisionService.incrementRevision(projectId);
+                }
+            }
             long sparqlDuration = System.currentTimeMillis() - sparqlStart;
             log.info("[MUTATION] SPARQL update completed in {}ms for project={}", sparqlDuration, projectId);
 
@@ -1679,6 +1722,19 @@ public class OntologyMutationService {
             case "DisjointWith" -> "owl:disjointWith";
             default -> "rdfs:subClassOf";
         };
+    }
+
+    private static final java.util.Set<String> DRAFT_DELETE_ENTITY_OPS = java.util.Set.of(
+            "deleteClass", "deleteIndividual", "deleteObjectProperty",
+            "deleteDataProperty", "deleteAnnotationProperty"
+    );
+
+    private void markDraftDeletions(String projectId, String userId, List<MutationOp> ops) {
+        for (MutationOp op : ops) {
+            if (DRAFT_DELETE_ENTITY_OPS.contains(op.type())) {
+                datasetService.markDraftEntityDeleted(projectId, userId, op.iri());
+            }
+        }
     }
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)

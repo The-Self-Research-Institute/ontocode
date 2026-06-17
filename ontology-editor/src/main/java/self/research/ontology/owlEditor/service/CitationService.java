@@ -36,10 +36,10 @@ public class CitationService {
     private static final Pattern DOI_PATTERN = Pattern.compile("^10\\.\\d{4,9}/.+$", Pattern.CASE_INSENSITIVE);
 
     @Autowired
-    private GraphDBDatasetService datasetService;
+    private SparqlDatasetService datasetService;
 
     @Autowired
-    private GraphDBHistoryService historyService;
+    private OntologyHistoryService historyService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -274,7 +274,7 @@ public class CitationService {
 
             List<Map<String, Object>> citations = new ArrayList<>();
             
-            // Use GraphDBDatasetService to execute query
+            // Use SparqlDatasetService to execute query
             RepositoryConnection conn = datasetService.getConnection();
             try {
                 TupleQueryResult results = datasetService.executeQuery(conn, projectId, sparqlQuery);

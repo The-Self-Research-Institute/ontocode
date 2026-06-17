@@ -8,7 +8,7 @@ import self.research.ontology.owlEditor.model.collaboration.EditOperation;
 import self.research.ontology.owlEditor.model.collaboration.GraphUpdateMessage;
 import self.research.ontology.owlEditor.model.collaboration.LockMessage;
 import self.research.ontology.owlEditor.model.collaboration.PresenceMessage;
-import self.research.ontology.owlEditor.service.GraphDBHistoryService;
+import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.websocket.WebSocketEventListener;
 
@@ -27,7 +27,7 @@ public class CollaborativeEditService {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final WebSocketEventListener eventListener;
-    private final GraphDBHistoryService historyService;
+    private final OntologyHistoryService historyService;
     
     // Operation history per project: projectId -> Queue<EditOperation>
     private final Map<String, Queue<EditOperation>> operationHistory = new ConcurrentHashMap<>();

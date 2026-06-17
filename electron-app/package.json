@@ -1,13 +1,9 @@
 {
   "name": "ontocode-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0-beta.1",
   "description": "OntoCode Ontology Editor – Desktop (Electron + bundled backend)",
   "homepage": "https://ontocode.selfresearch.org",
-  "author": {
-    "name": "Coretopia",
-    "email": "support@selfresearch.org",
-    "url": "https://ontocode.selfresearch.org"
-  },
+  "author": "OntoCode",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -21,14 +17,20 @@
     "dist:linux": "npm run build-web && electron-builder --linux",
     "pack": "electron-builder --dir"
   },
-  "keywords": ["ontology", "owl", "editor", "desktop", "offline"],
-  "author": "OntoCode",
+  "keywords": [
+    "ontology",
+    "owl",
+    "editor",
+    "desktop",
+    "offline"
+  ],
   "license": "MIT",
   "devDependencies": {
     "electron": "^29.0.0",
     "electron-builder": "^24.0.0"
   },
   "dependencies": {
-    "electron-store": "^8.1.0"
+    "electron-store": "^8.1.0",
+    "electron-updater": "^6.8.9"
   }
 }

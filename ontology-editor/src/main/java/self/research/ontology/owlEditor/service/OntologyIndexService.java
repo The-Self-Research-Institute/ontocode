@@ -70,10 +70,10 @@ public class OntologyIndexService {
         }
         """;
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final OntologyMetadataService metadataService;
 
-    public OntologyIndexService(GraphDBDatasetService datasetService, OntologyMetadataService metadataService) {
+    public OntologyIndexService(SparqlDatasetService datasetService, OntologyMetadataService metadataService) {
         this.datasetService = datasetService;
         this.metadataService = metadataService;
     }

@@ -23,9 +23,9 @@ import java.util.Optional;
 public class EntityRenameService {
 
     private final StorageManager storageManager;
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
 
-    public EntityRenameService(StorageManager storageManager, GraphDBDatasetService datasetService) {
+    public EntityRenameService(StorageManager storageManager, SparqlDatasetService datasetService) {
         this.storageManager = storageManager;
         this.datasetService = datasetService;
     }

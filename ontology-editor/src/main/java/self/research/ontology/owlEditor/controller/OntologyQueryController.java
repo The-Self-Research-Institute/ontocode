@@ -1,15 +1,22 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.service.DesktopHierarchyService;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiAnnotationPropertyQueryService;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiDatatypeQueryService;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiIndividualQueryService;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiPropertyQueryService;
 import self.research.ontology.owlEditor.service.HierarchyIndexService;
 import self.research.ontology.owlEditor.service.OntologyMetadataService;
 import self.research.ontology.owlEditor.service.OntologyQueryService;
@@ -19,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 @RestController
 @RequestMapping("/api/ontology")
@@ -35,10 +43,29 @@ public class OntologyQueryController {
     private DesktopHierarchyService desktopHierarchyService;
 
     @Autowired(required = false) @Nullable
+    private OwlApiOntologyContext owlApiContext;
+
+    @Autowired(required = false) @Nullable
+    private OwlApiPropertyQueryService owlApiPropertyQueryService;
+
+    @Autowired(required = false) @Nullable
+    private OwlApiIndividualQueryService owlApiIndividualQueryService;
+
+    @Autowired(required = false) @Nullable
+    private OwlApiAnnotationPropertyQueryService owlApiAnnotationPropertyQueryService;
+
+    @Autowired(required = false) @Nullable
+    private OwlApiDatatypeQueryService owlApiDatatypeQueryService;
+
+    @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.DesktopOntologyLoader desktopOntologyLoader;
 
     @Autowired(required = false) @Nullable
-    private self.research.ontology.owlEditor.service.GraphDBDatasetService datasetService;
+    private self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
+
+    /** Desktop Protégé-style: OWLAPI is authoritative; Fuseki may not be synced yet. */
+    @Value("${ontocode.desktop.owlapi-first:false}")
+    private boolean owlApiFirst;
 
     public OntologyQueryController(OntologyQueryService queryService,
                                    ProjectMetadataService projectMetadataService,
@@ -48,6 +75,54 @@ public class OntologyQueryController {
         this.projectMetadataService = projectMetadataService;
         this.ontologyMetadataService = ontologyMetadataService;
         this.hierarchyIndexService = hierarchyIndexService;
+    }
+
+    private boolean owlApiReady(String projectId) {
+        return owlApiContext != null && owlApiContext.hasOntology(projectId);
+    }
+
+    /** True when SPARQL fallback is unsafe (Fuseki deferred) — serve OWLAPI or a warming response. */
+    private boolean preferOwlApiPath() {
+        return owlApiFirst && desktopOntologyLoader != null;
+    }
+
+    private void ensureOwlApiWarming(String projectId) {
+        if (desktopOntologyLoader != null) {
+            desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
+        }
+    }
+
+    private ResponseEntity<?> owlApiWarmingListResponse() {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("success", true);
+        body.put("warming", true);
+        body.put("owlapiReady", false);
+        body.put("data", List.of());
+        body.put("total", 0);
+        body.put("message", "OWLAPI model is loading — retry shortly");
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(body);
+    }
+
+    /**
+     * Desktop owlapi-first: serve from OWLAPI or return a warming response.
+     * Never fall through to Fuseki (deferred on desktop → 503).
+     *
+     * @return response when owlapi-first applies; empty when caller should use SPARQL
+     */
+    private Optional<ResponseEntity<?>> owlApiOnlyOrWarming(String projectId, Supplier<ResponseEntity<?>> whenReady) {
+        if (!preferOwlApiPath()) {
+            return Optional.empty();
+        }
+        ensureOwlApiWarming(projectId);
+        if (!owlApiReady(projectId)) {
+            return Optional.of(owlApiWarmingListResponse());
+        }
+        try {
+            return Optional.of(whenReady.get());
+        } catch (Exception e) {
+            return Optional.of(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "OWLAPI query failed: " + e.getMessage())));
+        }
     }
 
     /** Desktop: tells the frontend whether the OWLAPI in-memory model is ready. */
@@ -277,11 +352,21 @@ public class OntologyQueryController {
                                         @RequestParam(required = false) String type,
                                         @RequestParam(defaultValue = "2000") int limit,
                                         @RequestParam(defaultValue = "0") int offset) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiPropertyQueryService == null) {
+                throw new IllegalStateException("OWLAPI property service unavailable");
+            }
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    owlApiPropertyQueryService.list(projectId, type, limit, offset)));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         try {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     queryService.properties(projectId, type, limit, offset)));
         } catch (Exception e) {
-            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
         }
     }
@@ -289,11 +374,21 @@ public class OntologyQueryController {
     @GetMapping("/properties/detail/{projectId:.+}")
     public ResponseEntity<?> propertyDetail(@PathVariable String projectId,
                                             @RequestParam String iri) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiPropertyQueryService == null) {
+                throw new IllegalStateException("OWLAPI property service unavailable");
+            }
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    owlApiPropertyQueryService.detail(projectId, iri)));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         try {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     queryService.propertyDetail(projectId, iri)));
         } catch (Exception e) {
-            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("success", false, "error", "Query failed: " + e.getMessage()));
         }
     }
@@ -302,6 +397,19 @@ public class OntologyQueryController {
     public ResponseEntity<?> individuals(@PathVariable String projectId,
                                          @RequestParam(defaultValue = "50") int limit,
                                          @RequestParam(defaultValue = "0") int offset) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiIndividualQueryService == null) {
+                throw new IllegalStateException("OWLAPI individual service unavailable");
+            }
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "data", owlApiIndividualQueryService.list(projectId, limit, offset),
+                    "total", owlApiIndividualQueryService.count(projectId)
+            ));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         try {
             return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -309,7 +417,7 @@ public class OntologyQueryController {
                     "total", queryService.individualCount(projectId)
             ));
         } catch (Exception e) {
-            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
         }
     }
@@ -318,11 +426,21 @@ public class OntologyQueryController {
     public ResponseEntity<?> annotationProperties(@PathVariable String projectId,
                                                   @RequestParam(defaultValue = "2000") int limit,
                                                   @RequestParam(defaultValue = "0") int offset) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiAnnotationPropertyQueryService == null) {
+                throw new IllegalStateException("OWLAPI annotation property service unavailable");
+            }
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    owlApiAnnotationPropertyQueryService.list(projectId, limit, offset)));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         try {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     queryService.annotationProperties(projectId, limit, offset)));
         } catch (Exception e) {
-            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
         }
     }
@@ -330,6 +448,16 @@ public class OntologyQueryController {
     @GetMapping("/annotation-properties/{projectId}/usage")
     public ResponseEntity<?> annotationPropertyUsage(@PathVariable String projectId,
                                                      @RequestParam String propertyIri) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiAnnotationPropertyQueryService == null) {
+                throw new IllegalStateException("OWLAPI annotation property service unavailable");
+            }
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    owlApiAnnotationPropertyQueryService.usage(projectId, propertyIri)));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.annotationPropertyUsage(projectId, propertyIri)));
     }
@@ -338,11 +466,21 @@ public class OntologyQueryController {
     public ResponseEntity<?> datatypes(@PathVariable String projectId,
                                        @RequestParam(defaultValue = "100") int limit,
                                        @RequestParam(defaultValue = "0") int offset) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiDatatypeQueryService == null) {
+                throw new IllegalStateException("OWLAPI datatype service unavailable");
+            }
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    owlApiDatatypeQueryService.list(projectId, limit, offset)));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         try {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     queryService.datatypes(projectId, limit, offset)));
         } catch (Exception e) {
-            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
         }
     }
@@ -362,6 +500,16 @@ public class OntologyQueryController {
     @GetMapping("/properties/usage/{projectId}")
     public ResponseEntity<?> propertyUsage(@PathVariable String projectId,
                                           @RequestParam String propertyIri) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiPropertyQueryService == null) {
+                throw new IllegalStateException("OWLAPI property service unavailable");
+            }
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    owlApiPropertyQueryService.usage(projectId, propertyIri)));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.propertyUsage(projectId, propertyIri)));
     }
@@ -369,6 +517,16 @@ public class OntologyQueryController {
     @GetMapping("/datatypes/usage/{projectId}")
     public ResponseEntity<?> datatypeUsage(@PathVariable String projectId,
                                           @RequestParam String datatypeIri) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiDatatypeQueryService == null) {
+                throw new IllegalStateException("OWLAPI datatype service unavailable");
+            }
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    owlApiDatatypeQueryService.usage(projectId, datatypeIri)));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.datatypeUsage(projectId, datatypeIri)));
     }
@@ -376,6 +534,16 @@ public class OntologyQueryController {
     @GetMapping("/individuals/usage/{projectId}")
     public ResponseEntity<?> individualUsage(@PathVariable String projectId,
                                             @RequestParam String individualIri) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiIndividualQueryService == null) {
+                throw new IllegalStateException("OWLAPI individual service unavailable");
+            }
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    owlApiIndividualQueryService.usage(projectId, individualIri)));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.individualUsage(projectId, individualIri)));
     }
@@ -431,19 +599,25 @@ public class OntologyQueryController {
 
     @GetMapping("/classes/instance-counts/{projectId:.+}")
     public ResponseEntity<?> classInstanceCounts(@PathVariable String projectId) {
-        try {
-            if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
-                return ResponseEntity.ok(Map.of(
-                        "success", true,
-                        "data", desktopHierarchyService.classInstanceCounts(projectId)
-                ));
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (desktopHierarchyService == null) {
+                throw new IllegalStateException("OWLAPI hierarchy service unavailable");
             }
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "data", desktopHierarchyService.classInstanceCounts(projectId)
+            ));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
+        try {
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "data", queryService.getClassInstanceCounts(projectId)
             ));
         } catch (Exception e) {
-            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
         }
     }
@@ -460,12 +634,30 @@ public class OntologyQueryController {
     @GetMapping("/{projectId}/individuals/{individualIri}")
     public ResponseEntity<?> individualDetails(@PathVariable String projectId,
                                               @PathVariable String individualIri) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiIndividualQueryService == null) {
+                throw new IllegalStateException("OWLAPI individual service unavailable");
+            }
+            return ResponseEntity.ok(owlApiIndividualQueryService.details(projectId, individualIri));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         return ResponseEntity.ok(queryService.getIndividualDetails(projectId, individualIri));
     }
 
     @GetMapping("/individual-details/{projectId}")
     public ResponseEntity<?> individualDetailsByParam(@PathVariable String projectId,
                                                       @RequestParam String individualIri) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiIndividualQueryService == null) {
+                throw new IllegalStateException("OWLAPI individual service unavailable");
+            }
+            return ResponseEntity.ok(owlApiIndividualQueryService.details(projectId, individualIri));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
         return ResponseEntity.ok(queryService.getIndividualDetails(projectId, individualIri));
     }
 

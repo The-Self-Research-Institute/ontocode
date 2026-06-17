@@ -7,6 +7,7 @@ const LAST_OPENED_KEYS = [
   "ontocode_lastWorkspaceFileId",
   "ontocode_lastWorkspaceFileName",
   "ontocode_lastEditorActiveAt",
+  "ontocode_desktopActiveFile",
 ];
 
 const SESSION_CACHE_KEYS = [

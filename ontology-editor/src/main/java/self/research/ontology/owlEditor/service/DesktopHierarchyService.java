@@ -12,10 +12,14 @@ import self.research.ontology.owlEditor.config.FastOpenCondition;
 import self.research.ontology.owlEditor.dto.OntologyDto;
 import self.research.ontology.owlEditor.hierarchy.HierarchySnapshotBuilder;
 import self.research.ontology.owlEditor.hierarchy.OntologyMetricsComputer;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiQuerySupport;
 import self.research.ontology.owlEditor.util.AnnotationValueCollector;
 
 import java.util.*;
 import java.util.stream.Collectors;
+
+import static self.research.ontology.owlEditor.service.owlapi.OwlApiQuerySupport.getLabel;
 
 /**
  * OWLAPI in-memory hierarchy (desktop + cloud fast-open).
@@ -27,6 +31,9 @@ public class DesktopHierarchyService {
     private static final Logger log = LoggerFactory.getLogger(DesktopHierarchyService.class);
 
     @Autowired
+    private OwlApiOntologyContext owlApiContext;
+
+    @Autowired
     private ProjectOntologyCache ontologyCache;
 
     @Autowired
@@ -35,14 +42,8 @@ public class DesktopHierarchyService {
     @Autowired
     private OntologyMetricsComputer metricsComputer;
 
-    @Autowired(required = false)
-    private OwlApiMutationCoordinator mutationCoordinator;
-
     public boolean hasOntology(String projectId) {
-        if (mutationCoordinator != null) {
-            mutationCoordinator.ensureFreshForRead(projectId);
-        }
-        return ontologyCache.has(projectId);
+        return owlApiContext.hasOntology(projectId);
     }
 
     public Map<String, Object> declarationCounts(String projectId) {
@@ -234,6 +235,7 @@ public class DesktopHierarchyService {
         details.put("directSubclasses", directSubclasses);
 
         supplementClassDetails(ont, r, classIri, details);
+        details.put("inferredFromOwlApi", true);
 
         log.debug("[Desktop] classDetails({}) in {}ms", classIri, System.currentTimeMillis() - start);
         return details;
@@ -658,16 +660,6 @@ public class DesktopHierarchyService {
             return "{" + inds + "}";
         }
         return ce.getClassExpressionType().getName();
-    }
-
-    private String getLabel(OWLOntology ont, IRI iri) {
-        IRI rdfsLabelIri = IRI.create("http://www.w3.org/2000/01/rdf-schema#label");
-        return ont.annotationAssertionAxioms(iri, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED)
-            .filter(ax -> ax.getProperty().getIRI().equals(rdfsLabelIri))
-            .findFirst()
-            .flatMap(ax -> ax.getValue().asLiteral())
-            .map(OWLLiteral::getLiteral)
-            .orElse(iri.getShortForm());
     }
 
     private String dataRangeToString(OWLDataRange range) {

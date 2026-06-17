@@ -15,7 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.service.GraphGeneratingService;
 import self.research.ontology.owlEditor.service.GraphGeneratingService.Graph;
-import self.research.ontology.owlEditor.service.GraphDBDatasetService;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
 
 import java.io.InputStream;
 import java.io.ByteArrayInputStream;
@@ -42,7 +42,7 @@ public class VisualizationController {
     private GraphGeneratingService graphService;
 
     @Autowired
-    private GraphDBDatasetService graphDBService;
+    private SparqlDatasetService datasetService;
 
     private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
 
@@ -57,7 +57,7 @@ public class VisualizationController {
 
         // Primary: load from GraphDB (has the latest mutations)
         try {
-            String rdfData = graphDBService.exportDataset(projectId, RDFFormat.RDFXML);
+            String rdfData = datasetService.exportDataset(projectId, RDFFormat.RDFXML);
             if (rdfData != null && !rdfData.isBlank()) {
                 OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
                 OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
@@ -258,7 +258,7 @@ public class VisualizationController {
             
             // Query GraphDB SPARQL instead of loading from GridFS
             // This ensures we get the actual imported triples, not parsing issues from the original file
-            List<Map<String, Object>> rootClasses = graphDBService.getRootClassesFromGraphDB(projectId);
+            List<Map<String, Object>> rootClasses = datasetService.getRootClassesFromGraphDB(projectId);
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
@@ -290,7 +290,7 @@ public class VisualizationController {
             log.info("Getting children for class: {} from GraphDB", classIRI);
             
             // Query GraphDB SPARQL instead of loading from GridFS
-            List<Map<String, Object>> children = graphDBService.getChildClassesFromGraphDB(projectId, classIRI);
+            List<Map<String, Object>> children = datasetService.getChildClassesFromGraphDB(projectId, classIRI);
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);

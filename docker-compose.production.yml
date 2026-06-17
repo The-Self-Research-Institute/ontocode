@@ -1,11 +1,20 @@
 # OntoCode Production Docker Compose — t3.xlarge baseline (16 GB RAM)
 # Total container limits ≈ 13.5 GB | leaves ~2.5 GB for OS + Docker overhead
 #
+# Capacity target (100 registered users, typical 10–20 concurrent editors):
+#   • Heap is SHARED — not 100 × 750 MB. Users are HTTP requests, not OWLAPI models.
+#   • Fuseki + Mongo snapshots serve hierarchy; annotations are 1 light SPARQL each.
+#   • Heavy class-details SPARQL runs only when a user opens the Description tab.
+#   • ONTOCODE_FASTOPEN_AUTO_WARM=false + memcache off → editor ~1.5 GB steady state.
+#   • Fuseki gets the RAM budget (all users query one shared TDB2).
+#   Not viable on one node: 100 simultaneous heavy editors on 250 MB ontologies.
+#
 # For other instance sizes, layer on a sizing override:
 #   t3.large  (8 GB):  docker compose -f docker-compose.production.yml -f docker-compose.t3-large.yml up -d
 #   t3.xlarge (16 GB): docker compose -f docker-compose.production.yml up -d
 #   t3.2xlarge(32 GB): docker compose -f docker-compose.production.yml -f docker-compose.t3-2xlarge.yml up -d
-#   r5.2xlarge(64 GB): docker compose -f docker-compose.production.yml -f docker-compose.r5-2xlarge.yml up -d
+#   r6i.xlarge (32 GB): docker compose -f docker-compose.production.yml -f docker-compose.r6i-xlarge.yml up -d
+#   r5.2xlarge / r6i.2xlarge (64 GB): docker compose -f docker-compose.production.yml -f docker-compose.r5-2xlarge.yml up -d
 #
 # Set DOCKER_REGISTRY, VERSION, and a locked-down .env (secrets, public BASE_URL, Stripe keys).
 
@@ -16,7 +25,7 @@ services:
     container_name: ontocode-mongo
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo-data:/data/db
     environment:
@@ -47,7 +56,7 @@ services:
       - "3030:3030"
     environment:
       ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?FUSEKI_ADMIN_PASSWORD is required in production}
-      JVM_ARGS: "-Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+      JVM_ARGS: "-Xmx5g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
     command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
     volumes:
       - ./fuseki-config.ttl:/config.ttl:ro
@@ -57,7 +66,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 5g
+          memory: 6g
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -u admin:${FUSEKI_ADMIN_PASSWORD:-admin} http://localhost:3030/$/ping || exit 1"]
       interval: 15s
@@ -171,13 +180,15 @@ services:
       FUSEKI_GSP_ENDPOINT: http://fuseki:3030/ontocode/data
       FUSEKI_ADMIN_USER: ${FUSEKI_ADMIN_USER:-admin}
       FUSEKI_ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ONTOCODE_EDITOR_REQUIRE_JWT: "true"
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
       ONTOLOGY_HTTP_TIMEOUT_MS: ${ONTOLOGY_HTTP_TIMEOUT_MS:-7200000}
       ONTOLOGY_HTTP_TIMEOUT_SECONDS: ${ONTOLOGY_HTTP_TIMEOUT_SECONDS:-7200s}
       JAVA_OPTS: >-
-        -Xms1g -Xmx3g
+        -Xms512m -Xmx2g
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
         -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
         -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m
@@ -191,14 +202,15 @@ services:
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
       JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
       JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
-      # In-memory RDF4J MemoryStore cache — projects above this threshold bypass it.
-      # Raised to 3M so large ontologies (e.g. mido.ttl ~2.8M triples) are cached in
-      # memory like Protégé, giving sub-ms children/classDetails instead of 30s Fuseki queries.
-      # Each cached project uses ~300-400 MB; max-projects=3 → ~1.2 GB max cache footprint.
+      # Multi-tenant: do NOT mirror whole graphs in editor RAM (was ~400 MB × 3 projects).
+      # Hierarchy → Mongo snapshots; repeat reads → Caffeine; cold reads → Fuseki.
+      ONTOCODE_MEMCACHE_ENABLED: ${ONTOCODE_MEMCACHE_ENABLED:-false}
+      ONTOCODE_MEMCACHE_MAX_PROJECTS: ${ONTOCODE_MEMCACHE_MAX_PROJECTS:-1}
       ONTOCODE_MEMCACHE_NO_CACHE_THRESHOLD: ${ONTOCODE_MEMCACHE_NO_CACHE_THRESHOLD:-3000000}
-      ONTOCODE_MEMCACHE_MAX_PROJECTS: ${ONTOCODE_MEMCACHE_MAX_PROJECTS:-3}
-      # TDB2 is single-writer: keep at 1 on all tiers. See ImportQueueManager.
-      ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-1}
+      # TDB2 is single-writer: 2 concurrent imports on t3.xlarge.
+      ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-2}
+      # Web default: Fuseki + Mongo snapshots. OWLAPI loads only when user POST /warm (optional fast editor).
+      ONTOCODE_FASTOPEN_AUTO_WARM: ${ONTOCODE_FASTOPEN_AUTO_WARM:-false}
     depends_on:
       mongo:
         condition: service_healthy
@@ -211,7 +223,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4g
+          memory: 2560m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health/liveness"]
       interval: 20s

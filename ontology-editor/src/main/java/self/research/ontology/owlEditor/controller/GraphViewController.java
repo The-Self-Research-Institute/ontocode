@@ -42,7 +42,7 @@ public class GraphViewController {
     private final GraphGeneratingService graphGeneratingService;
     private final GridFsTemplate gridfs;
     private final CollaborativeEditService collaborativeEditService;
-    private final self.research.ontology.owlEditor.service.GraphDBDatasetService graphDBDatasetService;
+    private final self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
     private final java.util.Map<String, OWLOntology> ontologyCache = new HashMap<>();
 
     /**
@@ -98,7 +98,7 @@ public class GraphViewController {
         List<GraphGeneratingService.Edge> edges = new ArrayList<>();
 
         try {
-            var result = graphDBDatasetService.execSelect(projectId, sparql);
+            var result = datasetService.execSelect(projectId, sparql);
 
             while (result.hasNext()) {
                 var binding = result.next();
@@ -171,7 +171,7 @@ public class GraphViewController {
                 }
                 """;
             
-            result = graphDBDatasetService.execSelect(projectId, edgeSparql);
+            result = datasetService.execSelect(projectId, edgeSparql);
             
             while (result.hasNext()) {
                 var binding = result.next();

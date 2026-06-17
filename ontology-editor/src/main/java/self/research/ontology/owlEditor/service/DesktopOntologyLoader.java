@@ -18,9 +18,12 @@ import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.config.FastOpenCondition;
 import self.research.ontology.owlEditor.document.ProjectDocument;
+import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,8 +62,17 @@ public class DesktopOntologyLoader {
     @Autowired(required = false) @Lazy
     private HierarchyIndexService hierarchyIndexService;
 
+    @Autowired(required = false) @Lazy
+    private SparqlDatasetService datasetService;
+
+    @Autowired(required = false)
+    private GridFSFileService gridFSFileService;
+
     @Autowired(required = false)
     private ProjectRepository projectRepository;
+
+    @Autowired(required = false)
+    private DesktopOpenMetricsService openMetricsService;
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
@@ -72,6 +84,9 @@ public class DesktopOntologyLoader {
     /** When false (web default), OWLAPI loads only via POST /warm — Fuseki handles reads. */
     @Value("${ontocode.fastopen.auto-warm:false}")
     private boolean autoWarm;
+
+    @Value("${ontocode.desktop.owlapi-first:false}")
+    private boolean owlApiFirst;
 
     public boolean isAutoWarmEnabled() {
         return autoWarm;
@@ -126,13 +141,30 @@ public class DesktopOntologyLoader {
         long start = System.currentTimeMillis();
         CompletableFuture<Boolean> waiter = warmWaiters.computeIfAbsent(projectId, id -> new CompletableFuture<>());
         triggerLazyLoadIfNeeded(projectId);
+        awaitLoadStart(projectId, 2_500);
 
         if (!loadingInProgress.contains(projectId) && !cache.has(projectId)) {
-            // No file or heap guard rejected load before async started
+            materializeOntologyOnDiskIfMissing(projectId);
+            triggerLazyLoadIfNeeded(projectId);
+            awaitLoadStart(projectId, 2_500);
+        }
+
+        if (!loadingInProgress.contains(projectId) && !cache.has(projectId)) {
+            if (desktopMode && owlApiFirst) {
+                return Map.of(
+                    "ready", false,
+                    "sparqlFallback", false,
+                    "pending", true,
+                    "owlapiReady", false,
+                    "elapsedMs", System.currentTimeMillis() - start,
+                    "message", "OWLAPI warm pending — materializing ontology for fast open"
+                );
+            }
             completeWarmWaiters(projectId, false);
             return Map.of(
                 "ready", false,
                 "sparqlFallback", true,
+                "pending", false,
                 "elapsedMs", System.currentTimeMillis() - start,
                 "message", "OWLAPI load not started (missing file or insufficient heap)"
             );
@@ -147,12 +179,20 @@ public class DesktopOntologyLoader {
             return warmResponse(projectId, ready, System.currentTimeMillis() - start);
         } catch (TimeoutException e) {
             Map<String, Object> warm = warmResponse(projectId, isHierarchyReady(projectId), System.currentTimeMillis() - start);
-            warm.put("pending", !isHierarchyReady(projectId));
+            if (!isHierarchyReady(projectId)) {
+                warm.put("pending", true);
+                warm.put("sparqlFallback", false);
+                warm.put("message", "OWLAPI warm still in progress");
+            }
             return warm;
         } catch (Exception e) {
             log.warn("[Desktop] warmProject failed for {}: {}", projectId, e.getMessage());
             Map<String, Object> warm = warmResponse(projectId, isHierarchyReady(projectId), System.currentTimeMillis() - start);
             warm.put("error", e.getMessage() != null ? e.getMessage() : "warm failed");
+            if (!isHierarchyReady(projectId) && loadingInProgress.contains(projectId)) {
+                warm.put("pending", true);
+                warm.put("sparqlFallback", false);
+            }
             return warm;
         } finally {
             warmWaiters.remove(projectId);
@@ -160,20 +200,37 @@ public class DesktopOntologyLoader {
     }
 
     private boolean isHierarchyReady(String projectId) {
-        if (!cache.has(projectId)) {
-            return false;
+        // Parsed into OWLAPI cache = ready for queries; top-level count may still be zero
+        // for empty ontologies and must not block warm/open for minutes.
+        return cache.has(projectId);
+    }
+
+    /** Brief wait for async OWLAPI parse to register (avoids racing triggerLazyLoad). */
+    private void awaitLoadStart(String projectId, long maxWaitMs) {
+        long deadline = System.currentTimeMillis() + maxWaitMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (loadingInProgress.contains(projectId) || cache.has(projectId)) {
+                return;
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
-        if (desktopHierarchyService == null) {
-            return true;
-        }
-        return desktopHierarchyService.topLevelClassTotal(projectId) > 0;
     }
 
     private Map<String, Object> warmResponse(String projectId, boolean ready, long elapsedMs) {
         Map<String, Object> warm = new java.util.LinkedHashMap<>();
         warm.put("ready", ready);
         warm.put("owlapiReady", cache.has(projectId));
-        warm.put("sparqlFallback", !ready);
+        // pending = still loading OWLAPI. sparqlFallback = only when OWLAPI path is abandoned.
+        boolean pending = !ready && (loadingInProgress.contains(projectId) || cache.has(projectId));
+        warm.put("pending", pending);
+        warm.put("sparqlFallback", !desktopMode || !owlApiFirst
+                ? (!ready && !pending && !loadingInProgress.contains(projectId) && !cache.has(projectId))
+                : false);
         warm.put("elapsedMs", elapsedMs);
         if (cache.has(projectId)) {
             warm.putAll(declarationCountsFromCache(projectId));
@@ -204,10 +261,50 @@ public class DesktopOntologyLoader {
             }
             return;
         }
+        materializeOntologyOnDiskIfMissing(projectId);
         findFastestParseSource(projectId).ifPresentOrElse(
             path -> startParallelWarm(projectId, path),
             () -> completeWarmWaiters(projectId, false)
         );
+    }
+
+    /**
+     * After restart, OWLAPI cache is empty but GridFS/Mongo still have the file.
+     * Write ontology.original.owl + ontology.current.owl so warm can parse locally.
+     */
+    private void materializeOntologyOnDiskIfMissing(String projectId) {
+        if (storageManager.findCurrentOntology(projectId).isPresent()) {
+            return;
+        }
+        if (gridFSFileService == null || projectRepository == null) {
+            return;
+        }
+        try {
+            var docOpt = projectRepository.findById(projectId);
+            if (docOpt.isEmpty()) {
+                return;
+            }
+            ProjectDocument doc = docOpt.get();
+            String gridfsId = doc.getGridfsFileId();
+            if (gridfsId == null || gridfsId.isBlank()) {
+                return;
+            }
+            var resourceOpt = gridFSFileService.getFileById(gridfsId);
+            if (resourceOpt.isEmpty()) {
+                log.warn("[Desktop] GridFS content missing for {} (gridfsId={})", projectId, gridfsId);
+                return;
+            }
+            Path projectDir = storageManager.prepareProjectDir(projectId);
+            Path original = projectDir.resolve("ontology.original.owl");
+            Path current = projectDir.resolve("ontology.current.owl");
+            try (var in = resourceOpt.get().getInputStream()) {
+                Files.copy(in, original, StandardCopyOption.REPLACE_EXISTING);
+            }
+            Files.copy(original, current, StandardCopyOption.REPLACE_EXISTING);
+            log.info("[Desktop] Materialized ontology on disk from GridFS for OWLAPI warm: {}", projectId);
+        } catch (Exception e) {
+            log.warn("[Desktop] Could not materialize ontology on disk for {}: {}", projectId, e.getMessage());
+        }
     }
 
     /**
@@ -254,8 +351,6 @@ public class DesktopOntologyLoader {
         if (java.nio.file.Files.exists(dirtyMarker)) {
             try {
                 Path fresh = storageManager.exportOntology(projectId, "rdfxml");
-                // Remove stale derived artifacts so they can't shadow the fresh export
-                // on later warms (they're re-derivable from Fuseki via export at any time).
                 for (String stale : List.of("ontology.original.ofn", "ontology.original.ttl",
                         "ontology.original.nt", "ontology.current.ttl", "ontology.current.owl")) {
                     Path p = dir.resolve(stale);
@@ -268,10 +363,12 @@ public class DesktopOntologyLoader {
                         projectId, fresh);
                 return Optional.of(fresh);
             } catch (Exception e) {
-                log.warn("[Desktop] Fresh export failed for dirty project {} — skipping OWLAPI warm, SPARQL fallback: {}",
+                log.warn("[Desktop] Fresh Fuseki export failed for dirty project {} — trying on-disk copy: {}",
                         projectId, e.getMessage());
-                // Stale files must not be parsed; SPARQL path reads Fuseki directly and is correct.
-                return Optional.empty();
+                try {
+                    java.nio.file.Files.deleteIfExists(dirtyMarker);
+                } catch (java.io.IOException ignored) {
+                }
             }
         }
 
@@ -290,7 +387,20 @@ public class DesktopOntologyLoader {
                 return Optional.of(p);
             }
         }
-        return storageManager.findCurrentOntology(projectId);
+        Optional<Path> current = storageManager.findCurrentOntology(projectId);
+        if (current.isPresent()) {
+            return current;
+        }
+        if (datasetService != null && datasetService.hasGraphData(projectId)) {
+            try {
+                Path exported = storageManager.exportOntology(projectId, "rdfxml");
+                log.info("[Desktop] Exported ontology from Fuseki for OWLAPI warm: {}", exported);
+                return Optional.of(exported);
+            } catch (Exception e) {
+                log.warn("[Desktop] Fuseki export for OWLAPI warm failed for {}: {}", projectId, e.getMessage());
+            }
+        }
+        return Optional.empty();
     }
 
     @Async("desktopModelExecutor")
@@ -343,9 +453,18 @@ public class DesktopOntologyLoader {
             );
 
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(owlFilePath.toFile());
+            long parseMs = System.currentTimeMillis() - start;
             long classCount = ontology.classesInSignature().count();
-            log.info("[Desktop] OWLAPI parsed {} classes in {}ms", classCount,
-                System.currentTimeMillis() - start);
+            log.info("[Desktop] OWLAPI parsed {} classes in {}ms", classCount, parseMs);
+
+            if (openMetricsService != null) {
+                openMetricsService.recordOwlApiLoad(
+                        projectId,
+                        owlFilePath.getFileName().toString(),
+                        owlFilePath.toFile().length(),
+                        parseMs,
+                        owlFilePath.toString());
+            }
 
             boolean assertedOnly = !desktopMode && skipReasonerPrecompute;
             OWLReasoner reasoner = null;
@@ -375,6 +494,25 @@ public class DesktopOntologyLoader {
             return desktopHierarchyService.declarationCounts(projectId);
         }
         return Map.of();
+    }
+
+    /** Persist in-memory OWLAPI model to disk (Protégé-style save without Fuseki). */
+    public void persistToDisk(String projectId) throws java.io.IOException {
+        var cached = cache.get(projectId);
+        if (cached.isEmpty()) {
+            throw new java.io.IOException("No OWLAPI model in memory for project: " + projectId);
+        }
+        Path target = storageManager.findCurrentOntology(projectId)
+                .orElse(storageManager.resolveProjectFile(projectId, "ontology.current.owl"));
+        Files.createDirectories(target.getParent());
+        var ontology = cached.get().ontology();
+        var manager = cached.get().manager();
+        try (var out = Files.newOutputStream(target)) {
+            manager.saveOntology(ontology, new org.semanticweb.owlapi.formats.RDFXMLDocumentFormat(), out);
+        } catch (org.semanticweb.owlapi.model.OWLOntologyStorageException e) {
+            throw new java.io.IOException("Failed to save ontology: " + e.getMessage(), e);
+        }
+        log.info("[Desktop] Persisted OWLAPI model to {}", target);
     }
 
     private void completeWarmWaiters(String projectId, boolean success) {

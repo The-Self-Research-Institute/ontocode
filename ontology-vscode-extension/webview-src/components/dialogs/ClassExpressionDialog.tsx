@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, CheckCircle2, AlertCircle } from 'lucide-react';
+import { X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import EntityHierarchy from '../EntityHierarchy';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import expressionService from '../../services/expressionService';
@@ -19,7 +19,7 @@ export interface RestrictionData {
 interface ClassExpressionDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (expression: string, restrictionData?: RestrictionData) => void;
+  onConfirm: (expression: string, restrictionData?: RestrictionData) => void | Promise<void>;
   classHierarchy: TreeNode[];
   objectProperties: Property[];
   dataProperties: Property[];
@@ -139,6 +139,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const [inlineCreateType, setInlineCreateType] = useState<'subclass' | 'sibling'>('subclass');
   const [inlineClassName, setInlineClassName] = useState('');
   const [isCreatingClass, setIsCreatingClass] = useState(false);
+  const [isSavingConfirm, setIsSavingConfirm] = useState(false);
 
   // Inline class deletion state
   const [showInlineDelete, setShowInlineDelete] = useState(false);

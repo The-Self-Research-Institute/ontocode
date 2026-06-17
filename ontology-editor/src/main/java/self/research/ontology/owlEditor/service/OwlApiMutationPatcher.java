@@ -38,7 +38,18 @@ public class OwlApiMutationPatcher {
             "addSubPropertyOf", "deleteSubPropertyOf",
             "deleteClass",
             "addObjectRestriction", "deleteObjectRestriction",
-            "addPropertyChain", "deletePropertyChain"
+            "addPropertyChain", "deletePropertyChain",
+            "createObjectProperty", "createDataProperty", "createAnnotationProperty",
+            "deleteObjectProperty", "deleteDataProperty", "deleteAnnotationProperty",
+            "addInverseProperty", "deleteInverseProperty",
+            "addEquivalentProperty", "deleteEquivalentProperty",
+            "addDisjointProperty", "deleteDisjointProperty",
+            "addCharacteristic", "deleteCharacteristic",
+            "addObjectPropertyAssertion", "deleteObjectPropertyAssertion",
+            "addDataPropertyAssertion", "deleteDataPropertyAssertion",
+            "addSameIndividual", "deleteSameIndividual",
+            "addDifferentIndividual", "deleteDifferentIndividual",
+            "createDatatype", "deleteDatatype"
     );
 
     private final ProjectOntologyCache ontologyCache;
@@ -304,8 +315,316 @@ public class OwlApiMutationPatcher {
             case "deletePropertyChain" -> {
                 yield removePropertyChain(df, op, toRemove);
             }
+            case "createObjectProperty" -> {
+                yield createObjectProperty(df, op, toAdd);
+            }
+            case "createDataProperty" -> {
+                yield createDataProperty(df, op, toAdd);
+            }
+            case "createAnnotationProperty" -> {
+                yield createAnnotationProperty(df, op, toAdd);
+            }
+            case "deleteObjectProperty" -> {
+                yield deleteObjectProperty(ontology, df, op.iri(), toRemove);
+            }
+            case "deleteDataProperty" -> {
+                yield deleteDataProperty(ontology, df, op.iri(), toRemove);
+            }
+            case "deleteAnnotationProperty" -> {
+                yield deleteAnnotationProperty(ontology, df, op.iri(), toRemove);
+            }
+            case "addInverseProperty" -> {
+                yield addInverseProperty(df, op, toAdd);
+            }
+            case "deleteInverseProperty" -> {
+                yield removeInverseProperty(df, op, toRemove);
+            }
+            case "addEquivalentProperty" -> {
+                yield addEquivalentProperty(df, op, toAdd);
+            }
+            case "deleteEquivalentProperty" -> {
+                yield removeEquivalentProperty(df, op, toRemove);
+            }
+            case "addDisjointProperty" -> {
+                yield addDisjointProperty(df, op, toAdd);
+            }
+            case "deleteDisjointProperty" -> {
+                yield removeDisjointProperty(df, op, toRemove);
+            }
+            case "addCharacteristic" -> {
+                yield addCharacteristic(df, op, toAdd);
+            }
+            case "deleteCharacteristic" -> {
+                yield removeCharacteristic(df, op, toRemove);
+            }
+            case "addObjectPropertyAssertion" -> {
+                yield addObjectPropertyAssertion(df, op, toAdd);
+            }
+            case "deleteObjectPropertyAssertion" -> {
+                yield removeObjectPropertyAssertion(df, op, toRemove);
+            }
+            case "addDataPropertyAssertion" -> {
+                yield addDataPropertyAssertion(df, op, toAdd);
+            }
+            case "deleteDataPropertyAssertion" -> {
+                yield removeDataPropertyAssertion(df, op, toRemove);
+            }
+            case "addSameIndividual" -> {
+                yield addSameIndividual(df, op, toAdd);
+            }
+            case "deleteSameIndividual" -> {
+                yield removeSameIndividual(df, op, toRemove);
+            }
+            case "addDifferentIndividual" -> {
+                yield addDifferentIndividual(df, op, toAdd);
+            }
+            case "deleteDifferentIndividual" -> {
+                yield removeDifferentIndividual(df, op, toRemove);
+            }
+            case "createDatatype" -> {
+                yield createDatatype(df, op, toAdd);
+            }
+            case "deleteDatatype" -> {
+                if (op.iri() == null) yield false;
+                OWLDatatype dt = df.getOWLDatatype(IRI.create(op.iri()));
+                toRemove.addAll(ontology.getAxioms(dt));
+                yield true;
+            }
             default -> false;
         };
+    }
+
+    private boolean createObjectProperty(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null) return false;
+        OWLObjectProperty prop = df.getOWLObjectProperty(IRI.create(op.iri()));
+        toAdd.add(df.getOWLDeclarationAxiom(prop));
+        if (op.label() != null && !op.label().isBlank()) {
+            toAdd.add(df.getOWLAnnotationAssertionAxiom(
+                    df.getRDFSLabel(), prop.getIRI(), df.getOWLLiteral(op.label())));
+        }
+        if (hasRealPropertyParent(op.parent())) {
+            toAdd.add(df.getOWLSubObjectPropertyOfAxiom(prop, df.getOWLObjectProperty(IRI.create(op.parent()))));
+        }
+        return true;
+    }
+
+    private boolean createDataProperty(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null) return false;
+        OWLDataProperty prop = df.getOWLDataProperty(IRI.create(op.iri()));
+        toAdd.add(df.getOWLDeclarationAxiom(prop));
+        if (op.label() != null && !op.label().isBlank()) {
+            toAdd.add(df.getOWLAnnotationAssertionAxiom(
+                    df.getRDFSLabel(), prop.getIRI(), df.getOWLLiteral(op.label())));
+        }
+        if (hasRealPropertyParent(op.parent())) {
+            toAdd.add(df.getOWLSubDataPropertyOfAxiom(prop, df.getOWLDataProperty(IRI.create(op.parent()))));
+        }
+        return true;
+    }
+
+    private boolean hasRealPropertyParent(String parent) {
+        return parent != null && !parent.isBlank()
+                && !parent.contains("topObjectProperty")
+                && !parent.contains("topDataProperty");
+    }
+
+    private boolean createAnnotationProperty(OWLDataFactory df,
+                                             OntologyMutationService.MutationOp op,
+                                             Set<OWLAxiom> toAdd) {
+        if (op.iri() == null) return false;
+        OWLAnnotationProperty prop = df.getOWLAnnotationProperty(IRI.create(op.iri()));
+        toAdd.add(df.getOWLDeclarationAxiom(prop));
+        if (op.label() != null && !op.label().isBlank()) {
+            toAdd.add(df.getOWLAnnotationAssertionAxiom(
+                    df.getRDFSLabel(), prop.getIRI(), df.getOWLLiteral(op.label())));
+        }
+        return true;
+    }
+
+    private boolean deleteObjectProperty(OWLOntology ontology, OWLDataFactory df, String iri, Set<OWLAxiom> toRemove) {
+        if (iri == null) return false;
+        toRemove.addAll(ontology.getAxioms(df.getOWLObjectProperty(IRI.create(iri))));
+        return true;
+    }
+
+    private boolean deleteDataProperty(OWLOntology ontology, OWLDataFactory df, String iri, Set<OWLAxiom> toRemove) {
+        if (iri == null) return false;
+        toRemove.addAll(ontology.getAxioms(df.getOWLDataProperty(IRI.create(iri))));
+        return true;
+    }
+
+    private boolean deleteAnnotationProperty(OWLOntology ontology, OWLDataFactory df, String iri, Set<OWLAxiom> toRemove) {
+        if (iri == null) return false;
+        toRemove.addAll(ontology.getAxioms(df.getOWLAnnotationProperty(IRI.create(iri))));
+        return true;
+    }
+
+    private boolean addInverseProperty(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null || op.target() == null) return false;
+        OWLObjectProperty a = df.getOWLObjectProperty(IRI.create(op.iri()));
+        OWLObjectProperty b = df.getOWLObjectProperty(IRI.create(op.target()));
+        toAdd.add(df.getOWLInverseObjectPropertiesAxiom(a, b));
+        return true;
+    }
+
+    private boolean removeInverseProperty(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toRemove) {
+        if (op.iri() == null || op.target() == null) return false;
+        OWLObjectProperty a = df.getOWLObjectProperty(IRI.create(op.iri()));
+        OWLObjectProperty b = df.getOWLObjectProperty(IRI.create(op.target()));
+        toRemove.add(df.getOWLInverseObjectPropertiesAxiom(a, b));
+        return true;
+    }
+
+    private boolean addEquivalentProperty(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null || op.target() == null) return false;
+        toAdd.add(df.getOWLEquivalentObjectPropertiesAxiom(
+                df.getOWLObjectProperty(IRI.create(op.iri())),
+                df.getOWLObjectProperty(IRI.create(op.target()))));
+        return true;
+    }
+
+    private boolean removeEquivalentProperty(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toRemove) {
+        if (op.iri() == null || op.target() == null) return false;
+        toRemove.add(df.getOWLEquivalentObjectPropertiesAxiom(
+                df.getOWLObjectProperty(IRI.create(op.iri())),
+                df.getOWLObjectProperty(IRI.create(op.target()))));
+        return true;
+    }
+
+    private boolean addDisjointProperty(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null || op.target() == null) return false;
+        toAdd.add(df.getOWLDisjointObjectPropertiesAxiom(
+                df.getOWLObjectProperty(IRI.create(op.iri())),
+                df.getOWLObjectProperty(IRI.create(op.target()))));
+        return true;
+    }
+
+    private boolean removeDisjointProperty(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toRemove) {
+        if (op.iri() == null || op.target() == null) return false;
+        toRemove.add(df.getOWLDisjointObjectPropertiesAxiom(
+                df.getOWLObjectProperty(IRI.create(op.iri())),
+                df.getOWLObjectProperty(IRI.create(op.target()))));
+        return true;
+    }
+
+    private boolean addCharacteristic(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null || op.target() == null) return false;
+        OWLObjectProperty prop = df.getOWLObjectProperty(IRI.create(op.iri()));
+        OWLAxiom axiom = characteristicAxiom(df, prop, op.target());
+        if (axiom == null) return false;
+        toAdd.add(axiom);
+        return true;
+    }
+
+    private boolean removeCharacteristic(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toRemove) {
+        if (op.iri() == null || op.target() == null) return false;
+        OWLObjectProperty prop = df.getOWLObjectProperty(IRI.create(op.iri()));
+        OWLAxiom axiom = characteristicAxiom(df, prop, op.target());
+        if (axiom == null) return false;
+        toRemove.add(axiom);
+        return true;
+    }
+
+    private OWLAxiom characteristicAxiom(OWLDataFactory df, OWLObjectProperty prop, String characteristicIri) {
+        if (characteristicIri == null) return null;
+        return switch (characteristicIri) {
+            case "http://www.w3.org/2002/07/owl#FunctionalProperty",
+                 "owl:FunctionalProperty" -> df.getOWLFunctionalObjectPropertyAxiom(prop);
+            case "http://www.w3.org/2002/07/owl#InverseFunctionalProperty",
+                 "owl:InverseFunctionalProperty" -> df.getOWLInverseFunctionalObjectPropertyAxiom(prop);
+            case "http://www.w3.org/2002/07/owl#TransitiveProperty",
+                 "owl:TransitiveProperty" -> df.getOWLTransitiveObjectPropertyAxiom(prop);
+            case "http://www.w3.org/2002/07/owl#SymmetricProperty",
+                 "owl:SymmetricProperty" -> df.getOWLSymmetricObjectPropertyAxiom(prop);
+            case "http://www.w3.org/2002/07/owl#AsymmetricProperty",
+                 "owl:AsymmetricProperty" -> df.getOWLAsymmetricObjectPropertyAxiom(prop);
+            case "http://www.w3.org/2002/07/owl#ReflexiveProperty",
+                 "owl:ReflexiveProperty" -> df.getOWLReflexiveObjectPropertyAxiom(prop);
+            case "http://www.w3.org/2002/07/owl#IrreflexiveProperty",
+                 "owl:IrreflexiveProperty" -> df.getOWLIrreflexiveObjectPropertyAxiom(prop);
+            default -> null;
+        };
+    }
+
+    private boolean addObjectPropertyAssertion(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null || op.property() == null || op.target() == null) return false;
+        toAdd.add(df.getOWLObjectPropertyAssertionAxiom(
+                df.getOWLObjectProperty(IRI.create(op.property())),
+                df.getOWLNamedIndividual(IRI.create(op.iri())),
+                df.getOWLNamedIndividual(IRI.create(op.target()))));
+        return true;
+    }
+
+    private boolean removeObjectPropertyAssertion(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toRemove) {
+        if (op.iri() == null || op.property() == null || op.target() == null) return false;
+        toRemove.add(df.getOWLObjectPropertyAssertionAxiom(
+                df.getOWLObjectProperty(IRI.create(op.property())),
+                df.getOWLNamedIndividual(IRI.create(op.iri())),
+                df.getOWLNamedIndividual(IRI.create(op.target()))));
+        return true;
+    }
+
+    private boolean addDataPropertyAssertion(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null || op.property() == null || op.value() == null) return false;
+        OWLLiteral literal = dataLiteral(df, op.value(), op.language(), op.datatype());
+        toAdd.add(df.getOWLDataPropertyAssertionAxiom(
+                df.getOWLDataProperty(IRI.create(op.property())),
+                df.getOWLNamedIndividual(IRI.create(op.iri())),
+                literal));
+        return true;
+    }
+
+    private boolean removeDataPropertyAssertion(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toRemove) {
+        if (op.iri() == null || op.property() == null || op.value() == null) return false;
+        OWLLiteral literal = dataLiteral(df, op.value(), op.language(), op.datatype());
+        toRemove.add(df.getOWLDataPropertyAssertionAxiom(
+                df.getOWLDataProperty(IRI.create(op.property())),
+                df.getOWLNamedIndividual(IRI.create(op.iri())),
+                literal));
+        return true;
+    }
+
+    private boolean addSameIndividual(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null || op.target() == null) return false;
+        toAdd.add(df.getOWLSameIndividualAxiom(
+                df.getOWLNamedIndividual(IRI.create(op.iri())),
+                df.getOWLNamedIndividual(IRI.create(op.target()))));
+        return true;
+    }
+
+    private boolean removeSameIndividual(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toRemove) {
+        if (op.iri() == null || op.target() == null) return false;
+        toRemove.add(df.getOWLSameIndividualAxiom(
+                df.getOWLNamedIndividual(IRI.create(op.iri())),
+                df.getOWLNamedIndividual(IRI.create(op.target()))));
+        return true;
+    }
+
+    private boolean addDifferentIndividual(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null || op.target() == null) return false;
+        toAdd.add(df.getOWLDifferentIndividualsAxiom(
+                df.getOWLNamedIndividual(IRI.create(op.iri())),
+                df.getOWLNamedIndividual(IRI.create(op.target()))));
+        return true;
+    }
+
+    private boolean removeDifferentIndividual(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toRemove) {
+        if (op.iri() == null || op.target() == null) return false;
+        toRemove.add(df.getOWLDifferentIndividualsAxiom(
+                df.getOWLNamedIndividual(IRI.create(op.iri())),
+                df.getOWLNamedIndividual(IRI.create(op.target()))));
+        return true;
+    }
+
+    private boolean createDatatype(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        if (op.iri() == null) return false;
+        OWLDatatype dt = df.getOWLDatatype(IRI.create(op.iri()));
+        toAdd.add(df.getOWLDeclarationAxiom(dt));
+        if (op.label() != null && !op.label().isBlank()) {
+            toAdd.add(df.getOWLAnnotationAssertionAxiom(
+                    df.getRDFSLabel(), dt.getIRI(), df.getOWLLiteral(op.label())));
+        }
+        return true;
     }
 
     private boolean addObjectRestriction(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
@@ -526,6 +845,16 @@ public class OwlApiMutationPatcher {
             return Optional.empty();
         }
         return Optional.of(df.getOWLClass(IRI.create(iri)));
+    }
+
+    private OWLLiteral dataLiteral(OWLDataFactory df, String value, String lang, String datatype) {
+        if (datatype != null && !datatype.isBlank()) {
+            return df.getOWLLiteral(value, df.getOWLDatatype(IRI.create(datatype)));
+        }
+        if (lang != null && !lang.isBlank()) {
+            return df.getOWLLiteral(value, lang);
+        }
+        return df.getOWLLiteral(value);
     }
 
     private OWLAnnotationValue literalValue(OWLDataFactory df, String value, String lang, String datatype) {

@@ -38,7 +38,7 @@ public class OwlApiMutationCoordinator {
     }
 
     /**
-     * Called at the end of every {@link GraphDBDatasetService#execUpdate}.
+     * Called at the end of every {@link SparqlDatasetService#execUpdate}.
      *
      * @param structuredOps non-null when the write originated from {@link OntologyMutationService#apply}
      */

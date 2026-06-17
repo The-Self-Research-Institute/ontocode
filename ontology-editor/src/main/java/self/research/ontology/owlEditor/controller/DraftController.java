@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.DraftChange;
+import self.research.ontology.owlEditor.service.DraftPublishAnalysis;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 
@@ -113,25 +114,68 @@ public class DraftController {
     }
     
     /**
-     * Apply all drafts to GraphDB (called during save)
-     * POST /api/ontology/{projectId}/drafts/apply
+     * Preview publish conflicts before save.
+     * GET /api/ontology/{projectId}/drafts/publish-preview?userId=...
+     */
+    @GetMapping("/{projectId}/drafts/publish-preview")
+    public ResponseEntity<Map<String, Object>> publishPreview(
+            @PathVariable String projectId,
+            @RequestParam String userId,
+            @RequestParam(required = false, defaultValue = "true") boolean axiomDetail) {
+        try {
+            DraftPublishAnalysis analysis = draftTrackingService.analyzePublish(projectId, userId, axiomDetail);
+            Map<String, Object> response = new HashMap<>(analysis.toResponseMap());
+            response.put("success", true);
+            response.put("projectId", projectId);
+            response.put("userId", userId);
+            response.put("blocked", analysis.isBlocked(false));
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("[DRAFT API] Error analyzing publish preview", e);
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Apply drafts to GraphDB (called during save)
+     * POST /api/ontology/{projectId}/drafts/apply?userId=...&force=false
      */
     @PostMapping("/{projectId}/drafts/apply")
-    public ResponseEntity<Map<String, Object>> applyDrafts(@PathVariable String projectId) {
+    public ResponseEntity<Map<String, Object>> applyDrafts(
+            @PathVariable String projectId,
+            @RequestParam String userId,
+            @RequestParam(required = false, defaultValue = "false") boolean force,
+            @RequestParam(required = false, defaultValue = "false") boolean merge) {
         try {
-            log.info("[DRAFT API] Applying drafts for project {}", projectId);
-            
-            DraftTrackingService.ApplyDraftsResult result = 
-                draftTrackingService.applyDrafts(projectId);
-            
+            log.info("[DRAFT API] Applying drafts for project {} user {} (force={}, merge={})",
+                    projectId, userId, force, merge);
+
+            DraftTrackingService.ApplyDraftsResult result =
+                draftTrackingService.applyDrafts(projectId, userId, force, merge);
+
+            if (result.isConflictBlocked()) {
+                Map<String, Object> body = new HashMap<>();
+                body.put("success", false);
+                body.put("message", result.getMessage());
+                body.put("conflictBlocked", true);
+                body.put("projectId", projectId);
+                if (result.getPublishAnalysis() != null) {
+                    body.putAll(result.getPublishAnalysis().toResponseMap());
+                }
+                return ResponseEntity.status(409).body(body);
+            }
+
             Map<String, Object> response = new HashMap<>();
             response.put("success", result.isSuccess());
             response.put("appliedCount", result.getAppliedCount());
             response.put("message", result.getMessage());
             response.put("projectId", projectId);
-            
+
             return ResponseEntity.ok(response);
-            
+
         } catch (Exception e) {
             log.error("[DRAFT API] Error applying drafts", e);
             return ResponseEntity.status(500).body(Map.of(
@@ -140,18 +184,20 @@ public class DraftController {
             ));
         }
     }
-    
+
     /**
-     * Discard all unapplied drafts
-     * DELETE /api/ontology/{projectId}/drafts
+     * Discard unapplied drafts
+     * DELETE /api/ontology/{projectId}/drafts?userId=...
      */
     @DeleteMapping("/{projectId}/drafts")
-    public ResponseEntity<Map<String, Object>> discardDrafts(@PathVariable String projectId) {
+    public ResponseEntity<Map<String, Object>> discardDrafts(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId) {
         try {
-            log.info("[DRAFT API] Discarding drafts for project {}", projectId);
-            
-            DraftTrackingService.DiscardDraftsResult result = 
-                draftTrackingService.discardDrafts(projectId);
+            log.info("[DRAFT API] Discarding drafts for project {} user {}", projectId, userId);
+
+            DraftTrackingService.DiscardDraftsResult result =
+                draftTrackingService.discardDrafts(projectId, userId);
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", result.isSuccess());

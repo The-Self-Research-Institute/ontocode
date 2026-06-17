@@ -10,10 +10,13 @@ import org.semanticweb.owlapi.util.BidirectionalShortFormProviderAdapter;
 import org.semanticweb.owlapi.util.ShortFormProvider;
 import org.semanticweb.owlapi.util.SimpleShortFormProvider;
 import org.semanticweb.owlapi.util.mansyntax.ManchesterOWLSyntaxParser;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.util.OwlAxiomSparqlWriter;
 
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -24,9 +27,13 @@ import java.util.Set;
 public class ManchesterExpressionService {
 
     private final StorageManager storageManager;
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
 
-    public ManchesterExpressionService(StorageManager storageManager, GraphDBDatasetService datasetService) {
+    /** Optional: present when fast-open is enabled. Used to skip the slow export+parse. */
+    @Autowired(required = false)
+    private ProjectOntologyCache ontologyCache;
+
+    public ManchesterExpressionService(StorageManager storageManager, SparqlDatasetService datasetService) {
         this.storageManager = storageManager;
         this.datasetService = datasetService;
     }
@@ -183,6 +190,17 @@ public class ManchesterExpressionService {
     }
 
     private OWLOntology loadOntology(String projectId) throws Exception {
+        // Fast path: use the in-memory OWLAPI model when it is already warm.
+        // This avoids a full Fuseki export + re-parse which can take 1-2 minutes for large ontologies.
+        if (ontologyCache != null) {
+            Optional<ProjectOntologyCache.CachedOntology> cached = ontologyCache.get(projectId);
+            if (cached.isPresent()) {
+                log.debug("[Manchester] Using cached OWLAPI model for project {}", projectId);
+                return cached.get().ontology();
+            }
+        }
+        // Slow fallback: export from Fuseki and parse (cold cache or fast-open disabled).
+        log.info("[Manchester] OWLAPI cache miss for project {} — exporting from Fuseki (slow path)", projectId);
         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
