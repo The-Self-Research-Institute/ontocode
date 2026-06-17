@@ -209,6 +209,9 @@ services:
       ONTOCODE_MEMCACHE_NO_CACHE_THRESHOLD: ${ONTOCODE_MEMCACHE_NO_CACHE_THRESHOLD:-3000000}
       # TDB2 is single-writer: 2 concurrent imports on t3.xlarge.
       ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-2}
+      # DL Query: ceiling 2 on production; runtime policy may drop to 1 under heap pressure.
+      ONTOCODE_DLQUERY_MAX_CONCURRENT: ${ONTOCODE_DLQUERY_MAX_CONCURRENT:-2}
+      ONTOCODE_DLQUERY_SLOT_BUDGET: ${ONTOCODE_DLQUERY_SLOT_BUDGET:-2}
       # Web default: Fuseki + Mongo snapshots. OWLAPI loads only when user POST /warm (optional fast editor).
       ONTOCODE_FASTOPEN_AUTO_WARM: ${ONTOCODE_FASTOPEN_AUTO_WARM:-false}
     depends_on:

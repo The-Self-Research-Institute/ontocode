@@ -56,6 +56,25 @@ public class AsyncConfig implements AsyncConfigurer {
         return executor;
     }
 
+    /**
+     * DL Query reasoning lane — serial by default (max-concurrent=1) because each job
+     * can load a full ontology + reasoner into heap. Isolated from import parsing.
+     */
+    @Bean(name = "dlQueryExecutor")
+    public Executor dlQueryExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(50);
+        executor.setThreadNamePrefix("dl-query-");
+        executor.setKeepAliveSeconds(60);
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(120);
+        executor.initialize();
+        return executor;
+    }
+
     @Bean(name = "desktopModelExecutor")
     public Executor desktopModelExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

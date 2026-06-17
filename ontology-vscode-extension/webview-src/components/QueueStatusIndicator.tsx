@@ -196,28 +196,48 @@ export const GlobalQueueStats: React.FC<GlobalQueueStatsProps> = ({ visible = tr
     window.addEventListener('message', handleMessage);
     window.addEventListener('queueStatsUpdate', handleStatsCustomEvent);
 
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    let backoffMs = 0;
+    let cancelled = false;
+
+    const scheduleNext = (delayMs: number) => {
+      if (cancelled) return;
+      if (intervalId) clearTimeout(intervalId);
+      intervalId = setTimeout(() => { void pollStats(); }, delayMs);
+    };
+
     const pollStats = async () => {
+      if (cancelled) return;
       try {
         const data: any = await apiClient.get('/api/import-queue/stats');
+        backoffMs = 0;
         if (data && typeof data.activeImports === 'number') {
-          setStats({
+          const next = {
             activeImports: data.activeImports,
             queuedImports: data.queuedImports ?? 0,
             averageProcessingTimeMs: data.averageProcessingTimeMs ?? 0,
-          });
+          };
+          setStats(next);
+          window.dispatchEvent(new CustomEvent('queueStatsUpdate', { detail: next }));
+          const busy = next.activeImports > 0 || next.queuedImports > 0;
+          scheduleNext(busy ? 3000 : 30000);
+          return;
         }
+        scheduleNext(30000);
       } catch {
-        // Stats endpoint may be unavailable during startup
+        // Editor may be saturated during large imports — back off instead of hammering every 3s.
+        backoffMs = Math.min(backoffMs > 0 ? backoffMs * 2 : 10000, 60000);
+        scheduleNext(backoffMs);
       }
     };
 
     pollStats();
-    const intervalId = setInterval(pollStats, 3000);
 
     return () => {
+      cancelled = true;
       window.removeEventListener('message', handleMessage);
       window.removeEventListener('queueStatsUpdate', handleStatsCustomEvent);
-      clearInterval(intervalId);
+      if (intervalId) clearTimeout(intervalId);
     };
   }, [visible]);
 

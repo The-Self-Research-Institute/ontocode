@@ -266,7 +266,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   useEffect(() => {
     if (isDesktop() || !user?.workspaceId) return;
 
-    let lastSeenPlan = (user.subscriptionPlan || "").toUpperCase();
+    let lastSeenPlan = "";
     let lastSeenStatus = "";
 
     const interval = setInterval(async () => {
@@ -527,12 +527,28 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   };
 
   const handleRemoveMember = async (member: TeamMember, projectId?: string) => {
-    // Prevent removing yourself
+    // Non-owner may leave the workspace (self-removal)
     if (member.email === user?.email) {
-      showToast(
-        "You cannot remove yourself from the workspace. Please contact the workspace owner if you want to leave.",
-        "warning",
+      if (member.roles.some((r) => r.toUpperCase() === "OWNER")) {
+        showToast(
+          "Workspace owners cannot leave. Transfer ownership or delete the workspace.",
+          "warning",
+        );
+        return;
+      }
+      const confirmed = await showConfirmDialog(
+        "Leave workspace?",
+        "You will lose access to this workspace and its projects. You can rejoin if invited again.",
+        "Leave workspace",
       );
+      if (!confirmed || !user?.workspaceId) return;
+      try {
+        await apiClient.post(`/api/workspaces/${user.workspaceId}/leave`);
+        showToast("You have left the workspace", "success");
+        switchWorkspace();
+      } catch (error: any) {
+        showToast(error?.error || error?.message || "Failed to leave workspace", "error");
+      }
       return;
     }
 
@@ -1377,6 +1393,17 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                               title="Remove member"
                             >
                               <Trash2 size={16} />
+                            </button>
+                          )}
+                        {member.email === user?.email &&
+                          !member.roles.some((r) => r.toUpperCase() === "OWNER") &&
+                          member.status !== "PENDING" && (
+                            <button
+                              onClick={() => handleRemoveMember(member)}
+                              className="px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded border border-red-200"
+                              title="Leave this workspace"
+                            >
+                              Leave
                             </button>
                           )}
                         {canInviteMembers && member.status === "PENDING" && (

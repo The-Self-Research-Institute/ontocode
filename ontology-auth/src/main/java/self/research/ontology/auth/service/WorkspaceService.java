@@ -335,6 +335,19 @@ public class WorkspaceService {
     }
 
     /**
+     * Leave a workspace voluntarily (non-owner members and admins).
+     */
+    @Transactional
+    public void leaveWorkspace(String workspaceId, String userId) {
+        Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found"));
+        if (workspace.getOwnerId().equals(userId)) {
+            throw new IllegalArgumentException("Workspace owner cannot leave. Transfer ownership or delete the workspace.");
+        }
+        removeMember(workspaceId, userId);
+    }
+
+    /**
      * Remove a member from workspace (by userId or email).
      * Also removes any WS_EDITOR_LINK_ADMIN project entries for the removed user
      * so they don't retain project access after being removed from the workspace.
