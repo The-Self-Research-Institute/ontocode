@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.controller;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -39,6 +40,11 @@ public class OntologyCrudController {
     private final OntologyHistoryService historyService;
     private final CollaborativeEditService collaborativeEditService;
 
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
+    private static final String DESKTOP_USER_ID = "desktop-user-local";
+
     public OntologyCrudController(OntologyMutationService mutationService,
                                  DraftTrackingService draftTrackingService,
                                  OntologyHistoryService historyService,
@@ -60,6 +66,9 @@ public class OntologyCrudController {
                 request.ops().size(), projectId);
 
             String userId = request.userId() != null ? request.userId() : "anonymous";
+            if (desktopMode) {
+                userId = DESKTOP_USER_ID;
+            }
             String username = request.username() != null ? request.username() : "Anonymous";
             String sessionId = request.sessionId() != null ? request.sessionId() :
                 UUID.randomUUID().toString();
@@ -79,6 +88,9 @@ public class OntologyCrudController {
                     request.ops().size(), projectId);
 
                 String userId = request.userId() != null ? request.userId() : "anonymous";
+                if (desktopMode) {
+                    userId = DESKTOP_USER_ID;
+                }
                 String username = request.username() != null ? request.username() : "Anonymous";
 
                 mutationService.apply(projectId, request.ops());

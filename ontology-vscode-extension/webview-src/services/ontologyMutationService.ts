@@ -1,5 +1,5 @@
 import apiClient from './apiClient';
-import { isDesktop } from '../utils/desktop';
+import { resolveMutationActor } from '../utils/mutationActor';
 
 export interface MutationOp {
   type: string;
@@ -21,35 +21,6 @@ export interface MutationOp {
 // When true: changes apply immediately (for shared files)
 // When false: changes save as drafts (for private files)
 let realTimeSyncEnabled = false;
-
-const DESKTOP_USER_ID = 'desktop-user-local';
-
-/** Resolve user id for draft graph writes — must match JWT / SparqlQueryContext on read. */
-function resolveMutationActor(userId?: string, username?: string): { userId: string; username: string } {
-  if (isDesktop()) {
-    return { userId: DESKTOP_USER_ID, username: username || 'Desktop User' };
-  }
-  try {
-    const token = localStorage.getItem('authToken');
-    if (token) {
-      const parts = token.split('.');
-      if (parts.length === 3) {
-        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-        const jwtUserId = payload.userId || payload.id || payload.sub;
-        const resolvedName = payload.sub || payload.email || username || 'Anonymous';
-        if (jwtUserId) {
-          return { userId: jwtUserId, username: resolvedName };
-        }
-      }
-    }
-  } catch {
-    /* fall through */
-  }
-  if (userId && userId !== 'anonymous') {
-    return { userId, username: username || 'Anonymous' };
-  }
-  return { userId: userId || 'anonymous', username: username || 'Anonymous' };
-}
 
 export const ontologyMutationService = {
   setRealTimeSync(enabled: boolean) {
@@ -138,9 +109,7 @@ export const ontologyMutationService = {
   },
 
   /**
-   * Add annotation to an entity.
-   * Always applied directly (draft=false) so annotations persist through tab switches
-   * and re-fetches regardless of private/public sync mode.
+   * Add annotation to an entity (respects private/public sync mode).
    */
   async addAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string,
                      userId?: string, username?: string, language?: string, datatype?: string): Promise<void> {
@@ -151,12 +120,11 @@ export const ontologyMutationService = {
       value,
       language,
       datatype,
-    }], false, userId, username);
+    }], undefined, userId, username);
   },
 
   /**
-   * Delete annotation from an entity.
-   * Always applied directly (draft=false) — see addAnnotation.
+   * Delete annotation from an entity (respects private/public sync mode).
    */
   async deleteAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string,
                         userId?: string, username?: string, language?: string, datatype?: string): Promise<void> {
@@ -167,12 +135,11 @@ export const ontologyMutationService = {
       value,
       language,
       datatype,
-    }], false, userId, username);
+    }], undefined, userId, username);
   },
 
   /**
-   * Update annotation value (atomic operation).
-   * Always applied directly (draft=false) — see addAnnotation.
+   * Update annotation value (respects private/public sync mode).
    */
   async updateAnnotation(projectId: string, entityIri: string, propertyIri: string, newValue: string,
                         userId?: string, username?: string, oldValue?: string, language?: string, datatype?: string): Promise<void> {
@@ -184,11 +151,11 @@ export const ontologyMutationService = {
       oldValue,
       language,
       datatype,
-    }], false, userId, username);
+    }], undefined, userId, username);
   },
 
   /**
-   * Add SubClassOf axiom (applied immediately, not as draft)
+   * Add SubClassOf axiom (respects private/public sync mode)
    */
   async addSubClassOf(projectId: string, classIri: string, superClassIri: string, 
                       userId?: string, username?: string): Promise<void> {
@@ -196,7 +163,7 @@ export const ontologyMutationService = {
       type: 'addSubClassOf',
       iri: classIri,
       target: superClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -208,7 +175,7 @@ export const ontologyMutationService = {
       type: 'deleteSubClassOf',
       iri: classIri,
       target: superClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -221,7 +188,7 @@ export const ontologyMutationService = {
       iri: classIri,
       value: oldSuperClassIri,  // old target
       target: newSuperClassIri   // new target
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -233,7 +200,7 @@ export const ontologyMutationService = {
       type: 'addEquivalentClass',
       iri: classIri,
       target: equivalentClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -245,7 +212,7 @@ export const ontologyMutationService = {
       type: 'deleteEquivalentClass',
       iri: classIri,
       target: equivalentClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -258,7 +225,7 @@ export const ontologyMutationService = {
       iri: classIri,
       value: oldEquivalentClassIri,  // old target
       target: newEquivalentClassIri   // new target
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -270,7 +237,7 @@ export const ontologyMutationService = {
       type: 'addDisjointWith',
       iri: classIri,
       target: disjointClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -282,7 +249,7 @@ export const ontologyMutationService = {
       type: 'deleteDisjointWith',
       iri: classIri,
       target: disjointClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -295,7 +262,7 @@ export const ontologyMutationService = {
       iri: classIri,
       value: oldDisjointClassIri,  // old target
       target: newDisjointClassIri   // new target
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -569,7 +536,7 @@ export const ontologyMutationService = {
     await this.applyMutations(projectId, [
       { type: deleteTypes[relation], iri: propertyIri, target: oldIri },
       { type: addTypes[relation],    iri: propertyIri, target: newIri },
-    ], false, userId, username);
+    ], undefined, userId, username);
   },
 
   /**
@@ -589,7 +556,7 @@ export const ontologyMutationService = {
     await this.applyMutations(projectId, [
       { type: deleteType, iri: individualIri, target: oldIri },
       { type: addType,    iri: individualIri, target: newIri },
-    ], false, userId, username);
+    ], undefined, userId, username);
   },
 
   async addPropertyChain(projectId: string, propertyIri: string, chainExpression: string, userId?: string, username?: string): Promise<void> {
@@ -829,7 +796,7 @@ export const ontologyMutationService = {
       type: 'addDisjointUnion',
       iri: classIri,
       value: valueStr
-    }], false); // Apply immediately
+    }], undefined);
     
     console.log('[MutationService] addDisjointUnion completed');
   },
@@ -844,7 +811,7 @@ export const ontologyMutationService = {
       type: 'deleteDisjointUnion',
       iri: classIri,
       target: listNodeId
-    }], false); // Apply immediately
+    }], undefined);
   },
 
   /**
@@ -858,7 +825,7 @@ export const ontologyMutationService = {
       type: 'addHasKey',
       iri: classIri,
       value: propertyIris.join(',')
-    }], false); // Apply immediately
+    }], undefined);
   },
 
   /**
@@ -871,7 +838,7 @@ export const ontologyMutationService = {
       type: 'deleteHasKey',
       iri: classIri,
       target: listNodeId
-    }], false); // Apply immediately
+    }], undefined);
   },
 
   /**
@@ -901,7 +868,7 @@ export const ontologyMutationService = {
       const opType = axiomType === 'EquivalentTo' ? 'updateEquivalentClass'
                    : axiomType === 'DisjointWith'  ? 'updateDisjointWith'
                    : 'updateSubClassOf';
-      await this.applyMutations(projectId, [{ type: opType, iri: classIri, value: old.iri, target: newVal.iri }], false, userId, username);
+      await this.applyMutations(projectId, [{ type: opType, iri: classIri, value: old.iri, target: newVal.iri }], undefined, userId, username);
       return;
     }
 
@@ -953,7 +920,7 @@ export const ontologyMutationService = {
       ops.push({ type: 'addUnion', iri: classIri, axiomType, value: newVal.union.join(',') });
     }
 
-    await this.applyMutations(projectId, ops, false, userId, username);
+    await this.applyMutations(projectId, ops, undefined, userId, username);
   },
 
   /**
@@ -967,7 +934,7 @@ export const ontologyMutationService = {
       classIri,
       target: expression,
       value: type
-    }], false); // Apply immediately
+    }], undefined);
   },
 
   /**
@@ -979,7 +946,7 @@ export const ontologyMutationService = {
       type: 'addGCAIntersection',
       iri: classIri,
       value: memberIris.join(',')
-    }], false);
+    }], undefined);
   },
 
   /**
@@ -991,7 +958,7 @@ export const ontologyMutationService = {
       type: 'addGCAUnion',
       iri: classIri,
       value: memberIris.join(',')
-    }], false);
+    }], undefined);
   },
 
   /**
@@ -1008,7 +975,7 @@ export const ontologyMutationService = {
       iri: classIri,
       value: memberIris.join(','),
       axiomType
-    }], false);
+    }], undefined);
   },
 
   /**
@@ -1025,7 +992,7 @@ export const ontologyMutationService = {
       iri: classIri,
       value: memberIris.join(','),
       axiomType
-    }], false);
+    }], undefined);
   },
 
   /**
@@ -1036,7 +1003,7 @@ export const ontologyMutationService = {
     await this.applyMutations(projectId, [{
       type: 'deleteAxiom',
       iri: axiomId
-    }], false); // Apply immediately
+    }], undefined);
   },
 
   /**
@@ -1060,7 +1027,7 @@ export const ontologyMutationService = {
       target: fillerClassIri,
       cardinality: cardinality,
       axiomType // EquivalentTo or SubClassOf
-    }], false); // Apply immediately
+    }], undefined);
   },
 
   /**
@@ -1084,7 +1051,7 @@ export const ontologyMutationService = {
       target: datatypeIri,
       cardinality: cardinality,
       axiomType
-    }], false); // Apply immediately
+    }], undefined);
   },
 
   /**
@@ -1105,7 +1072,7 @@ export const ontologyMutationService = {
       restrictionType,
       target: fillerClassIri,
       axiomType
-    }], false);
+    }], undefined);
   },
 
   /**
@@ -1126,7 +1093,7 @@ export const ontologyMutationService = {
       restrictionType,
       target: datatypeIri,
       axiomType
-    }], false);
+    }], undefined);
   },
 };
 

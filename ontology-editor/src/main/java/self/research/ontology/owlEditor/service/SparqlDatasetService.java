@@ -1136,6 +1136,26 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * True when the user has unpublished draft overlay data (triples and/or deletion markers).
+     * Used to route reads through SPARQL (main + draft graphs) instead of stale OWLAPI cache.
+     */
+    public boolean hasActiveDraftOverlay(String projectId, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return false;
+        }
+        try {
+            if (countDraftTriples(projectId, userId) > 0) {
+                return true;
+            }
+            return !getDraftDeletedIris(projectId, userId).isEmpty();
+        } catch (Exception e) {
+            log.debug("[DRAFT-GRAPH] hasActiveDraftOverlay failed for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+            return false;
+        }
+    }
+
     public long countMainGraphTriples(String projectId) {
         try {
             ProjectGraphBinding binding = resolveBinding(projectId, false);
