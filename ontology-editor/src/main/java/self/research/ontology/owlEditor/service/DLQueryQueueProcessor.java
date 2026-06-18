@@ -46,7 +46,7 @@ public class DLQueryQueueProcessor {
                 long duration = System.currentTimeMillis() - start;
                 if (Boolean.FALSE.equals(result.get("success"))) {
                     String error = result.get("error") != null ? result.get("error").toString() : "DL Query failed";
-                    queueManager.markFailed(job, error);
+                    queueManager.markFailed(job, DLQueryQueueManager.userFriendlyError(error));
                 } else {
                     queueManager.markCompleted(job, result, duration);
                 }
@@ -56,7 +56,7 @@ public class DLQueryQueueProcessor {
                 if (msg.toLowerCase(Locale.ROOT).contains("outofmemory")) {
                     msg = DLQueryQueueManager.userFriendlyError(msg);
                 }
-                queueManager.markFailed(job, msg);
+                queueManager.markFailed(job, DLQueryQueueManager.userFriendlyError(msg));
             } finally {
                 processNext();
             }

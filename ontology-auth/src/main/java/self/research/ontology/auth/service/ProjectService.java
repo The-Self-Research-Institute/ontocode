@@ -694,7 +694,7 @@ public class ProjectService {
         if (owner == null) return true; // Safety fallback for legacy data
 
         // Enterprise domain bypass owners always have accessible workspaces
-        if (systemSettingsService.isEnterpriseDomain(owner.getEmail())) return true;
+        if (systemSettingsService.isEnterpriseBypass(owner.getEmail())) return true;
 
         String subStatus = owner.getSubscriptionStatus();
         String subPlan = owner.getSubscriptionPlanName();

@@ -7,16 +7,11 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.auth.model.SystemSettings;
-import self.research.ontology.auth.model.User;
-import self.research.ontology.auth.model.Workspace;
-import self.research.ontology.auth.repository.UserRepository;
-import self.research.ontology.auth.repository.WorkspaceRepository;
+import self.research.ontology.auth.service.EnterpriseBypassService;
 import self.research.ontology.auth.service.SystemSettingsService;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * Admin-only endpoints for runtime system settings.
@@ -29,15 +24,12 @@ public class AdminSettingsController {
     private static final Logger log = LoggerFactory.getLogger(AdminSettingsController.class);
 
     private final SystemSettingsService settingsService;
-    private final UserRepository userRepository;
-    private final WorkspaceRepository workspaceRepository;
+    private final EnterpriseBypassService enterpriseBypassService;
 
     public AdminSettingsController(SystemSettingsService settingsService,
-                                   UserRepository userRepository,
-                                   WorkspaceRepository workspaceRepository) {
+                                   EnterpriseBypassService enterpriseBypassService) {
         this.settingsService = settingsService;
-        this.userRepository = userRepository;
-        this.workspaceRepository = workspaceRepository;
+        this.enterpriseBypassService = enterpriseBypassService;
     }
 
     /** GET /api/admin/settings — return current settings */
@@ -52,6 +44,7 @@ public class AdminSettingsController {
     public ResponseEntity<?> updateSettings(@RequestBody SystemSettings body) {
         if (!isAdmin()) return forbidden();
         SystemSettings saved = settingsService.save(body, currentEmail());
+        enterpriseBypassService.reconcileAllUsers();
         return ResponseEntity.ok(saved);
     }
 
@@ -89,48 +82,35 @@ public class AdminSettingsController {
         SystemSettings s = settingsService.get();
         s.setEnterpriseDomains(domains);
         SystemSettings saved = settingsService.save(s, currentEmail());
-
-        // Apply enterprise plan to existing workspaces whose owner matches the new domain list
-        applyEnterpriseToExistingWorkspaces(saved.getEnterpriseDomains());
+        enterpriseBypassService.reconcileAllUsers();
 
         return ResponseEntity.ok(Map.of(
             "enterpriseDomains", saved.getEnterpriseDomains()
         ));
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    /** PATCH /api/admin/settings/enterprise-emails — update individual beta/partner emails */
+    @PatchMapping("/enterprise-emails")
+    public ResponseEntity<?> setEnterpriseEmails(@RequestBody Map<String, Object> body) {
+        if (!isAdmin()) return forbidden();
 
-    private void applyEnterpriseToExistingWorkspaces(List<String> enterpriseDomains) {
-        if (enterpriseDomains == null || enterpriseDomains.isEmpty()) return;
-        for (String domain : enterpriseDomains) {
-            String domainLower = domain.trim().toLowerCase();
-            // Find users whose email ends with this domain
-            userRepository.findAll().stream()
-                .filter(u -> u.getEmail() != null && u.getEmail().toLowerCase().endsWith("@" + domainLower))
-                .forEach(user -> {
-                    workspaceRepository.findByOwnerId(user.getId()).stream()
-                        .filter(ws -> !Boolean.TRUE.equals(ws.getIsDeleted()))
-                        .forEach(ws -> {
-                            boolean dirty = false;
-                            if (!"ENTERPRISE".equalsIgnoreCase(ws.getSubscriptionPlan())) {
-                                ws.setSubscriptionPlan("ENTERPRISE");
-                                dirty = true;
-                            }
-                            if (!Boolean.TRUE.equals(ws.getCollaborationEnabled())) {
-                                ws.setCollaborationEnabled(true);
-                                dirty = true;
-                            }
-                            if (ws.getMaxMembers() == null || ws.getMaxMembers() != Integer.MAX_VALUE) {
-                                ws.setMaxMembers(Integer.MAX_VALUE);
-                                dirty = true;
-                            }
-                            if (dirty) {
-                                workspaceRepository.save(ws);
-                                log.info("Auto-granted ENTERPRISE to workspace {} (owner={})", ws.getWorkspaceId(), user.getEmail());
-                            }
-                        });
-                });
+        @SuppressWarnings("unchecked")
+        List<String> emails = (List<String>) body.get("emails");
+        if (emails == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "emails list is required"));
         }
+
+        SystemSettings s = settingsService.get();
+        s.setEnterpriseEmails(emails.stream()
+                .map(e -> e != null ? e.trim().toLowerCase() : "")
+                .filter(e -> !e.isBlank())
+                .toList());
+        SystemSettings saved = settingsService.save(s, currentEmail());
+        enterpriseBypassService.reconcileAllUsers();
+
+        return ResponseEntity.ok(Map.of(
+            "enterpriseEmails", saved.getEnterpriseEmails()
+        ));
     }
 
     private boolean isAdmin() {

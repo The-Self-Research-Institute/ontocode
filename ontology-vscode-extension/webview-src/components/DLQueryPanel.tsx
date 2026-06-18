@@ -89,40 +89,87 @@ const formatDlQueryProgress = (detail: DLQueryJobUpdate): string => {
 const friendlyDlQueryError = (raw?: string): string => {
   if (!raw) return 'Could not run this query. Please try again.';
   const lower = raw.toLowerCase();
+  if (lower.includes('inconsistent')) {
+    return 'This ontology has inconsistent data (for example, an individual typed as both a class and its opposite). Fix that in the editor, then try again.';
+  }
   if (lower.includes('too large') || lower.includes('out of memory') || lower.includes('triples')) {
     return 'This ontology is too large for DL Query. Try a simpler expression or use the SPARQL tab instead.';
+  }
+  if (lower.includes('openllet') || lower.includes('pellet') || lower.includes('reasoner')) {
+    return 'Could not run this query on the current ontology. Check for inconsistent class or individual types, then try again.';
   }
   return raw;
 };
 
-const waitForDlQueryJob = (jobId: string): Promise<DLQueryJobUpdate> =>
+const waitForDlQueryJob = (
+  jobId: string,
+  apiClient: { get: <T>(url: string) => Promise<T> }
+): Promise<DLQueryJobUpdate> =>
   new Promise((resolve, reject) => {
+    let settled = false;
     const timeoutMs = 45 * 60 * 1000;
-    const timeoutId = window.setTimeout(() => {
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
       cleanup();
-      reject(new Error('This query is taking longer than expected. Please try again.'));
-    }, timeoutMs);
+      fn();
+    };
 
     const cleanup = () => {
       window.clearTimeout(timeoutId);
+      window.clearInterval(pollId);
       window.removeEventListener('dlQueryJobUpdate', onUpdate);
       window.dispatchEvent(new CustomEvent('dlQueryUnsubscribe', { detail: { jobId } }));
+    };
+
+    const onTerminal = (detail: DLQueryJobUpdate) => {
+      if (detail.status === 'COMPLETED') {
+        settle(() => resolve(detail));
+      } else if (detail.status === 'FAILED') {
+        settle(() => reject(new Error(friendlyDlQueryError(detail.error))));
+      }
     };
 
     const onUpdate = (event: Event) => {
       const detail = (event as CustomEvent<DLQueryJobUpdate>).detail;
       if (!detail || detail.jobId !== jobId) return;
-      if (detail.status === 'COMPLETED') {
-        cleanup();
-        resolve(detail);
-      } else if (detail.status === 'FAILED') {
-        cleanup();
-        reject(new Error(friendlyDlQueryError(detail.error)));
+      onTerminal(detail);
+    };
+
+    const poll = async () => {
+      if (settled) return;
+      try {
+        const data = await apiClient.get<DLQueryResponse & { status?: string }>(
+          `/api/dl-query/jobs/${jobId}`
+        );
+        if (data.status === 'COMPLETED' || (data.success && data.results)) {
+          settle(() =>
+            resolve({
+              jobId,
+              projectId: '',
+              status: 'COMPLETED',
+              result: data.results,
+              executionTimeMs: data.executionTime ?? data.executionTimeMs,
+            })
+          );
+        } else if (data.status === 'FAILED' || data.success === false) {
+          settle(() => reject(new Error(friendlyDlQueryError(data.error))));
+        }
+      } catch {
+        // ignore transient poll errors
       }
     };
 
     window.addEventListener('dlQueryJobUpdate', onUpdate);
     window.dispatchEvent(new CustomEvent('dlQuerySubscribe', { detail: { jobId } }));
+
+    void poll();
+    const pollId = window.setInterval(() => void poll(), 1500);
+
+    const timeoutId = window.setTimeout(() => {
+      settle(() => reject(new Error('This query is taking longer than expected. Please try again.')));
+    }, timeoutMs);
   });
 
 interface OntologyMetrics {
@@ -377,15 +424,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
 
         let jobUpdate: DLQueryJobUpdate;
         try {
-          jobUpdate = await waitForDlQueryJob(submit.jobId);
-        } catch (wsError) {
-          // WebSocket fallback (e.g. extension host without STOMP)
-          const polled = await apiClient.get<DLQueryResponse>(`/api/dl-query/jobs/${submit.jobId}`);
-          if (polled.status === 'FAILED' || polled.success === false) {
-            throw new Error(polled.error || (wsError as Error).message);
-          }
-          setResults(polled);
-          return;
+          jobUpdate = await waitForDlQueryJob(submit.jobId, apiClient);
         } finally {
           if (pendingJobListenerRef.current) {
             window.removeEventListener('dlQueryJobUpdate', pendingJobListenerRef.current);
@@ -398,7 +437,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
           success: true,
           query: (resultPayload?.query as string) || submit.query || query,
           queryType: (resultPayload?.queryType as string[]) || selectedTypes,
-          results: resultPayload?.results as DLQueryResponse['results'],
+          results: (resultPayload?.results ?? jobUpdate.result) as DLQueryResponse['results'],
           executionTime: jobUpdate.executionTimeMs ?? (resultPayload?.executionTime as number),
         };
         setResults(response);

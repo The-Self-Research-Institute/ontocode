@@ -73,8 +73,13 @@ function wireEvents() {
         );
     });
 
-    autoUpdater.on('update-not-available', () => {
-        broadcastStatus({ status: 'up-to-date', availableVersion: null, error: null });
+    autoUpdater.on('update-not-available', (info) => {
+        broadcastStatus({
+            status: 'up-to-date',
+            availableVersion: info?.version || null,
+            error: null,
+            percent: 0,
+        });
     });
 
     autoUpdater.on('download-progress', (progress) => {

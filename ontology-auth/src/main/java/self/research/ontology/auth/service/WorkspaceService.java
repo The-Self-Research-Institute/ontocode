@@ -105,7 +105,7 @@ public class WorkspaceService {
         // Resolve owner's current plan and standing (Model C: Inherit from account)
         String ownerPlan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName().toUpperCase() : "FREE";
         // Enterprise domain bypass overrides FREE — the user's DB plan may not yet reflect the bypass
-        if ("FREE".equals(ownerPlan) && systemSettingsService.isEnterpriseDomain(user.getEmail())) {
+        if ("FREE".equals(ownerPlan) && systemSettingsService.isEnterpriseBypass(user.getEmail())) {
             ownerPlan = "ENTERPRISE";
             log.info("Enterprise domain bypass: creating workspace as ENTERPRISE for {}", user.getEmail());
         }
@@ -148,7 +148,7 @@ public class WorkspaceService {
         boolean collaborationEnabled;
         int maxMembers;
 
-        if (systemSettingsService.isEnterpriseDomain(owner.getEmail())) {
+        if (systemSettingsService.isEnterpriseBypass(owner.getEmail())) {
             // Enterprise domain bypass: treat as ENTERPRISE/active regardless of DB record
             planName = "ENTERPRISE";
             status = "active";

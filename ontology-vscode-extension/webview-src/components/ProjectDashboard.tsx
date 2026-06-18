@@ -48,6 +48,8 @@ import { UserGuideModal } from "./UserGuideModal";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { Bug } from "lucide-react";
 import AdminSettingsModal from "./AdminSettingsModal";
+import { OntoCodeLogo } from "./OntoCodeLogo";
+import { getAppVersion } from "../utils/appVersion";
 import {
   WORKSPACE_ROLES,
   type WorkspaceRole,
@@ -133,6 +135,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [showInviteMember, setShowInviteMember] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAdminSettings, setShowAdminSettings] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
   const [showPlanDetails, setShowPlanDetails] = useState(false);
   const [showUserGuide, setShowUserGuide] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
@@ -256,6 +259,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  useEffect(() => {
+    getAppVersion().then(setAppVersion).catch(() => setAppVersion(""));
   }, []);
 
   // Poll workspace state every 15s. Two responsibilities:
@@ -950,11 +957,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               )}
               <div className="min-w-0">
                 <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate flex items-center gap-2">
-                  <Building2 size={22} className="text-purple-600 flex-shrink-0" />
+                  <OntoCodeLogo size={24} />
                   <span className="truncate">{currentWorkspaceName}</span>
                 </h1>
                 <p className="text-xs sm:text-sm text-gray-500 truncate">
-                  OntoCode Project Dashboard · Welcome, {user?.username}
+                  OntoCode Project Dashboard{appVersion ? ` v${appVersion}` : ""} · Welcome, {user?.username}
                   {!isDesktop() && currentWorkspaceName && (
                     <button
                       onClick={() => {

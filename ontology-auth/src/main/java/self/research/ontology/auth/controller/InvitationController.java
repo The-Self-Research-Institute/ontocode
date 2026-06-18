@@ -98,7 +98,7 @@ public class InvitationController {
             // Paid plans require collaborationEnabled=true (set on subscription activation).
             // Enterprise domain bypass owners are always allowed to collaborate.
             boolean ownerIsEnterpriseDomain = userRepository.findById(workspace.getOwnerId())
-                .map(o -> systemSettingsService.isEnterpriseDomain(o.getEmail()))
+                .map(o -> systemSettingsService.isEnterpriseBypass(o.getEmail()))
                 .orElse(false);
             if (!ownerIsEnterpriseDomain && !Boolean.TRUE.equals(workspace.getCollaborationEnabled())) {
                 String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";

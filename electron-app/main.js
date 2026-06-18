@@ -372,8 +372,24 @@ app.whenReady().then(async () => {
 
 // Prevent quit while services are shutting down
 let isQuitting = false;
+let isInstallingUpdate = false;
+
+/** Stop bundled JVM/Mongo before NSIS runs — otherwise quitAndInstall can restart without applying. */
+async function installAppUpdate() {
+    if (isInstallingUpdate) return false;
+    isInstallingUpdate = true;
+    isQuitting = true;
+    try {
+        await Promise.all([svcMgr.stopAll(), proxy.stop(), syncMgr.stop()]);
+    } catch (err) {
+        console.warn('[Update] Shutdown before install:', err?.message || err);
+    }
+    servicesRunning = false;
+    return autoUpdater.installUpdate();
+}
 
 app.on('before-quit', (event) => {
+    if (isInstallingUpdate) return;
     if ((servicesRunning && !IS_DEV) && !isQuitting) {
         event.preventDefault();
         isQuitting = true;
@@ -530,7 +546,7 @@ ipcMain.handle('logs:open', () => {
 // ── App updates (electron-updater) ────────────────────────────────────────────
 ipcMain.handle('update:getStatus', () => autoUpdater.getStatus());
 ipcMain.handle('update:check', () => autoUpdater.checkForUpdates(true));
-ipcMain.handle('update:install', () => autoUpdater.installUpdate());
+ipcMain.handle('update:install', () => installAppUpdate());
 
 // ── Sync / Share IPC ──────────────────────────────────────────────────────────
 
@@ -641,6 +657,11 @@ function setupMenu(win) {
         {
             role: 'help',
             submenu: [
+                {
+                    label: `Version ${app.getVersion()}`,
+                    enabled: false,
+                },
+                { type: 'separator' },
                 {
                     label: 'About OntoCode',
                     click: () => {
