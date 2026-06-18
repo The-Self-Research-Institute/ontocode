@@ -19,12 +19,7 @@ COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
 # Uses BuildKit cache for ~/.m2 to avoid re-downloading dependencies on every build.
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
-        clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp
-
-# Build editor module - package goal includes spring-boot:repackage automatically
-RUN --mount=type=cache,target=/root/.m2 \
-    mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
-        clean package -pl ontology-editor -DskipTests -B -ntp
+        clean install -pl shared/common-models,shared/common-utils,ontology-editor -DskipTests -B -ntp
 
 # Runtime stage
 FROM eclipse-temurin:21-jre
