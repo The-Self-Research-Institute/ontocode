@@ -222,6 +222,12 @@
         </dependency>
         
         <!-- ========== UTILITIES ========== -->
+
+        <dependency>
+            <groupId>self.research.ontology</groupId>
+            <artifactId>common-utils</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         
         <!-- Gson (required for RDF4J and other dependencies) -->
         <dependency>

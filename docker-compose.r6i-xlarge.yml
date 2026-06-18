@@ -39,15 +39,26 @@ services:
 
   owl-editor:
     environment:
-      JAVA_OPTS: "-Xms2g -Xmx6g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+      JAVA_OPTS: "-Xms2g -Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
       ONTOCODE_IMPORT_MAX_CONCURRENT: 1
       ONTOCODE_DLQUERY_MAX_CONCURRENT: 2
       ONTOCODE_DLQUERY_SLOT_BUDGET: 2
+      ONTOCODE_REASONER_WORKER_ENABLED: "true"
       ONTOCODE_REASONER_MAX_TRIPLES: 1000000
     deploy:
       resources:
         limits:
-          memory: 7g
+          memory: 5g
+
+  reasoner-worker:
+    environment:
+      JAVA_OPTS: "-Xms3g -Xmx10g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof"
+      ONTOCODE_REASONING_MAX_CONCURRENT: 2
+      ONTOCODE_REASONING_SLOT_BUDGET: 2
+    deploy:
+      resources:
+        limits:
+          memory: 11g
 
   swrl-service:
     environment:

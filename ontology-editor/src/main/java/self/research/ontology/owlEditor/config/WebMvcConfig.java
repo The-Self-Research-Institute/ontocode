@@ -16,15 +16,18 @@ public class WebMvcConfig implements WebMvcConfigurer {
     private final FreeViewOnlyInterceptor freeViewOnlyInterceptor;
     private final EditorApiAuthInterceptor editorApiAuthInterceptor;
     private final SparqlQueryContextInterceptor sparqlQueryContextInterceptor;
+    private final InternalApiAuthInterceptor internalApiAuthInterceptor;
 
     public WebMvcConfig(PerformanceLoggingInterceptor performanceLoggingInterceptor,
                         FreeViewOnlyInterceptor freeViewOnlyInterceptor,
                         EditorApiAuthInterceptor editorApiAuthInterceptor,
-                        SparqlQueryContextInterceptor sparqlQueryContextInterceptor) {
+                        SparqlQueryContextInterceptor sparqlQueryContextInterceptor,
+                        InternalApiAuthInterceptor internalApiAuthInterceptor) {
         this.performanceLoggingInterceptor = performanceLoggingInterceptor;
         this.freeViewOnlyInterceptor = freeViewOnlyInterceptor;
         this.editorApiAuthInterceptor = editorApiAuthInterceptor;
         this.sparqlQueryContextInterceptor = sparqlQueryContextInterceptor;
+        this.internalApiAuthInterceptor = internalApiAuthInterceptor;
     }
 
     @Override
@@ -36,6 +39,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(internalApiAuthInterceptor)
+                .addPathPatterns("/internal/**")
+                .order(-1);
         registry.addInterceptor(editorApiAuthInterceptor)
                 .addPathPatterns("/api/**")
                 .order(0);

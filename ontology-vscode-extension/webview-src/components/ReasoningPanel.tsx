@@ -55,6 +55,35 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
     setExpandedSections(newExpanded);
   };
 
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const pollReasoningJob = async (jobId: string, timeoutMs = 30 * 60 * 1000): Promise<ReasonerResult> => {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const job: any = await apiClient.get(`/api/dl-query/jobs/${jobId}`);
+      const status = String(job?.status || '').toUpperCase();
+      if (status === 'COMPLETED') {
+        return { ...job, success: job.success !== false };
+      }
+      if (status === 'FAILED') {
+        return {
+          success: false,
+          message: job.error || job.message || 'Reasoning failed',
+        };
+      }
+      await sleep(status === 'QUEUED' ? 2000 : 1500);
+    }
+    return { success: false, message: 'Reasoning timed out. Try again later.' };
+  };
+
+  const postReasoningTask = async (path: string): Promise<ReasonerResult> => {
+    const response: any = await apiClient.post(path, null, { params: { reasonerType } });
+    if (response?.async && response?.jobId) {
+      return pollReasoningJob(response.jobId);
+    }
+    return response;
+  };
+
   // Run full reasoning
   const runFullReasoning = async () => {
     setIsRunning(true);
@@ -62,11 +91,7 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
     setInferredAxioms([]);
     
     try {
-      const response = await apiClient.post<ReasonerResult>(
-        `/api/ontology/${projectId}/reasoner/run`,
-        null,
-        { params: { reasonerType } }
-      );
+      const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/run`);
       
       setResult(response);
       
@@ -91,11 +116,7 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
     setResult(null);
     
     try {
-      const response = await apiClient.post<ReasonerResult>(
-        `/api/ontology/${projectId}/reasoner/consistency`,
-        null,
-        { params: { reasonerType } }
-      );
+      const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/consistency`);
       
       setResult(response);
       
@@ -114,11 +135,7 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
     setIsRunning(true);
     
     try {
-      const response = await apiClient.post<ReasonerResult>(
-        `/api/ontology/${projectId}/reasoner/classify`,
-        null,
-        { params: { reasonerType } }
-      );
+      const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/classify`);
       
       setResult(response);
       
@@ -137,11 +154,7 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
     setIsRunning(true);
     
     try {
-      const response = await apiClient.post<ReasonerResult>(
-        `/api/ontology/${projectId}/reasoner/realize`,
-        null,
-        { params: { reasonerType } }
-      );
+      const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/realize`);
       
       setResult(response);
       

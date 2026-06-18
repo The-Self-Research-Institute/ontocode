@@ -7,8 +7,10 @@ import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.common.ReasoningFriendlyErrors;
 import self.research.ontology.owlEditor.model.DLQueryJob;
 import self.research.ontology.owlEditor.service.DLQueryQueueManager;
 import self.research.ontology.owlEditor.service.DLQueryQueueProcessor;
@@ -16,6 +18,8 @@ import self.research.ontology.owlEditor.service.DLQueryService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
+import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
+import self.research.ontology.owlEditor.service.ReasoningJobRelayService;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -57,6 +61,15 @@ public class DLQueryController {
     @Autowired
     private DLQueryQueueProcessor dlQueryQueueProcessor;
 
+    @Autowired(required = false)
+    private ReasonerWorkerClient reasonerWorkerClient;
+
+    @Autowired(required = false)
+    private ReasoningJobRelayService reasoningJobRelayService;
+
+    @Value("${ontocode.reasoner-worker.enabled:false}")
+    private boolean reasonerWorkerEnabled;
+
     /**
      * Submit a DL Query job (async). Results arrive via WebSocket /topic/dlquery/{jobId}
      * or GET /api/dl-query/jobs/{jobId}.
@@ -77,6 +90,36 @@ public class DLQueryController {
 
             log.info("DL Query enqueue for project {}: expression='{}', types={}",
                     projectId, request.getExpression(), request.getQueryTypes());
+
+            if (reasonerWorkerEnabled && reasonerWorkerClient != null && reasoningJobRelayService != null) {
+                Map<String, Object> worker = reasonerWorkerClient.submitJob(
+                        "DL_QUERY",
+                        projectId,
+                        request.getExpression().trim(),
+                        request.getQueryTypes(),
+                        null,
+                        request.getUserEmail());
+                if (Boolean.FALSE.equals(worker.get("success"))) {
+                    return ResponseEntity.status(500).body(Map.of(
+                            "success", false,
+                            "error", ReasoningFriendlyErrors.forUser(stringOrNull(worker.get("error"))),
+                            "query", request.getExpression()
+                    ));
+                }
+                String jobId = stringOrNull(worker.get("jobId"));
+                reasoningJobRelayService.rememberSubmittedJob(
+                        jobId, projectId, request.getExpression().trim(), "DL_QUERY", worker);
+
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", true);
+                response.put("async", true);
+                response.put("jobId", jobId);
+                response.put("status", worker.getOrDefault("status", "QUEUED"));
+                response.put("queuePosition", worker.getOrDefault("queuePosition", 1));
+                response.put("estimatedWaitTimeMs", worker.getOrDefault("estimatedWaitTimeMs", 0));
+                response.put("query", request.getExpression());
+                return ResponseEntity.accepted().body(response);
+            }
 
             DLQueryJob job = dlQueryQueueManager.enqueue(
                     projectId,
@@ -99,10 +142,14 @@ public class DLQueryController {
             log.error("DL Query enqueue error for project {}: {}", projectId, e.getMessage(), e);
             return ResponseEntity.status(500).body(Map.of(
                     "success", false,
-                    "error", e.getMessage(),
+                    "error", ReasoningFriendlyErrors.forUser(e.getMessage()),
                     "query", request.getExpression()
             ));
         }
+    }
+
+    private static String stringOrNull(Object value) {
+        return value != null ? value.toString() : null;
     }
 
     /**

@@ -212,6 +212,9 @@ services:
       # DL Query: ceiling 2 on production; runtime policy may drop to 1 under heap pressure.
       ONTOCODE_DLQUERY_MAX_CONCURRENT: ${ONTOCODE_DLQUERY_MAX_CONCURRENT:-2}
       ONTOCODE_DLQUERY_SLOT_BUDGET: ${ONTOCODE_DLQUERY_SLOT_BUDGET:-2}
+      ONTOCODE_REASONER_WORKER_ENABLED: ${ONTOCODE_REASONER_WORKER_ENABLED:-true}
+      ONTOCODE_REASONER_WORKER_URL: http://reasoner-worker:8088
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
       # Web default: Fuseki + Mongo snapshots. OWLAPI loads only when user POST /warm (optional fast editor).
       ONTOCODE_FASTOPEN_AUTO_WARM: ${ONTOCODE_FASTOPEN_AUTO_WARM:-false}
     depends_on:
@@ -269,6 +272,44 @@ services:
         limits:
           memory: 1024m
 
+  # Reasoner Worker — unified DL Query + Reasoner queue (isolated heap)
+  reasoner-worker:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-reasoner-worker:${VERSION:-latest}
+    container_name: ontocode-reasoner-worker
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      ONTOLOGY_EDITOR_URL: http://owl-editor:8083
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
+      ONTOCODE_REASONING_MAX_CONCURRENT: ${ONTOCODE_REASONING_MAX_CONCURRENT:-2}
+      ONTOCODE_REASONING_SLOT_BUDGET: ${ONTOCODE_REASONING_SLOT_BUDGET:-2}
+      ONTOCODE_REASONING_IDLE_EVICTION_MINUTES: ${ONTOCODE_REASONING_IDLE_EVICTION_MINUTES:-15}
+      ONTOCODE_REASONER_MAX_TRIPLES: ${ONTOCODE_REASONER_MAX_TRIPLES:-1000000}
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_OPTS: >-
+        -Xms2g -Xmx8g
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+    volumes:
+      - /var/log/ontocode/reasoner-worker:/app/logs
+    depends_on:
+      owl-editor:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 9g
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8088/actuator/health/liveness"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
   # Plugin Service
   plugin-service:
     image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin:${VERSION:-latest}
@@ -281,6 +322,9 @@ services:
       SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
+      ONTOCODE_REASONER_WORKER_URL: http://reasoner-worker:8088
+      ONTOCODE_REASONER_WORKER_ENABLED: ${ONTOCODE_REASONER_WORKER_ENABLED:-true}
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC

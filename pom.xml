@@ -20,6 +20,7 @@
         <module>ontology-auth</module>
         <module>ontology-swrl</module>
         <module>ontology-plugin-service</module>
+        <module>ontology-reasoner-worker</module>
     </modules>
 
     <properties>
