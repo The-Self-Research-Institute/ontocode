@@ -775,6 +775,12 @@ const TopMenuBar = ({
       </div>
 
       <div className="flex items-center ml-auto mr-1 sm:mr-4 gap-1 sm:gap-2 flex-shrink-0 pl-1">
+        {isDesktop() ? (
+          <span className="hidden sm:inline text-xs font-medium text-gray-500" title="Edits are kept in your private draft until you click Save">
+            Private (Draft)
+          </span>
+        ) : (
+          <>
         <span className={`hidden sm:inline text-xs font-medium ${syncMode === "public" ? "text-green-600" : "text-gray-500"}`}>
           {syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
         </span>
@@ -791,6 +797,8 @@ const TopMenuBar = ({
             }`}
           />
         </button>
+          </>
+        )}
       </div>
     </header>
   );
@@ -3614,9 +3622,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           try {
             const lists = await fetchProjects();
 
-            // Non-workspace mode: always apply mutations directly to GraphDB
-            // (no collaboration, so draft mode causes data loss if user navigates away)
-            const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
+            // Non-workspace web: apply directly to avoid draft loss when navigating away.
+            // Desktop: always use Protege-style private draft until Save (local named graph).
+            const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId && !isDesktop();
 
             if (!lists) {
               console.warn("[Dashboard] ?? No project list available");
@@ -3666,12 +3674,14 @@ const Dashboard: React.FC<DashboardProps> = ({
               myProjectsList.map((f: any) => f.id),
             );
 
-            // Configure mutation service based on whether file is shared
-            // Non-workspace mode: always apply directly to GraphDB to prevent data loss
+            // Configure mutation service: shared/live OR non-workspace web direct-write.
+            // Desktop and private web projects use per-user draft graphs until Save.
             const shouldApplyDirectly = isShared || isNonWorkspaceMode;
             ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
             setSyncMode(shouldApplyDirectly ? "public" : "private");
-            if (isNonWorkspaceMode && !isShared) {
+            if (isDesktop() && !isShared) {
+              console.log("[Dashboard] 📝 Desktop private draft mode (Protege-style — Save to publish)");
+            } else if (isNonWorkspaceMode && !isShared) {
               console.log("[Dashboard] 📝 Non-workspace mode - mutations apply directly to GraphDB");
             }
 
@@ -7579,8 +7589,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const updateDraftCount = useCallback(async () => {
     if (!projectId) return;
     try {
-      console.log("[Dashboard] Updating draft count for project:", projectId);
-      const stats = await draftTrackingService.getDraftStats(projectId);
+      const effectiveUserId = user?.userId || user?.email || (isDesktop() ? "desktop-user-local" : undefined);
+      console.log("[Dashboard] Updating draft count for project:", projectId, "user:", effectiveUserId);
+      const stats = await draftTrackingService.getDraftStats(projectId, effectiveUserId);
       console.log("[Dashboard] Draft stats received:", stats);
       setDraftCount(stats.unappliedDrafts);
       setHasUnsavedChanges(stats.unappliedDrafts > 0);
@@ -7589,7 +7600,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Don't show error notification - just log it
       // The user can still work, we'll try again later
     }
-  }, [projectId]);
+  }, [projectId, user?.userId, user?.email]);
 
   // Silently refresh axiom/entity counts from backend after mutations
   const silentRefreshMetadata = useCallback(async () => {
@@ -15413,12 +15424,14 @@ const Dashboard: React.FC<DashboardProps> = ({
             const newMode = syncMode === "public" ? "private" : "public";
             setSyncMode(newMode);
             ontologyMutationService.setRealTimeSync(newMode === "public");
+            const effectiveUserId = user?.userId || user?.email || "anonymous";
             if (newMode === "public") {
               // Auto-apply any pending drafts so structural changes are live immediately
               if (projectId && hasUnsavedChanges) {
-                apiClient.post(`/api/ontology/${projectId}/drafts/apply`, {})
+                draftTrackingService.applyDrafts(projectId, effectiveUserId)
                   .then(() => {
                     setHasUnsavedChanges(false);
+                    setDraftCount(0);
                     notificationService.success("Live Mode Enabled", "Pending changes applied and live.");
                   })
                   .catch(() => {
@@ -15428,7 +15441,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 notificationService.success("Live Mode Enabled", "Changes will be broadcast immediately.");
               }
             } else {
-              notificationService.info("Draft Mode Enabled", "Changes will be saved locally until you save.");
+              notificationService.info("Draft Mode Enabled", "Changes are saved to your private draft until you click Save.");
             }
           }}
           isReasonerRunning={isReasonerRunning}
