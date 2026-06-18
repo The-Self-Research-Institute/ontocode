@@ -26,9 +26,6 @@ const DESKTOP_USER_ID = 'desktop-user-local';
 
 /** Resolve user id for draft graph writes — must match JWT / SparqlQueryContext on read. */
 function resolveMutationActor(userId?: string, username?: string): { userId: string; username: string } {
-  if (userId && userId !== 'anonymous') {
-    return { userId, username: username || 'Anonymous' };
-  }
   if (isDesktop()) {
     return { userId: DESKTOP_USER_ID, username: username || 'Desktop User' };
   }
@@ -38,15 +35,18 @@ function resolveMutationActor(userId?: string, username?: string): { userId: str
       const parts = token.split('.');
       if (parts.length === 3) {
         const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-        const resolvedId = payload.userId || payload.id || payload.email || payload.sub;
+        const jwtUserId = payload.userId || payload.id || payload.sub;
         const resolvedName = payload.sub || payload.email || username || 'Anonymous';
-        if (resolvedId) {
-          return { userId: resolvedId, username: resolvedName };
+        if (jwtUserId) {
+          return { userId: jwtUserId, username: resolvedName };
         }
       }
     }
   } catch {
     /* fall through */
+  }
+  if (userId && userId !== 'anonymous') {
+    return { userId, username: username || 'Anonymous' };
   }
   return { userId: userId || 'anonymous', username: username || 'Anonymous' };
 }
