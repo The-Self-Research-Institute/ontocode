@@ -546,6 +546,7 @@ ipcMain.handle('logs:open', () => {
 // ── App updates (electron-updater) ────────────────────────────────────────────
 ipcMain.handle('update:getStatus', () => autoUpdater.getStatus());
 ipcMain.handle('update:check', () => autoUpdater.checkForUpdates(true));
+ipcMain.handle('update:download', () => autoUpdater.downloadUpdate());
 ipcMain.handle('update:install', () => installAppUpdate());
 
 // ── Sync / Share IPC ──────────────────────────────────────────────────────────

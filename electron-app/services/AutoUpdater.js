@@ -1,6 +1,6 @@
 /**
  * Auto-update via electron-updater (generic provider).
- * Checks the OntoCode API for latest.yml and notifies the renderer like Cursor.
+ * Checks the OntoCode API for latest.yml; user must click to download/install.
  */
 const { app, Notification } = require('electron');
 
@@ -46,12 +46,11 @@ function showNativeNotification(title, body) {
 
 function configure() {
     if (!autoUpdater) return;
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.allowDowngrade = false;
     autoUpdater.logger = console;
 
-    // Generic provider — latest.yml served by OntoCode API
     autoUpdater.setFeedURL({
         provider: 'generic',
         url: UPDATE_URL,
@@ -66,10 +65,10 @@ function wireEvents() {
 
     autoUpdater.on('update-available', (info) => {
         const version = info?.version || 'unknown';
-        broadcastStatus({ status: 'available', availableVersion: version, error: null });
+        broadcastStatus({ status: 'available', availableVersion: version, error: null, percent: 0 });
         showNativeNotification(
             'OntoCode update available',
-            `Version ${version} is ready to download.`,
+            `Version ${version} is available. Open Help → Check for Updates or use the banner to download.`,
         );
     });
 
@@ -94,7 +93,7 @@ function wireEvents() {
         broadcastStatus({ status: 'downloaded', availableVersion: version, percent: 100 });
         showNativeNotification(
             'OntoCode update ready',
-            `Version ${version} will install when you restart, or click Restart to update now.`,
+            `Version ${version} downloaded. Click Restart to update in OntoCode.`,
         );
     });
 
@@ -151,6 +150,21 @@ async function checkForUpdates(manual = true) {
     }
 }
 
+async function downloadUpdate() {
+    if (!autoUpdater || !app.isPackaged || process.platform !== 'win32') {
+        return { ...lastStatus, status: 'dev-skipped' };
+    }
+    try {
+        broadcastStatus({ status: 'downloading', error: null, percent: 0 });
+        await autoUpdater.downloadUpdate();
+        return lastStatus;
+    } catch (err) {
+        const message = err?.message || String(err);
+        broadcastStatus({ status: 'error', error: message });
+        return lastStatus;
+    }
+}
+
 function installUpdate() {
     if (!autoUpdater || !app.isPackaged) return false;
     autoUpdater.quitAndInstall(false, true);
@@ -177,6 +191,7 @@ module.exports = {
     start,
     stop,
     checkForUpdates,
+    downloadUpdate,
     installUpdate,
     getStatus,
 };

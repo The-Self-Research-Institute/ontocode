@@ -42,6 +42,14 @@ export const DesktopUpdateBanner: React.FC = () => {
   const isReady = update.status === "downloaded";
   const isDownloading = update.status === "downloading";
 
+  const handleDownload = async () => {
+    try {
+      await (window as any).electronAPI?.updateDownload?.();
+    } catch {
+      /* banner shows error via status event */
+    }
+  };
+
   const handleInstall = async () => {
     setInstalling(true);
     try {
@@ -75,7 +83,7 @@ export const DesktopUpdateBanner: React.FC = () => {
         ) : !isDownloading ? (
           <button
             type="button"
-            onClick={() => (window as any).electronAPI?.updateCheck?.()}
+            onClick={handleDownload}
             className="inline-flex items-center gap-1.5 rounded-md bg-white/20 hover:bg-white/30 px-3 py-1 text-xs font-medium transition-colors"
           >
             Download update
