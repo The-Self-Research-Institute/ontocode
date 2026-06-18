@@ -49,12 +49,13 @@ export const draftTrackingService = {
   },
   
   /**
-   * Get draft statistics
+   * Get draft statistics (optionally scoped to one user's private draft)
    */
-  async getDraftStats(projectId: string): Promise<DraftStatistics> {
+  async getDraftStats(projectId: string, userId?: string): Promise<DraftStatistics> {
     try {
-      console.log(`[draftTrackingService] Getting draft stats for project: ${projectId}`);
-      const response = await apiClient.get(`/api/ontology/${projectId}/drafts/stats`);
+      console.log(`[draftTrackingService] Getting draft stats for project: ${projectId}`, userId);
+      const params = userId ? { userId } : undefined;
+      const response = await apiClient.get(`/api/ontology/${projectId}/drafts/stats`, params);
       
       console.log('[draftTrackingService] getDraftStats response:', response);
       

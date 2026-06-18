@@ -327,25 +327,29 @@ public class DraftTrackingService {
      * Get draft statistics
      */
     public Map<String, Object> getDraftStatistics(String projectId) {
-        List<DraftChange> allDrafts = getAllDrafts(projectId);
-        long unappliedCount = allDrafts.stream().filter(d -> !d.isApplied()).count();
-        long appliedCount = allDrafts.stream().filter(DraftChange::isApplied).count();
-        
-        Map<String, Long> operationTypeCounts = allDrafts.stream()
-            .filter(d -> !d.isApplied())
+        return getDraftStatistics(projectId, null);
+    }
+
+    public Map<String, Object> getDraftStatistics(String projectId, String userId) {
+        List<DraftChange> unapplied = userId != null && !userId.isBlank()
+            ? getUnappliedDraftsForUser(projectId, userId)
+            : getUnappliedDrafts(projectId);
+        long unappliedCount = unapplied.size();
+
+        Map<String, Long> operationTypeCounts = unapplied.stream()
             .collect(Collectors.groupingBy(DraftChange::getOperationType, Collectors.counting()));
-        
+
         Map<String, Object> stats = new HashMap<>();
-        stats.put("totalDrafts", allDrafts.size());
+        stats.put("totalDrafts", unappliedCount);
         stats.put("unappliedDrafts", unappliedCount);
-        stats.put("appliedDrafts", appliedCount);
+        stats.put("appliedDrafts", 0L);
         stats.put("operationTypeCounts", operationTypeCounts);
-        
-        if (!allDrafts.isEmpty()) {
-            stats.put("oldestDraft", allDrafts.get(allDrafts.size() - 1).getTimestamp());
-            stats.put("newestDraft", allDrafts.get(0).getTimestamp());
+
+        if (!unapplied.isEmpty()) {
+            stats.put("oldestDraft", unapplied.get(0).getTimestamp());
+            stats.put("newestDraft", unapplied.get(unapplied.size() - 1).getTimestamp());
         }
-        
+
         return stats;
     }
     

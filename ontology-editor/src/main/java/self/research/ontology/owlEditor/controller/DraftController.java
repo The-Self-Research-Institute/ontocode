@@ -96,9 +96,11 @@ public class DraftController {
      * GET /api/ontology/{projectId}/drafts/stats
      */
     @GetMapping("/{projectId}/drafts/stats")
-    public ResponseEntity<Map<String, Object>> getDraftStats(@PathVariable String projectId) {
+    public ResponseEntity<Map<String, Object>> getDraftStats(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId) {
         try {
-            Map<String, Object> stats = draftTrackingService.getDraftStatistics(projectId);
+            Map<String, Object> stats = draftTrackingService.getDraftStatistics(projectId, userId);
             stats.put("success", true);
             stats.put("projectId", projectId);
             
