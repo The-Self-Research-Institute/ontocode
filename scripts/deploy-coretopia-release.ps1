@@ -44,6 +44,7 @@ if ($Include.Count -gt 0) {
 
 $map = @{
     "editor"  = "owl-editor"
+    "reasoner-worker" = "reasoner-worker"
     "auth"    = "ontology-auth"
     "gateway" = "gateway"
     "web"     = "ontocode-web"
@@ -58,6 +59,7 @@ $dockerBuilds = @{
     "auth"         = @{ Tag = "ontocode-auth";        File = "Dockerfile.auth" }
     "gateway"      = @{ Tag = "ontocode-gateway";     File = "Dockerfile.gateway" }
     "editor"       = @{ Tag = "ontocode-editor";      File = "Dockerfile.editor" }
+    "reasoner-worker" = @{ Tag = "ontocode-reasoner-worker"; File = "Dockerfile.reasoner-worker" }
     "swrl"         = @{ Tag = "ontocode-swrl";        File = "Dockerfile.swrl" }
     "plugin"       = @{ Tag = "ontocode-plugin";      File = "Dockerfile.plugin" }
     "plugin-init"  = @{ Tag = "ontocode-plugin-init"; File = "Dockerfile.plugin-init" }

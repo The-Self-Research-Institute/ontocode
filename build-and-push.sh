@@ -11,7 +11,7 @@
 #   ./build-and-push.sh ontocode latest gateway web  # build gateway + web
 #
 # Available service names:
-#   fuseki  graphdb  auth  gateway  editor  swrl  plugin  plugin-init  web
+#   fuseki  graphdb  auth  gateway  editor  reasoner-worker  swrl  plugin  plugin-init  web
 #
 # On EC2 (pull & restart after pushing):
 #   ./build-and-push.sh ontocode latest editor && \
@@ -102,11 +102,12 @@ should_build fuseki     && docker buildx build \
 should_build graphdb    && build "[1/8] graphdb"     ontocode-graphdb     Dockerfile.graphdb
 should_build auth       && build "[2/8] auth"        ontocode-auth        Dockerfile.auth
 should_build gateway    && build "[3/8] gateway"     ontocode-gateway     Dockerfile.gateway
-should_build editor     && build "[4/8] editor"      ontocode-editor      Dockerfile.editor
-should_build swrl       && build "[5/8] swrl"        ontocode-swrl        Dockerfile.swrl
-should_build plugin     && build "[6/8] plugin"      ontocode-plugin      Dockerfile.plugin
-should_build plugin-init && build "[7/8] plugin-init" ontocode-plugin-init Dockerfile.plugin-init
-should_build web        && build "[8/8] web"         ontocode-web         Dockerfile.webapp "--no-cache"
+should_build editor     && build "[4/9] editor"      ontocode-editor      Dockerfile.editor
+should_build reasoner-worker && build "[5/9] reasoner-worker" ontocode-reasoner-worker Dockerfile.reasoner-worker
+should_build swrl       && build "[6/9] swrl"        ontocode-swrl        Dockerfile.swrl
+should_build plugin     && build "[7/9] plugin"      ontocode-plugin      Dockerfile.plugin
+should_build plugin-init && build "[8/9] plugin-init" ontocode-plugin-init Dockerfile.plugin-init
+should_build web        && build "[9/9] web"         ontocode-web         Dockerfile.webapp "--no-cache"
 
 trap - ERR
 

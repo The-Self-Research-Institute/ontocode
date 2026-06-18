@@ -34,7 +34,7 @@ public class DLQueryQueueManager {
 
     private final Cache<String, DLQueryJob> finishedJobs = Caffeine.newBuilder()
             .maximumSize(200)
-            .expireAfterWrite(30, TimeUnit.MINUTES)
+            .expireAfterWrite(15, TimeUnit.MINUTES)
             .build();
 
     private static final long DEFAULT_ESTIMATE_MS = 120_000;
@@ -320,26 +320,7 @@ public class DLQueryQueueManager {
     }
 
     public static String userFriendlyError(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return "Something went wrong. Please try again.";
-        }
-        String lower = raw.toLowerCase(Locale.ROOT);
-        if (lower.contains("inconsistent")) {
-            return "This ontology has inconsistent data (for example, an individual typed as both a class and its opposite). Fix that in the editor, then try again.";
-        }
-        if (lower.contains("outofmemory") || lower.contains("out of memory")) {
-            return "This query needs more memory than is available right now. Try again in a few minutes, or use a simpler expression.";
-        }
-        if (lower.contains("too large") || lower.contains("triples")) {
-            return "This ontology is too large for DL Query. Try a simpler expression or use the SPARQL tab instead.";
-        }
-        if (lower.contains("no dl reasoner") || lower.contains("reasoner available")) {
-            return "DL Query is not available on this server. Please contact support.";
-        }
-        if (lower.contains("failed to parse") || lower.contains("manchester")) {
-            return raw;
-        }
-        return raw;
+        return self.research.ontology.common.ReasoningFriendlyErrors.forUser(raw);
     }
 
     public synchronized List<DLQueryJob> snapshotQueuedJobs() {

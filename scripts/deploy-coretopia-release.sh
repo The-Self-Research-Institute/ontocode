@@ -56,7 +56,7 @@ while [[ $# -gt 0 ]]; do
     --desktop-linux) DO_DESKTOP_LINUX=true; shift ;;
     --upload-desktop) DO_UPLOAD_DESKTOP=true; shift ;;
     --include) shift; SERVICES+=("$1"); shift ;;
-    auth|gateway|editor|web|fuseki|graphdb|swrl|plugin|plugin-init)
+    auth|gateway|editor|reasoner-worker|web|fuseki|graphdb|swrl|plugin|plugin-init)
       SERVICES+=("$1"); shift ;;
     *) echo "Unknown arg: $1"; usage 1 ;;
   esac
@@ -95,6 +95,7 @@ if $DO_DEPLOY; then
     for s in "${SERVICES[@]}"; do
       case "$s" in
         editor)  compose_services+=(owl-editor) ;;
+        reasoner-worker) compose_services+=(reasoner-worker) ;;
         auth)    compose_services+=(ontology-auth) ;;
         gateway) compose_services+=(gateway) ;;
         web)     compose_services+=(ontocode-web) ;;

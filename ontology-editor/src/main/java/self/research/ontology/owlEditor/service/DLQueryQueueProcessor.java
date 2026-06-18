@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DLQueryJob;
@@ -12,6 +13,7 @@ import java.util.Locale;
 
 @Slf4j
 @Service
+@ConditionalOnProperty(name = "ontocode.reasoner-worker.enabled", havingValue = "false", matchIfMissing = true)
 public class DLQueryQueueProcessor {
 
     private final DLQueryQueueManager queueManager;
