@@ -2,6 +2,7 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 import { getGatewayUrl, getStoredDeploymentType, type DeploymentType } from '../config/deploymentConfig';
 import { isDesktop } from '../utils/desktop';
+import { resolveMutationUserId } from '../utils/mutationActor';
 
 // Get initial base URL from centralized config
 let BASE_URL = getGatewayUrl();
@@ -254,6 +255,10 @@ class ApiClient {
         if (token && config.headers) {
           config.headers.Authorization = `Bearer ${token}`;
         }
+      }
+      const mutationUserId = resolveMutationUserId();
+      if (mutationUserId && config.headers) {
+        config.headers['X-Ontocode-User-Id'] = mutationUserId;
       }
       return config;
     });
