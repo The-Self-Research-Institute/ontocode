@@ -3,6 +3,8 @@ import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
 import { Loader2, Eye, EyeOff, ArrowLeft, Bug, RefreshCw } from 'lucide-react';
 import ReportIssueModal from './ReportIssueModal';
+import { AppVersionBadge } from './AppVersionBadge';
+import { OntoCodeLogo } from './OntoCodeLogo';
 
 interface LoginFormProps {
   onToggleForm: () => void;
@@ -75,6 +77,12 @@ const LoginForm = ({
 
       <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-md mx-auto">
         <div className="text-center mb-8">
+          <div className="flex justify-center mb-4">
+            <OntoCodeLogo size={56} rounded className="shadow-lg shadow-purple-500/20" />
+          </div>
+          <div className="flex justify-center mb-3">
+            <AppVersionBadge variant="dark" />
+          </div>
           <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Welcome to OntoCode</h2>
           <p className="text-gray-300">Sign in to access your ontology editor</p>
         </div>
