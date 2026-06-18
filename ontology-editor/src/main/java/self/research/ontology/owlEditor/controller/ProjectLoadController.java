@@ -122,7 +122,10 @@ public class ProjectLoadController {
     @org.springframework.lang.Nullable
     private self.research.ontology.owlEditor.service.DesktopFusekiSyncScheduler fusekiSyncScheduler;
 
-    private final OntologyPreparseService preparseService;
+    @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
+    private static final String DESKTOP_USER_ID = "desktop-user-local";
     private final ImportWorkerDispatcher importWorkerDispatcher;
     private final MongoTemplate mongoTemplate;
 
@@ -1005,6 +1008,9 @@ public class ProjectLoadController {
         synchronized (lock) {
             try {
                 String effectiveUserId = (userId != null && !userId.isBlank()) ? userId : "anonymous";
+                if (desktopMode) {
+                    effectiveUserId = DESKTOP_USER_ID;
+                }
                 log.info("[SAVE] Save requested for project: {} by user: {} (acquiring lock, force={}, merge={})",
                         projectId, username, force, merge);
 
@@ -1109,7 +1115,7 @@ public class ProjectLoadController {
                 
                 historyService.recordEdit(
                     projectId,
-                    userId != null ? userId : "system",
+                    effectiveUserId,
                     username != null ? username : "System",
                     draft.getOperationType(),
                     entityIRI,
@@ -1131,7 +1137,7 @@ public class ProjectLoadController {
                 Map<String, Object> saveNotification = Map.of(
                     "type", "PROJECT_SAVED",
                     "projectId", projectId,
-                    "userId", userId != null ? userId : "system",
+                    "userId", effectiveUserId,
                     "username", username != null ? username : "System",
                     "appliedChanges", draftResult.getAppliedCount(),
                     "timestamp", System.currentTimeMillis(),
@@ -1142,6 +1148,8 @@ public class ProjectLoadController {
             }
             
             log.info("[SAVE] ✅ Save completed successfully, releasing lock");
+
+            refreshDesktopOwlApiAfterSave(projectId);
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -1158,6 +1166,27 @@ public class ProjectLoadController {
                                 "error", "Failed to save ontology: " + e.getMessage()
                         ));
             }
+        }
+    }
+
+    /** After publish, reload OWLAPI from disk so desktop reads match saved state. */
+    private void refreshDesktopOwlApiAfterSave(String projectId) {
+        if (!desktopMode) {
+            return;
+        }
+        try {
+            if (ontologyCache != null) {
+                ontologyCache.evict(projectId);
+            }
+            if (desktopOntologyLoader != null) {
+                desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
+            }
+            if (fusekiSyncScheduler != null) {
+                fusekiSyncScheduler.scheduleAfterOpen(projectId);
+            }
+            log.info("[SAVE] Scheduled OWLAPI refresh after save for project {}", projectId);
+        } catch (Exception e) {
+            log.warn("[SAVE] OWLAPI refresh after save failed for {}: {}", projectId, e.getMessage());
         }
     }
 

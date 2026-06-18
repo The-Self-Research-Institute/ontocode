@@ -220,6 +220,15 @@ public class DraftTrackingService {
         List<DraftChange> unappliedDrafts = getUnappliedDraftsForUser(projectId, userId);
 
         if (unappliedDrafts.isEmpty()) {
+            if (datasetService.hasActiveDraftOverlay(projectId, userId)) {
+                log.info("[DRAFT] No Mongo drafts but Fuseki draft graph has data — publishing for project {} user {}",
+                        projectId, userId);
+                datasetService.publishDraftGraphToMain(projectId, userId);
+                mainGraphRevisionService.incrementRevision(projectId);
+                draftPublishService.clearBaseline(projectId, userId);
+                return new ApplyDraftsResult(true, 0,
+                        "Published draft graph overlay", false, null);
+            }
             log.info("[DRAFT] No drafts to apply for project {} user {}", projectId, userId);
             return new ApplyDraftsResult(true, 0, "No drafts to apply", false, null);
         }

@@ -21,6 +21,7 @@ import self.research.ontology.owlEditor.service.HierarchyIndexService;
 import self.research.ontology.owlEditor.service.OntologyMetadataService;
 import self.research.ontology.owlEditor.service.OntologyQueryService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
+import self.research.ontology.owlEditor.service.SparqlQueryContext;
 
 import java.util.HashMap;
 import java.util.List;
@@ -81,9 +82,20 @@ public class OntologyQueryController {
         return owlApiContext != null && owlApiContext.hasOntology(projectId);
     }
 
-    /** True when SPARQL fallback is unsafe (Fuseki deferred) — serve OWLAPI or a warming response. */
-    private boolean preferOwlApiPath() {
-        return owlApiFirst && desktopOntologyLoader != null;
+    /**
+     * Desktop owlapi-first: use in-memory OWLAPI when there is no active per-user draft overlay.
+     * When the user has unpublished drafts, reads must go through SPARQL (main + draft graphs).
+     */
+    private boolean preferOwlApiPath(String projectId) {
+        if (!owlApiFirst || desktopOntologyLoader == null) {
+            return false;
+        }
+        String userId = SparqlQueryContext.getUserId();
+        if (userId != null && !userId.isBlank() && datasetService != null
+                && datasetService.hasActiveDraftOverlay(projectId, userId)) {
+            return false;
+        }
+        return true;
     }
 
     private void ensureOwlApiWarming(String projectId) {
@@ -110,7 +122,7 @@ public class OntologyQueryController {
      * @return response when owlapi-first applies; empty when caller should use SPARQL
      */
     private Optional<ResponseEntity<?>> owlApiOnlyOrWarming(String projectId, Supplier<ResponseEntity<?>> whenReady) {
-        if (!preferOwlApiPath()) {
+        if (!preferOwlApiPath(projectId)) {
             return Optional.empty();
         }
         ensureOwlApiWarming(projectId);
@@ -201,8 +213,9 @@ public class OntologyQueryController {
                                       @RequestParam(defaultValue = "5000") int limit,
                                       @RequestParam(defaultValue = "0") int offset) {
         try {
-            // Desktop fast path: OWLAPI in-memory → instant, no network
-            if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            // Desktop fast path: OWLAPI in-memory — skip when user has active draft overlay
+            if (preferOwlApiPath(projectId)
+                    && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
                 var classes = desktopHierarchyService.topLevelClasses(projectId, limit, offset);
                 int topLevelTotal = desktopHierarchyService.topLevelClassTotal(projectId);
                 boolean truncated = (offset + classes.size()) < topLevelTotal;
@@ -314,10 +327,9 @@ public class OntologyQueryController {
                                       @RequestParam String parentIri,
                                       @RequestParam(defaultValue = "1000") int limit,
                                       @RequestParam(defaultValue = "0") int offset) {
-        // Desktop fast path — also fixes the duplicate union-member display bug:
-        // StructuralReasoner.getSubClasses(direct=true) returns only explicit rdfs:subClassOf,
-        // never union members, so Viruses won't appear twice.
-        if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+        // Desktop fast path — skip when draft overlay is active (reads must merge Fuseki drafts)
+        if (preferOwlApiPath(projectId)
+                && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(desktopHierarchyService.children(projectId, parentIri, limit, offset));
         }
         Optional<List<self.research.ontology.owlEditor.dto.OntologyDto.TreeNode>> snapChildren =

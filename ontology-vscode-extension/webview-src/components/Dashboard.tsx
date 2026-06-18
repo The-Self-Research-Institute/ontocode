@@ -73,6 +73,7 @@ import type {
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from "../utils/desktop";
+import { resolveMutationActor } from "../utils/mutationActor";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
@@ -7589,7 +7590,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const updateDraftCount = useCallback(async () => {
     if (!projectId) return;
     try {
-      const effectiveUserId = user?.userId || user?.email || (isDesktop() ? "desktop-user-local" : undefined);
+      const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
       console.log("[Dashboard] Updating draft count for project:", projectId, "user:", effectiveUserId);
       const stats = await draftTrackingService.getDraftStats(projectId, effectiveUserId);
       console.log("[Dashboard] Draft stats received:", stats);
@@ -7660,7 +7661,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[DEBUG] handleSave called", { forcePublish, mergePublish });
     if (!projectId || isSaving) return;
 
-    const effectiveUserId = user?.userId || user?.email || (isDesktop() ? 'desktop-user-local' : 'anonymous');
+    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
 
     const performSave = async (force: boolean, merge: boolean) => {
       setIsSaving(true);
@@ -15424,7 +15425,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             const newMode = syncMode === "public" ? "private" : "public";
             setSyncMode(newMode);
             ontologyMutationService.setRealTimeSync(newMode === "public");
-            const effectiveUserId = user?.userId || user?.email || "anonymous";
+            const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
             if (newMode === "public") {
               // Auto-apply any pending drafts so structural changes are live immediately
               if (projectId && hasUnsavedChanges) {
