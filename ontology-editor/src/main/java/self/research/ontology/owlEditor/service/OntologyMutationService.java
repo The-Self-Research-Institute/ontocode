@@ -200,25 +200,45 @@ public class OntologyMutationService {
      * "Add to ontology".
      */
     public void applyRawUpdate(String projectId, String sparql) {
+        applyRawUpdate(projectId, sparql, false, null);
+    }
+
+    /**
+     * Apply a pre-built SPARQL update (optionally to the user's draft graph).
+     */
+    public void applyRawUpdate(String projectId, String sparql, boolean draft, String userId) {
         if (sparql == null || sparql.isBlank()) {
             log.warn("[MUTATION] Empty raw SPARQL update for project={}", projectId);
             return;
         }
 
-        datasetService.execUpdate(projectId, sparql);
+        if (draft) {
+            datasetService.execDraftUpdate(projectId, userId, sparql);
+        } else {
+            datasetService.execUpdate(projectId, sparql);
+            if (mainGraphRevisionService != null) {
+                mainGraphRevisionService.incrementRevision(projectId);
+            }
+        }
         topLevelCacheService.evict(projectId);
         graphGeneratingService.clearGraphCache();
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
         }
 
-        CompletableFuture.runAsync(() -> {
-            Map<String, Object> meta = indexService.computeMetadata(projectId);
-            metadataService.writeMeta(projectId, meta);
-        }, metadataExecutor);
+        if (!draft) {
+            CompletableFuture.runAsync(() -> {
+                Map<String, Object> meta = indexService.computeMetadata(projectId);
+                metadataService.writeMeta(projectId, meta);
+            }, metadataExecutor);
+        }
     }
 
     public void makeSiblingsDisjoint(String projectId, List<String> classIds) {
+        makeSiblingsDisjoint(projectId, classIds, false, null);
+    }
+
+    public void makeSiblingsDisjoint(String projectId, List<String> classIds, boolean draft, String userId) {
         if (classIds == null || classIds.size() < 2) {
             return;
         }
@@ -240,7 +260,15 @@ public class OntologyMutationService {
         
         sparqlBuilder.append("}");
         
-        datasetService.execUpdate(projectId, sparqlBuilder.toString());
+        String sparql = sparqlBuilder.toString();
+        if (draft) {
+            datasetService.execDraftUpdate(projectId, userId, sparql);
+        } else {
+            datasetService.execUpdate(projectId, sparql);
+            if (mainGraphRevisionService != null) {
+                mainGraphRevisionService.incrementRevision(projectId);
+            }
+        }
         topLevelCacheService.evict(projectId);
 
         // Clear graph cache
@@ -249,10 +277,12 @@ public class OntologyMutationService {
             visualizationController.clearCache(projectId);
         }
 
-        CompletableFuture.runAsync(() -> {
-            Map<String, Object> meta = indexService.computeMetadata(projectId);
-            metadataService.writeMeta(projectId, meta);
-        }, metadataExecutor);
+        if (!draft) {
+            CompletableFuture.runAsync(() -> {
+                Map<String, Object> meta = indexService.computeMetadata(projectId);
+                metadataService.writeMeta(projectId, meta);
+            }, metadataExecutor);
+        }
     }
 
     // These operation types use classIri() as their subject instead of iri()

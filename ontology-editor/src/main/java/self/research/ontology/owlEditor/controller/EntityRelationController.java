@@ -2,14 +2,17 @@ package self.research.ontology.owlEditor.controller;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Single endpoint for add / edit / delete of any entity relation.
@@ -24,17 +27,25 @@ import java.util.Map;
 public class EntityRelationController {
 
     private static final Logger log = LoggerFactory.getLogger(EntityRelationController.class);
+    private static final String DESKTOP_USER_ID = "desktop-user-local";
 
     private final OntologyMutationService mutationService;
+    private final DraftTrackingService draftTrackingService;
 
-    public EntityRelationController(OntologyMutationService mutationService) {
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
+    public EntityRelationController(OntologyMutationService mutationService,
+                                    DraftTrackingService draftTrackingService) {
         this.mutationService = mutationService;
+        this.draftTrackingService = draftTrackingService;
     }
 
     @PutMapping("/{projectId}/relation")
     public ResponseEntity<?> editRelation(
             @PathVariable String projectId,
-            @RequestBody RelationRequest req) {
+            @RequestBody RelationRequest req,
+            @RequestParam(required = false, defaultValue = "true") boolean draft) {
 
         log.info("[RELATION] op={} entity={} rel={} old={} new={}",
                 req.operation(), req.entityIri(), req.relationshipType(),
@@ -46,8 +57,16 @@ public class EntityRelationController {
                 return ResponseEntity.badRequest()
                         .body(Map.of("success", false, "message", "No operations generated for request"));
             }
-            mutationService.apply(projectId, ops);
-            return ResponseEntity.ok(Map.of("success", true));
+            String userId = resolveUserId(req);
+            String username = req.username() != null ? req.username() : "Anonymous";
+            if (draft) {
+                mutationService.applyDraft(projectId, userId, ops);
+                draftTrackingService.recordDrafts(projectId, userId, username, ops,
+                        "relation_" + UUID.randomUUID());
+            } else {
+                mutationService.apply(projectId, ops);
+            }
+            return ResponseEntity.ok(Map.of("success", true, "draft", draft));
         } catch (IllegalArgumentException e) {
             log.warn("[RELATION] Bad request for project={}: {}", projectId, e.getMessage());
             return ResponseEntity.badRequest()
@@ -198,6 +217,11 @@ public class EntityRelationController {
 
             default -> throw new IllegalArgumentException("Unsupported relationshipType: " + rel);
         };
+    }
+
+    private String resolveUserId(RelationRequest req) {
+        String userId = req.userId() != null ? req.userId() : "anonymous";
+        return desktopMode ? DESKTOP_USER_ID : userId;
     }
 
     public record RestrictionData(
