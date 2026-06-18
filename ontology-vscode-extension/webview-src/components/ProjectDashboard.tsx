@@ -49,6 +49,7 @@ import { ReportIssueModal } from "./ReportIssueModal";
 import { Bug } from "lucide-react";
 import AdminSettingsModal from "./AdminSettingsModal";
 import { OntoCodeLogo } from "./OntoCodeLogo";
+import { AppVersionBadge } from "./AppVersionBadge";
 import { getAppVersion } from "../utils/appVersion";
 import {
   WORKSPACE_ROLES,
@@ -979,6 +980,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap justify-start sm:justify-end w-full sm:w-auto">
+              <AppVersionBadge variant="header" />
               {/* Workspace Subscription Plan Badge — hidden in desktop (no plans/pricing) */}
               {!isDesktop() && (isWorkspaceOwner ? (
                 <button

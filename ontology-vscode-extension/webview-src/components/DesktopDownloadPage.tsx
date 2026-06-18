@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Download, Monitor, CheckCircle, ArrowLeft, Cpu, HardDrive, MemoryStick } from "lucide-react";
 import { getGatewayUrl } from "../config/deploymentConfig";
-import { getAppVersion } from "../utils/appVersion";
 import { OntoCodeLogo } from "./OntoCodeLogo";
+import { AppVersionBadge } from "./AppVersionBadge";
 
 const RELEASE_BASE = `${getGatewayUrl()}/api/downloads`;
 const PLATFORM = "windows-x64";
@@ -74,11 +74,6 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
   const [requirements, setRequirements] = useState<SystemRequirements | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
-  const [webAppVersion, setWebAppVersion] = useState("");
-
-  useEffect(() => {
-    getAppVersion().then(setWebAppVersion).catch(() => setWebAppVersion(""));
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,9 +137,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {webAppVersion && (
-              <span className="text-xs text-white/35 hidden sm:inline">Web v{webAppVersion}</span>
-            )}
+            <AppVersionBadge variant="dark" />
             <span className="text-xs text-white/40">Installer v{versionLabel}</span>
             {release?.releaseNotes && (
               <span className="text-xs text-white/50 max-w-xs truncate hidden sm:inline">
