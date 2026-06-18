@@ -95,7 +95,7 @@ public class SubscriptionController {
     @GetMapping("/subscription")
     public ResponseEntity<?> getSubscription(@AuthenticationPrincipal UserDetails principal) {
         User user = resolveUser(principal);
-        if (systemSettingsService.isEnterpriseDomain(user.getEmail())) {
+        if (systemSettingsService.isEnterpriseBypass(user.getEmail())) {
             return ResponseEntity.ok(Map.of(
                 "planName",               "ENTERPRISE",
                 "status",                 "active",
@@ -427,7 +427,7 @@ public class SubscriptionController {
             User owner = userRepository.findById(workspace.getOwnerId())
                     .orElseThrow(() -> new IllegalStateException("Workspace owner not found"));
 
-            if (systemSettingsService.isEnterpriseDomain(owner.getEmail())) {
+            if (systemSettingsService.isEnterpriseBypass(owner.getEmail())) {
                 return ResponseEntity.ok(Map.of(
                     "planName", "ENTERPRISE",
                     "status", "active",

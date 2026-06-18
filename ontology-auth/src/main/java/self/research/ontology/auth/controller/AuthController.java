@@ -22,6 +22,7 @@ import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.service.AuditService;
 import self.research.ontology.auth.service.EmailService;
+import self.research.ontology.auth.service.EnterpriseBypassService;
 import self.research.ontology.auth.service.RateLimitService;
 import self.research.ontology.auth.service.SystemSettingsService;
 import self.research.ontology.auth.util.JwtUtil;
@@ -45,6 +46,7 @@ public class AuthController {
     private final RateLimitService rateLimitService;
     private final AuditService auditService;
     private final SystemSettingsService systemSettingsService;
+    private final EnterpriseBypassService enterpriseBypassService;
 
     @Value("${app.admin.password:}")
     private String adminPassword;
@@ -77,7 +79,8 @@ public class AuthController {
                           EmailService emailService,
                           RateLimitService rateLimitService,
                           AuditService auditService,
-                          SystemSettingsService systemSettingsService) {
+                          SystemSettingsService systemSettingsService,
+                          EnterpriseBypassService enterpriseBypassService) {
         this.authenticationManager = authenticationManager;
         this.userDetailsService = userDetailsService;
         this.jwtUtil = jwtUtil;
@@ -88,6 +91,7 @@ public class AuthController {
         this.rateLimitService = rateLimitService;
         this.auditService = auditService;
         this.systemSettingsService = systemSettingsService;
+        this.enterpriseBypassService = enterpriseBypassService;
     }
 
     private boolean isDomainAllowed(String email) {
@@ -251,24 +255,9 @@ public class AuthController {
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
 
-        // Enterprise domain bypass: auto-grant ENTERPRISE to user account and all their workspaces
-        if (systemSettingsService.isEnterpriseDomain(user.getEmail())) {
-            if (!"ENTERPRISE".equalsIgnoreCase(user.getSubscriptionPlanName())) {
-                user.setSubscriptionPlanName("ENTERPRISE");
-                user.setSubscriptionStatus("active");
-                userRepository.save(user);
-                log.info("Enterprise domain bypass: set user plan to ENTERPRISE for {}", user.getEmail());
-            }
-            workspaceRepository.findByOwnerId(user.getId()).stream()
-                .filter(ws -> !Boolean.TRUE.equals(ws.getIsDeleted()))
-                .filter(ws -> !"ENTERPRISE".equalsIgnoreCase(ws.getSubscriptionPlan()))
-                .forEach(ws -> {
-                    ws.setSubscriptionPlan("ENTERPRISE");
-                    ws.setCollaborationEnabled(true);
-                    workspaceRepository.save(ws);
-                    log.info("Enterprise domain bypass: upgraded workspace {} for {}", ws.getWorkspaceId(), user.getEmail());
-                });
-        }
+        // Enterprise bypass (domain or email allowlist): grant or revoke on each login
+        enterpriseBypassService.applyBypassIfEligible(user);
+        enterpriseBypassService.revokeBypassIfNeeded(user);
 
         // Generate JWT token
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
@@ -288,7 +277,7 @@ public class AuthController {
         loginResp.put("email", user.getEmail());
         loginResp.put("roles", loginRoles);
         loginResp.put("isAdmin", isAdmin);
-        loginResp.put("enterpriseDomainBypass", systemSettingsService.isEnterpriseDomain(user.getEmail()));
+        loginResp.put("enterpriseDomainBypass", systemSettingsService.isEnterpriseBypass(user.getEmail()));
         return ResponseEntity.ok(loginResp);
     }
 
@@ -327,6 +316,10 @@ public class AuthController {
                 ));
             }
 
+            enterpriseBypassService.applyBypassIfEligible(user);
+            enterpriseBypassService.revokeBypassIfNeeded(user);
+            user = userRepository.findByEmailIgnoreCase(email).orElse(user);
+
             UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
             Set<String> roles = user.getRoles() != null ? user.getRoles() : Set.of();
@@ -343,6 +336,7 @@ public class AuthController {
             resp.put("roles", roles);
             resp.put("isAdmin", isAdmin);
             resp.put("subscriptionPlan", planName);
+            resp.put("enterpriseDomainBypass", systemSettingsService.isEnterpriseBypass(user.getEmail()));
             return ResponseEntity.ok(resp);
         } catch (Exception e) {
             log.error("Token refresh failed", e);
@@ -446,6 +440,9 @@ public class AuthController {
         user.clearVerificationToken();
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
+
+        enterpriseBypassService.applyBypassIfEligible(user);
+        user = userRepository.findByEmailIgnoreCase(user.getEmail()).orElse(user);
 
         auditService.logEmailVerified(user.getEmail());
 

@@ -80,7 +80,7 @@ public class LicenseController {
     }
 
     private String resolvePlan(User user) {
-        if (systemSettingsService.isEnterpriseDomain(user.getEmail())) {
+        if (systemSettingsService.isEnterpriseBypass(user.getEmail())) {
             return "ENTERPRISE";
         }
         String plan = user.getSubscriptionPlanName();

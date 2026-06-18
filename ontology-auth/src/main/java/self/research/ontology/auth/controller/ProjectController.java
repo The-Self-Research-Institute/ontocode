@@ -1944,7 +1944,7 @@ public class ProjectController {
         // Members operate under the workspace owner's subscription plan
         Optional<User> ownerOpt = userRepository.findById(ownerId);
         // Enterprise domain bypass owners have full collaboration enabled
-        if (ownerOpt.isPresent() && systemSettingsService.isEnterpriseDomain(ownerOpt.get().getEmail())) {
+        if (ownerOpt.isPresent() && systemSettingsService.isEnterpriseBypass(ownerOpt.get().getEmail())) {
             return Optional.empty();
         }
         String ownerPlan = ownerOpt.map(User::getSubscriptionPlanName).orElse(null);

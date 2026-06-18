@@ -6,6 +6,7 @@ interface SystemSettings {
     maintenanceModeEnabled: boolean;
     maintenanceAllowedDomains: string[];
     enterpriseDomains: string[];
+    enterpriseEmails: string[];
     updatedAt?: string;
     updatedBy?: string;
 }
@@ -22,6 +23,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
         maintenanceModeEnabled: false,
         maintenanceAllowedDomains: [],
         enterpriseDomains: [],
+        enterpriseEmails: [],
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -29,6 +31,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
     const [newAllowedDomain, setNewAllowedDomain] = useState('');
     const [newEnterpriseDomain, setNewEnterpriseDomain] = useState('');
+    const [newEnterpriseEmail, setNewEnterpriseEmail] = useState('');
 
     const [connections, setConnections] = useState<{
         totalConnections: number;
@@ -115,7 +118,20 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
             setSaving(true);
             await apiClient.patch('/api/admin/settings/enterprise-domains', { domains });
             setSettings(prev => ({ ...prev, enterpriseDomains: domains }));
-            showToast('success', 'Enterprise domains updated — existing workspaces upgraded');
+            showToast('success', 'Enterprise domains updated');
+        } catch (e: any) {
+            showToast('error', e.response?.data?.error || 'Save failed');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const saveEnterpriseEmails = async (emails: string[]) => {
+        try {
+            setSaving(true);
+            await apiClient.patch('/api/admin/settings/enterprise-emails', { emails });
+            setSettings(prev => ({ ...prev, enterpriseEmails: emails }));
+            showToast('success', 'Beta / partner emails updated');
         } catch (e: any) {
             showToast('error', e.response?.data?.error || 'Save failed');
         } finally {
@@ -145,6 +161,18 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
     const removeEnterpriseDomain = (domain: string) => {
         saveEnterpriseDomains(settings.enterpriseDomains.filter(d => d !== domain));
+    };
+
+    const addEnterpriseEmail = () => {
+        const e = newEnterpriseEmail.trim().toLowerCase();
+        if (!e || !e.includes('@') || settings.enterpriseEmails.includes(e)) return;
+        const updated = [...settings.enterpriseEmails, e];
+        setNewEnterpriseEmail('');
+        saveEnterpriseEmails(updated);
+    };
+
+    const removeEnterpriseEmail = (email: string) => {
+        saveEnterpriseEmails(settings.enterpriseEmails.filter(e => e !== email));
     };
 
     if (!isOpen) return null;
@@ -244,17 +272,51 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
                             <hr className="border-gray-100" />
 
-                            {/* ── Enterprise Domain Bypass ────────────────────────── */}
+                            {/* ── Enterprise bypass (beta / partner) ───────────────── */}
                             <section>
                                 <div className="flex items-center gap-2 mb-1">
                                     <Building2 className="w-4 h-4 text-purple-500" />
-                                    <h3 className="font-semibold text-gray-900">Enterprise Domain Bypass</h3>
+                                    <h3 className="font-semibold text-gray-900">Enterprise Bypass (Beta / Partner)</h3>
                                 </div>
                                 <p className="text-sm text-gray-500 mb-4">
-                                    Users from these domains automatically receive an Enterprise plan — no purchase required.
-                                    Existing workspaces are upgraded immediately when you add a domain.
+                                    Grant Enterprise features without Stripe billing. Add individual emails for beta testers
+                                    or entire domains for partner organisations. Removing an email or domain downgrades
+                                    affected accounts to Free (unless they have an active paid subscription).
                                 </p>
 
+                                <p className="text-sm font-medium text-gray-700 mb-2">Individual emails</p>
+                                <div className="flex flex-wrap gap-2 mb-3 min-h-[2rem]">
+                                    {(settings.enterpriseEmails || []).length === 0 && (
+                                        <span className="text-sm text-gray-400 italic">No beta emails added yet</span>
+                                    )}
+                                    {(settings.enterpriseEmails || []).map(e => (
+                                        <span key={e} className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-sm">
+                                            {e}
+                                            <button onClick={() => removeEnterpriseEmail(e)} className="hover:text-indigo-900 ml-1">
+                                                <X size={12} />
+                                            </button>
+                                        </span>
+                                    ))}
+                                </div>
+                                <div className="flex gap-2 mb-6">
+                                    <input
+                                        type="email"
+                                        value={newEnterpriseEmail}
+                                        onChange={ev => setNewEnterpriseEmail(ev.target.value)}
+                                        onKeyDown={ev => ev.key === 'Enter' && addEnterpriseEmail()}
+                                        placeholder="beta.user@company.com"
+                                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                    />
+                                    <button
+                                        onClick={addEnterpriseEmail}
+                                        disabled={!newEnterpriseEmail.trim() || saving}
+                                        className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <Plus size={16} />
+                                    </button>
+                                </div>
+
+                                <p className="text-sm font-medium text-gray-700 mb-2">Email domains</p>
                                 <div className="flex flex-wrap gap-2 mb-3 min-h-[2rem]">
                                     {settings.enterpriseDomains.length === 0 && (
                                         <span className="text-sm text-gray-400 italic">No enterprise domains added yet</span>
@@ -287,11 +349,11 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                     </button>
                                 </div>
 
-                                {settings.enterpriseDomains.length > 0 && (
+                                {(settings.enterpriseDomains.length > 0 || (settings.enterpriseEmails || []).length > 0) && (
                                     <div className="mt-3 p-3 bg-purple-50 rounded-lg border border-purple-100">
                                         <p className="text-xs text-purple-700">
-                                            Users from these domains get Enterprise on login. Their workspaces are upgraded automatically.
-                                            Removing a domain here does <strong>not</strong> downgrade existing workspaces.
+                                            Matching users receive Enterprise on login. Removing an email or domain
+                                            downgrades bypass-only accounts to Free and syncs their workspaces.
                                         </p>
                                     </div>
                                 )}
