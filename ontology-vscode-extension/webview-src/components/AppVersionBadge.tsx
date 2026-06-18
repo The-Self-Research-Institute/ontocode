@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getAppVersion } from "../utils/appVersion";
+import { getAppVersion, getWebAppVersion } from "../utils/appVersion";
 import { isDesktop } from "../utils/desktop";
 
 type Variant = "light" | "dark" | "muted" | "header";
@@ -24,10 +24,10 @@ export const AppVersionBadge: React.FC<AppVersionBadgeProps> = ({
   variant = "muted",
   className = "",
 }) => {
-  const [version, setVersion] = useState("");
+  const [version, setVersion] = useState(() => getWebAppVersion());
 
   useEffect(() => {
-    getAppVersion().then(setVersion).catch(() => setVersion(""));
+    getAppVersion().then(setVersion).catch(() => {});
   }, []);
 
   if (!version) return null;
