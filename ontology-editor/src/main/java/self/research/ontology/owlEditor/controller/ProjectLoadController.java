@@ -126,6 +126,8 @@ public class ProjectLoadController {
     private boolean desktopMode;
 
     private static final String DESKTOP_USER_ID = "desktop-user-local";
+
+    private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
     private final MongoTemplate mongoTemplate;
 
