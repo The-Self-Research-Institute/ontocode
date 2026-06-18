@@ -15,6 +15,7 @@ import self.research.ontology.owlEditor.model.DLQueryJob;
 import self.research.ontology.owlEditor.service.DLQueryQueueManager;
 import self.research.ontology.owlEditor.service.DLQueryQueueProcessor;
 import self.research.ontology.owlEditor.service.DLQueryService;
+import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
@@ -45,9 +46,13 @@ import java.util.stream.Collectors;
 public class DLQueryController {
 
     private static final Logger log = LoggerFactory.getLogger(DLQueryController.class);
+    private static final String DESKTOP_USER_ID = "desktop-user-local";
 
     @Autowired
     private OntologyMutationService mutationService;
+
+    @Autowired
+    private DraftTrackingService draftTrackingService;
 
     @Autowired
     private ReasonerService reasonerService;
@@ -69,6 +74,9 @@ public class DLQueryController {
 
     @Value("${ontocode.reasoner-worker.enabled:false}")
     private boolean reasonerWorkerEnabled;
+
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
 
     /**
      * Submit a DL Query job (async). Results arrive via WebSocket /topic/dlquery/{jobId}
@@ -162,7 +170,8 @@ public class DLQueryController {
     @PostMapping("/{projectId}/dl/add")
     public ResponseEntity<Map<String, Object>> addDLQueryToOntology(
             @PathVariable String projectId,
-            @RequestBody DLAddRequest request
+            @RequestBody DLAddRequest request,
+            @RequestParam(required = false, defaultValue = "true") boolean draft
     ) {
         try {
             if (request.getExpression() == null || request.getExpression().isBlank()) {
@@ -204,10 +213,22 @@ public class DLQueryController {
                 axioms.add(df.getOWLEquivalentClassesAxiom(newClass, classExpression));
 
                 String sparql = buildInsertDataFromAxioms(axioms);
-                mutationService.applyRawUpdate(projectId, sparql);
+                String userId = resolveDraftUserId(request);
+                String username = request.getUsername() != null ? request.getUsername() : "Anonymous";
+                if (draft) {
+                    mutationService.applyRawUpdate(projectId, sparql, true, userId);
+                    OntologyMutationService.MutationOp dlOp = new OntologyMutationService.MutationOp(
+                            "addDlQueryClass", classIri, request.getClassName().trim(), null, null, null, null,
+                            request.getExpression().trim(), null, null, null, null, null, null);
+                    draftTrackingService.recordDrafts(projectId, userId, username,
+                            List.of(dlOp), "dl-add-" + UUID.randomUUID());
+                } else {
+                    mutationService.applyRawUpdate(projectId, sparql);
+                }
 
                 return ResponseEntity.ok(Map.of(
                         "success", true,
+                        "draft", draft,
                         "classIri", classIri,
                         "className", request.getClassName().trim(),
                         "expression", request.getExpression().trim(),
@@ -223,6 +244,19 @@ public class DLQueryController {
                     "error", e.getMessage() != null ? e.getMessage() : "Failed to add DL query expression"
             ));
         }
+    }
+
+    private String resolveDraftUserId(DLAddRequest request) {
+        if (desktopMode) {
+            return DESKTOP_USER_ID;
+        }
+        if (request.getUserId() != null && !request.getUserId().isBlank()) {
+            return request.getUserId();
+        }
+        if (request.getUserEmail() != null && !request.getUserEmail().isBlank()) {
+            return request.getUserEmail();
+        }
+        return "anonymous";
     }
 
     private String resolveNewClassIri(OWLOntology ontology, String className) {
@@ -379,6 +413,8 @@ public class DLQueryController {
         private String expression;
         private String className;
         private String userEmail;
+        private String userId;
+        private String username;
 
         public String getExpression() {
             return expression;
@@ -402,6 +438,22 @@ public class DLQueryController {
 
         public void setUserEmail(String userEmail) {
             this.userEmail = userEmail;
+        }
+
+        public String getUserId() {
+            return userId;
+        }
+
+        public void setUserId(String userId) {
+            this.userId = userId;
+        }
+
+        public String getUsername() {
+            return username;
+        }
+
+        public void setUsername(String username) {
+            this.username = username;
         }
     }
 

@@ -18,6 +18,7 @@ import {
   PlusCircle,
 } from "lucide-react";
 import apiClient from "../../services/apiClient";
+import ontologyMutationService from "../../services/ontologyMutationService";
 import { syncService } from "../../services/syncService";
 import { pluginLoader } from "../../services/pluginLoader";
 import DLQueryPanel from "../DLQueryPanel";
@@ -1615,17 +1616,11 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
             apiClient={apiClient}
             onAddToOntology={async (expression, className) => {
               try {
-                await apiClient.post(`/api/ontology/${projectId}/dl/add`, {
-                  expression,
-                  className,
-                  userEmail: user?.email || "anonymous",
-                });
+                await ontologyMutationService.addDlQueryClass(projectId || "", expression, className, user?.email);
                 showToast(`Created class "${className}"`, "success");
-                // Refresh class hierarchy and metadata after successful class creation
                 await refreshClassHierarchy();
                 await fetchData(projectId, false);
               } catch (e) {
-                // Fallback for older backend versions: create via the existing mutations endpoint.
                 const status = (e as any)?.status ?? (e as any)?.response?.status ?? (e as any)?.data?.status;
                 if (status !== 404) {
                   console.warn("DL add failed:", e);
@@ -1633,7 +1628,6 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                   return;
                 }
 
-                // Resolve target IRI from known classes (supports simple expressions like "Course").
                 const normalizedExpr = (expression || "").trim();
                 const byIri = normalizedExpr.startsWith("http://") || normalizedExpr.startsWith("https://");
                 const target = byIri
@@ -1656,29 +1650,16 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
 
                 const newIri = base + normalizedClassName;
 
-                const mutationBody = {
-                  ops: [
-                    {
-                      type: "createClass",
-                      iri: newIri,
-                      label: className,
-                      parent: "http://www.w3.org/2002/07/owl#Thing",
-                    },
-                    {
-                      type: "addEquivalentClass",
-                      iri: newIri,
-                      target,
-                    },
-                  ],
-                  userId: user?.email || "anonymous",
-                  username: user?.username || user?.email || "Anonymous",
-                  sessionId: `dl-add-${Date.now()}`,
-                };
-
                 try {
-                  await apiClient.post(`/api/ontology/mutations/${projectId}?draft=false`, mutationBody);
+                  await ontologyMutationService.addDlQueryClassViaMutations(
+                    projectId || "",
+                    newIri,
+                    className,
+                    target,
+                    user?.email,
+                    user?.username || user?.email,
+                  );
                   showToast(`Created class "${className}"`, "success");
-                  // Refresh class hierarchy and metadata after successful class creation
                   await refreshClassHierarchy();
                   await fetchData(projectId, false);
                 } catch (e2) {

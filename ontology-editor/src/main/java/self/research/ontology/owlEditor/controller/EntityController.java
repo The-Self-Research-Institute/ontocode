@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.service.EntityRenameService;
@@ -14,8 +15,13 @@ import java.util.Map;
 @CrossOrigin(originPatterns = "*")
 public class EntityController {
 
+    private static final String DESKTOP_USER_ID = "desktop-user-local";
+
     private final EntityRenameService renameService;
     private final CollaborativeEditService collaborativeEditService;
+
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
 
     public EntityController(EntityRenameService renameService,
                             CollaborativeEditService collaborativeEditService) {
@@ -26,6 +32,7 @@ public class EntityController {
     @PostMapping("/{projectId}/rename")
     public ResponseEntity<?> renameEntity(@PathVariable String projectId,
                                           @RequestBody RenameEntityRequest request,
+                                          @RequestParam(required = false, defaultValue = "true") boolean draft,
                                           @RequestParam(required = false) String userId,
                                           @RequestParam(required = false) String username) {
         if (request == null || isBlank(request.oldIri) || isBlank(request.newIri)) {
@@ -33,15 +40,23 @@ public class EntityController {
                     "success", false,
                     "error", "oldIri and newIri are required"));
         }
+        String effectiveUserId = desktopMode ? DESKTOP_USER_ID : (userId != null ? userId : "anonymous");
+        String effectiveUsername = username != null ? username : "Anonymous";
         try {
-            renameService.renameEntity(projectId, request.oldIri.trim(), request.newIri.trim());
+            if (draft) {
+                renameService.renameEntityDraft(projectId, effectiveUserId, request.oldIri.trim(), request.newIri.trim());
+            } else {
+                renameService.renameEntity(projectId, request.oldIri.trim(), request.newIri.trim());
+            }
             collaborativeEditService.broadcastMutation(projectId,
                     new OntologyMutationService.MutationOp(
                             "renameEntity", request.oldIri, null, null, null, request.newIri,
                             null, null, null, null, null, null, null, null),
-                    userId != null ? userId : "anonymous",
-                    username != null ? username : "Anonymous");
-            return ResponseEntity.ok(Map.of("success", true, "oldIri", request.oldIri, "newIri", request.newIri));
+                    effectiveUserId,
+                    effectiveUsername);
+            return ResponseEntity.ok(Map.of(
+                    "success", true, "draft", draft,
+                    "oldIri", request.oldIri, "newIri", request.newIri));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
         } catch (Exception e) {

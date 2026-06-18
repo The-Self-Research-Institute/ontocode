@@ -10247,13 +10247,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleAddDlToOntology = useCallback(async () => {
     if (!projectId || !dlQuery.trim()) return;
     try {
-      await apiClient.post(`/api/ontology/${projectId}/dl/add`, { expression: dlQuery });
+      await ontologyMutationService.addDlQueryClass(projectId, dlQuery, dlQuery, user?.email);
       console.log("DL expression submitted to backend.");
     } catch (e) {
-      // Keep app stable even if the endpoint doesn't exist.
-      console.warn("DL add endpoint not available; skipping.");
+      console.warn("DL add endpoint not available; skipping.", e);
     }
-  }, [projectId, dlQuery]);
+  }, [projectId, dlQuery, user?.email]);
   // #endregion
 
   // #region Render Methods
@@ -14273,17 +14272,11 @@ const Dashboard: React.FC<DashboardProps> = ({
             apiClient={apiClient}
             onAddToOntology={async (expression, className) => {
               try {
-                await apiClient.post(`/api/ontology/${projectId}/dl/add`, {
-                  expression,
-                  className,
-                  userEmail: user?.email || "anonymous",
-                });
+                await ontologyMutationService.addDlQueryClass(projectId || "", expression, className, user?.email);
                 showToast(`Created class "${className}"`, "success");
-                // Refresh class hierarchy and metadata after successful class creation
                 await refreshClassHierarchy();
                 await fetchData(projectId, false);
               } catch (e) {
-                // Fallback for older backend versions: create via the existing mutations endpoint.
                 const status = (e as any)?.status ?? (e as any)?.response?.status ?? (e as any)?.data?.status;
                 if (status !== 404) {
                   console.warn("DL add failed:", e);
@@ -14291,7 +14284,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                   return;
                 }
 
-                // Resolve target IRI from known classes (supports simple expressions like "Course").
                 const normalizedExpr = (expression || "").trim();
                 const byIri = normalizedExpr.startsWith("http://") || normalizedExpr.startsWith("https://");
                 const target = byIri
@@ -14314,29 +14306,16 @@ const Dashboard: React.FC<DashboardProps> = ({
 
                 const newIri = base + normalizedClassName;
 
-                const mutationBody = {
-                  ops: [
-                    {
-                      type: "createClass",
-                      iri: newIri,
-                      label: className,
-                      parent: "http://www.w3.org/2002/07/owl#Thing",
-                    },
-                    {
-                      type: "addEquivalentClass",
-                      iri: newIri,
-                      target,
-                    },
-                  ],
-                  userId: user?.email || "anonymous",
-                  username: user?.username || user?.email || "Anonymous",
-                  sessionId: `dl-add-${Date.now()}`,
-                };
-
                 try {
-                  await apiClient.post(`/api/ontology/mutations/${projectId}?draft=false`, mutationBody);
+                  await ontologyMutationService.addDlQueryClassViaMutations(
+                    projectId || "",
+                    newIri,
+                    className,
+                    target,
+                    user?.email,
+                    user?.username || user?.email,
+                  );
                   showToast(`Created class "${className}"`, "success");
-                  // Refresh class hierarchy and metadata after successful class creation
                   await refreshClassHierarchy();
                   await fetchData(projectId, false);
                 } catch (e2) {
