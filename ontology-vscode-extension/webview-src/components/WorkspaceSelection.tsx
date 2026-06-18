@@ -5,6 +5,8 @@ import { ReportIssueModal } from "./ReportIssueModal";
 import { validateWorkspaceName, validateDescription } from "../utils/validation";
 import { useAuth } from "../custom-hook/useAuth";
 import { SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "../utils/sessionCleanup";
+import { OntoCodeLogo } from "./OntoCodeLogo";
+import { AppVersionBadge } from "./AppVersionBadge";
 
 // ─── Local storage helpers ───────────────────────────────────────────────────
 
@@ -584,6 +586,12 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         </div>
 
         <div className="text-center mb-8">
+          <div className="flex justify-center mb-4">
+            <OntoCodeLogo size={56} rounded className="shadow-lg shadow-purple-500/20" />
+          </div>
+          <div className="flex justify-center mb-3">
+            <AppVersionBadge variant="dark" />
+          </div>
           <h2 className="text-3xl font-bold text-white mb-2">Select a Workspace</h2>
           <p className="text-gray-300 mb-1">
             Welcome back, <span className="font-semibold">{username}</span>
