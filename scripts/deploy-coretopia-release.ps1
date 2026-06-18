@@ -269,7 +269,10 @@ if ($DesktopLinux) {
 
 if ($UploadDesktop) {
     $dist = "$Root\electron-app\dist-electron"
-    $exe = Get-ChildItem "$dist\*Setup*x64*.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $exe = Get-ChildItem "$dist\*Setup*.exe" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch 'blockmap' } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
     if ($exe) { Upload-Installer -Platform "windows-x64" -FilePath $exe.FullName }
     $dmgArm = Get-ChildItem "$dist\*arm64*.dmg" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($dmgArm) { Upload-Installer -Platform "mac-arm64" -FilePath $dmgArm.FullName }
