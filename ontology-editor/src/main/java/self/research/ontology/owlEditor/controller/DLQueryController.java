@@ -58,7 +58,7 @@ public class DLQueryController {
     @Autowired
     private DLQueryQueueManager dlQueryQueueManager;
 
-    @Autowired
+    @Autowired(required = false)
     private DLQueryQueueProcessor dlQueryQueueProcessor;
 
     @Autowired(required = false)
@@ -126,7 +126,9 @@ public class DLQueryController {
                     request.getExpression().trim(),
                     request.getQueryTypes(),
                     request.getUserEmail());
-            dlQueryQueueProcessor.processNext();
+            if (dlQueryQueueProcessor != null) {
+                dlQueryQueueProcessor.processNext();
+            }
 
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
