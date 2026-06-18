@@ -22,11 +22,23 @@ export interface MutationOp {
 // When false: changes save as drafts (for private files)
 let realTimeSyncEnabled = false;
 
+/** True when edits should go to the per-user draft graph (private mode). */
+export function isPrivateEditMode(): boolean {
+  return !realTimeSyncEnabled;
+}
+
+function resolveUseDraft(draft?: boolean): boolean {
+  return draft !== undefined ? draft : !realTimeSyncEnabled;
+}
+
 export const ontologyMutationService = {
   setRealTimeSync(enabled: boolean) {
     realTimeSyncEnabled = enabled;
     console.log(`[MutationService] Real-time sync ${enabled ? 'ENABLED' : 'DISABLED'}`);
   },
+
+  isPrivateEditMode,
+  resolveUseDraft,
 
   /**
    * Apply mutations to the ontology
@@ -41,7 +53,7 @@ export const ontologyMutationService = {
                       userId?: string, username?: string, sessionId?: string): Promise<void> {
     // Private mode (realTimeSyncEnabled=false): write to per-user draft named graph in Fuseki.
     // Public/shared mode: write directly to the project main graph.
-    const useDraft = draft !== undefined ? draft : !realTimeSyncEnabled;
+    const useDraft = resolveUseDraft(draft);
     const actor = resolveMutationActor(userId, username);
 
     console.log(`[MutationService] 🔄 Applying mutations to ${projectId}`,ops, {
@@ -386,8 +398,10 @@ export const ontologyMutationService = {
    * Delete an annotation property
    */
   async renameEntity(projectId: string, oldIri: string, newIri: string, userId?: string, username?: string): Promise<void> {
+    const actor = resolveMutationActor(userId, username);
+    const useDraft = resolveUseDraft();
     await apiClient.post(
-      `/api/ontology/entity/${encodeURIComponent(projectId)}/rename?userId=${encodeURIComponent(userId || 'anonymous')}&username=${encodeURIComponent(username || 'Anonymous')}`,
+      `/api/ontology/entity/${encodeURIComponent(projectId)}/rename?draft=${useDraft}&userId=${encodeURIComponent(actor.userId)}&username=${encodeURIComponent(actor.username)}`,
       { oldIri, newIri },
     );
   },
@@ -757,8 +771,13 @@ export const ontologyMutationService = {
       expressionType?: 'intersection' | 'union';
     }
   ): Promise<void> {
+    const actor = resolveMutationActor(params.userId, params.username);
+    const useDraft = resolveUseDraft();
     try {
-      await apiClient.put(`/api/ontology/${projectId}/relation`, params);
+      await apiClient.put(
+        `/api/ontology/${projectId}/relation?draft=${useDraft}`,
+        { ...params, userId: actor.userId, username: actor.username },
+      );
     } catch (err: any) {
       if (err?.status === 403 && err?.data?.requiresUpgrade) {
         const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
@@ -778,7 +797,56 @@ export const ontologyMutationService = {
    * Make siblings disjoint - adds pairwise disjointWith axioms
    */
   async makeSiblingsDisjoint(projectId: string, classIds: string[], userId?: string, username?: string): Promise<void> {
-    await apiClient.post(`/api/ontology/make-siblings-disjoint/${projectId}?userId=${userId || 'anonymous'}&username=${encodeURIComponent(username || 'Anonymous')}`, { classIds });
+    const actor = resolveMutationActor(userId, username);
+    const ops: MutationOp[] = [];
+    for (let i = 0; i < classIds.length; i++) {
+      for (let j = i + 1; j < classIds.length; j++) {
+        ops.push({ type: 'addDisjointWith', iri: classIds[i], target: classIds[j] });
+      }
+    }
+    if (ops.length === 0) return;
+    await this.applyMutations(projectId, ops, undefined, actor.userId, actor.username);
+  },
+
+  /** DL Query "Add to ontology" — respects private/public sync mode. */
+  async addDlQueryClass(
+    projectId: string,
+    expression: string,
+    className: string,
+    userEmail?: string,
+  ): Promise<void> {
+    const actor = resolveMutationActor(userEmail);
+    const useDraft = resolveUseDraft();
+    await apiClient.post(`/api/ontology/${projectId}/dl/add?draft=${useDraft}`, {
+      expression,
+      className,
+      userEmail: actor.userId,
+      userId: actor.userId,
+      username: actor.username,
+    });
+  },
+
+  /** Fallback when /dl/add is unavailable (older backends). */
+  async addDlQueryClassViaMutations(
+    projectId: string,
+    newIri: string,
+    className: string,
+    targetIri: string,
+    userId?: string,
+    username?: string,
+  ): Promise<void> {
+    const actor = resolveMutationActor(userId, username);
+    await this.applyMutations(
+      projectId,
+      [
+        { type: 'createClass', iri: newIri, label: className, parent: 'http://www.w3.org/2002/07/owl#Thing' },
+        { type: 'addEquivalentClass', iri: newIri, target: targetIri },
+      ],
+      undefined,
+      actor.userId,
+      actor.username,
+      `dl-add-${Date.now()}`,
+    );
   },
 
   /**
