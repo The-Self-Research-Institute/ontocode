@@ -29,13 +29,19 @@ public class SystemSettings {
      */
     private List<String> maintenanceAllowedDomains = new ArrayList<>();
 
-    // ── Enterprise domain bypass ──────────────────────────────────────────────
+    // ── Enterprise bypass (beta / partner access) ───────────────────────────────
     /**
      * Email domains whose users automatically receive an Enterprise plan
      * without going through Stripe payment.
      * Example: ["university.edu", "hospital.org"]
      */
     private List<String> enterpriseDomains = new ArrayList<>();
+
+    /**
+     * Individual email addresses granted Enterprise access (beta testers, partners).
+     * Example: ["beta.user@company.com"]
+     */
+    private List<String> enterpriseEmails = new ArrayList<>();
 
     private LocalDateTime updatedAt;
     private String updatedBy;
@@ -63,6 +69,11 @@ public class SystemSettings {
         this.enterpriseDomains = enterpriseDomains != null ? enterpriseDomains : new ArrayList<>();
     }
 
+    public List<String> getEnterpriseEmails() { return enterpriseEmails; }
+    public void setEnterpriseEmails(List<String> enterpriseEmails) {
+        this.enterpriseEmails = enterpriseEmails != null ? enterpriseEmails : new ArrayList<>();
+    }
+
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 
@@ -81,8 +92,20 @@ public class SystemSettings {
 
     public boolean isEnterpriseDomain(String email) {
         if (email == null || enterpriseDomains.isEmpty()) return false;
-        String lower = email.toLowerCase();
+        String lower = email.toLowerCase().trim();
         return enterpriseDomains.stream()
                 .anyMatch(d -> lower.endsWith("@" + d.trim().toLowerCase()));
+    }
+
+    /** True when email matches an explicit allowlist entry or an enterprise domain. */
+    public boolean isEnterpriseBypass(String email) {
+        if (email == null) return false;
+        String lower = email.toLowerCase().trim();
+        if (!enterpriseEmails.isEmpty()) {
+            boolean emailMatch = enterpriseEmails.stream()
+                    .anyMatch(e -> lower.equals(e.trim().toLowerCase()));
+            if (emailMatch) return true;
+        }
+        return isEnterpriseDomain(email);
     }
 }

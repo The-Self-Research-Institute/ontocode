@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Download, Monitor, CheckCircle, ArrowLeft, Cpu, HardDrive, MemoryStick } from "lucide-react";
 import { getGatewayUrl } from "../config/deploymentConfig";
 import { getAppVersion } from "../utils/appVersion";
+import { OntoCodeLogo } from "./OntoCodeLogo";
 
 const RELEASE_BASE = `${getGatewayUrl()}/api/downloads`;
 const PLATFORM = "windows-x64";
@@ -156,6 +157,9 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
 
       <div className="max-w-5xl mx-auto px-6 py-12">
         <div className="text-center mb-12">
+          <div className="flex justify-center mb-6">
+            <OntoCodeLogo size={80} rounded className="shadow-2xl shadow-purple-500/20" />
+          </div>
           <div className="inline-flex items-center gap-2 bg-purple-500/20 border border-purple-500/30 rounded-full px-4 py-1.5 text-sm text-purple-300 mb-6">
             <Cpu size={14} /> Desktop Edition — Free Download (Windows)
           </div>

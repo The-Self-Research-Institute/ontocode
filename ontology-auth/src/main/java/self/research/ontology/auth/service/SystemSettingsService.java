@@ -39,9 +39,10 @@ public class SystemSettingsService {
         settings.setUpdatedBy(updatedBy);
         SystemSettings saved = repo.save(settings);
         cache.set(saved);
-        log.info("SystemSettings updated by {}: maintenance={} allowedDomains={} enterpriseDomains={}",
+        log.info("SystemSettings updated by {}: maintenance={} allowedDomains={} enterpriseDomains={} enterpriseEmails={}",
                 updatedBy, saved.isMaintenanceModeEnabled(),
-                saved.getMaintenanceAllowedDomains(), saved.getEnterpriseDomains());
+                saved.getMaintenanceAllowedDomains(), saved.getEnterpriseDomains(),
+                saved.getEnterpriseEmails());
         return saved;
     }
 
@@ -51,8 +52,13 @@ public class SystemSettingsService {
         return s.isMaintenanceModeEnabled() && !s.isDomainAllowedDuringMaintenance(email);
     }
 
-    /** True when the email's domain is in the enterprise bypass list. */
+    /** True when the email's domain is in the enterprise domain bypass list. */
     public boolean isEnterpriseDomain(String email) {
         return get().isEnterpriseDomain(email);
+    }
+
+    /** True when the email matches an enterprise domain or explicit email allowlist. */
+    public boolean isEnterpriseBypass(String email) {
+        return get().isEnterpriseBypass(email);
     }
 }

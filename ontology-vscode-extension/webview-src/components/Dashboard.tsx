@@ -164,6 +164,8 @@ import {
   combineReasonerResults,
   showNotification,
 } from "./dashboard-parts";
+import { OntoCodeLogo } from "./OntoCodeLogo";
+import OpenSourceLicensesModal from "./OpenSourceLicensesModal";
 
 const TopMenuBar = ({
   fileList,
@@ -182,6 +184,7 @@ const TopMenuBar = ({
   onOpenHistory,
   onReportIssue,
   onOpenUserGuide,
+  onOpenOpenSourceLicenses,
   onOpenMergeWizard,
   syncMode,
   onToggleSyncMode,
@@ -220,6 +223,7 @@ const TopMenuBar = ({
   onOpenHistory: () => void;
   onReportIssue: () => void;
   onOpenUserGuide: () => void;
+  onOpenOpenSourceLicenses: () => void;
   onOpenMergeWizard: () => void;
   syncMode: "private" | "public";
   onToggleSyncMode: () => void;
@@ -249,8 +253,15 @@ const TopMenuBar = ({
   const [isLoading, setIsLoading] = useState(false);
   const [showExportFormats, setShowExportFormats] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState("");
 
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    import("../utils/appVersion").then(({ getAppVersion }) => {
+      getAppVersion().then(setAppVersion).catch(() => setAppVersion(""));
+    });
+  }, []);
 
   const onSearchFileChange = (value: string) => {
     setSearchFile(value);
@@ -302,7 +313,7 @@ const TopMenuBar = ({
       }}
     >
       <div className="flex items-center gap-1 p-1 sm:p-2 mr-1 sm:mr-2 flex-shrink-0">
-        <Package size={16} className="text-purple-600" />
+        <OntoCodeLogo size={20} />
       </div>
       <div className="flex items-center">
         {menuItems.map((item) => (
@@ -556,6 +567,16 @@ const TopMenuBar = ({
                     )}
                     <button
                       onClick={() => {
+                        onOpenOpenSourceLicenses();
+                        setOpenMenu(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                    >
+                      <BookOpen size={14} />
+                      Open Source Libraries
+                    </button>
+                    <button
+                      onClick={() => {
                         onReportIssue();
                         setOpenMenu(null);
                       }}
@@ -564,6 +585,14 @@ const TopMenuBar = ({
                       <Bug size={14} />
                       Report Issue
                     </button>
+                    <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                    <div
+                      className="w-full text-left px-4 py-2 text-xs flex items-center gap-2 opacity-60 cursor-default select-none"
+                      aria-disabled="true"
+                    >
+                      <Info size={14} />
+                      Version {appVersion || "…"}
+                    </div>
                   </div>
                 ) : item === "File" ? (
                   <div className="flex flex-col py-1">
@@ -1686,6 +1715,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isMergeWizardOpen, setMergeWizardOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [isOpenSourceModalOpen, setIsOpenSourceModalOpen] = useState(false);
   const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
@@ -15364,6 +15394,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
           onReportIssue={() => setIsReportIssueModalOpen(true)}
           onOpenUserGuide={() => setIsUserGuideOpen(true)}
+          onOpenOpenSourceLicenses={() => setIsOpenSourceModalOpen(true)}
           onOpenMergeWizard={async () => {
             setMergeWizardOpen(true);
             // Fetch files from the current project to show in merge wizard
@@ -16319,6 +16350,11 @@ const Dashboard: React.FC<DashboardProps> = ({
           onClose={() => setIsReportIssueModalOpen(false)}
         />
       )}
+
+      <OpenSourceLicensesModal
+        isOpen={isOpenSourceModalOpen}
+        onClose={() => setIsOpenSourceModalOpen(false)}
+      />
 
       {/* User Guide Modal - only in cloud mode */}
       {isCloudDeployment && <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />}

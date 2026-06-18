@@ -152,7 +152,7 @@ public class WorkspaceController {
             String accountStatus = user.getSubscriptionStatus();
 
             // Enterprise domain bypass: treat as unlimited regardless of stored plan/status
-            if (systemSettingsService.isEnterpriseDomain(user.getEmail())) {
+            if (systemSettingsService.isEnterpriseBypass(user.getEmail())) {
                 rawAccountPlan = "ENTERPRISE";
                 accountStatus = "active";
             }
@@ -470,8 +470,8 @@ public class WorkspaceController {
             // Enterprise domain bypass on the workspace owner grants full access to all members.
             User workspaceOwner = userRepository.findById(workspace.getOwnerId()).orElse(null);
             boolean ownerEnterpriseBypass = workspaceOwner != null
-                    && systemSettingsService.isEnterpriseDomain(workspaceOwner.getEmail());
-            boolean isEnterpriseDomainUser = systemSettingsService.isEnterpriseDomain(user.getEmail());
+                    && systemSettingsService.isEnterpriseBypass(workspaceOwner.getEmail());
+            boolean isEnterpriseDomainUser = systemSettingsService.isEnterpriseBypass(user.getEmail());
             if (isPaidPlan && !hasValidBilling && !isEnterpriseDomainUser && !ownerEnterpriseBypass) {
                 log.warn("[Workspace] Access blocked for workspace {} due to {} billing status", workspaceId, billingStatus);
                 return ResponseEntity.status(402).body(Map.of(
@@ -1008,7 +1008,7 @@ public class WorkspaceController {
 
         // Enterprise-domain owners: billing is managed externally — always active.
         Optional<User> ownerOpt = userRepository.findById(workspace.getOwnerId());
-        if (ownerOpt.isPresent() && systemSettingsService.isEnterpriseDomain(ownerOpt.get().getEmail())) {
+        if (ownerOpt.isPresent() && systemSettingsService.isEnterpriseBypass(ownerOpt.get().getEmail())) {
             return "ACTIVE";
         }
 

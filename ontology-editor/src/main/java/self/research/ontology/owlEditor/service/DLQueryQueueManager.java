@@ -267,7 +267,8 @@ public class DLQueryQueueManager {
                 .estimatedWaitTimeMs(calculateEstimatedWaitTime(job))
                 .executionTimeMs(job.getExecutionTimeMs())
                 .result(job.getResult())
-                .error(job.getError())
+                .error(job.getStatus() == DLQueryJob.Status.FAILED
+                        ? userFriendlyError(job.getError()) : job.getError())
                 .message(buildMessage(job))
                 .timestamp(System.currentTimeMillis())
                 .queueStats(getQueueStats())
@@ -323,6 +324,9 @@ public class DLQueryQueueManager {
             return "Something went wrong. Please try again.";
         }
         String lower = raw.toLowerCase(Locale.ROOT);
+        if (lower.contains("inconsistent")) {
+            return "This ontology has inconsistent data (for example, an individual typed as both a class and its opposite). Fix that in the editor, then try again.";
+        }
         if (lower.contains("outofmemory") || lower.contains("out of memory")) {
             return "This query needs more memory than is available right now. Try again in a few minutes, or use a simpler expression.";
         }

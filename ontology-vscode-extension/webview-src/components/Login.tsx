@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Mail, Lock, User, Eye, EyeOff, Wrench, Clock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { OntoCodeLogo } from './OntoCodeLogo';
+import { getAppVersion } from '../utils/appVersion';
 
 const MaintenancePage: React.FC = () => (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 via-slate-900 to-gray-900 p-6">
@@ -53,6 +55,7 @@ const Login: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [maintenanceMode, setMaintenanceMode] = useState(false);
+    const [appVersion, setAppVersion] = useState('');
 
     const { login } = useAuth();
     const location = useLocation();
@@ -60,6 +63,10 @@ const Login: React.FC = () => {
 
     const inviteToken = new URLSearchParams(location.search).get('invite');
     const inviteEmail = new URLSearchParams(location.search).get('email');
+
+    useEffect(() => {
+        getAppVersion().then(setAppVersion).catch(() => setAppVersion(''));
+    }, []);
 
     useEffect(() => {
         if (inviteEmail) {
@@ -107,10 +114,8 @@ const Login: React.FC = () => {
             <div className="max-w-md w-full">
                 {/* Header */}
                 <div className="text-center mb-8">
-                    <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-600 to-blue-600 rounded-2xl mb-4">
-                        <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                        </svg>
+                    <div className="inline-flex items-center justify-center mb-4">
+                        <OntoCodeLogo size={64} rounded className="shadow-lg" />
                     </div>
                     <h1 className="text-3xl font-bold text-gray-900 mb-2">
                         {inviteToken ? 'Join OntoCode' : 'OntoCode Editor'}
@@ -227,6 +232,8 @@ const Login: React.FC = () => {
 
                 {/* Footer */}
                 <p className="text-center text-xs text-gray-500 mt-6">
+                    {appVersion ? `OntoCode v${appVersion}` : 'OntoCode'}
+                    <span className="mx-2">·</span>
                     By continuing, you agree to our Terms of Service and Privacy Policy
                 </p>
             </div>
