@@ -7,17 +7,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestTemplate;
+import self.research.ontology.common.ReasoningFriendlyErrors;
 import self.research.ontology.plugins.service.ReasonerService;
 import self.research.ontology.plugins.service.ReasonerType;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.http.HttpStatus;
+import self.research.ontology.plugins.service.ReasonerWorkerClient;
 
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -51,6 +53,12 @@ public class ReasonerController {
     private String editorServiceUrl;
 
     private final RestTemplate restTemplate = buildRestTemplate();
+
+    @Autowired(required = false)
+    private ReasonerWorkerClient reasonerWorkerClient;
+
+    @Value("${ontocode.reasoner-worker.enabled:false}")
+    private boolean reasonerWorkerEnabled;
 
     private static RestTemplate buildRestTemplate() {
         org.springframework.http.client.SimpleClientHttpRequestFactory f =
@@ -226,6 +234,22 @@ public class ReasonerController {
     ) {
         try {
             String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
+            if (reasonerWorkerEnabled && reasonerWorkerClient != null) {
+                Map<String, Object> worker = reasonerWorkerClient.submit("REASONER_CONSISTENCY", projectId, reasonerType);
+                if (Boolean.FALSE.equals(worker.get("success"))) {
+                    return ResponseEntity.status(500).body(Map.of(
+                            "success", false,
+                            "error", ReasoningFriendlyErrors.forUser(String.valueOf(worker.get("error")))));
+                }
+                String jobId = String.valueOf(worker.get("jobId"));
+                return ResponseEntity.accepted().body(Map.of(
+                        "async", true,
+                        "taskId", jobId,
+                        "jobId", jobId,
+                        "status", worker.getOrDefault("status", "QUEUED"),
+                        "pollUrl", "/api/dl-query/jobs/" + jobId));
+            }
+
             log.info("Checking consistency for project: {} with {}", projectId, reasonerType);
             
             OWLOntology ontology = loadOntology(projectId);
@@ -276,6 +300,22 @@ public class ReasonerController {
     ) {
         try {
             String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
+            if (reasonerWorkerEnabled && reasonerWorkerClient != null) {
+                Map<String, Object> worker = reasonerWorkerClient.submit("REASONER_CLASSIFY", projectId, reasonerType);
+                if (Boolean.FALSE.equals(worker.get("success"))) {
+                    return ResponseEntity.status(500).body(Map.of(
+                            "success", false,
+                            "error", ReasoningFriendlyErrors.forUser(String.valueOf(worker.get("error")))));
+                }
+                String jobId = String.valueOf(worker.get("jobId"));
+                return ResponseEntity.accepted().body(Map.of(
+                        "async", true,
+                        "taskId", jobId,
+                        "jobId", jobId,
+                        "status", worker.getOrDefault("status", "QUEUED"),
+                        "pollUrl", "/api/dl-query/jobs/" + jobId));
+            }
+
             log.info("Classifying ontology for project: {} with {}", projectId, reasonerType);
 
             // Pre-validate reasoner type
@@ -344,6 +384,12 @@ public class ReasonerController {
     ) {
         Map<String, Object> taskInfo = classifyTasks.get(taskId);
         if (taskInfo == null) {
+            if (reasonerWorkerEnabled && reasonerWorkerClient != null) {
+                Map<String, Object> remote = reasonerWorkerClient.getJob(taskId);
+                if (remote != null && remote.get("jobId") != null) {
+                    return mapWorkerJobToClassifyStatus(taskId, remote);
+                }
+            }
             return ResponseEntity.status(404).body(Map.of(
                 "success", false,
                 "error", "Task not found: " + taskId
@@ -677,6 +723,28 @@ public class ReasonerController {
     }
 
     // Helper methods
+
+    private ResponseEntity<Map<String, Object>> mapWorkerJobToClassifyStatus(String taskId, Map<String, Object> remote) {
+        Map<String, Object> response = new HashMap<>(remote);
+        response.put("taskId", taskId);
+        String status = String.valueOf(remote.getOrDefault("status", "QUEUED"));
+        if ("COMPLETED".equals(status)) {
+            response.put("status", "COMPLETED");
+            response.put("success", true);
+            if (!response.containsKey("message")) {
+                response.put("message", "Classification completed successfully");
+            }
+        } else if ("FAILED".equals(status)) {
+            response.put("status", "FAILED");
+            response.put("success", false);
+            response.put("error", ReasoningFriendlyErrors.forUser(String.valueOf(remote.get("error"))));
+        } else if ("PROCESSING".equals(status)) {
+            response.put("status", "RUNNING");
+        } else {
+            response.put("status", "RUNNING");
+        }
+        return ResponseEntity.ok(response);
+    }
 
     private String getLabel(OWLEntity entity, OWLOntology ontology) {
         return ontology.getAnnotationAssertionAxioms(entity.getIRI()).stream()

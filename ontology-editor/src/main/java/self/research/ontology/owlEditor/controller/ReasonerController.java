@@ -15,8 +15,10 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
+import self.research.ontology.owlEditor.service.ReasoningJobSubmitService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,8 +32,6 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
 import org.semanticweb.owlapi.model.IRI;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 
 /**
  * Controller for reasoning operations on ontologies.
@@ -53,20 +53,11 @@ public class ReasonerController {
     @Autowired
     private SparqlDatasetService datasetService;
 
-    // Caffeine cache: max 5 ontologies, evict after 20 min idle
-    // Each OWL ontology can hold hundreds of MB — eviction is critical for heap health
-    private final Cache<String, OWLOntology> ontologyCache = Caffeine.newBuilder()
-        .maximumSize(5)
-        .expireAfterAccess(20, TimeUnit.MINUTES)
-        .removalListener((key, val, cause) -> log.info("[OntologyCache] Evicted: {} ({})", key, cause))
-        .build();
+    @Autowired
+    private ReasoningJobSubmitService reasoningJobSubmitService;
 
-    // Caffeine cache: built hierarchy trees, 10 min TTL — avoids rebuilding on every load
-    private record HierarchyCacheEntry(List<Map<String, Object>> hierarchy, String reasonerType) {}
-    private final Cache<String, HierarchyCacheEntry> hierarchyResultCache = Caffeine.newBuilder()
-        .maximumSize(20)
-        .expireAfterWrite(10, TimeUnit.MINUTES)
-        .build();
+    @Autowired
+    private EditorReasonerCacheService editorReasonerCache;
 
     // Ontologies above this triple count are rejected before export to prevent OOM
     @Value("${ontocode.reasoner.max-triples:1000000}")
@@ -79,11 +70,13 @@ public class ReasonerController {
     private OWLOntology loadOntology(String projectId) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
 
-        OWLOntology cachedOntology = ontologyCache.getIfPresent(projectId);
-        if (cachedOntology != null) {
+        Optional<OWLOntology> cached = editorReasonerCache.getOntology(projectId);
+        if (cached.isPresent()) {
             log.info("Returning cached ontology for project: {}", projectId);
-            return cachedOntology;
+            return cached.get();
         }
+
+        editorReasonerCache.prepareForOntologyLoad(projectId);
 
         // Guard: reject oversized ontologies before attempting OWL API parsing.
         // Even with streaming export, loading a 2.8M-triple ontology into OWLOntology
@@ -120,7 +113,7 @@ public class ReasonerController {
                 try (InputStream in = Files.newInputStream(tempFile)) {
                     OWLOntology ontology = manager.loadOntologyFromOntologyDocument(in);
                     log.info("Ontology loaded from Fuseki stream: {} axioms", ontology.getAxiomCount());
-                    ontologyCache.put(projectId, ontology);
+                    editorReasonerCache.putOntology(projectId, ontology);
                     return ontology;
                 }
             }
@@ -157,7 +150,7 @@ public class ReasonerController {
             log.info("Class count: {}", ontology.getClassesInSignature().size());
             log.info("Object property count: {}", ontology.getObjectPropertiesInSignature().size());
             log.info("Data property count: {}", ontology.getDataPropertiesInSignature().size());
-            ontologyCache.put(projectId, ontology);
+            editorReasonerCache.putOntology(projectId, ontology);
             return ontology;
         } catch (Exception e) {
             log.error("Error loading ontology from GridFS", e);
@@ -172,16 +165,10 @@ public class ReasonerController {
     ) {
         try {
             log.info("Refreshing reasoner for project: {}", projectId);
-            OWLOntology oldOntology = ontologyCache.getIfPresent(projectId);
-            ontologyCache.invalidate(projectId);
-            
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            if (oldOntology != null) {
-                reasonerService.disposeReasoner(oldOntology, type);
-            }
-            
+            editorReasonerCache.invalidateOntology(projectId);
+
             OWLOntology ontology = loadOntology(projectId);
-            
+
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "message", "Reasoner refreshed with latest data from GraphDB",
@@ -206,6 +193,12 @@ public class ReasonerController {
             @RequestParam(defaultValue = "HERMIT") String reasonerType
     ) {
         try {
+            ResponseEntity<Map<String, Object>> async = reasoningJobSubmitService.submit(
+                    "REASONER_CONSISTENCY", projectId, reasonerType, null);
+            if (async != null) {
+                return async;
+            }
+
             log.info("Checking consistency for project: {} with {}", projectId, reasonerType);
             
             OWLOntology ontology = loadOntology(projectId);
@@ -264,6 +257,12 @@ public class ReasonerController {
             @RequestParam(defaultValue = "HERMIT") String reasonerType
     ) {
         try {
+            ResponseEntity<Map<String, Object>> async = reasoningJobSubmitService.submit(
+                    "REASONER_CLASSIFY", projectId, reasonerType, null);
+            if (async != null) {
+                return async;
+            }
+
             log.info("Classifying ontology for project: {} with {}", projectId, reasonerType);
             
             OWLOntology ontology = loadOntology(projectId);
@@ -300,6 +299,12 @@ public class ReasonerController {
             @RequestParam(defaultValue = "HERMIT") String reasonerType
     ) {
         try {
+            ResponseEntity<Map<String, Object>> async = reasoningJobSubmitService.submit(
+                    "REASONER_REALIZE", projectId, reasonerType, null);
+            if (async != null) {
+                return async;
+            }
+
             log.info("Realizing ontology for project: {} with {}", projectId, reasonerType);
             
             OWLOntology ontology = loadOntology(projectId);
@@ -514,7 +519,8 @@ public class ReasonerController {
 
             // Return cached hierarchy immediately if still fresh (Caffeine handles TTL)
             String cacheKey = projectId + "-" + type.name();
-            HierarchyCacheEntry cached = hierarchyResultCache.getIfPresent(cacheKey);
+            EditorReasonerCacheService.HierarchyCacheEntry cached =
+                    editorReasonerCache.getHierarchy(cacheKey).orElse(null);
             if (cached != null) {
                 log.info("Returning cached hierarchy for project {} ({})", projectId, type);
                 return ResponseEntity.ok(Map.of(
@@ -556,7 +562,7 @@ public class ReasonerController {
                 Map<String, Object> result = future.get(HIERARCHY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 @SuppressWarnings("unchecked")
                 List<Map<String, Object>> builtHierarchy = (List<Map<String, Object>>) result.get("hierarchy");
-                hierarchyResultCache.put(cacheKey, new HierarchyCacheEntry(
+                editorReasonerCache.putHierarchy(cacheKey, new EditorReasonerCacheService.HierarchyCacheEntry(
                         builtHierarchy, (String) result.get("reasonerType")));
                 log.info("Hierarchy built for project {} — {} classes", projectId, result.get("totalClasses"));
 
@@ -1330,6 +1336,12 @@ public class ReasonerController {
             @RequestParam(defaultValue = "HERMIT") String reasonerType
     ) {
         try {
+            ResponseEntity<Map<String, Object>> async = reasoningJobSubmitService.submit(
+                    "REASONER_RUN", projectId, reasonerType, null);
+            if (async != null) {
+                return async;
+            }
+
             log.info("Running full reasoning for project: {} with {}", projectId, reasonerType);
             
             OWLOntology ontology = loadOntology(projectId);
@@ -1389,8 +1401,7 @@ public class ReasonerController {
     @PostMapping("/reasoner/clear-cache")
     public ResponseEntity<Map<String, Object>> clearCache() {
         try {
-            reasonerService.clearCache();
-            ontologyCache.invalidateAll();
+            editorReasonerCache.clearAll();
             
             return ResponseEntity.ok(Map.of(
                 "success", true,

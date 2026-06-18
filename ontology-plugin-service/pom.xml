@@ -82,6 +82,12 @@
             <optional>true</optional>
         </dependency>
 
+        <dependency>
+            <groupId>self.research.ontology</groupId>
+            <artifactId>common-utils</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

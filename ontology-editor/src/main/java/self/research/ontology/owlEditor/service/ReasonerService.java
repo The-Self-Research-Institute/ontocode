@@ -29,7 +29,7 @@ public class ReasonerService {
     // (each reasoner holds the full ontology + inference state in heap)
     private final Cache<String, OWLReasoner> reasonerCache = Caffeine.newBuilder()
         .maximumSize(5)
-        .expireAfterAccess(30, TimeUnit.MINUTES)
+        .expireAfterAccess(15, TimeUnit.MINUTES)
         .removalListener((key, value, cause) -> {
             if (value instanceof OWLReasoner reasoner) {
                 log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
@@ -386,6 +386,24 @@ public class ReasonerService {
         } catch (Exception e) {
             log.error("Error explaining unsatisfiability", e);
             return Collections.emptySet();
+        }
+    }
+
+    /**
+     * Dispose all cached reasoners for an ontology and remove it from its manager.
+     * Called when the editor ontology cache evicts after idle timeout.
+     */
+    public void releaseOntologyFromMemory(OWLOntology ontology) {
+        if (ontology == null) {
+            return;
+        }
+        for (ReasonerType type : ReasonerType.values()) {
+            disposeReasoner(ontology, type);
+        }
+        try {
+            ontology.getOWLOntologyManager().removeOntology(ontology);
+        } catch (Exception e) {
+            log.debug("Ontology remove after cache eviction: {}", e.getMessage());
         }
     }
 
