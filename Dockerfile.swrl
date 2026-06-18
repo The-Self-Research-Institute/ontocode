@@ -14,6 +14,7 @@ COPY ontology-auth/pom.xml ./ontology-auth/pom.xml
 COPY ontology-gateway/pom.xml ./ontology-gateway/pom.xml
 COPY ontology-editor/pom.xml ./ontology-editor/pom.xml
 COPY ontology-plugin-service/pom.xml ./ontology-plugin-service/pom.xml
+COPY ontology-reasoner-worker/pom.xml ./ontology-reasoner-worker/pom.xml
 
 # Full source only for what we actually compile
 COPY shared/ ./shared/
