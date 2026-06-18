@@ -13,6 +13,7 @@ COPY ontology-gateway/ ./ontology-gateway/
 COPY ontology-editor/ ./ontology-editor/
 COPY ontology-swrl/ ./ontology-swrl/
 COPY ontology-plugin-service/ ./ontology-plugin-service/
+COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
 
 # Build shared modules first (these are dependencies for all services)
 RUN --mount=type=cache,target=/root/.m2 \
