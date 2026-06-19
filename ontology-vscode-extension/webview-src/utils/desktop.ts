@@ -135,6 +135,47 @@ export function isOwlApiWarmingResponse(res: unknown): boolean {
     return !!(r?.warming || (r?.data as Record<string, unknown> | undefined)?.warming);
 }
 
+/** True when the backend is temporarily unavailable (OWLAPI warming, lazy Fuseki, overload). */
+export function isOwlApiRetryableError(e: unknown): boolean {
+    const err = e as { status?: number; response?: { status?: number } } | null | undefined;
+    const status = err?.status ?? err?.response?.status;
+    return status === 503 || status === 502 || status === 504;
+}
+
+/**
+ * GET with retries for desktop entity lists while OWLAPI is warming or Fuseki is deferred.
+ * Returns null when aborted or all attempts exhausted without data.
+ */
+export async function getOntologyListWithRetry<T = unknown>(
+    url: string,
+    options?: { signal?: AbortSignal; maxAttempts?: number; delayMs?: number },
+): Promise<T | null> {
+    const maxAttempts = options?.maxAttempts ?? 20;
+    const delayMs = options?.delayMs ?? 2000;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (options?.signal?.aborted) return null;
+        try {
+            const res = await apiClient.get<T>(url, undefined, { signal: options?.signal });
+            if (isOwlApiWarmingResponse(res)) {
+                if (attempt < maxAttempts - 1) {
+                    await new Promise((r) => setTimeout(r, delayMs));
+                    continue;
+                }
+                return null;
+            }
+            return res;
+        } catch (e: any) {
+            if (e?.name === 'AbortError' || e?.code === 'ERR_CANCELED') throw e;
+            if (isOwlApiRetryableError(e) && attempt < maxAttempts - 1) {
+                await new Promise((r) => setTimeout(r, delayMs));
+                continue;
+            }
+            throw e;
+        }
+    }
+    return null;
+}
+
 /**
  * Start Fuseki (if deferred) and sync the ontology for SPARQL/graph features.
  * Core editing uses OWLAPI only — this is only needed for Fuseki-dependent tabs.

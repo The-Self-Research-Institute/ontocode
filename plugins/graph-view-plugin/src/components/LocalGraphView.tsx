@@ -396,6 +396,7 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
   return (
     <div
       ref={containerRef}
+      data-testid="local-graph-view"
       style={{
         position: 'relative',
         width: '100%',
@@ -424,6 +425,7 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
         >
           <Crosshair size={14} />
           <span style={{ fontWeight: 600 }}>Local graph</span>
+          <span style={{ color: '#94a3b8', fontSize: 11 }}>Obsidian-style</span>
           <span style={{ color: '#94a3b8' }}>·</span>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             depth
@@ -486,6 +488,7 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
         ) : (
           <svg
             ref={svgRef}
+            data-testid="local-graph-svg"
             width={size.width}
             height={size.height}
             style={{ display: 'block', width: '100%', height: '100%' }}

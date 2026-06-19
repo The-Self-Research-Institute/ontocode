@@ -184,6 +184,33 @@ public class ReasonerController {
     }
 
     /**
+     * Stop reasoning for a project — dispose warmed reasoner sessions without unloading ontology.
+     * POST /api/ontology/{projectId}/reasoner/stop
+     */
+    @PostMapping("/{projectId}/reasoner/stop")
+    public ResponseEntity<Map<String, Object>> stopReasoner(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String reasonerType
+    ) {
+        try {
+            log.info("Stopping reasoner for project: {} ({})", projectId,
+                    reasonerType != null ? reasonerType : "all");
+            editorReasonerCache.stopReasoning(projectId, reasonerType);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Reasoner stopped",
+                    "projectId", projectId
+            ));
+        } catch (Exception e) {
+            log.error("Error stopping reasoner", e);
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
      * Check ontology consistency
      * POST /api/ontology/{projectId}/reasoner/consistency
      */

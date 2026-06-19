@@ -100,8 +100,11 @@ function Invoke-BuildPushNative {
     Push-Location $Root
     try {
         Write-Host "Setting up buildx..."
-        docker buildx create --name ontocode-builder --use --driver docker-container 2>$null
-        if ($LASTEXITCODE -ne 0) { docker buildx use ontocode-builder 2>$null }
+        docker buildx use ontocode-builder 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            docker buildx create --name ontocode-builder --use --driver docker-container
+            if ($LASTEXITCODE -ne 0) { throw "docker buildx create failed" }
+        }
         docker buildx inspect --bootstrap
         if ($LASTEXITCODE -ne 0) { throw "docker buildx setup failed" }
 

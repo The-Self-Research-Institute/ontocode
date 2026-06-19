@@ -14,6 +14,8 @@ public class OntologyDto {
         private String label;
         private String description;
         private String parent;
+        /** All named superclass IRIs (rdfs:subClassOf and intersection parents). */
+        private List<String> subClassOf;
         private List<TreeNode> children;
         private Boolean hasChildren;
         private Map<String, String> annotations;
@@ -29,6 +31,8 @@ public class OntologyDto {
         public void setDescription(String description) { this.description = description; }
         public String getParent() { return parent; }
         public void setParent(String parent) { this.parent = parent; }
+        public List<String> getSubClassOf() { return subClassOf; }
+        public void setSubClassOf(List<String> subClassOf) { this.subClassOf = subClassOf; }
         public List<TreeNode> getChildren() { return children; }
         public void setChildren(List<TreeNode> children) { this.children = children; }
         public Boolean getHasChildren() { return hasChildren; }

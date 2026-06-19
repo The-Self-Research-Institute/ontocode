@@ -121,6 +121,31 @@ public class EditorReasonerCacheService {
         }
     }
 
+    /**
+     * Stop reasoning for a project: dispose warmed reasoners and drop hierarchy cache,
+     * but keep the ontology object cached for faster restart.
+     */
+    public void stopReasoning(String projectId, String reasonerType) {
+        Optional<OWLOntology> ontOpt = getOntology(projectId);
+        ontOpt.ifPresent(ont -> {
+            if (reasonerType != null && !reasonerType.isBlank()) {
+                try {
+                    reasonerService.disposeReasoner(ont, ReasonerType.valueOf(reasonerType.toUpperCase()));
+                } catch (IllegalArgumentException e) {
+                    log.warn("[EditorReasonerCache] Unknown reasoner type {} for stop", reasonerType);
+                }
+            } else {
+                for (ReasonerType type : ReasonerType.values()) {
+                    reasonerService.disposeReasoner(ont, type);
+                }
+            }
+        });
+        synchronized (hierarchies) {
+            hierarchies.keySet().removeIf(key -> key.startsWith(projectId + "-"));
+        }
+        log.info("[EditorReasonerCache] Stopped reasoning for project {}", projectId);
+    }
+
     public void clearAll() {
         synchronized (ontologies) {
             for (CachedOntology cached : ontologies.values()) {

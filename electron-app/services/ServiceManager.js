@@ -359,6 +359,7 @@ async function startDesktop() {
         '--spring.main.allow-circular-references=true',
         // Disable cloud-only features
         '--ontocode.desktop.mode=true',
+        '--ontocode.desktop.owlapi-first=true',
         `--ontocode.desktop.plugins.bundled-dir=${path.join(RESOURCES_DIR, 'plugin-bundles')}`,
         '--app.email.enabled=false',
         '--jira.enabled=false',
