@@ -36,7 +36,8 @@ final class EphemeralReasonerFactory {
                 case ELK -> {
                     try {
                         yield new ElkReasonerFactory().createReasoner(ontology, config);
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
+                        log.warn("ELK failed, using Structural: {}", e.getMessage());
                         yield new StructuralReasonerFactory().createReasoner(ontology, config);
                     }
                 }

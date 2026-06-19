@@ -241,51 +241,16 @@ public class OntologyQueryService {
         log.info("[PERF] Top-level classes phase 1 complete: {} results in {}ms", phase1.size(), p1Duration);
 
         // Phase 2: supplement with orphan classes (owl:Class declarations with no named parent).
-        // First, run a cheap ASK to detect if any orphans exist at all — skips the expensive
-        // NOT EXISTS scan entirely for well-structured ontologies (the common case).
+        // Uses Java-side subtraction (two cheap SPARQL scans) instead of SPARQL MINUS chains,
+        // which were O(n²) on large ontologies and caused 504 timeouts.
         Set<String> phase1Iris = phase1.stream()
                 .map(OntologyDto.TreeNode::getId)
                 .collect(java.util.stream.Collectors.toSet());
 
-        String exclusionValues = phase1Iris.isEmpty() ? "" :
-                "  FILTER(?c NOT IN (<" + String.join(">, <", phase1Iris) + ">))\n";
-
-        // MINUS is used instead of FILTER NOT EXISTS. Semantically they're equivalent
-        // here (both compute the set of ?c with no named-IRI rdfs:subClassOf parent).
-        // Both forms are valid in Jena ARQ; we use MINUS for consistency with the
-        // two-stage orphan SELECT below, where MINUS pairs well with VALUES-based
-        // hydration. See https://www.w3.org/TR/sparql11-query/#neg-minus.
-        // The MINUS must exclude owl:Thing just like orphanIrisQuery does — otherwise a class
-        // whose only parent IS owl:Thing (e.g. an OBO root class like MONDO:0000001) incorrectly
-        // looks like it has a named parent and the ASK returns false, skipping the orphan scan.
-        String orphanAsk = PREFIXES + """
-            ASK {
-              ?c a owl:Class .
-              FILTER(isIRI(?c) && ?c != <http://www.w3.org/2002/07/owl#Thing>)
-            %s  MINUS {
-                ?c rdfs:subClassOf ?any .
-                FILTER(isIRI(?any) && ?any != <http://www.w3.org/2002/07/owl#Thing>)
-              }
-            }
-            """.formatted(exclusionValues);
-
-        // For very large projects (>1.5M triples), the MINUS-based orphan scan is
-        // extremely expensive on TDB2 (O(classes) × index-lookup). Skip it entirely —
-        // phase 1 covers the well-structured top-level classes and that is sufficient
-        // for production-scale ontologies like NCBITaxon.
-        // Also skip when Phase 1 itself was slow (>5s): cold TDB2 after a Fuseki restart.
-        // In that scenario the COUNT timed out so the project isn't in knownLargeProjects yet,
-        // but the MINUS-based orphan scan would add another 7-40 s and breach the ALB 60 s limit.
-        // Phase 2 (orphan supplement) skip logic:
-        // For large ontologies, the full MINUS-based orphan scan can take 7-40s and exceed
-        // the ALB 60s timeout. However completely skipping Phase 2 means union members that
-        // have no explicit subClassOf wrongly appear at root (or disappear entirely).
-        // With per-file datasets, each project has its own isolated TDB2 so the orphan
-        // scan no longer causes cross-project interference. Skip only when Fuseki is cold
-        // (p1 took >10s = first query after restart) to avoid 60s timeout breaches.
+        // Skip only when Fuseki is cold (phase 1 took >10s = first query after restart).
         boolean knownLarge = datasetService.isKnownLargeProject(projectId);
         if (p1Duration > 10000) {
-            log.info("[PERF] Skipping orphan ASK for project={} (p1Duration={}ms, cold Fuseki)",
+            log.info("[PERF] Skipping orphan scan for project={} (p1Duration={}ms — cold Fuseki)",
                      projectId, p1Duration);
             List<OntologyDto.TreeNode> merged = new java.util.ArrayList<>(phase1);
             merged.sort(java.util.Comparator.comparing(n -> n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
@@ -301,79 +266,61 @@ public class OntologyQueryService {
             return result;
         }
 
-        boolean hasOrphans = datasetService.execAsk(projectId, orphanAsk);
-        long askDuration = System.currentTimeMillis() - startTime - p1Duration;
-        log.info("[PERF] Orphan ASK query: {} in {}ms", hasOrphans, askDuration);
+        // Java-side orphan detection: two cheap index-scan queries, subtraction in memory.
+        // Replaces the SPARQL MINUS-chain which was O(n²) on large ontologies and caused 504s.
+        //
+        // Query A: all named owl:Class IRIs (POS index scan on rdf:type — very fast).
+        // Query B: all classes that already have a named parent via any of the parent patterns
+        //          (rdfs:subClassOf, intersectionOf, equivalentClass, unionOf).
+        // Orphans = A − B − phase1 IRIs.
+        String allClassesQuery = PREFIXES + """
+            SELECT DISTINCT ?c WHERE {
+              ?c a owl:Class .
+              FILTER(isIRI(?c) && ?c != <http://www.w3.org/2002/07/owl#Thing>)
+            }
+            """;
+        Set<String> allClassIris = new java.util.HashSet<>();
+        TupleQueryResult allRs = datasetService.execSelect(projectId, allClassesQuery);
+        while (allRs.hasNext()) {
+            Value v = allRs.next().getValue("c");
+            if (v != null) allClassIris.add(v.stringValue());
+        }
+        long afterAllClasses = System.currentTimeMillis() - startTime;
+        log.info("[PERF] All-classes scan: {} IRIs in {}ms", allClassIris.size(), afterAllClasses - p1Duration);
+
+        // Query B: classes that have a named non-Thing parent through any structural pattern.
+        String hasParentQuery = PREFIXES + """
+            SELECT DISTINCT ?c WHERE {
+              { ?c rdfs:subClassOf ?p . FILTER(isIRI(?p) && ?p != <http://www.w3.org/2002/07/owl#Thing> && ?p != ?c) }
+              UNION
+              { ?c rdfs:subClassOf ?anon . ?anon owl:intersectionOf/rdf:rest*/rdf:first ?p .
+                FILTER(isIRI(?p) && ?p != ?c && ?p != <http://www.w3.org/2002/07/owl#Thing>) }
+              UNION
+              { ?c owl:equivalentClass ?ec . ?ec owl:intersectionOf/rdf:rest*/rdf:first ?p .
+                FILTER(isIRI(?p) && ?p != ?c && ?p != <http://www.w3.org/2002/07/owl#Thing>) }
+              UNION
+              { ?p owl:unionOf/rdf:rest*/rdf:first ?c . FILTER(isIRI(?p) && ?p != ?c) }
+            }
+            """;
+        Set<String> hasParentIris = new java.util.HashSet<>();
+        TupleQueryResult parRs = datasetService.execSelect(projectId, hasParentQuery);
+        while (parRs.hasNext()) {
+            Value v = parRs.next().getValue("c");
+            if (v != null) hasParentIris.add(v.stringValue());
+        }
+        long afterHasParent = System.currentTimeMillis() - startTime;
+        log.info("[PERF] Has-parent scan: {} IRIs in {}ms", hasParentIris.size(), afterHasParent - afterAllClasses);
+
+        // Subtract in Java: orphans = all classes − has-named-parent − already in phase1
+        allClassIris.removeAll(hasParentIris);
+        allClassIris.removeAll(phase1Iris);
+        List<String> orphanIris = new java.util.ArrayList<>(allClassIris);
+        orphanIris.sort(java.util.Comparator.naturalOrder());
+        if (orphanIris.size() > limit) orphanIris = orphanIris.subList(0, limit);
+        log.info("[PERF] Java-subtraction orphans: {} candidates", orphanIris.size());
 
         List<OntologyDto.TreeNode> orphans = java.util.Collections.emptyList();
-        if (hasOrphans) {
-            // Two-stage query.
-            //
-            // Stage 1 (IRI lookup): a stripped-down query that returns ONLY the
-            // orphan IRIs — no labels, no descriptions, no hasChildren EXISTS, no
-            // label-based ORDER BY. This is what was making the original query
-            // explode on GO-scale ontologies: ARQ was materialising labels +
-            // running per-row EXISTS / NOT EXISTS over the full 50k owl:Class set
-            // *before* the LIMIT could trim anything (ORDER BY label forces full
-            // materialisation). Now stage 1 only does the cheap candidate filter.
-            //
-            // Stage 2 (hydration): given the small set of orphan IRIs (≤ limit),
-            // pull label / description / hasChildren in a second query whose WHERE
-            // is anchored by VALUES — Jena resolves VALUES via direct index lookup
-            // per IRI, so the OPTIONALs and EXISTS are bounded by `limit`, not by
-            // the total class count.
-            //
-            // Behavior preserved: the result set is the same orphan IRIs each with
-            // identical label / description / hasChildren. The outer Java sort
-            // (further down at `merged.sort(...)`) re-orders by label, so the
-            // stage-1 `ORDER BY ?c` only governs which IRIs are kept when total
-            // orphans exceed `limit` — and it does so deterministically.
-            String orphanIrisQuery = PREFIXES + """
-                SELECT ?c WHERE {
-                  ?c a owl:Class .
-                  FILTER(isIRI(?c) && ?c != <http://www.w3.org/2002/07/owl#Thing>)
-                %s  MINUS {
-                    ?c rdfs:subClassOf ?super .
-                    FILTER(isIRI(?super) && ?super != <http://www.w3.org/2002/07/owl#Thing> && ?super != ?c)
-                  }
-                  MINUS {
-                    # subClassOf (NamedParent ⊓ …) — Protégé parity, e.g. Employee under Person
-                    ?c rdfs:subClassOf ?anon .
-                    ?anon owl:intersectionOf/rdf:rest*/rdf:first ?namedParent .
-                    FILTER(isIRI(?namedParent) && ?namedParent != ?c
-                           && ?namedParent != <http://www.w3.org/2002/07/owl#Thing>)
-                  }
-                  MINUS {
-                    # Exclude intersection members where a named conjunct is the structural parent
-                    ?c owl:equivalentClass ?ec .
-                    { ?ec owl:intersectionOf/rdf:rest*/rdf:first ?namedParent . }
-                    FILTER(isIRI(?namedParent) && ?namedParent != ?c
-                           && ?namedParent != <http://www.w3.org/2002/07/owl#Thing>)
-                  }
-                  MINUS {
-                    # Direct union/intersection member (no equivalentClass wrapper)
-                    ?namedParent owl:unionOf/rdf:rest*/rdf:first ?c .
-                    FILTER(isIRI(?namedParent) && ?namedParent != ?c)
-                  }
-                  MINUS {
-                    # Also exclude members of anonymous unions that are the range
-                    # of a subClassOf axiom (covers GCI-style union parents)
-                    ?namedParent rdfs:subClassOf ?anon .
-                    ?anon owl:unionOf/rdf:rest*/rdf:first ?c .
-                    FILTER(isIRI(?namedParent) && isBlank(?anon) && ?namedParent != ?c)
-                  }
-                }
-                ORDER BY ?c
-                LIMIT %d
-                """.formatted(exclusionValues, Math.max(1, limit));
-
-            List<String> orphanIris = new java.util.ArrayList<>();
-            TupleQueryResult irisRs = datasetService.execSelect(projectId, orphanIrisQuery);
-            while (irisRs.hasNext()) {
-                BindingSet sol = irisRs.next();
-                String iri = resource(sol, "c");
-                if (iri != null) orphanIris.add(iri);
-            }
+        if (!orphanIris.isEmpty()) {
 
             if (!orphanIris.isEmpty()) {
                 String valuesBlock = orphanIris.stream()
