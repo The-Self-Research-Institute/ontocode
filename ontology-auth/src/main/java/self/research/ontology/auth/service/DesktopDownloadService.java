@@ -99,6 +99,9 @@ public class DesktopDownloadService {
         }
 
         String fileUrl = updateBaseUrl + "/" + WINDOWS_PLATFORM;
+        // electron-updater names the cached file from the URL path segment (windows-x64),
+        // not Content-Disposition — path must match or quitAndInstall prompts for the exe.
+        String cachedPath = WINDOWS_PLATFORM;
         StringBuilder yml = new StringBuilder();
         yml.append("version: ").append(version).append('\n');
         yml.append("files:\n");
@@ -107,7 +110,7 @@ public class DesktopDownloadService {
             yml.append("    sha512: ").append(sha512).append('\n');
         }
         yml.append("    size: ").append(size).append('\n');
-        yml.append("path: ").append(yamlQuote(filename)).append('\n');
+        yml.append("path: ").append(yamlQuote(cachedPath)).append('\n');
         if (!sha512.isBlank()) {
             yml.append("sha512: ").append(sha512).append('\n');
         }

@@ -223,7 +223,12 @@ public class OntologyQueryService {
                     .collect(java.util.stream.Collectors.joining(" "));
             String phase1bQuery = PREFIXES + """
                 SELECT ?c ?label ?description
-                (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c && isIRI(?child)) } AS ?hasChildren)
+                (EXISTS {
+                  { ?child rdfs:subClassOf ?c . }
+                  UNION { ?child owl:equivalentClass ?hcExpr . ?hcExpr owl:intersectionOf/rdf:rest*/rdf:first ?c . }
+                  UNION { ?child rdfs:subClassOf ?hcExpr . ?hcExpr owl:intersectionOf/rdf:rest*/rdf:first ?c . }
+                  FILTER(?child != ?c && isIRI(?child))
+                } AS ?hasChildren)
                 WHERE {
                   VALUES ?c { %s }
                   OPTIONAL { ?c rdfs:label ?label }
@@ -339,16 +344,6 @@ public class OntologyQueryService {
                            && ?namedParent != <http://www.w3.org/2002/07/owl#Thing>)
                   }
                   MINUS {
-                    # Exclude union/intersection members where the containing class is named.
-                    # Uses explicit blank-node traversal rather than property paths to handle
-                    # all RDF serialisations (OWL/XML, RDF/XML, Turtle) consistently.
-                    ?namedParent owl:equivalentClass ?ec .
-                    { ?ec owl:unionOf/rdf:rest*/rdf:first ?c . }
-                    UNION
-                    { ?ec owl:intersectionOf/rdf:rest*/rdf:first ?c . }
-                    FILTER(isIRI(?namedParent) && ?namedParent != ?c)
-                  }
-                  MINUS {
                     # Exclude intersection members where a named conjunct is the structural parent
                     ?c owl:equivalentClass ?ec .
                     { ?ec owl:intersectionOf/rdf:rest*/rdf:first ?namedParent . }
@@ -386,7 +381,12 @@ public class OntologyQueryService {
                         .collect(java.util.stream.Collectors.joining(" "));
                 String hydrationQuery = PREFIXES + """
                     SELECT ?c ?label ?description
-                    (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c && isIRI(?child)) } AS ?hasChildren)
+                    (EXISTS {
+                      { ?child rdfs:subClassOf ?c . }
+                      UNION { ?child owl:equivalentClass ?hcExpr . ?hcExpr owl:intersectionOf/rdf:rest*/rdf:first ?c . }
+                      UNION { ?child rdfs:subClassOf ?hcExpr . ?hcExpr owl:intersectionOf/rdf:rest*/rdf:first ?c . }
+                      FILTER(?child != ?c && isIRI(?child))
+                    } AS ?hasChildren)
                     WHERE {
                       VALUES ?c { %s }
                       OPTIONAL { ?c rdfs:label ?label }
@@ -669,8 +669,8 @@ public class OntologyQueryService {
               OPTIONAL { ?prop rdfs:range ?range . FILTER(isIRI(?range)) }
               OPTIONAL { ?prop rdfs:subPropertyOf ?super . FILTER(isIRI(?super) && ?super != ?prop) }
               OPTIONAL { { ?prop owl:inverseOf ?inverse } UNION { ?inverse owl:inverseOf ?prop } FILTER(isIRI(?inverse)) }
-              OPTIONAL { ?prop owl:propertyDisjointWith ?disjoint . FILTER(isIRI(?disjoint)) }
-              OPTIONAL { ?prop owl:equivalentProperty ?equiv . FILTER(isIRI(?equiv) && ?equiv != ?prop) }
+              OPTIONAL { { ?prop owl:propertyDisjointWith ?disjoint } UNION { ?disjoint owl:propertyDisjointWith ?prop } FILTER(isIRI(?disjoint) && ?disjoint != ?prop) }
+              OPTIONAL { { ?prop owl:equivalentProperty ?equiv } UNION { ?equiv owl:equivalentProperty ?prop } FILTER(isIRI(?equiv) && ?equiv != ?prop) }
               OPTIONAL {
                 ?prop a ?char .
                 FILTER(?char IN (
@@ -2607,7 +2607,9 @@ public class OntologyQueryService {
             String q = PREFIXES + """
                 SELECT DISTINCT ?ancestor ?super ?label WHERE {
                   <%s> rdfs:subClassOf+ ?ancestor .
-                  ?ancestor rdfs:subClassOf ?super .
+                  { ?ancestor rdfs:subClassOf ?super . }
+                  UNION
+                  { ?ancestor owl:equivalentClass ?super . FILTER(isBlank(?super)) }
                   FILTER(isBlank(?super) || (?super != owl:Thing && ?super != <%s>))
                   OPTIONAL { ?super rdfs:label ?label }
                 }
@@ -3043,8 +3045,27 @@ public class OntologyQueryService {
                 anonymousAncestorAxioms.add(axiom);
             }
         }
+        // Direct anonymous restrictions on this class also belong in "SubClass Of (Anonymous Ancestor)"
+        // to match desktop OWLAPI behavior (BFS starts at the current class and includes its own
+        // anonymous supers). Without this, owl:hasValue / someValuesFrom restrictions declared
+        // directly on a class are invisible in the Anonymous Ancestor section for the webapp path.
+        for (Map<String, String> subAxiom : subClassAxioms) {
+            if (!"true".equals(subAxiom.get("isRestriction"))) continue;
+            String restrictionId = subAxiom.get("id");
+            if (restrictionId == null) continue;
+            String ancestorKey = classIri + "|" + restrictionId;
+            if (seenAncestors.contains(ancestorKey)) continue;
+            seenAncestors.add(ancestorKey);
+            Map<String, String> entry = new LinkedHashMap<>();
+            entry.put("id", restrictionId);
+            entry.put("type", "SubClassOf");
+            entry.put("ancestorIri", classIri);
+            entry.put("navigable", "false");
+            entry.put("definition", subAxiom.get("definition") != null ? subAxiom.get("definition") : "Anonymous restriction");
+            anonymousAncestorAxioms.add(entry);
+        }
         details.put("anonymousAncestorAxioms", anonymousAncestorAxioms);
-        
+
         long duration = System.currentTimeMillis() - startTime;
         log.info("[PERF] classDetails for {} completed in {}ms project={} (parallel)", localName(classIri), duration, projectId);
         return details;
@@ -3223,7 +3244,9 @@ public class OntologyQueryService {
             String q = PREFIXES + """
                 SELECT DISTINCT ?ancestor ?super ?label WHERE {
                   <%s> rdfs:subClassOf+ ?ancestor .
-                  ?ancestor rdfs:subClassOf ?super .
+                  { ?ancestor rdfs:subClassOf ?super . }
+                  UNION
+                  { ?ancestor owl:equivalentClass ?super . FILTER(isBlank(?super)) }
                   FILTER(isBlank(?super) || (?super != owl:Thing && ?super != <%s>))
                   OPTIONAL { ?super rdfs:label ?label }
                 }
