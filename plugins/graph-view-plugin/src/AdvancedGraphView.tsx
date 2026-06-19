@@ -858,7 +858,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [localGraphFollowSelection, setLocalGraphFollowSelection] = useState(true);
   const [localFocusId, setLocalFocusId] = useState<string | null>(null);
   const [localGraphHeight, setLocalGraphHeight] = useState(260);
-  const [analyticsHeight, setAnalyticsHeight] = useState(280);
+  const [centralityThreshold, setCentralityThreshold] = useState(100);
 
   // Compute neighborhood of focused node via BFS over subClassOf, instanceOf,
   // domain/range and propertyRelation edges.
@@ -5341,7 +5341,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
           {/* Graph workspace: main canvas + Obsidian local graph + InfraNodus insights */}
           <div style={styles.graphWorkspace}>
-          <div style={{ ...styles.graphContentArea, flex: showLocalGraph || showAnalytics ? '1 1 auto' : 1 }}>
+          <div style={{ ...styles.graphContentArea, flex: showLocalGraph ? '1 1 auto' : 1 }}>
             {/* SVG Canvas for Force, WebVOWL, OntoGraph, and projected 3D Spatial mode */}
             <svg
               ref={svgRef}
@@ -5495,39 +5495,38 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </div>
         )}
 
-        {showAnalytics && (
-          <div
-            data-testid="graph-analytics-pane"
-            style={{ height: analyticsHeight, flexShrink: 0, minHeight: 200 }}
-          >
-            <AnalyticsPanel
-              analytics={graphAnalytics}
-              nodes={filteredNodes}
-              colorByCluster={colorByCluster}
-              onToggleColorByCluster={setColorByCluster}
-              onSelectNode={(node) => {
-                setSelectedNodes(new Set([node.id]));
-                setSelectedNodeInfo(node);
-                setLocalFocusId(node.id);
-              }}
-              onHighlightGap={(gap) => {
-                const nodeA = filteredNodes.find(n => n.label === gap.labelA);
-                const nodeB = filteredNodes.find(n => n.label === gap.labelB);
-                if (nodeA) {
-                  setSelectedNodeInfo(nodeA);
-                  setLocalFocusId(nodeA.id);
-                } else if (nodeB) {
-                  setSelectedNodeInfo(nodeB);
-                  setLocalFocusId(nodeB.id);
-                }
-              }}
-              onClose={() => setShowAnalytics(false)}
-            />
-          </div>
-        )}
-
           </div>
       </div>
+
+      {/* InfraNodus-style Insights Panel — right-side column */}
+      {showAnalytics && (
+        <AnalyticsPanel
+          analytics={graphAnalytics}
+          nodes={filteredNodes}
+          selectedNode={selectedNodeInfo}
+          colorByCluster={colorByCluster}
+          onToggleColorByCluster={setColorByCluster}
+          centralityThreshold={centralityThreshold}
+          onCentralityThresholdChange={setCentralityThreshold}
+          onSelectNode={(node) => {
+            setSelectedNodes(new Set([node.id]));
+            setSelectedNodeInfo(node);
+            setLocalFocusId(node.id);
+          }}
+          onHighlightGap={(gap) => {
+            const nodeA = filteredNodes.find(n => n.label === gap.labelA);
+            const nodeB = filteredNodes.find(n => n.label === gap.labelB);
+            if (nodeA) {
+              setSelectedNodeInfo(nodeA);
+              setLocalFocusId(nodeA.id);
+            } else if (nodeB) {
+              setSelectedNodeInfo(nodeB);
+              setLocalFocusId(nodeB.id);
+            }
+          }}
+          onClose={() => setShowAnalytics(false)}
+        />
+      )}
 
         {/* Graph View Sidebar - Second Column */}
         {showPropertyPanel && (

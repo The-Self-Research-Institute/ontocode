@@ -5,6 +5,14 @@
 
 import type { OntologyNode, OntologyEdge } from '../types';
 
+export interface DiscourseStructure {
+  focusScore: number; // 0-100: % of intra-cluster edges
+  label: 'focused' | 'balanced' | 'diversified';
+  advice: string;
+  clusterCount: number;
+  avgClusterSize: number;
+}
+
 export interface GraphAnalytics {
   degree: Map<string, number>;
   betweenness: Map<string, number>;
@@ -13,6 +21,7 @@ export interface GraphAnalytics {
   topConcepts: Array<{ node: OntologyNode; score: number; degree: number }>;
   gaps: StructuralGap[];
   clusterColors: Map<number, string>;
+  discourseStructure: DiscourseStructure;
 }
 
 export interface StructuralGap {
@@ -68,8 +77,9 @@ export function computeGraphAnalytics(
     .filter(x => x.node);
 
   const gaps = findStructuralGaps(communities, communitySizes, nodes, activeEdges, degree);
+  const discourseStructure = computeDiscourseStructure(communities, activeEdges, communitySizes);
 
-  return { degree, betweenness, communities, communitySizes, topConcepts, gaps, clusterColors };
+  return { degree, betweenness, communities, communitySizes, topConcepts, gaps, clusterColors, discourseStructure };
 }
 
 function buildUndirectedAdjacency(edges: OntologyEdge[]): Map<string, Set<string>> {
@@ -272,6 +282,28 @@ function findStructuralGaps(
   }
 
   return gaps.sort((x, y) => y.bridgeScore - x.bridgeScore).slice(0, 6);
+}
+
+function computeDiscourseStructure(
+  communities: Map<string, number>,
+  edges: OntologyEdge[],
+  communitySizes: Map<number, number>
+): DiscourseStructure {
+  let intra = 0, total = 0;
+  for (const e of edges) {
+    const ca = communities.get(e.from);
+    const cb = communities.get(e.to);
+    if (ca === undefined || cb === undefined) continue;
+    total++;
+    if (ca === cb) intra++;
+  }
+  const focusScore = total === 0 ? 50 : Math.round((intra / total) * 100);
+  const clusterCount = communitySizes.size;
+  const totalNodes = [...communitySizes.values()].reduce((a, b) => a + b, 0);
+  const avgClusterSize = clusterCount === 0 ? 0 : Math.round(totalNodes / clusterCount);
+  const label: DiscourseStructure['label'] = focusScore >= 60 ? 'focused' : focusScore <= 35 ? 'diversified' : 'balanced';
+  const advice = label === 'focused' ? 'diversify' : label === 'diversified' ? 'focus' : 'explore gaps';
+  return { focusScore, label, advice, clusterCount, avgClusterSize };
 }
 
 export function getClusterColor(clusterId: number | undefined, palette: Map<number, string>): string | null {

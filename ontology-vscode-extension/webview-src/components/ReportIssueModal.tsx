@@ -12,6 +12,7 @@ import {
   FileCode,
   Image,
   File,
+  FileVideo,
 } from "lucide-react";
 import { useAuth } from "../custom-hook/useAuth";
 import { getEditorUrl } from "../config/deploymentConfig";
@@ -107,9 +108,15 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       ".owl",
       ".ttl",
       ".rdf",
+      ".mp4",
+      ".webm",
+      ".ogg",
+      ".mov",
+      ".m4v",
     ];
     const allowedMimeTypes = [
       "image/",
+      "video/",
       "application/pdf",
       "application/msword",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -131,7 +138,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
     if (invalidTypeFiles.length > 0) {
       alert(
-        `The following files have unsupported file types: ${invalidTypeFiles.map((f: File) => f.name).join(", ")}\\n\\nSupported formats: images, PDF, Word documents (.doc, .docx), text files, logs, and ontology files (.owl, .ttl, .rdf)`,
+        `The following files have unsupported file types: ${invalidTypeFiles.map((f: File) => f.name).join(", ")}\\n\\nSupported formats: images, videos (.mp4, .webm, .mov, .ogg), PDF, Word documents (.doc, .docx), text files, logs, and ontology files (.owl, .ttl, .rdf)`,
       );
       return;
     }
@@ -152,6 +159,10 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       const isPDF = fileName.endsWith(".pdf");
       const isWordDoc = fileName.endsWith(".doc") || fileName.endsWith(".docx");
 
+      const isVideo =
+        file.type.startsWith("video/") ||
+        [".mp4", ".webm", ".ogg", ".mov", ".m4v"].some((ext) => fileName.endsWith(ext));
+
       if (file.type.startsWith("image/")) {
         // Image preview - read as data URL
         const reader = new FileReader();
@@ -161,6 +172,10 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
           }
         };
         reader.readAsDataURL(file);
+      } else if (isVideo) {
+        // Video preview - use an object URL (avoids loading large files into memory)
+        const objectUrl = URL.createObjectURL(file);
+        setFilePreviews((prev) => new Map(prev).set(file.name, `video:${objectUrl}`));
       } else if (isTextFile) {
         // Text file preview - read first 500 characters
         const reader = new FileReader();
@@ -217,11 +232,27 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
     // Remove preview if exists
     if (filePreviews.has(fileToRemove.name)) {
+      const existingPreview = filePreviews.get(fileToRemove.name);
+      // Release video object URLs to avoid leaking memory
+      if (existingPreview?.startsWith("video:")) {
+        URL.revokeObjectURL(existingPreview.substring(6));
+      }
       const newPreviews = new Map(filePreviews);
       newPreviews.delete(fileToRemove.name);
       setFilePreviews(newPreviews);
     }
   };
+
+  // Release any outstanding video object URLs when the modal unmounts
+  useEffect(() => {
+    return () => {
+      filePreviews.forEach((preview) => {
+        if (preview.startsWith("video:")) {
+          URL.revokeObjectURL(preview.substring(6));
+        }
+      });
+    };
+  }, [filePreviews]);
 
   const handleSubmit = async () => {
     if (!online) {
@@ -335,6 +366,11 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
     if (fileType.startsWith("image/")) {
       return { icon: Image, color: "bg-green-100", iconColor: "text-green-600" };
+    } else if (
+      fileType.startsWith("video/") ||
+      [".mp4", ".webm", ".ogg", ".mov", ".m4v"].some((ext) => fileName.endsWith(ext))
+    ) {
+      return { icon: FileVideo, color: "bg-indigo-100", iconColor: "text-indigo-600" };
     } else if (fileName.endsWith(".pdf")) {
       return { icon: File, color: "bg-red-100", iconColor: "text-red-600" };
     } else if (fileName.endsWith(".doc") || fileName.endsWith(".docx")) {
@@ -635,13 +671,13 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
                 {/* Supported file types */}
                 <span className={`text-gray-500 transition-all ${attachments.length > 0 ? "text-[10px]" : "text-xs"}`}>
-                  JPG, PNG, PDF, DOC, DOCX, TXT, .log, .owl, .ttl, .rdf
+                  JPG, PNG, MP4, WEBM, MOV, PDF, DOC, DOCX, TXT, .log, .owl, .ttl, .rdf
                 </span>
 
                 <input
                   type="file"
                   multiple
-                  accept="image/*,.pdf,.doc,.docx,.txt,.log,.owl,.ttl,.rdf"
+                  accept="image/*,video/*,.mp4,.webm,.ogg,.mov,.m4v,.pdf,.doc,.docx,.txt,.log,.owl,.ttl,.rdf"
                   onChange={handleFileSelect}
                   className="hidden"
                   disabled={submitting}
@@ -678,8 +714,16 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                             preview &&
                             !preview.startsWith("text:") &&
                             !preview.startsWith("pdf:") &&
-                            !preview.startsWith("word:") ? (
+                            !preview.startsWith("word:") &&
+                            !preview.startsWith("video:") ? (
                               <img src={preview} alt={file.name} className="w-full h-full object-cover rounded" />
+                            ) : preview?.startsWith("video:") ? (
+                              <video
+                                src={preview.substring(6)}
+                                controls
+                                preload="metadata"
+                                className="w-full h-full object-cover rounded bg-black"
+                              />
                             ) : preview?.startsWith("text:") ? (
                               <div className="w-full h-full bg-white rounded border border-gray-200 p-2 overflow-hidden">
                                 <pre className="text-[7px] leading-tight text-gray-700 font-mono whitespace-pre-wrap break-all">

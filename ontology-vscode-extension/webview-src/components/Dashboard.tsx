@@ -166,7 +166,7 @@ import {
   showNotification,
 } from "./dashboard-parts";
 import { OntoCodeLogo } from "./OntoCodeLogo";
-import OpenSourceLicensesModal from "./OpenSourceLicensesModal";
+import ReleaseNotesModal from "./ReleaseNotesModal";
 
 const TopMenuBar = ({
   fileList,
@@ -185,7 +185,7 @@ const TopMenuBar = ({
   onOpenHistory,
   onReportIssue,
   onOpenUserGuide,
-  onOpenOpenSourceLicenses,
+  onOpenReleaseNotes,
   onOpenMergeWizard,
   syncMode,
   onToggleSyncMode,
@@ -224,7 +224,7 @@ const TopMenuBar = ({
   onOpenHistory: () => void;
   onReportIssue: () => void;
   onOpenUserGuide: () => void;
-  onOpenOpenSourceLicenses: () => void;
+  onOpenReleaseNotes: () => void;
   onOpenMergeWizard: () => void;
   syncMode: "private" | "public";
   onToggleSyncMode: () => void;
@@ -568,16 +568,6 @@ const TopMenuBar = ({
                     )}
                     <button
                       onClick={() => {
-                        onOpenOpenSourceLicenses();
-                        setOpenMenu(null);
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                    >
-                      <BookOpen size={14} />
-                      Open Source Libraries
-                    </button>
-                    <button
-                      onClick={() => {
                         onReportIssue();
                         setOpenMenu(null);
                       }}
@@ -587,13 +577,17 @@ const TopMenuBar = ({
                       Report Issue
                     </button>
                     <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
-                    <div
-                      className="w-full text-left px-4 py-2 text-xs flex items-center gap-2 opacity-60 cursor-default select-none"
-                      aria-disabled="true"
+                    <button
+                      onClick={() => {
+                        onOpenReleaseNotes();
+                        setOpenMenu(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      title="View release notes"
                     >
                       <Info size={14} />
                       Version {appVersion || "…"}
-                    </div>
+                    </button>
                   </div>
                 ) : item === "File" ? (
                   <div className="flex flex-col py-1">
@@ -1724,7 +1718,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isMergeWizardOpen, setMergeWizardOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
-  const [isOpenSourceModalOpen, setIsOpenSourceModalOpen] = useState(false);
+  const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
   const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
@@ -1866,23 +1860,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       id: "Classes",
       label: "Classes",
       icon: Package,
-      count:
-        hierarchyViewModes.Classes === "inferred"
-          ? countNodes(
-              inferredClassHierarchy.length > 0
-                ? inferredClassHierarchy
-                : Array.isArray(reasonerResults?.classHierarchyTree)
-                  ? reasonerResults.classHierarchyTree
-                  : Array.isArray(reasonerResults?.classHierarchy)
-                    ? reasonerResults.classHierarchy
-                    : [],
-            )
-          : (() => {
-              // Always show the authoritative total from OWLAPI/metadata.
-              // Do NOT gate on isHierarchyLoading — that causes the badge to flash 0
-              // every time the hierarchy refreshes for an already-loaded project.
-              return Number((metadata as any)?.classCount) || 0;
-            })(),
+      count: Number((metadata as any)?.classCount) || 0,
       theme: "bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]",
     },
     {
@@ -2238,7 +2216,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         const [classificationResponse, statsResponse] = await Promise.all([
           pollForResult(),
           apiClient
-            .get(`/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`)
+            .get(`/api/ontology/${encodedProjectId}/reasoner/stats?reasonerType=${reasonerType}`)
             .catch((error) => {
               console.warn("[Dashboard] Reasoner stats request failed:", error);
               return null;
@@ -2251,7 +2229,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Fallback: backend returned a synchronous result (older API)
       const [statsResponse] = await Promise.all([
         apiClient
-          .get(`/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`)
+          .get(`/api/ontology/${encodedProjectId}/reasoner/stats?reasonerType=${reasonerType}`)
           .catch((error) => {
             console.warn("[Dashboard] Reasoner stats request failed:", error);
             return null;
@@ -3716,7 +3694,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
             // Configure mutation service: shared/live OR non-workspace web direct-write.
             // Desktop and private web projects use per-user draft graphs until Save.
-            const shouldApplyDirectly = isShared || isNonWorkspaceMode;
+            // For workspace private projects, respect the user's saved preference across refreshes.
+            const syncModeKey = projectId ? `ontocode_sync_mode_${projectId}` : null;
+            const savedSyncMode = syncModeKey ? localStorage.getItem(syncModeKey) : null;
+            let shouldApplyDirectly: boolean;
+            if (isNonWorkspaceMode || isShared) {
+              shouldApplyDirectly = true;
+            } else if (savedSyncMode !== null) {
+              shouldApplyDirectly = savedSyncMode === "public";
+            } else {
+              shouldApplyDirectly = false;
+            }
             ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
             setSyncMode(shouldApplyDirectly ? "public" : "private");
             if (isDesktop() && !isShared) {
@@ -5179,23 +5167,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (timer) clearTimeout(timer);
     };
   }, [isInitialLoading, showLoadingChoice, projectId, showToast]);
-
-  useEffect(() => {
-    if (inferredClassHierarchy.length > 0 && inferredClassHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
-      const owlThingId = inferredClassHierarchy[0].id;
-      const childCount = inferredClassHierarchy[0].children?.length || 0;
-
-      if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
-        console.log("[Dashboard] Auto-expanding owl:Thing in inferred hierarchy");
-        setExpandedNodes((prev) => (prev.includes(owlThingId) ? prev : [...prev, owlThingId]));
-      }
-    }
-    const nothingId = "http://www.w3.org/2002/07/owl#Nothing";
-    const nothingNode = inferredClassHierarchy.find((n) => n.id === nothingId);
-    if (nothingNode && (nothingNode.children?.length ?? 0) > 0 && !expandedNodes.includes(nothingId)) {
-      setExpandedNodes((prev) => (prev.includes(nothingId) ? prev : [...prev, nothingId]));
-    }
-  }, [inferredClassHierarchy]);
 
   useEffect(() => {
     if (!projectId || !showImportClosure) return;
@@ -7445,14 +7416,26 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
           return null;
         };
+        // Mirror the inferred-class fallback used by the rendered tree (sourceData):
+        // while inferredClassHierarchy is still loading the UI shows reasonerResults,
+        // so toggleNode must search that same source or it can't find the node the
+        // user clicked during the initial-load window.
+        const inferredClasses: TreeNode[] =
+          inferredClassHierarchy.length > 0
+            ? inferredClassHierarchy
+            : Array.isArray(reasonerResults?.classHierarchyTree)
+              ? reasonerResults.classHierarchyTree
+              : Array.isArray(reasonerResults?.classHierarchy)
+                ? reasonerResults.classHierarchy
+                : [];
         const currentHierarchy =
           mainTab === "IndividualsByClass"
             ? hierarchyViewModes.Classes === "inferred"
-              ? inferredClassHierarchy
+              ? inferredClasses
               : classHierarchy
             : entitiesTab === "Classes"
             ? currentHierarchyViewMode === "inferred"
-              ? inferredClassHierarchy
+              ? inferredClasses
               : classHierarchy
             : entitiesTab === "ObjectProperties"
               ? hierarchyViewModes.ObjectProperties === "inferred"
@@ -7521,6 +7504,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       expandedNodes,
       classHierarchy,
       inferredClassHierarchy,
+      reasonerResults,
       objectPropertyHierarchy,
       dataPropertyHierarchy,
       inferredObjectPropertyHierarchy,
@@ -15393,7 +15377,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
           onReportIssue={() => setIsReportIssueModalOpen(true)}
           onOpenUserGuide={() => setIsUserGuideOpen(true)}
-          onOpenOpenSourceLicenses={() => setIsOpenSourceModalOpen(true)}
+          onOpenReleaseNotes={() => setIsReleaseNotesOpen(true)}
           onOpenMergeWizard={async () => {
             setMergeWizardOpen(true);
             // Fetch files from the current project to show in merge wizard
@@ -15412,6 +15396,9 @@ const Dashboard: React.FC<DashboardProps> = ({
             const newMode = syncMode === "public" ? "private" : "public";
             setSyncMode(newMode);
             ontologyMutationService.setRealTimeSync(newMode === "public");
+            if (projectId) {
+              localStorage.setItem(`ontocode_sync_mode_${projectId}`, newMode);
+            }
             const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
             if (newMode === "public") {
               // Auto-apply any pending drafts so structural changes are live immediately
@@ -15423,7 +15410,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                     notificationService.success("Live Mode Enabled", "Pending changes applied and live.");
                   })
                   .catch(() => {
-                    notificationService.success("Live Mode Enabled", "Changes will be broadcast immediately.");
+                    // Revert — drafts failed to apply, staying in draft is safer than lying to the user
+                    setSyncMode("private");
+                    ontologyMutationService.setRealTimeSync(false);
+                    if (projectId) localStorage.setItem(`ontocode_sync_mode_${projectId}`, "private");
+                    notificationService.error("Could Not Apply Drafts", "Failed to push pending changes live. Still in Draft Mode — try again.");
                   });
               } else {
                 notificationService.success("Live Mode Enabled", "Changes will be broadcast immediately.");
@@ -16352,9 +16343,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         />
       )}
 
-      <OpenSourceLicensesModal
-        isOpen={isOpenSourceModalOpen}
-        onClose={() => setIsOpenSourceModalOpen(false)}
+      <ReleaseNotesModal
+        isOpen={isReleaseNotesOpen}
+        onClose={() => setIsReleaseNotesOpen(false)}
       />
 
       {/* User Guide Modal - only in cloud mode */}
