@@ -1066,7 +1066,10 @@ public class SparqlDatasetService {
         String draftGraph = getDraftGraphUri(projectId, userId);
         if (sparqlUpdate.toUpperCase().contains("WHERE")
                 && !sparqlUpdate.toUpperCase().contains("USING ")) {
-            sparqlUpdate = "USING <" + mainGraph + "> " + sparqlUpdate;
+            // Insert USING right before each WHERE clause (must follow DELETE/INSERT, not precede PREFIXes).
+            // WITH + USING is invalid per SPARQL 1.1 §3.1.3, so injectGraphContext will wrap
+            // the DELETE/INSERT template bodies with GRAPH <draftGraph> instead of using WITH.
+            sparqlUpdate = sparqlUpdate.replaceAll("(?i)\\bWHERE\\b", "USING <" + mainGraph + "> WHERE");
         }
         execUpdate(projectId, draftGraph, sparqlUpdate);
     }
@@ -1330,8 +1333,13 @@ public class SparqlDatasetService {
         // Check if this is INSERT { ... } WHERE { ... } with Turtle syntax (contains blank nodes or semicolons within braces)
         // Don't split by semicolon in this case as it's part of Turtle syntax
         if (operationsStr.matches("(?is)INSERT\\s*\\{.*WHERE.*")) {
-            // Add WITH clause before INSERT
-            if (!operationsStr.trim().toUpperCase().startsWith("WITH")) {
+            if (operationsStr.toUpperCase().contains("USING ")) {
+                // Draft update: USING already present; wrap INSERT template with GRAPH instead of
+                // WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
+                operationsStr = operationsStr.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\})",
+                        "$1 GRAPH <" + graphUri + "> {$2} $3");
+                log.info("[GRAPH-INJECT] Injected GRAPH into INSERT template (USING present)");
+            } else if (!operationsStr.trim().toUpperCase().startsWith("WITH")) {
                 operationsStr = "WITH <" + graphUri + "> " + operationsStr;
                 log.info("[GRAPH-INJECT] Added WITH clause to INSERT...WHERE statement");
             }
@@ -1365,10 +1373,20 @@ public class SparqlDatasetService {
                 stmt = stmt.replaceFirst("(?is)(.*)(\\}\\s*)$", "$1 }$2");
                 log.info("[GRAPH-INJECT] Matched DELETE DATA");
             }
-            // For DELETE { ... } WHERE { ... }, add WITH clause
+            // For DELETE { ... } WHERE { ... }, add WITH clause (or GRAPH if USING is present)
             else if (stmt.matches("(?is)DELETE\\s*\\{.*") && !stmt.trim().toUpperCase().startsWith("WITH")) {
-                stmt = "WITH <" + graphUri + "> " + stmt;
-                log.info("[GRAPH-INJECT] Matched DELETE WHERE, added WITH clause");
+                if (stmt.toUpperCase().contains("USING ")) {
+                    // Draft update: USING already present; wrap DELETE/INSERT templates with GRAPH
+                    // instead of WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
+                    stmt = stmt.replaceFirst("(?is)(DELETE\\s*\\{)(.*?)(\\})",
+                            "$1 GRAPH <" + graphUri + "> {$2} $3");
+                    stmt = stmt.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\})",
+                            "$1 GRAPH <" + graphUri + "> {$2} $3");
+                    log.info("[GRAPH-INJECT] Injected GRAPH into DELETE/INSERT templates (USING present)");
+                } else {
+                    stmt = "WITH <" + graphUri + "> " + stmt;
+                    log.info("[GRAPH-INJECT] Matched DELETE WHERE, added WITH clause");
+                }
             } else {
                 log.info("[GRAPH-INJECT] No pattern matched for statement");
             }

@@ -299,9 +299,25 @@ public class OntologyQueryController {
                 pending.put("message", "Class hierarchy index is building. Please wait and refresh.");
                 return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
             }
+            // Desktop owlapi-first: while OWLAPI is actively loading, return a "loading" response
+            // instead of running SPARQL. SPARQL misses classes that have only anonymous superclasses
+            // (owl:Restriction patterns) with no explicit rdfs:subClassOf owl:Thing — they appear
+            // as orphans only via the Phase 2 MINUS scan, which can produce incomplete results.
+            // Keeping hierarchyReady:false here ensures the frontend keeps polling until the
+            // authoritative OWLAPI result is available.
+            boolean owlapiLoading = desktopOntologyLoader != null && desktopOntologyLoader.isLoading(projectId);
+            if (preferOwlApiPath(projectId) && owlapiLoading) {
+                Map<String, Object> pending = new java.util.LinkedHashMap<>();
+                pending.put("success", true);
+                pending.put("hierarchyReady", false);
+                pending.put("classes", List.of());
+                pending.put("hierarchyEngine", "owlapi-loading");
+                pending.put("owlapiReady", false);
+                pending.put("message", "Loading ontology into memory…");
+                return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
+            }
             // SPARQL fallback when OWLAPI/snapshot unavailable (e.g. heap-skipped large files)
             var classes = queryService.topLevelClasses(projectId, limit);
-            boolean owlapiLoading = desktopOntologyLoader != null && desktopOntologyLoader.isLoading(projectId);
             boolean inDesktopMode = desktopOntologyLoader != null;
             if (offset == 0 && classes.isEmpty()) {
                 int topCount = 0;

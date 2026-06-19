@@ -1203,8 +1203,17 @@ public class OntologyMetadataService {
 
     private String formatResource(String iri) {
         if (iri == null) return null;
+        if (iri.startsWith("<")) return iri;
         if (iri.startsWith("_:")) return iri;
-        if (iri.contains(":") && !iri.startsWith("http")) return iri; // Prefixed name
+        // A genuine SPARQL prefixed name (owl:Class, rdfs:label) has no ':', '/', or '#' after the colon.
+        // Full URIs with non-http schemes (urn:, file:, urn:uuid:) must be wrapped in < >.
+        int colonIdx = iri.indexOf(':');
+        if (colonIdx > 0) {
+            String localPart = iri.substring(colonIdx + 1);
+            if (!localPart.contains(":") && !localPart.contains("/") && !localPart.contains("#")) {
+                return iri; // genuine CURIE like owl:Class
+            }
+        }
         return "<" + iri + ">";
     }
 

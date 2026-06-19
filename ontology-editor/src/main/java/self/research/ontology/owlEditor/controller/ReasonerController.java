@@ -463,7 +463,11 @@ public class ReasonerController {
     ) {
         try {
             OWLOntology ontology = loadOntology(projectId);
-            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "ELK" : reasonerType;
+            // Mirror the mapping from getInferredClassHierarchy: HermiT → OPENLLET so that
+            // child queries use the same reasoner as the initial hierarchy load, preventing
+            // expand-arrow inconsistencies where OPENLLET marks a node hasChildren:true
+            // but ELK returns empty for the same node on expand.
+            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
             int axiomCount = ontology.getAxiomCount();
             if (axiomCount > MEDIUM_ONTOLOGY_THRESHOLD && axiomCount <= LARGE_ONTOLOGY_AXIOM_THRESHOLD
                     && !effectiveType.equalsIgnoreCase("ELK") && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
@@ -516,7 +520,10 @@ public class ReasonerController {
     private static final int MEDIUM_ONTOLOGY_THRESHOLD = 10_000;   // ELK kicks in above this
     private static final int LARGE_ONTOLOGY_AXIOM_THRESHOLD = 100_000; // STRUCTURAL fallback above this
     private static final int HIERARCHY_TIMEOUT_SECONDS = 5;
-    private static final int INITIAL_HIERARCHY_DEPTH = 2;
+    // Pre-populate three levels (owl:Thing → children → grandchildren) so the UI can
+    // render and expand the first levels without a lazy fetch. A deeper initial tree
+    // closes the window where the user expands a node before its children are loaded.
+    private static final int INITIAL_HIERARCHY_DEPTH = 3;
 
     @GetMapping("/{projectId}/reasoner/inferred-class-hierarchy")
     public ResponseEntity<Map<String, Object>> getInferredClassHierarchy(
