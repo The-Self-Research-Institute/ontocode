@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Play, RefreshCw, CheckCircle, XCircle, AlertTriangle, Clock, Loader2, ChevronDown, ChevronRight, Brain, ListTree } from 'lucide-react';
 import apiClient from '../services/apiClient';
 
@@ -38,12 +38,14 @@ interface ReasonerStats {
 }
 
 const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
-  const [reasonerType, setReasonerType] = useState<'HERMIT' | 'STRUCTURAL' | 'PELLET'>('HERMIT');
+  const [reasonerType, setReasonerType] = useState<'HERMIT' | 'ELK' | 'STRUCTURAL' | 'PELLET'>('HERMIT');
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<ReasonerResult | null>(null);
   const [inferredAxioms, setInferredAxioms] = useState<InferredAxiom[]>([]);
   const [stats, setStats] = useState<ReasonerStats | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary']));
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const toggleSection = (section: string) => {
     const newExpanded = new Set(expandedSections);
@@ -53,6 +55,27 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
       newExpanded.add(section);
     }
     setExpandedSections(newExpanded);
+  };
+
+  const startTimer = () => {
+    setElapsedSeconds(0);
+    elapsedRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+  };
+
+  const stopTimer = () => {
+    if (elapsedRef.current) {
+      clearInterval(elapsedRef.current);
+      elapsedRef.current = null;
+    }
+  };
+
+  useEffect(() => () => stopTimer(), []);
+
+  const formatElapsed = (s: number) => {
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return rem > 0 ? `${m}m ${rem}s` : `${m}m`;
   };
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -89,23 +112,18 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
     setIsRunning(true);
     setResult(null);
     setInferredAxioms([]);
-    
+    startTimer();
+
     try {
       const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/run`);
-      
       setResult(response);
-      
-      // If successful, fetch inferred axioms
       if (response.success) {
         fetchInferredAxioms();
       }
-      
     } catch (error: any) {
-      setResult({
-        success: false,
-        message: error.message || 'Reasoning failed'
-      });
+      setResult({ success: false, message: error.message || 'Reasoning failed' });
     } finally {
+      stopTimer();
       setIsRunning(false);
     }
   };
@@ -114,18 +132,15 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
   const checkConsistency = async () => {
     setIsRunning(true);
     setResult(null);
-    
+    startTimer();
+
     try {
       const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/consistency`);
-      
       setResult(response);
-      
     } catch (error: any) {
-      setResult({
-        success: false,
-        message: error.message || 'Consistency check failed'
-      });
+      setResult({ success: false, message: error.message || 'Consistency check failed' });
     } finally {
+      stopTimer();
       setIsRunning(false);
     }
   };
@@ -133,18 +148,15 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
   // Classify ontology
   const classify = async () => {
     setIsRunning(true);
-    
+    startTimer();
+
     try {
       const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/classify`);
-      
       setResult(response);
-      
     } catch (error: any) {
-      setResult({
-        success: false,
-        message: error.message || 'Classification failed'
-      });
+      setResult({ success: false, message: error.message || 'Classification failed' });
     } finally {
+      stopTimer();
       setIsRunning(false);
     }
   };
@@ -152,18 +164,15 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
   // Realize ontology
   const realize = async () => {
     setIsRunning(true);
-    
+    startTimer();
+
     try {
       const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/realize`);
-      
       setResult(response);
-      
     } catch (error: any) {
-      setResult({
-        success: false,
-        message: error.message || 'Realization failed'
-      });
+      setResult({ success: false, message: error.message || 'Realization failed' });
     } finally {
+      stopTimer();
       setIsRunning(false);
     }
   };
@@ -283,7 +292,8 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
             disabled={isRunning}
             className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
           >
-            <option value="HERMIT">HermiT (Hypertableau)</option>
+            <option value="HERMIT">HermiT (Complete, slow on large files)</option>
+            <option value="ELK">ELK (Fast, OWL EL profile)</option>
             <option value="PELLET">Pellet/Openllet</option>
             <option value="STRUCTURAL">Structural (Fast, No Inference)</option>
           </select>
@@ -474,13 +484,29 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
           </Section>
         )}
 
-        {/* Loading State */}
+        {/* Loading State — TSRI-161 */}
         {isRunning && !result && (
           <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <Loader2 size={48} className="animate-spin text-purple-600 mx-auto mb-4" />
-              <p className="text-gray-600">Running {reasonerType} reasoner...</p>
-              <p className="text-sm text-gray-700 mt-2">This may take a few moments for large ontologies</p>
+            <div className="text-center space-y-3">
+              <Loader2 size={48} className="animate-spin text-purple-600 mx-auto" />
+              <p className="text-gray-800 font-semibold">Running {reasonerType} reasoner…</p>
+              <div className="flex items-center justify-center gap-2 text-purple-700 font-mono text-lg">
+                <Clock size={18} />
+                <span>{formatElapsed(elapsedSeconds)}</span>
+              </div>
+              {elapsedSeconds >= 30 && (
+                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 max-w-sm mx-auto">
+                  Still running — this is normal.{' '}
+                  {reasonerType === 'HERMIT' || reasonerType === 'PELLET'
+                    ? 'HermiT/Pellet can take 15–40 minutes on large ontologies (100MB+).'
+                    : 'Processing is active.'}
+                </p>
+              )}
+              {elapsedSeconds >= 120 && (reasonerType === 'HERMIT' || reasonerType === 'PELLET') && (
+                <p className="text-xs text-gray-500 max-w-sm mx-auto">
+                  Tip: For large ontologies, ELK is significantly faster if your ontology uses the OWL EL profile.
+                </p>
+              )}
             </div>
           </div>
         )}
