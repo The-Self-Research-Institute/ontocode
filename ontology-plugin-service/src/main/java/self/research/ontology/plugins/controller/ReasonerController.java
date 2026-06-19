@@ -596,6 +596,37 @@ public class ReasonerController {
     }
 
     /**
+     * Stop reasoning for a project — dispose warmed reasoner sessions.
+     * POST /api/reasoner/{projectId}/stop
+     */
+    @PostMapping("/{projectId}/stop")
+    public ResponseEntity<Map<String, Object>> stopReasoner(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String reasonerType
+    ) {
+        try {
+            if (reasonerType != null && !reasonerType.isBlank()) {
+                reasonerService.disposeReasoner(projectId, ReasonerType.valueOf(reasonerType.toUpperCase()));
+            } else {
+                for (ReasonerType type : ReasonerType.values()) {
+                    reasonerService.disposeReasoner(projectId, type);
+                }
+            }
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Reasoner stopped",
+                    "projectId", projectId
+            ));
+        } catch (Exception e) {
+            log.error("Error stopping reasoner for {}", projectId, e);
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
      * Clear reasoner cache
      * POST /api/reasoner/clear-cache
      */

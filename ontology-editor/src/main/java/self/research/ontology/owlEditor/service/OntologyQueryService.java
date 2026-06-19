@@ -332,6 +332,13 @@ public class OntologyQueryService {
                     FILTER(isIRI(?super) && ?super != <http://www.w3.org/2002/07/owl#Thing> && ?super != ?c)
                   }
                   MINUS {
+                    # subClassOf (NamedParent ⊓ …) — Protégé parity, e.g. Employee under Person
+                    ?c rdfs:subClassOf ?anon .
+                    ?anon owl:intersectionOf/rdf:rest*/rdf:first ?namedParent .
+                    FILTER(isIRI(?namedParent) && ?namedParent != ?c
+                           && ?namedParent != <http://www.w3.org/2002/07/owl#Thing>)
+                  }
+                  MINUS {
                     # Exclude union/intersection members where the containing class is named.
                     # Uses explicit blank-node traversal rather than property paths to handle
                     # all RDF serialisations (OWL/XML, RDF/XML, Turtle) consistently.
@@ -340,6 +347,13 @@ public class OntologyQueryService {
                     UNION
                     { ?ec owl:intersectionOf/rdf:rest*/rdf:first ?c . }
                     FILTER(isIRI(?namedParent) && ?namedParent != ?c)
+                  }
+                  MINUS {
+                    # Exclude intersection members where a named conjunct is the structural parent
+                    ?c owl:equivalentClass ?ec .
+                    { ?ec owl:intersectionOf/rdf:rest*/rdf:first ?namedParent . }
+                    FILTER(isIRI(?namedParent) && ?namedParent != ?c
+                           && ?namedParent != <http://www.w3.org/2002/07/owl#Thing>)
                   }
                   MINUS {
                     # Direct union/intersection member (no equivalentClass wrapper)
@@ -439,8 +453,18 @@ public class OntologyQueryService {
               OPTIONAL { ?c rdfs:label ?label }
               OPTIONAL { ?c rdfs:comment ?description }
               OPTIONAL {
-                ?c rdfs:subClassOf ?parent .
-                FILTER(isIRI(?parent) && ?parent != ?c)
+                {
+                  ?c rdfs:subClassOf ?parent .
+                  FILTER(isIRI(?parent) && ?parent != ?c)
+                } UNION {
+                  ?c owl:equivalentClass ?expr .
+                  ?expr owl:intersectionOf/rdf:rest*/rdf:first ?parent .
+                  FILTER(isIRI(?parent) && ?parent != ?c)
+                } UNION {
+                  ?c rdfs:subClassOf ?expr .
+                  ?expr owl:intersectionOf/rdf:rest*/rdf:first ?parent .
+                  FILTER(isIRI(?parent) && ?parent != ?c)
+                }
               }
             }
             ORDER BY COALESCE(LCASE(?label), STR(?c))
@@ -468,7 +492,17 @@ public class OntologyQueryService {
 
             String parentIri = resource(sol, "parent");
             if (parentIri != null) {
-                node.setParent(parentIri);
+                List<String> parents = node.getSubClassOf();
+                if (parents == null) {
+                    parents = new ArrayList<>();
+                    node.setSubClassOf(parents);
+                }
+                if (!parents.contains(parentIri)) {
+                    parents.add(parentIri);
+                }
+                if (node.getParent() == null) {
+                    node.setParent(parentIri);
+                }
             }
         }
 
@@ -505,7 +539,15 @@ public class OntologyQueryService {
         String query = PREFIXES + """
             SELECT DISTINCT ?child ?label ?description ?hasChildren
             WHERE {
-              ?child rdfs:subClassOf <%s> .
+              {
+                ?child rdfs:subClassOf <%s> .
+              } UNION {
+                ?child owl:equivalentClass ?expr .
+                ?expr owl:intersectionOf/rdf:rest*/rdf:first <%s> .
+              } UNION {
+                ?child rdfs:subClassOf ?expr .
+                ?expr owl:intersectionOf/rdf:rest*/rdf:first <%s> .
+              }
               FILTER(isIRI(?child) && ?child != <%s>)
               %s
               # Exclude union members: <%s> owl:equivalentClass/owl:unionOf/.../child
@@ -516,10 +558,22 @@ public class OntologyQueryService {
               }
               OPTIONAL { ?child rdfs:label ?label }
               OPTIONAL { ?child rdfs:comment ?description }
-              BIND(EXISTS { ?grandchild rdfs:subClassOf ?child . FILTER(?grandchild != ?child && isIRI(?grandchild)) } AS ?hasChildren)
+              BIND(EXISTS {
+                {
+                  ?grandchild rdfs:subClassOf ?child .
+                } UNION {
+                  ?grandchild owl:equivalentClass ?gexpr .
+                  ?gexpr owl:intersectionOf/rdf:rest*/rdf:first ?child .
+                } UNION {
+                  ?grandchild rdfs:subClassOf ?gexpr .
+                  ?gexpr owl:intersectionOf/rdf:rest*/rdf:first ?child .
+                }
+                FILTER(?grandchild != ?child && isIRI(?grandchild))
+              } AS ?hasChildren)
             }
             LIMIT %d OFFSET %d
-            """.formatted(parentIri, parentIri, draftEntityHiddenFilter(projectId, "?child"),
+            """.formatted(parentIri, parentIri, parentIri, parentIri,
+                    draftEntityHiddenFilter(projectId, "?child"),
                     parentIri, parentIri, parentIri, Math.max(1, limit), Math.max(0, offset));
 
         List<OntologyDto.TreeNode> result = mapTreeNodes(projectId, query, parentIri);
@@ -3429,28 +3483,16 @@ public class OntologyQueryService {
         List<Map<String, Object>> instances = new ArrayList<>();
         Set<String> seenIndividuals = new LinkedHashSet<>();
         
-        // OPTIMIZED: Single query that returns both asserted and inferred instances
-        // Uses BIND to flag inferred instances instead of two separate queries
+        // Asserted class assertions only (Fuseki/Jena). Inferred instances come from OWLAPI
+        // reasoner path (desktop / fast-open cache) or after classify via reasoner endpoints.
         String combinedQuery = PREFIXES + """
-            SELECT DISTINCT ?individual ?label ?isInferred WHERE {
-              {
-                ?individual a <%s> .
-                BIND(false AS ?isInferred)
-              } UNION {
-                GRAPH <http://www.ontotext.com/inferred> {
-                  ?individual a <%s> .
-                }
-                FILTER NOT EXISTS {
-                  GRAPH <http://www.ontotext.com/explicit> {
-                    ?individual a <%s> .
-                  }
-                }
-                BIND(true AS ?isInferred)
-              }
+            SELECT DISTINCT ?individual ?label WHERE {
+              ?individual a <%s> .
+              FILTER(isIRI(?individual))
               OPTIONAL { ?individual rdfs:label ?label }
             }
             ORDER BY ?label
-            """.formatted(classIri, classIri, classIri);
+            """.formatted(classIri);
         
         TupleQueryResult rs = datasetService.execSelect(projectId, combinedQuery);
         
@@ -3462,8 +3504,7 @@ public class OntologyQueryService {
                 Map<String, Object> individual = new LinkedHashMap<>();
                 individual.put("id", individualIri);
                 individual.put("label", sol.hasBinding("label") ? literal(sol, "label") : localName(individualIri));
-                boolean inferred = sol.hasBinding("isInferred") && "true".equals(sol.getValue("isInferred").stringValue());
-                individual.put("isInferred", inferred);
+                individual.put("isInferred", false);
                 
                 List<String> types = new ArrayList<>();
                 types.add(classIri);

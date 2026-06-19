@@ -5,6 +5,7 @@ import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
@@ -41,6 +42,10 @@ public class DesktopHierarchyService {
 
     @Autowired
     private OntologyMetricsComputer metricsComputer;
+
+    @Autowired(required = false)
+    @Qualifier("owlEditorReasonerService")
+    private ReasonerService reasonerService;
 
     public boolean hasOntology(String projectId) {
         return owlApiContext.hasOntology(projectId);
@@ -719,6 +724,9 @@ public class DesktopHierarchyService {
         }
 
         OWLReasoner r = reasoner;
+        if (reasonerService != null) {
+            r = reasonerService.findCachedReasoner(ont).orElse(reasoner);
+        }
         if (r != null) {
             try {
                 for (OWLNamedIndividual ind : r.getInstances(cls, false).getFlattened()) {

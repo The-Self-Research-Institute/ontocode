@@ -64,9 +64,18 @@ public class OntologyQueryController {
     @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
 
+    @Autowired(required = false) @Nullable
+    private self.research.ontology.owlEditor.service.ReasonerClassInstanceMerger reasonerClassInstanceMerger;
+
+    @Autowired(required = false) @Nullable
+    private self.research.ontology.owlEditor.service.ReasonerIndividualAssertionMerger reasonerIndividualAssertionMerger;
+
     /** Desktop Protégé-style: OWLAPI is authoritative; Fuseki may not be synced yet. */
     @Value("${ontocode.desktop.owlapi-first:false}")
     private boolean owlApiFirst;
+
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
 
     public OntologyQueryController(OntologyQueryService queryService,
                                    ProjectMetadataService projectMetadataService,
@@ -84,10 +93,17 @@ public class OntologyQueryController {
 
     /**
      * Desktop owlapi-first: use in-memory OWLAPI when there is no active per-user draft overlay.
-     * When the user has unpublished drafts, reads must go through SPARQL (main + draft graphs).
+     * On desktop, Fuseki is deferred — always prefer OWLAPI over SPARQL (draft overlay would 503).
      */
     private boolean preferOwlApiPath(String projectId) {
-        if (!owlApiFirst || desktopOntologyLoader == null) {
+        if (!owlApiFirst) {
+            return false;
+        }
+        if (desktopMode) {
+            // Desktop: OWLAPI is authoritative; Fuseki may not be started yet.
+            return owlApiContext != null || desktopOntologyLoader != null;
+        }
+        if (desktopOntologyLoader == null) {
             return false;
         }
         String userId = SparqlQueryContext.getUserId();
@@ -96,6 +112,17 @@ public class OntologyQueryController {
             return false;
         }
         return true;
+    }
+
+    /** Desktop owlapi-first: SPARQL failures become warming/202 instead of 503. */
+    private ResponseEntity<?> sparqlListFallback(String projectId, Exception e) {
+        if (desktopMode && owlApiFirst) {
+            ensureOwlApiWarming(projectId);
+            // Fuseki is lazy on desktop — never 503 when OWLAPI-first is active; ask client to retry.
+            return owlApiWarmingListResponse();
+        }
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
     }
 
     private void ensureOwlApiWarming(String projectId) {
@@ -132,6 +159,18 @@ public class OntologyQueryController {
         try {
             return Optional.of(whenReady.get());
         } catch (Exception e) {
+            if (e instanceof IllegalStateException
+                    && e.getMessage() != null
+                    && e.getMessage().contains("service unavailable")) {
+                ensureOwlApiWarming(projectId);
+                return Optional.of(owlApiWarmingListResponse());
+            }
+            if (desktopOntologyLoader != null && desktopOntologyLoader.isLoading(projectId)) {
+                return Optional.of(owlApiWarmingListResponse());
+            }
+            if (!owlApiReady(projectId)) {
+                return Optional.of(owlApiWarmingListResponse());
+            }
             return Optional.of(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("success", false, "error", "OWLAPI query failed: " + e.getMessage())));
         }
@@ -378,8 +417,7 @@ public class OntologyQueryController {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     queryService.properties(projectId, type, limit, offset)));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+            return sparqlListFallback(projectId, e);
         }
     }
 
@@ -400,8 +438,7 @@ public class OntologyQueryController {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     queryService.propertyDetail(projectId, iri)));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body(Map.of("success", false, "error", "Query failed: " + e.getMessage()));
+            return sparqlListFallback(projectId, e);
         }
     }
 
@@ -429,8 +466,7 @@ public class OntologyQueryController {
                     "total", queryService.individualCount(projectId)
             ));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+            return sparqlListFallback(projectId, e);
         }
     }
 
@@ -452,8 +488,7 @@ public class OntologyQueryController {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     queryService.annotationProperties(projectId, limit, offset)));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+            return sparqlListFallback(projectId, e);
         }
     }
 
@@ -492,8 +527,7 @@ public class OntologyQueryController {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     queryService.datatypes(projectId, limit, offset)));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+            return sparqlListFallback(projectId, e);
         }
     }
 
@@ -606,7 +640,11 @@ public class OntologyQueryController {
         if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(desktopHierarchyService.classInstances(projectId, classIri));
         }
-        return ResponseEntity.ok(queryService.getClassInstances(projectId, classIri));
+        List<Map<String, Object>> instances = queryService.getClassInstances(projectId, classIri);
+        if (reasonerClassInstanceMerger != null) {
+            instances = reasonerClassInstanceMerger.mergeInferred(projectId, classIri, instances);
+        }
+        return ResponseEntity.ok(instances);
     }
 
     @GetMapping("/classes/instance-counts/{projectId:.+}")
@@ -624,13 +662,16 @@ public class OntologyQueryController {
             return owl.get();
         }
         try {
+            Map<String, Map<String, Integer>> counts = queryService.getClassInstanceCounts(projectId);
+            if (reasonerClassInstanceMerger != null) {
+                counts = reasonerClassInstanceMerger.mergeInferredCounts(projectId, counts);
+            }
             return ResponseEntity.ok(Map.of(
                     "success", true,
-                    "data", queryService.getClassInstanceCounts(projectId)
+                    "data", counts
             ));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+            return sparqlListFallback(projectId, e);
         }
     }
 
@@ -655,7 +696,15 @@ public class OntologyQueryController {
         if (owl.isPresent()) {
             return owl.get();
         }
-        return ResponseEntity.ok(queryService.getIndividualDetails(projectId, individualIri));
+        Map<String, Object> details = queryService.getIndividualDetails(projectId, individualIri);
+        if (reasonerIndividualAssertionMerger != null) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> assertions =
+                    (List<Map<String, Object>>) details.getOrDefault("propertyAssertions", List.of());
+            details.put("propertyAssertions",
+                    reasonerIndividualAssertionMerger.mergeInferred(projectId, individualIri, assertions));
+        }
+        return ResponseEntity.ok(details);
     }
 
     @GetMapping("/individual-details/{projectId}")
@@ -670,7 +719,15 @@ public class OntologyQueryController {
         if (owl.isPresent()) {
             return owl.get();
         }
-        return ResponseEntity.ok(queryService.getIndividualDetails(projectId, individualIri));
+        Map<String, Object> details = queryService.getIndividualDetails(projectId, individualIri);
+        if (reasonerIndividualAssertionMerger != null) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> assertions =
+                    (List<Map<String, Object>>) details.getOrDefault("propertyAssertions", List.of());
+            details.put("propertyAssertions",
+                    reasonerIndividualAssertionMerger.mergeInferred(projectId, individualIri, assertions));
+        }
+        return ResponseEntity.ok(details);
     }
 
     @GetMapping("/debug/{projectId}")
