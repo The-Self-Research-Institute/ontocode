@@ -48,7 +48,7 @@ public class ReasoningQueueProcessor {
                 } else {
                     queueManager.markCompleted(job, result, duration);
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 log.error("[Reasoning] Job {} failed", job.getJobId(), e);
                 String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
                 if (msg.toLowerCase(Locale.ROOT).contains("outofmemory")) {
