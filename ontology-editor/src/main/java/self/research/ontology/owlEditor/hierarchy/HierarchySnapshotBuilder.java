@@ -59,23 +59,12 @@ public class HierarchySnapshotBuilder {
     }
 
     private Set<OWLClass> assertedTopLevelCandidates(OWLOntology ont) {
-        Set<OWLClass> withNamedSuper = new HashSet<>();
-        for (OWLSubClassOfAxiom ax : ont.getAxioms(AxiomType.SUBCLASS_OF)) {
-            OWLClassExpression sub = ax.getSubClass();
-            OWLClassExpression sup = ax.getSuperClass();
-            if (sub.isAnonymous() || sub.isOWLNothing()) {
-                continue;
-            }
-            if (!sup.isAnonymous() && !sup.isOWLThing() && !sup.isOWLNothing()) {
-                withNamedSuper.add(sub.asOWLClass());
-            }
-        }
         Set<OWLClass> roots = new LinkedHashSet<>();
         for (OWLClass cls : ont.getClassesInSignature(Imports.EXCLUDED)) {
             if (cls.isBuiltIn() || cls.isOWLNothing()) {
                 continue;
             }
-            if (!withNamedSuper.contains(cls)) {
+            if (structuralNamedParents(ont, cls).isEmpty()) {
                 roots.add(cls);
             }
         }
@@ -86,11 +75,7 @@ public class HierarchySnapshotBuilder {
                                                     String parentIri, int limit, int offset) {
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
         OWLClass parent = df.getOWLClass(IRI.create(parentIri));
-        return ont.subClassAxiomsForSuperClass(parent)
-                .map(ax -> ax.getSubClass())
-                .filter(ce -> !ce.isAnonymous() && !ce.isOWLNothing())
-                .map(OWLClassExpression::asOWLClass)
-                .distinct()
+        return collectAssertedChildClasses(ont, parent).stream()
                 .sorted(Comparator.comparing(c -> getLabel(ont, c).toLowerCase(Locale.ROOT)))
                 .skip(Math.max(0, offset))
                 .limit(Math.max(1, limit))
@@ -99,31 +84,91 @@ public class HierarchySnapshotBuilder {
     }
 
     /**
-     * Precomputes direct children for every named class parent (asserted axioms only).
+     * Precomputes direct children for every named class parent (Protégé asserted hierarchy).
      */
     public Map<String, List<OntologyDto.TreeNode>> buildChildrenIndex(OWLOntology ont, OWLReasoner reasoner) {
-        Map<String, List<OWLClass>> raw = new HashMap<>();
-        for (OWLSubClassOfAxiom ax : ont.getAxioms(AxiomType.SUBCLASS_OF)) {
-            OWLClassExpression sub = ax.getSubClass();
-            OWLClassExpression sup = ax.getSuperClass();
-            if (sub.isAnonymous() || sub.isOWLNothing() || sup.isAnonymous() || sup.isOWLNothing()) {
+        Map<String, Set<OWLClass>> raw = new HashMap<>();
+        for (OWLClass cls : ont.getClassesInSignature(Imports.EXCLUDED)) {
+            if (cls.isBuiltIn() || cls.isOWLNothing()) {
                 continue;
             }
-            String parentIri = sup.asOWLClass().getIRI().toString();
-            raw.computeIfAbsent(parentIri, k -> new ArrayList<>()).add(sub.asOWLClass());
+            for (OWLClass parent : structuralNamedParents(ont, cls)) {
+                raw.computeIfAbsent(parent.getIRI().toString(), k -> new LinkedHashSet<>()).add(cls);
+            }
         }
 
         Map<String, List<OntologyDto.TreeNode>> index = new HashMap<>();
-        for (Map.Entry<String, List<OWLClass>> e : raw.entrySet()) {
+        for (Map.Entry<String, Set<OWLClass>> e : raw.entrySet()) {
             String parentIri = e.getKey();
             List<OntologyDto.TreeNode> nodes = e.getValue().stream()
-                    .distinct()
                     .sorted(Comparator.comparing(c -> getLabel(ont, c).toLowerCase(Locale.ROOT)))
                     .map(c -> toTreeNode(ont, reasoner, c, parentIri))
                     .collect(Collectors.toList());
             index.put(parentIri, nodes);
         }
         return index;
+    }
+
+    /**
+     * Protégé asserted children: direct subClassOf plus classes defined as equivalent to
+     * (Parent ⊓ …) or subClassOf (Parent ⊓ …).
+     */
+    private Set<OWLClass> collectAssertedChildClasses(OWLOntology ont, OWLClass parent) {
+        Set<OWLClass> children = new LinkedHashSet<>();
+        ont.subClassAxiomsForSuperClass(parent)
+                .map(OWLSubClassOfAxiom::getSubClass)
+                .filter(ce -> !ce.isAnonymous() && !ce.isOWLNothing())
+                .map(OWLClassExpression::asOWLClass)
+                .forEach(children::add);
+
+        for (OWLClass cls : ont.getClassesInSignature(Imports.EXCLUDED)) {
+            if (cls.isBuiltIn() || cls.isOWLNothing() || cls.equals(parent)) {
+                continue;
+            }
+            if (structuralNamedParents(ont, cls).contains(parent)) {
+                children.add(cls);
+            }
+        }
+        return children;
+    }
+
+    /**
+     * Named parents in the asserted hierarchy: explicit subClassOf plus named conjuncts from
+     * equivalentClass / anonymous subClassOf intersections (e.g. Customer under Person).
+     */
+    private Set<OWLClass> structuralNamedParents(OWLOntology ont, OWLClass cls) {
+        Set<OWLClass> parents = new LinkedHashSet<>();
+        for (OWLSubClassOfAxiom ax : ont.subClassAxiomsForSubClass(cls).toList()) {
+            OWLClassExpression sup = ax.getSuperClass();
+            if (!sup.isAnonymous() && !sup.isOWLThing() && !sup.isOWLNothing()) {
+                parents.add(sup.asOWLClass());
+            } else if (sup instanceof OWLObjectIntersectionOf) {
+                namedConjuncts(sup).stream()
+                        .filter(p -> !p.equals(cls) && !p.isOWLThing() && !p.isOWLNothing())
+                        .forEach(parents::add);
+            }
+        }
+        for (OWLEquivalentClassesAxiom ax : ont.equivalentClassesAxioms(cls).toList()) {
+            for (OWLClassExpression expr : ax.getClassExpressionsAsList()) {
+                if (expr.equals(cls) || !(expr instanceof OWLObjectIntersectionOf)) {
+                    continue;
+                }
+                namedConjuncts(expr).stream()
+                        .filter(p -> !p.equals(cls) && !p.isOWLThing() && !p.isOWLNothing())
+                        .forEach(parents::add);
+            }
+        }
+        return parents;
+    }
+
+    private Set<OWLClass> namedConjuncts(OWLClassExpression expr) {
+        if (!(expr instanceof OWLObjectIntersectionOf intersection)) {
+            return Set.of();
+        }
+        return intersection.getOperandsAsList().stream()
+                .filter(OWLClassExpression::isNamed)
+                .map(OWLClassExpression::asOWLClass)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private boolean hasNamedSuperclassViaReasoner(OWLReasoner reasoner, OWLDataFactory df, OWLClass cls) {
@@ -178,10 +223,7 @@ public class HierarchySnapshotBuilder {
     }
 
     private boolean hasDirectChildren(OWLOntology ont, OWLClass cls) {
-        return ont.subClassAxiomsForSuperClass(cls)
-                .anyMatch(ax -> !ax.getSubClass().isAnonymous()
-                        && !ax.getSubClass().isOWLNothing()
-                        && !ax.getSubClass().equals(cls));
+        return !collectAssertedChildClasses(ont, cls).isEmpty();
     }
 
     private String getLabel(OWLOntology ont, OWLClass cls) {

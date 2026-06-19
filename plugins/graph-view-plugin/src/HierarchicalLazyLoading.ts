@@ -371,6 +371,65 @@ export const expandAll = (
   };
 };
 
+/** Ontologies at or below this size open fully expanded (Protégé-style default for teaching files). */
+const SMALL_ONTOLOGY_NODE_CAP = 400;
+
+/**
+ * Initial visibility: class hierarchy roots + one level of children (Protégé-style).
+ * Avoids rendering the full ontology (individuals, properties, deep branches) on first paint.
+ */
+export const initialGraphVisibility = (
+  nodes: OntologyNode[],
+  edges: OntologyEdge[]
+): {
+  newExpandedIds: Set<string>;
+  newVisibleIds: Set<string>;
+} => {
+  const owlThingIri = 'http://www.w3.org/2002/07/owl#Thing';
+  const classNodes = nodes.filter(n => n.type === 'class');
+  const roots = getRootNodes(classNodes, edges);
+  const visible = new Set<string>();
+  const expanded = new Set<string>();
+
+  const expandOneLevel = (nodeId: string) => {
+    visible.add(nodeId);
+    expanded.add(nodeId);
+    getChildren(nodeId, edges, nodes).forEach(childId => visible.add(childId));
+  };
+
+  if (classNodes.some(n => n.id === owlThingIri)) {
+    expandOneLevel(owlThingIri);
+  }
+
+  for (const rootId of roots) {
+    if (rootId === owlThingIri) continue;
+    expandOneLevel(rootId);
+  }
+
+  if (visible.size === 0 && classNodes.length > 0) {
+    classNodes.slice(0, Math.min(12, classNodes.length)).forEach(n => visible.add(n.id));
+  }
+
+  return { newExpandedIds: expanded, newVisibleIds: visible };
+};
+
+/**
+ * Small/medium ontologies: show the full class tree on first paint.
+ * Large ontologies: lazy roots + one level to avoid heap spikes.
+ */
+export const smartInitialGraphVisibility = (
+  nodes: OntologyNode[],
+  edges: OntologyEdge[]
+): {
+  newExpandedIds: Set<string>;
+  newVisibleIds: Set<string>;
+} => {
+  if (nodes.length > 0 && nodes.length <= SMALL_ONTOLOGY_NODE_CAP) {
+    return expandAll(nodes);
+  }
+  return initialGraphVisibility(nodes, edges);
+};
+
 /**
  * Collapse every branch — show only roots for each entity type that has a hierarchy.
  */

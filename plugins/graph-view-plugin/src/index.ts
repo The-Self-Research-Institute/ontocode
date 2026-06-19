@@ -24,6 +24,8 @@ export {
   type HierarchyDirection
 } from './components/ClassHierarchyPanel';
 export { LocalGraphView } from './components/LocalGraphView';
+export { AnalyticsPanel } from './components/AnalyticsPanel';
+export { computeGraphAnalytics } from './services/GraphAnalyticsService';
 
 // Hierarchy helpers (cycle-safe, multi-parent)
 export {

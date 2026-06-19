@@ -72,7 +72,7 @@ import type {
   Datatype,
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
-import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from "../utils/desktop";
+import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry } from "../utils/desktop";
 import { resolveMutationActor } from "../utils/mutationActor";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
@@ -2413,6 +2413,44 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [projectId, selectedReasoner]);
 
+  const loadClassInstances = useCallback(async () => {
+    if (!projectId || !selectedClassForIndividuals) {
+      setClassInstances([]);
+      return;
+    }
+    setClassInstancesLoading(true);
+    try {
+      const response = await apiClient.get<any>(
+        `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`,
+      );
+      const payload = response?.data || response;
+      const instances = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+      setClassInstances(instances);
+    } catch (error) {
+      console.error("[Dashboard] Failed to load class instances:", error);
+      setClassInstances([]);
+    } finally {
+      setClassInstancesLoading(false);
+    }
+  }, [projectId, selectedClassForIndividuals]);
+
+  useEffect(() => {
+    setClassInstancesQuery("");
+    setClassInstancesView("direct");
+    setSelectedClassIndividual(null);
+    setSelectedClassIndividualDetails(null);
+    loadClassInstances();
+  }, [loadClassInstances]);
+
+  // Refresh instances whenever the IndividualsByClass tab becomes active (handles stale data
+  // after individuals are created in the Entities tab while this tab was in the background)
+  useEffect(() => {
+    if (mainTab === "IndividualsByClass" && selectedClassForIndividuals) {
+      loadClassInstances();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainTab]);
+
   const startReasoner = useCallback(async () => {
     if (!projectId) {
       notificationService.error("No Ontology Loaded", "Please load an ontology first");
@@ -2454,6 +2492,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       console.log("[Dashboard] ✅ All inferred hierarchies processed");
 
+      // Refresh class instances if user is viewing Individuals by Class
+      if (selectedClassForIndividuals) {
+        await loadClassInstances();
+      }
+
       // Automatically switch Classes tab to inferred mode to show the inferred hierarchy
       setHierarchyViewModes((prev) => ({ ...prev, Classes: "inferred" }));
       console.log("[Dashboard] ✅ Automatically switched Classes tab to inferred mode");
@@ -2483,14 +2526,24 @@ const Dashboard: React.FC<DashboardProps> = ({
     loadInferredAnnotationPropertyHierarchy,
     loadInferredDatatypes,
     loadInferredIndividuals,
+    loadClassInstances,
+    selectedClassForIndividuals,
   ]);
 
-  const stopReasoner = useCallback(() => {
+  const stopReasoner = useCallback(async () => {
+    if (projectId) {
+      try {
+        await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/reasoner/stop`, {});
+        await apiClient.post(`/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/stop`, {});
+      } catch (error) {
+        console.warn("[Dashboard] Stop reasoner API failed (local state cleared):", error);
+      }
+    }
     setIsReasonerRunning(false);
     setIsReasonerLoading(false);
     setReasonerResults(null);
-    notificationService.success("Reasoner Stopped", "Reasoner has been stopped");
-  }, []);
+    notificationService.success("Reasoner Stopped", "Reasoner session has been disposed");
+  }, [projectId]);
 
   const toggleReasonerSync = useCallback(() => {
     const newSyncState = !isReasonerSynced;
@@ -3458,25 +3511,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         // properties/individuals/etc. (otherwise they 503 on SPARQL fallback).
         const desktopOwlApiGate: Promise<void> = (async () => {
           if (!isDesktop() || signal.aborted) return;
-          let warmTriggered = false;
-          for (let i = 0; i < 90 && !signal.aborted; i++) {
-            try {
-              const cs = await apiClient.get<any>(
-                `/api/ontology/cache-status/${encodedProjectId}${cacheBuster}`,
-                undefined,
-                { signal },
-              );
-              if (!isStaleLoad()) applyDeclarationCounts(cs);
-              if (cs?.owlapiReady ?? cs?.data?.owlapiReady) return;
-              if (!warmTriggered && i >= 2) {
-                warmTriggered = true;
-                void warmOntologyInMemory(currentProjectId, { timeoutMs: 120_000 });
-              }
-            } catch {
-              /* retry */
-            }
-            if (i < 89) await new Promise((r) => setTimeout(r, 2000));
+          setLoadingStatusMessage("Opening ontology (fast path)…");
+          const warm = await warmOntologyInMemory(currentProjectId, { timeoutMs: 300_000 });
+          if (!warm.ready && !signal.aborted) {
+            await waitForDesktopOwlApiReady(currentProjectId, {
+              timeoutMs: 300_000,
+              pollMs: 2000,
+              signal,
+            });
           }
+          if (!isStaleLoad() && !warm.ready) {
+            console.warn("[Dashboard] OWLAPI warm still in progress — entity tabs will retry");
+          }
+          if (!isStaleLoad()) setLoadingStatusMessage("");
         })();
 
         void (async () => {
@@ -3514,17 +3561,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           await desktopOwlApiGate;
           if (isStaleLoad()) return;
           try {
-            const res = await apiClient.get<any>(
-              `/api/ontology/properties/${encodedProjectId}${cacheBuster}`,
-              undefined,
-              { signal },
-            );
-            if (!isStaleLoad()) {
-              if (isOwlApiWarmingResponse(res)) {
-                console.debug("[Dashboard] Properties still warming — will retry when tab is opened");
-              } else {
-                applyPropertiesResponse(res);
-              }
+            const fetchUrl = `/api/ontology/properties/${encodedProjectId}${cacheBuster}`;
+            const res = isDesktop()
+              ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
+              : await apiClient.get<any>(fetchUrl, undefined, { signal });
+            if (!isStaleLoad() && res) {
+              applyPropertiesResponse(res);
             }
           } catch (e: any) {
             if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
@@ -3539,12 +3581,11 @@ const Dashboard: React.FC<DashboardProps> = ({
           await desktopOwlApiGate;
           if (isStaleLoad()) return;
           try {
-            const res = await apiClient.get<any>(
-              `/api/ontology/individuals/${encodedProjectId}${cacheBuster}`,
-              undefined,
-              { signal },
-            );
-            if (!isStaleLoad()) {
+            const fetchUrl = `/api/ontology/individuals/${encodedProjectId}${cacheBuster}`;
+            const res = isDesktop()
+              ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
+              : await apiClient.get<any>(fetchUrl, undefined, { signal });
+            if (!isStaleLoad() && res) {
               setIndividuals(
                 Array.isArray(res?.data)
                   ? res.data
@@ -3566,12 +3607,11 @@ const Dashboard: React.FC<DashboardProps> = ({
           await desktopOwlApiGate;
           if (isStaleLoad()) return;
           try {
-            const res = await apiClient.get<any>(
-              `/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`,
-              undefined,
-              { signal },
-            );
-            if (!isStaleLoad()) {
+            const fetchUrl = `/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`;
+            const res = isDesktop()
+              ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
+              : await apiClient.get<any>(fetchUrl, undefined, { signal });
+            if (!isStaleLoad() && res) {
               const merged = mergeAnnotationProperties(
                 (Array.isArray(res?.data)
                   ? res.data
@@ -3596,12 +3636,11 @@ const Dashboard: React.FC<DashboardProps> = ({
           await desktopOwlApiGate;
           if (isStaleLoad()) return;
           try {
-            const res = await apiClient.get<any>(
-              `/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`,
-              undefined,
-              { signal },
-            );
-            if (!isStaleLoad()) {
+            const fetchUrl = `/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`;
+            const res = isDesktop()
+              ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
+              : await apiClient.get<any>(fetchUrl, undefined, { signal });
+            if (!isStaleLoad() && res) {
               setDatatypes(
                 Array.isArray(res?.data) ? res.data : Array.isArray(res?.datatypes) ? res.datatypes : [],
               );
@@ -4645,44 +4684,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     };
   };
-
-  const loadClassInstances = useCallback(async () => {
-    if (!projectId || !selectedClassForIndividuals) {
-      setClassInstances([]);
-      return;
-    }
-    setClassInstancesLoading(true);
-    try {
-      const response = await apiClient.get<any>(
-        `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`,
-      );
-      const payload = response?.data || response;
-      const instances = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
-      setClassInstances(instances);
-    } catch (error) {
-      console.error("[Dashboard] Failed to load class instances:", error);
-      setClassInstances([]);
-    } finally {
-      setClassInstancesLoading(false);
-    }
-  }, [projectId, selectedClassForIndividuals]);
-
-  useEffect(() => {
-    setClassInstancesQuery("");
-    setClassInstancesView("direct");
-    setSelectedClassIndividual(null);
-    setSelectedClassIndividualDetails(null);
-    loadClassInstances();
-  }, [loadClassInstances]);
-
-  // Refresh instances whenever the IndividualsByClass tab becomes active (handles stale data
-  // after individuals are created in the Entities tab while this tab was in the background)
-  useEffect(() => {
-    if (mainTab === "IndividualsByClass" && selectedClassForIndividuals) {
-      loadClassInstances();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mainTab]);
 
   const refreshSelectedClassIndividualDetails = useCallback(async () => {
     if (!projectId || !selectedClassIndividual?.id) {
@@ -14125,13 +14126,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                                 {selectedClassIndividualDetails.propertyAssertions.map((assertion) => (
                                   <div
                                     key={assertion.id}
-                                    className="group flex items-center justify-between text-[11px] text-gray-600"
+                                    className={`group flex items-center justify-between text-[11px] ${
+                                      assertion.isInferred ? "text-amber-800 bg-amber-50 border border-amber-100 rounded px-1" : "text-gray-600"
+                                    }`}
                                   >
                                     <span className="truncate">
                                       <span className="font-semibold">{assertion.propertyLabel}</span>
                                       {assertion.isNegative ? " (not)" : ""}:{" "}
                                       {assertion.targetLabel || assertion.targetIri || assertion.targetLiteral}
+                                      {assertion.isInferred && (
+                                        <span className="ml-1 text-[9px] uppercase font-semibold text-amber-700">inferred</span>
+                                      )}
                                     </span>
+                                    {!assertion.isInferred && (
                                     <button
                                       onClick={async () => {
                                         if (!projectId || !selectedClassIndividualDetails) return;
@@ -14186,6 +14193,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                     >
                                       Remove
                                     </button>
+                                    )}
                                   </div>
                                 ))}
                               </div>

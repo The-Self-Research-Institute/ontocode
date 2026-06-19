@@ -273,8 +273,10 @@ const IndividualEditor: React.FC<{
   }, [item.id]);
 
   // Separate positive/negative property assertions
-  const positiveObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && !a.isNegative) || [];
-  const positiveDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && !a.isNegative) || [];
+  const positiveObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && !a.isNegative && !a.isInferred) || [];
+  const positiveDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && !a.isNegative && !a.isInferred) || [];
+  const inferredObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && !a.isNegative && a.isInferred) || [];
+  const inferredDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && !a.isNegative && a.isInferred) || [];
   const negativeObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && a.isNegative) || [];
   const negativeDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && a.isNegative) || [];
   
@@ -623,7 +625,17 @@ const IndividualEditor: React.FC<{
                               </button>
                           </div>
                         ))}
-                        {positiveObjectPropertyAssertions.length === 0 && (
+                        {inferredObjectPropertyAssertions.map(assertion => (
+                          <div key={assertion.id} className="flex items-center justify-between text-xs bg-amber-50 p-1.5 rounded-sm border border-amber-200" title="Inferred by reasoner (read-only)">
+                              <div>
+                                  <span className="font-semibold text-amber-800">{assertion.propertyLabel}</span>
+                                  <span className="mx-1.5 text-gray-400">→</span>
+                                  <span className="text-amber-900">{assertion.targetLabel || assertion.targetIri?.split('#').pop()}</span>
+                                  <span className="ml-1.5 text-[9px] uppercase text-amber-700 font-semibold">inferred</span>
+                              </div>
+                          </div>
+                        ))}
+                        {positiveObjectPropertyAssertions.length === 0 && inferredObjectPropertyAssertions.length === 0 && (
                           <div className="text-xs text-gray-400 italic p-1">No object property assertions</div>
                         )}
                       </>
@@ -661,7 +673,17 @@ const IndividualEditor: React.FC<{
                               </button>
                           </div>
                         ))}
-                        {positiveDataPropertyAssertions.length === 0 && (
+                        {inferredDataPropertyAssertions.map(assertion => (
+                          <div key={assertion.id} className="flex items-center justify-between text-xs bg-amber-50 p-1.5 rounded-sm border border-amber-200" title="Inferred by reasoner (read-only)">
+                              <div>
+                                  <span className="font-semibold text-amber-800">{assertion.propertyLabel}</span>
+                                  <span className="mx-1.5 text-gray-400">=</span>
+                                  <span className="text-amber-900">{assertion.targetLiteral}</span>
+                                  <span className="ml-1.5 text-[9px] uppercase text-amber-700 font-semibold">inferred</span>
+                              </div>
+                          </div>
+                        ))}
+                        {positiveDataPropertyAssertions.length === 0 && inferredDataPropertyAssertions.length === 0 && (
                           <div className="text-xs text-gray-400 italic p-1">No data property assertions</div>
                         )}
                       </>

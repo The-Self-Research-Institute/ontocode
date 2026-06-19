@@ -1471,13 +1471,19 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                 {selectedClassIndividualDetails.propertyAssertions.map((assertion) => (
                                   <div
                                     key={assertion.id}
-                                    className="group flex items-center justify-between text-[11px] text-gray-600"
+                                    className={`group flex items-center justify-between text-[11px] ${
+                                      assertion.isInferred ? "text-amber-800 bg-amber-50 border border-amber-100 rounded px-1" : "text-gray-600"
+                                    }`}
                                   >
                                     <span className="truncate">
                                       <span className="font-semibold">{assertion.propertyLabel}</span>
                                       {assertion.isNegative ? " (not)" : ""}:{" "}
                                       {assertion.targetLabel || assertion.targetIri || assertion.targetLiteral}
+                                      {assertion.isInferred && (
+                                        <span className="ml-1 text-[9px] uppercase font-semibold text-amber-700">inferred</span>
+                                      )}
                                     </span>
+                                    {!assertion.isInferred && (
                                     <button
                                       onClick={async () => {
                                         if (!projectId || !selectedClassIndividualDetails) return;
@@ -1532,6 +1538,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                     >
                                       Remove
                                     </button>
+                                    )}
                                   </div>
                                 ))}
                               </div>

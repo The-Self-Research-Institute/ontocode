@@ -30,7 +30,9 @@ import {
   Trash2,
   Maximize,
   MinusSquare,
-  Save
+  Save,
+  TrendingUp,
+  Crosshair
 } from 'lucide-react';
 import type {
   OntologyNode,
@@ -46,9 +48,11 @@ import PluginUpdateService from './PluginUpdateService';
 import { vowlNotationService } from './services/VOWLNotationService';
 import { UnifiedSidebar } from './components/UnifiedSidebar';
 import { GraphViewSidebar } from './components/GraphViewSidebar';
+import { LocalGraphView } from './components/LocalGraphView';
+import { AnalyticsPanel } from './components/AnalyticsPanel';
+import { computeGraphAnalytics, getClusterColor } from './services/GraphAnalyticsService';
 import { createGraphDataFetchService } from './services/GraphDataFetchService';
 import { MatrixView } from './components/MatrixView';
-import { StatsDashboard } from './components/StatsDashboard';
 import * as layouts from './layouts';
 import {
   getRootNodes,
@@ -59,6 +63,8 @@ import {
   searchNodesWithPaths,
   expandAll as expandAllNodes,
   collapseAll as collapseAllNodes,
+  initialGraphVisibility,
+  smartInitialGraphVisibility,
   getExpansionStats,
   findPathToNode
 } from './HierarchicalLazyLoading';
@@ -294,6 +300,21 @@ const hashToUnit = (value: string): number => {
 
 const getNodeDegree = (nodeId: string, edges: OntologyEdge[]): number => {
   return edges.reduce((count, edge) => count + (edge.from === nodeId || edge.to === nodeId ? 1 : 0), 0);
+};
+
+/** Precomputed once per graph render — avoids O(N×E) inside force ticks. */
+const buildDegreeMap = (edges: OntologyEdge[]): Map<string, number> => {
+  const map = new Map<string, number>();
+  for (const edge of edges) {
+    map.set(edge.from, (map.get(edge.from) || 0) + 1);
+    map.set(edge.to, (map.get(edge.to) || 0) + 1);
+  }
+  return map;
+};
+
+const GRAPH_DEBUG = false;
+const graphLog = (...args: unknown[]) => {
+  if (GRAPH_DEBUG) console.log(...args);
 };
 
 const isInferredEntity = (item: { metadata?: Record<string, any>; [key: string]: any }) => {
@@ -552,8 +573,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [selectedNodeInfo, setSelectedNodeInfo] = useState<OntologyNode | null>(null);
   
   // Visualization Type (combines both view mode and visualization type)
-  const [visualizationType, setVisualizationType] = useState<VisualizationType>('vowl');
-  const [ontographLayoutType, setOntographLayoutType] = useState<'vertical' | 'horizontal' | 'radial' | 'grid' | 'tree' | 'spring'>('vertical');
+  const [visualizationType, setVisualizationType] = useState<VisualizationType>('ontograph');
+  const [ontographLayoutType, setOntographLayoutType] = useState<'vertical' | 'horizontal' | 'radial' | 'grid' | 'tree' | 'spring'>('tree');
   const [showLegend, setShowLegend] = useState(true);
   
   // WebVOWL Filters State (integrated into main sidebar)
@@ -727,7 +748,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     setAllNodes(nextNodes);
     setAllEdges(nextEdges);
 
-    const { newExpandedIds, newVisibleIds } = expandAllNodes(nextNodes);
+    const { newExpandedIds, newVisibleIds } = smartInitialGraphVisibility(nextNodes, nextEdges);
     updateHierarchyState(() => ({
       visible: newVisibleIds,
       expanded: newExpandedIds
@@ -829,6 +850,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [focusIncludeProperties, setFocusIncludeProperties] = useState<boolean>(true);
   const [focusIncludeIndividuals, setFocusIncludeIndividuals] = useState<boolean>(false);
 
+  // Obsidian-style local graph + InfraNodus-style insights
+  const [showLocalGraph, setShowLocalGraph] = useState(true);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [colorByCluster, setColorByCluster] = useState(false);
+  const [sizeByInfluence, setSizeByInfluence] = useState(true);
+  const [localGraphFollowSelection, setLocalGraphFollowSelection] = useState(true);
+  const [localFocusId, setLocalFocusId] = useState<string | null>(null);
+  const [localGraphHeight, setLocalGraphHeight] = useState(260);
+  const [analyticsHeight, setAnalyticsHeight] = useState(280);
+
   // Compute neighborhood of focused node via BFS over subClassOf, instanceOf,
   // domain/range and propertyRelation edges.
   const focusedNodeIds = useMemo<Set<string> | null>(() => {
@@ -903,11 +934,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return filtered;
     }
     const filtered = allNodes.filter(n => visibleNodeIds.has(n.id));
-    console.log('[AdvancedGraphView] 🔍 visibleNodes memo - allNodes:', allNodes.length, 'visibleNodeIds:', visibleNodeIds.size, 'filtered:', filtered.length);
-    console.log('[AdvancedGraphView] 🔍 Visible node types:', filtered.reduce((acc, n) => {
-      acc[n.type] = (acc[n.type] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>));
+    graphLog('[AdvancedGraphView] visibleNodes:', filtered.length, '/', allNodes.length);
     return filtered;
   }, [allNodes, visibleNodeIds, focusedNodeIds, focusedNodeId]);
 
@@ -1229,6 +1256,23 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return filtered;
   }, [visibleEdges, filteredNodes, filters, visualizationType, vowlFilters, allNodes, assertionView]);
 
+  const graphAnalytics = useMemo(
+    () => computeGraphAnalytics(filteredNodes, filteredEdges),
+    [filteredNodes, filteredEdges]
+  );
+
+  const activeLocalFocusId = useMemo(() => {
+    if (localGraphFollowSelection && selectedNodeInfo?.id) return selectedNodeInfo.id;
+    if (localFocusId) return localFocusId;
+    const thing = filteredNodes.find(n => n.id.includes('owl#Thing'));
+    const firstClass = filteredNodes.find(n => n.type === 'class');
+    return thing?.id || firstClass?.id || filteredNodes[0]?.id || null;
+  }, [localGraphFollowSelection, selectedNodeInfo?.id, localFocusId, filteredNodes]);
+
+  useEffect(() => {
+    if (selectedNodeInfo?.id) setLocalFocusId(selectedNodeInfo.id);
+  }, [selectedNodeInfo?.id]);
+
   // Generate dynamic legend based on current graph
   const dynamicLegend = useMemo(() => {
     console.log('[Legend] Computing dynamic legend - Mode:', visualizationType, 'Filtered nodes:', filteredNodes.length, 'Filtered edges:', filteredEdges.length);
@@ -1433,20 +1477,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         };
         assertedGraphRef.current = assertedGraph;
 
-        const inferredGraph = await fetchInferredGraphData(apiBaseUrl, authToken);
-        applyGraphForAssertionView(assertionView, assertedGraph, inferredGraph);
-        
-        console.log('[AdvancedGraphView] ✅ Set allNodes:', graphData.nodes.length, 'allEdges:', graphData.edges.length);
-        
-        // Use expandAll for initial state - show full hierarchy like Protégé OntoGraf
-        // This ensures all nodes and subClassOf edges are visible on load
-        console.log('[AdvancedGraphView] ✅ Initial hierarchy state:', {
-          visible: graphData.nodes.length,
-          expanded: graphData.nodes.length,
-          total: graphData.nodes.length
-        });
-
+        // Paint asserted graph immediately; reasoner/inferred data loads in background (no blocking spinner).
+        applyGraphForAssertionView(assertionView, assertedGraph, inferredGraphRef.current);
         setLoading(false);
+
+        fetchInferredGraphData(apiBaseUrl, authToken)
+          .then((inferredGraph) => {
+            if (assertedGraphRef.current) {
+              applyGraphForAssertionView(assertionView, assertedGraphRef.current, inferredGraph);
+            }
+          })
+          .catch((err) => {
+            console.warn('[AdvancedGraphView] Inferred graph prefetch failed (non-fatal):', err);
+          });
+        
+        graphLog('[AdvancedGraphView] ✅ Initial hierarchy — visible subset, expand with toolbar or double-click');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       setError(errorMessage);
@@ -1493,6 +1538,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
 
     const isSpatial3D = visualizationType === 'spatial3d';
+    const nodeDegreeMap = buildDegreeMap(filteredEdges);
+    const maxBetweenness = Math.max(0.001, ...graphAnalytics.betweenness.values());
+    const clusterFor = (nodeId: string) => graphAnalytics.communities.get(nodeId);
+    const influenceSize = (nodeId: string, base: number): number => {
+      if (!sizeByInfluence || visualizationType === 'ontograph') return base;
+      const b = graphAnalytics.betweenness.get(nodeId) ?? 0;
+      return base + Math.round(Math.sqrt(b / maxBetweenness) * 14);
+    };
 
     const svg = d3.select(svgRef.current)
       .on('click', () => {
@@ -1646,10 +1699,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const savedPositions = nodePositionsRef.current;
     const hasSavedPositions = savedPositions.size > 0;
     const d3Nodes: D3Node[] = filteredNodes.map((node, index) => {
+      const baseSize = influenceSize(node.id, node.size || settings.nodeSize);
+      const sizedNode = { ...node, size: baseSize };
       // Reuse previous position if the node was already rendered (Protégé-style stability)
       const saved = savedPositions.get(node.id);
       if (saved) {
-        return { ...node, x: saved.x, y: saved.y };
+        return { ...sizedNode, x: saved.x, y: saved.y };
       }
 
       // New node — place near its parent if we have a parent position
@@ -1659,7 +1714,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (parentPos) {
           const angle = Math.random() * Math.PI * 2;
           const dist = 80 + Math.random() * 60;
-          return { ...node, x: parentPos.x + Math.cos(angle) * dist, y: parentPos.y + Math.sin(angle) * dist };
+          return { ...sizedNode, x: parentPos.x + Math.cos(angle) * dist, y: parentPos.y + Math.sin(angle) * dist };
         }
       }
 
@@ -1690,15 +1745,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
       
       const z = visualizationType === 'spatial3d'
-        ? Math.max(-260, Math.min(420, (hashToUnit(`${node.id}:depth`) - 0.35) * 680 - getNodeDegree(node.id, filteredEdges) * 8))
+        ? Math.max(-260, Math.min(420, (hashToUnit(`${node.id}:depth`) - 0.35) * 680 - (nodeDegreeMap.get(node.id) || 0) * 8))
         : undefined;
-      return { ...node, x, y, z };
+      return { ...sizedNode, x, y, z };
     });
 
     if (isSpatial3D) {
       d3Nodes.forEach(node => {
         if (node.z == null) {
-          node.z = Math.max(-260, Math.min(420, (hashToUnit(`${node.id}:depth`) - 0.35) * 680 - getNodeDegree(node.id, filteredEdges) * 8));
+          node.z = Math.max(-260, Math.min(420, (hashToUnit(`${node.id}:depth`) - 0.35) * 680 - (nodeDegreeMap.get(node.id) || 0) * 8));
         }
         project3DNode(node);
       });
@@ -1848,7 +1903,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     console.log('[AdvancedGraphView D3] ✅ Prepared D3 data - Nodes:', d3Nodes.length, 'Edges:', d3Edges.length);
 
-    // Create force simulation with enhanced layout for better structure
     const nodeCount = d3Nodes.length;
     
     // Calculate link distance based on node types and VOWL distance controls
@@ -1934,7 +1988,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             return node.type === 'class' ? -1500 : -800;
           }
           if (visualizationType === 'spatial3d') {
-            const degree = getNodeDegree(node.id, filteredEdges);
+            const degree = nodeDegreeMap.get(node.id) || 0;
             return node.type === 'class' ? -1200 - degree * 25 : -700 - degree * 15;
           }
           // Standard mode repulsion
@@ -2078,7 +2132,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (isSpatial3D) {
       simulation.force('depthOrbit', () => {
         d3Nodes.forEach(node => {
-          const degree = getNodeDegree(node.id, filteredEdges);
+          const degree = nodeDegreeMap.get(node.id) || 0;
           const targetZ = Math.max(-300, Math.min(460, (hashToUnit(`${node.id}:depth`) - 0.35) * 700 - degree * 10));
           node.z = (node.z || 0) + (targetZ - (node.z || 0)) * 0.08;
           project3DNode(node);
@@ -2438,6 +2492,20 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return settings.showLabels ? 1 : 0;
       });
 
+    const updateLinkLabelBackgrounds = () => {
+      linkLabelBg.each(function(_d, i) {
+        const label = linkLabel.nodes()[i];
+        if (!label) return;
+        const bbox = (label as SVGTextElement).getBBox();
+        const padding = 3;
+        d3.select(this)
+          .attr('x', bbox.x - padding)
+          .attr('y', bbox.y - padding)
+          .attr('width', bbox.width + padding * 2)
+          .attr('height', bbox.height + padding * 2);
+      });
+    };
+
     // Filter nodes by viewport for large OntoGraph (virtualization)
     let visibleD3Nodes = d3Nodes;
     if (isLargeGraph && visualizationType === 'ontograph' && d3Nodes.length > 5000) {
@@ -2459,6 +2527,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .data(visibleD3Nodes)
       .join('g')
       .attr('class', 'node')
+      .attr('data-testid', 'graph-node')
+      .attr('data-graph-node-id', d => d.id)
       .style('cursor', editMode ? 'move' : 'pointer')
       .call(d3.drag<SVGGElement, D3Node>()
         .on('start', dragStarted)
@@ -2677,7 +2747,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         };
         const colors = isInferredEntity(d)
           ? { bg: isDark ? '#052e2b' : '#ecfdf5', border: '#10b981', accent: '#10b981', icon: '#10b981', text: isDark ? '#d1fae5' : '#064e3b' }
-          : (nodeColors[d.type] || nodeColors['class']);
+          : (colorByCluster && clusterFor(d.id) !== undefined
+            ? (() => {
+                const cc = getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors) || '#3b82f6';
+                return { bg: isDark ? '#1e293b' : '#f8fafc', border: cc, accent: cc, icon: cc, text: isDark ? '#e2e8f0' : '#1e293b' };
+              })()
+            : (nodeColors[d.type] || nodeColors['class']));
         
         // Main card background with subtle shadow
         nodeGroup.append('rect')
@@ -2776,7 +2851,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('cy', 0)
             .attr('rx', ellipseWidth)
             .attr('ry', ellipseHeight)
-            .attr('fill', '#FFE4B5')  // Light peach/moccasin color
+            .attr('fill', colorByCluster && clusterFor(d.id) !== undefined
+              ? (getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors) || '#FFE4B5')
+              : '#FFE4B5')
             .attr('stroke', isInferredEntity(d) ? '#10b981' : '#000000')
             .attr('stroke-width', isInferredEntity(d) ? 3 : 2)
             .attr('stroke-dasharray', isInferredEntity(d) ? '8 4' : null)
@@ -3196,18 +3273,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               .attr('x', labelX)
               .attr('y', labelY);
           });
-          linkLabelBg.each(function(d, i) {
-            const label = linkLabel.nodes()[i];
-            if (label) {
-              const bbox = (label as SVGTextElement).getBBox();
-              const padding = visualizationType === 'vowl' ? 3 : 3;
-              d3.select(this)
-                .attr('x', bbox.x - padding)
-                .attr('y', bbox.y - padding)
-                .attr('width', bbox.width + padding * 2)
-                .attr('height', bbox.height + padding * 2);
-            }
-          });
+          // Label backgrounds sized once after layout — getBBox in tick forces layout thrash
 
           node.attr('transform', d => {
             const point = getRenderPoint(d);
@@ -3229,6 +3295,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           ticking = false;
         });
       }
+    });
+
+    simulation.on('end', () => {
+      updateLinkLabelBackgrounds();
     });
 
     // Drag functions
@@ -3327,9 +3397,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .on('zoom', (event) => {
         g.attr('transform', event.transform);
         currentTransformRef.current = event.transform;
+        // Avoid React re-render on every pan frame — update zoom label on gesture end only
+      })
+      .on('end', (event) => {
         setZoomLevel(event.transform.k);
-        
-        // Update viewport bounds for large graph optimization
         if (isLargeGraph) {
           const transform = event.transform;
           setViewportBounds({
@@ -3374,7 +3445,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return () => {
       simulation.stop();
     };
-  }, [filteredNodes, filteredEdges, settings, editMode, onNodeClick, onEdgeClick, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType]);
+  }, [filteredNodes, filteredEdges, settings, editMode, onNodeClick, onEdgeClick, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence]);
 
   // Auto-fit the viewport when switching to ontograph or changing its layout type
   // This ensures nodes are always in view after a layout recalculation
@@ -4681,7 +4752,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * ========================================================================
    */
   return (
-    <div className="advanced-graph-view-d3" style={styles.container}>
+    <div
+      className="advanced-graph-view-d3"
+      style={styles.container}
+      data-testid="graph-view"
+      data-graph-loading={loading ? 'true' : 'false'}
+      data-graph-mode={visualizationType}
+    >
       {/* Plugin Update Service */}
       <PluginUpdateService
         currentVersion="3.1.0"
@@ -4786,10 +4863,48 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           Refresh
         </button>
 
+        {/* MVP view presets — Protégé-style Network vs Hierarchy */}
+        <div style={{ display: 'flex', gap: '2px', alignItems: 'center', backgroundColor: 'var(--surface-2)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+          <button
+            data-testid="graph-preset-network"
+            onClick={() => {
+              setVisualizationType('force');
+              setOntographLayoutType('spring');
+              const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
+              updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+            }}
+            style={visualizationType === 'force' ? styles.btnActive : styles.btn}
+            title="Network view — force-directed graph with subClassOf and property edges"
+          >
+            Network
+          </button>
+          <button
+            data-testid="graph-preset-tree"
+            onClick={() => {
+              setVisualizationType('ontograph');
+              setOntographLayoutType('tree');
+              const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
+              updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+            }}
+            style={visualizationType === 'ontograph' ? styles.btnActive : styles.btn}
+            title="Tree view — class hierarchy layout (Protégé OntoGraf style)"
+          >
+            Tree
+          </button>
+        </div>
+
+        <div style={styles.divider} />
+
         {/* Visualization Type Selector */}
         <select
           value={visualizationType}
-          onChange={(e) => setVisualizationType(e.target.value as VisualizationType)}
+          onChange={(e) => {
+            const next = e.target.value as VisualizationType;
+            setVisualizationType(next);
+            if (next === 'ontograph' && ontographLayoutType === 'spring') {
+              setOntographLayoutType('tree');
+            }
+          }}
           style={{
             padding: '6px 12px',
             border: '1px solid var(--border)',
@@ -4803,9 +4918,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }}
           title="Select visualization type"
         >
-          <option value="force">Force-Directed Graph</option>
+          <option value="force">Network (Force-Directed)</option>
+          <option value="ontograph">Hierarchy (Tree Layout)</option>
           <option value="vowl">WebVOWL Notation</option>
-          <option value="ontograph">Hierarchical Graph</option>
           <option value="spatial3d">3D Spatial Graph</option>
         </select>
 
@@ -5119,6 +5234,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         {/* Class Hierarchy Navigator toggle */}
         <button
+          data-testid="graph-navigator-toggle"
           onClick={() => {
             if (showHierarchyDialog) {
               setShowHierarchyDialog(false);
@@ -5133,10 +5249,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }
           }}
           style={showHierarchyDialog ? styles.btnActive : styles.btn}
-          title={showHierarchyDialog ? 'Hide Class Hierarchy Navigator' : 'Show Class Hierarchy Navigator'}
+          title={showHierarchyDialog ? 'Hide class tree navigator panel' : 'Show class tree navigator panel'}
         >
           <GitBranch size={16} />
-          Hierarchy
+          Navigator
         </button>
 
         <div style={styles.divider} />
@@ -5158,6 +5274,36 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           <FileText size={16} />
           <span style={{ marginLeft: 6 }}>Explorer</span>
         </button>
+        <button
+          data-testid="graph-local-toggle"
+          onClick={() => setShowLocalGraph(v => !v)}
+          style={showLocalGraph ? styles.btnActive : styles.btn}
+          title="Obsidian-style local graph — N-hop neighborhood of selected node"
+        >
+          <Crosshair size={16} />
+          Local
+        </button>
+        <button
+          data-testid="graph-insights-toggle"
+          onClick={() => setShowAnalytics(v => !v)}
+          style={showAnalytics ? styles.btnActive : styles.btn}
+          title="InfraNodus-style insights — clusters, top concepts, structural gaps"
+        >
+          <TrendingUp size={16} />
+          Insights
+        </button>
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', padding: '0 4px' }}
+          title="Local graph follows your selection"
+        >
+          <input
+            type="checkbox"
+            checked={localGraphFollowSelection}
+            onChange={(e) => setLocalGraphFollowSelection(e.target.checked)}
+            data-testid="graph-local-follow"
+          />
+          Follow
+        </label>
         <button onClick={() => setShowGrid(!showGrid)} style={showGrid ? styles.btnActive : styles.btn} title="Grid">
           <Grid size={16} />
         </button>
@@ -5171,7 +5317,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         <div style={{ flex: 1 }} />
 
         {/* Stats */}
-        <div style={styles.stats}>
+        <div
+          style={styles.stats}
+          data-testid="graph-stats"
+          data-visible-nodes={visibleNodeIds.size}
+          data-total-nodes={allNodes.length}
+          data-expanded-nodes={expandedNodeIds.size}
+        >
           {getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)} · {zoomLevel.toFixed(1)}x
           {allNodes.length > 1000 && <span style={{color: '#10b981', marginLeft: '8px'}}>⚡ Lazy Loading</span>}
         </div>
@@ -5187,10 +5339,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         </button>
       </div>
 
-          {/* Graph Content Area */}
-          <div style={styles.graphContentArea}>
+          {/* Graph workspace: main canvas + Obsidian local graph + InfraNodus insights */}
+          <div style={styles.graphWorkspace}>
+          <div style={{ ...styles.graphContentArea, flex: showLocalGraph || showAnalytics ? '1 1 auto' : 1 }}>
             {/* SVG Canvas for Force, WebVOWL, OntoGraph, and projected 3D Spatial mode */}
-            <svg ref={svgRef} style={visualizationType === 'spatial3d' ? { ...styles.svg, ...styles.spatial3dSvg } : styles.svg}>
+            <svg
+              ref={svgRef}
+              data-testid="graph-svg"
+              style={visualizationType === 'spatial3d' ? { ...styles.svg, ...styles.spatial3dSvg } : styles.svg}
+            >
                 <defs>
                   {/* Grid pattern */}
                   {showGrid && (
@@ -5306,6 +5463,70 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         )}
 
         </div>
+
+        {showLocalGraph && (
+          <div
+            data-testid="graph-local-pane"
+            style={{
+              height: localGraphHeight,
+              flexShrink: 0,
+              borderTop: '2px solid var(--border)',
+              minHeight: 180
+            }}
+          >
+            <LocalGraphView
+              nodes={filteredNodes}
+              edges={filteredEdges}
+              focusNodeId={activeLocalFocusId}
+              onSelect={(node) => {
+                setSelectedNodes(new Set([node.id]));
+                setSelectedNodeInfo(node);
+                setLocalFocusId(node.id);
+              }}
+              onActivate={(node) => {
+                setLocalFocusId(node.id);
+                setSelectedNodes(new Set([node.id]));
+                setSelectedNodeInfo(node);
+                enterFocusMode(node.id);
+              }}
+              showToolbar
+              height="100%"
+            />
+          </div>
+        )}
+
+        {showAnalytics && (
+          <div
+            data-testid="graph-analytics-pane"
+            style={{ height: analyticsHeight, flexShrink: 0, minHeight: 200 }}
+          >
+            <AnalyticsPanel
+              analytics={graphAnalytics}
+              nodes={filteredNodes}
+              colorByCluster={colorByCluster}
+              onToggleColorByCluster={setColorByCluster}
+              onSelectNode={(node) => {
+                setSelectedNodes(new Set([node.id]));
+                setSelectedNodeInfo(node);
+                setLocalFocusId(node.id);
+              }}
+              onHighlightGap={(gap) => {
+                const nodeA = filteredNodes.find(n => n.label === gap.labelA);
+                const nodeB = filteredNodes.find(n => n.label === gap.labelB);
+                if (nodeA) {
+                  setSelectedNodeInfo(nodeA);
+                  setLocalFocusId(nodeA.id);
+                } else if (nodeB) {
+                  setSelectedNodeInfo(nodeB);
+                  setLocalFocusId(nodeB.id);
+                }
+              }}
+              onClose={() => setShowAnalytics(false)}
+            />
+          </div>
+        )}
+
+          </div>
       </div>
 
         {/* Graph View Sidebar - Second Column */}
@@ -5692,7 +5913,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         {/* Loading */}
         {loading && (
-          <div style={styles.loadingOverlay}>
+          <div style={styles.loadingOverlay} data-testid="graph-loading">
             <RefreshCw size={32} className="spinning" />
             <div style={{ marginTop: '12px' }}>Loading graph...</div>
           </div>
@@ -6066,6 +6287,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '13px',
     color: 'var(--text-secondary)',
     padding: '0 12px'
+  },
+  graphWorkspace: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+    overflow: 'hidden'
   },
   graphContentArea: {
     flex: 1,

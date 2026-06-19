@@ -416,6 +416,21 @@ public class ReasonerService {
     }
 
     /**
+     * Returns a warmed classification reasoner for this ontology, if one exists.
+     * Does not create a new reasoner (unlike {@link #getReasoner}).
+     */
+    public Optional<OWLReasoner> findCachedReasoner(OWLOntology ontology) {
+        for (ReasonerType type : ReasonerType.values()) {
+            String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
+            OWLReasoner reasoner = reasonerCache.getIfPresent(cacheKey);
+            if (reasoner != null) {
+                return Optional.of(reasoner);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
      * Dispose reasoner for specific ontology object
      */
     public void disposeReasoner(OWLOntology ontology, ReasonerType type) {

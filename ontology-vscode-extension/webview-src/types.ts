@@ -75,6 +75,7 @@ export interface PropertyAssertion {
   targetLiteral?: string;
   isObjectProperty: boolean;
   isNegative?: boolean;
+  isInferred?: boolean;
   datatypeIri?: string;
 }
 
