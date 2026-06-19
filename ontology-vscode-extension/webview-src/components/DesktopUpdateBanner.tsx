@@ -41,6 +41,7 @@ export const DesktopUpdateBanner: React.FC = () => {
   const version = update.availableVersion || "";
   const isReady = update.status === "downloaded";
   const isDownloading = update.status === "downloading";
+  const hasError = update.status === "error";
 
   const handleDownload = async () => {
     try {
@@ -50,10 +51,20 @@ export const DesktopUpdateBanner: React.FC = () => {
     }
   };
 
+  const openManualDownload = () => {
+    const url =
+      (update as { manualDownloadUrl?: string }).manualDownloadUrl
+      || "https://ontocodeapi.selfresearch.org/api/downloads/windows-x64";
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   const handleInstall = async () => {
     setInstalling(true);
     try {
-      await (window as any).electronAPI?.updateInstall?.();
+      const result = await (window as any).electronAPI?.updateInstall?.();
+      if (result && result.ok === false) {
+        openManualDownload();
+      }
     } finally {
       setInstalling(false);
     }
@@ -89,6 +100,15 @@ export const DesktopUpdateBanner: React.FC = () => {
             Download update
           </button>
         ) : null}
+        {(hasError || isReady) && (
+          <button
+            type="button"
+            onClick={openManualDownload}
+            className="inline-flex items-center gap-1.5 rounded-md bg-white/10 hover:bg-white/20 px-3 py-1 text-xs font-medium transition-colors underline"
+          >
+            Download installer
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setDismissed(true)}
