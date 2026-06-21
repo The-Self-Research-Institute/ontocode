@@ -5,7 +5,7 @@ import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
 import openllet.owlapi.OpenlletReasonerFactory;
 import org.semanticweb.HermiT.ReasonerFactory;
-// import org.semanticweb.elk.owlapi.ElkReasonerFactory; // Temporarily disabled
+import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import uk.ac.manchester.cs.jfact.JFactFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,20 +70,13 @@ public class ReasonerService {
                     log.info("Using FaCT++ (JFact) reasoner");
                     return new JFactFactory().createReasoner(ontology, config);
                     
-                // Temporarily disabled ELK reasoner due to compatibility issues
-                // case ELK:
-                //     // ELK - Fast and scalable EL reasoner
-                //     // Note: ELK only supports EL profile of OWL, not full OWL 2 DL
-                //     log.info("Using ELK (Consequence-based) reasoner - Note: EL profile only");
-                //     try {
-                //         OWLReasoner elkReasoner = new ElkReasonerFactory().createReasoner(ontology, config);
-                //         log.info("ELK reasoner created successfully");
-                //         return elkReasoner;
-                //     } catch (Exception e) {
-                //         log.error("Failed to create ELK reasoner - may be due to unsupported OWL constructs", e);
-                //         throw e; // Will be caught by outer try-catch and fallback to Structural
-                //     }
-                    
+                case ELK:
+                    // ELK - Fast EL++ reasoner; best choice for large biomedical ontologies
+                    // (MONDO, GO, HP, etc.) that conform to the OWL EL profile.
+                    // Note: ELK only supports EL profile of OWL 2, not full OWL 2 DL.
+                    log.info("Using ELK (Consequence-based EL++) reasoner");
+                    return new ElkReasonerFactory().createReasoner(ontology, config);
+
                 case STRUCTURAL:
                 default:
                     log.info("Using Structural reasoner (basic)");
