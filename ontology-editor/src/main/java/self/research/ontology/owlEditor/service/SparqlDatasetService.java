@@ -1125,7 +1125,7 @@ public class SparqlDatasetService {
             }
             """.formatted(mainGraph, draftGraph, deletedPred, mainGraph);
 
-        String clearDraft = "CLEAR GRAPH <" + draftGraph + ">";
+        String clearDraft = "CLEAR SILENT GRAPH <" + draftGraph + ">";
 
         execUpdate(projectId, mainGraph, copyTriples);
         execUpdate(projectId, mainGraph, applyDeletions);
@@ -1136,7 +1136,8 @@ public class SparqlDatasetService {
 
     public void clearDraftGraph(String projectId, String userId) {
         String draftGraph = getDraftGraphUri(projectId, userId);
-        execUpdate(projectId, draftGraph, "CLEAR GRAPH <" + draftGraph + ">");
+        // SILENT suppresses "No such graph" when the draft graph has never been created yet.
+        execUpdate(projectId, draftGraph, "CLEAR SILENT GRAPH <" + draftGraph + ">");
         log.info("[DRAFT-GRAPH] Cleared draft graph {} for project {} user {}", draftGraph, projectId, userId);
     }
 
