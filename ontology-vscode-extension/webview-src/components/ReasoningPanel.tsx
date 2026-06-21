@@ -18,6 +18,7 @@ interface ReasonerResult {
   realizationMs?: number;
   consistencyCheckMs?: number;
   totalDurationMs?: number;
+  downgradedWarning?: string;
 }
 
 interface InferredAxiom {
@@ -365,6 +366,14 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
               <XCircle size={20} className="text-red-600" />
           }>
             <div className="space-y-4">
+              {/* ELK auto-downgrade warning */}
+              {result.downgradedWarning && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-300 flex items-start gap-2">
+                  <AlertTriangle size={16} className="text-amber-600 mt-0.5 shrink-0" />
+                  <p className="text-sm text-amber-800">{result.downgradedWarning}</p>
+                </div>
+              )}
+
               {/* Status */}
               <div className={`p-4 rounded-lg ${result.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
                 <div className="flex items-center gap-2 mb-2">
@@ -440,6 +449,46 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
                   <p className="text-sm font-medium text-purple-800">
                     Inferred {result.inferredAxiomsCount} new axioms
                   </p>
+                </div>
+              )}
+
+              {/* Inconsistency Issues */}
+              {result.inconsistent && (
+                <div className="p-4 bg-orange-50 rounded-lg border border-orange-300">
+                  <div className="flex items-center gap-2 mb-3">
+                    <AlertTriangle size={20} className="text-orange-600" />
+                    <h4 className="font-semibold text-orange-800">
+                      Ontology is Inconsistent
+                      {result.issues && result.issues.length > 0 && ` — ${result.issues.length} issue${result.issues.length === 1 ? '' : 's'} found`}
+                    </h4>
+                  </div>
+                  {result.issues && result.issues.length > 0 ? (
+                    <div className="space-y-2 max-h-72 overflow-y-auto">
+                      {result.issues.map((issue: any, idx: number) => (
+                        <div key={idx} className="p-3 bg-white rounded-lg border border-orange-200">
+                          <div className="flex items-start gap-2">
+                            <span className="mt-0.5 shrink-0 text-xs font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">
+                              {issue.type === 'complement_conflict' ? 'Complement' : 'Disjoint'}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-sm text-gray-800">{issue.message}</p>
+                              {issue.conflictingTypes && (
+                                <p className="text-xs text-gray-500 mt-1">
+                                  Conflicting types: <span className="font-mono">{issue.conflictingTypes.join(' ⊕ ')}</span>
+                                </p>
+                              )}
+                              <p className="text-xs text-gray-400 font-mono mt-1 truncate">{issue.iri}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-orange-700">
+                      The conflict may involve property restrictions or complex class expressions.
+                      Check your <span className="font-semibold">disjoint constraints</span> and <span className="font-semibold">complement definitions</span> in the editor.
+                    </p>
+                  )}
                 </div>
               )}
 

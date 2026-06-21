@@ -214,6 +214,12 @@ public class OntologyQueryService {
         // Phase 1b: VALUES-anchored hydration — bounded by p1Iris.size(), NOT by total class count.
         // Jena resolves VALUES via direct hash/index lookup per IRI, so OPTIONALs and EXISTS
         // are O(N) where N = p1Iris.size() (≤ limit), not O(all owl:Class declarations).
+        // hasChildren: simple rdfs:subClassOf for large graphs (avoids rdf:rest* traversal on
+        // 1M+ triple datasets); full OWL-DL expression check for small ontologies (<500K triples).
+        // -1 means COUNT timed out (cold TDB2 on 1M+ datasets) — treat as large to avoid
+        // the expensive rdf:rest*/rdf:first path traversal.
+        long tripleCount = datasetService.getGraphTripleCount(projectId);
+        boolean largeGraph = tripleCount < 0 || tripleCount >= 500_000L;
         List<OntologyDto.TreeNode> phase1;
         if (p1Iris.isEmpty()) {
             phase1 = java.util.Collections.emptyList();
@@ -221,20 +227,27 @@ public class OntologyQueryService {
             String valuesBlock = p1Iris.stream()
                     .map(iri -> "<" + iri + ">")
                     .collect(java.util.stream.Collectors.joining(" "));
-            String phase1bQuery = PREFIXES + """
-                SELECT ?c ?label ?description
-                (EXISTS {
+            String hasChildrenExpr = largeGraph ? """
+                  ?child rdfs:subClassOf ?c .
+                  FILTER(?child != ?c && isIRI(?child))
+                  FILTER NOT EXISTS { ?child owl:deprecated true }
+                """ : """
                   { ?child rdfs:subClassOf ?c . }
                   UNION { ?child owl:equivalentClass ?hcExpr . ?hcExpr owl:intersectionOf/rdf:rest*/rdf:first ?c . }
                   UNION { ?child rdfs:subClassOf ?hcExpr . ?hcExpr owl:intersectionOf/rdf:rest*/rdf:first ?c . }
                   FILTER(?child != ?c && isIRI(?child))
+                """;
+            String phase1bQuery = PREFIXES + """
+                SELECT ?c ?label ?description
+                (EXISTS {
+                  %s
                 } AS ?hasChildren)
                 WHERE {
                   VALUES ?c { %s }
                   OPTIONAL { ?c rdfs:label ?label }
                   OPTIONAL { ?c rdfs:comment ?description }
                 }
-                """.formatted(valuesBlock);
+                """.formatted(hasChildrenExpr, valuesBlock);
             phase1 = mapTreeNodes(projectId, phase1bQuery, null);
         }
         long p1Duration = System.currentTimeMillis() - startTime;
@@ -247,11 +260,16 @@ public class OntologyQueryService {
                 .map(OntologyDto.TreeNode::getId)
                 .collect(java.util.stream.Collectors.toSet());
 
-        // Skip only when Fuseki is cold (phase 1 took >10s = first query after restart).
+        // Skip orphan scan only when Fuseki is cold AND phase1 already has results to return.
+        // Using p1aDuration (Phase 1a scan only) rather than p1Duration so that the cold-TDB2
+        // COUNT inside getGraphTripleCount() doesn't artificially inflate the threshold check.
+        // Critically: if phase1 is empty (ontologies like Mondo/GO with no explicit
+        // rdfs:subClassOf owl:Thing children), we MUST run the orphan scan — skipping it
+        // returns an empty tree, which is always wrong.
         boolean knownLarge = datasetService.isKnownLargeProject(projectId);
-        if (p1Duration > 10000) {
-            log.info("[PERF] Skipping orphan scan for project={} (p1Duration={}ms — cold Fuseki)",
-                     projectId, p1Duration);
+        if (p1aDuration > 10000 && !phase1.isEmpty()) {
+            log.info("[PERF] Skipping orphan scan for project={} (p1aDuration={}ms — cold Fuseki, phase1={})",
+                     projectId, p1aDuration, phase1.size());
             List<OntologyDto.TreeNode> merged = new java.util.ArrayList<>(phase1);
             merged.sort(java.util.Comparator.comparing(n -> n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
             List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
@@ -266,82 +284,152 @@ public class OntologyQueryService {
             return result;
         }
 
-        // Java-side orphan detection: two cheap index-scan queries, subtraction in memory.
-        // Replaces the SPARQL MINUS-chain which was O(n²) on large ontologies and caused 504s.
+        // Java-side orphan detection with VALUES-bounded complex-expression verification.
         //
         // Query A: all named owl:Class IRIs (POS index scan on rdf:type — very fast).
-        // Query B: all classes that already have a named parent via any of the parent patterns
-        //          (rdfs:subClassOf, intersectionOf, equivalentClass, unionOf).
-        // Orphans = A − B − phase1 IRIs.
-        String allClassesQuery = PREFIXES + """
+        // Query B (simple): classes with a named rdfs:subClassOf parent — fast PSO scan.
+        // Candidates = A − B − phase1.
+        // Step 2b: run intersectionOf/equivalentClass/unionOf path expressions ONLY on
+        //          the candidates via VALUES binding. GraphDB resolves VALUES via direct index
+        //          lookup — O(candidates), not O(all_classes). For GO-scale ontologies the
+        //          candidates after step 2 are typically 3-10 (the root namespaces), so the
+        //          complex check runs in milliseconds regardless of total triple count.
+        // True orphans = candidates − hasComplexParent.
+        // Queries A and B are independent — run them in parallel so total wall-clock time is
+        // max(A, B) not A + B. On cold TDB2 each takes ~20-30s; sequential = 504 risk;
+        // parallel = ~30s, within Nginx's 60s proxy_read_timeout.
+        // Exclude owl:deprecated classes from Query A — they have no rdfs:subClassOf and look
+        // like orphans but are not real top-level roots. GO has ~22K deprecated terms out of
+        // ~51K total which was inflating orphan candidates from ~3 (true roots) to ~13K.
+        String allClassesQueryStr = PREFIXES + """
             SELECT DISTINCT ?c WHERE {
               ?c a owl:Class .
               FILTER(isIRI(?c) && ?c != <http://www.w3.org/2002/07/owl#Thing>)
+              FILTER NOT EXISTS { ?c owl:deprecated true }
             }
             """;
-        Set<String> allClassIris = new java.util.HashSet<>();
-        TupleQueryResult allRs = datasetService.execSelect(projectId, allClassesQuery);
-        while (allRs.hasNext()) {
-            Value v = allRs.next().getValue("c");
-            if (v != null) allClassIris.add(v.stringValue());
-        }
-        long afterAllClasses = System.currentTimeMillis() - startTime;
-        log.info("[PERF] All-classes scan: {} IRIs in {}ms", allClassIris.size(), afterAllClasses - p1Duration);
-
-        // Query B: classes that have a named non-Thing parent through any structural pattern.
-        String hasParentQuery = PREFIXES + """
+        String hasParentQueryStr = PREFIXES + """
             SELECT DISTINCT ?c WHERE {
-              { ?c rdfs:subClassOf ?p . FILTER(isIRI(?p) && ?p != <http://www.w3.org/2002/07/owl#Thing> && ?p != ?c) }
-              UNION
-              { ?c rdfs:subClassOf ?anon . ?anon owl:intersectionOf/rdf:rest*/rdf:first ?p .
-                FILTER(isIRI(?p) && ?p != ?c && ?p != <http://www.w3.org/2002/07/owl#Thing>) }
-              UNION
-              { ?c owl:equivalentClass ?ec . ?ec owl:intersectionOf/rdf:rest*/rdf:first ?p .
-                FILTER(isIRI(?p) && ?p != ?c && ?p != <http://www.w3.org/2002/07/owl#Thing>) }
-              UNION
-              { ?p owl:unionOf/rdf:rest*/rdf:first ?c . FILTER(isIRI(?p) && ?p != ?c) }
+              ?c rdfs:subClassOf ?p .
+              FILTER(isIRI(?p) && ?p != <http://www.w3.org/2002/07/owl#Thing> && ?p != ?c)
             }
             """;
-        Set<String> hasParentIris = new java.util.HashSet<>();
-        TupleQueryResult parRs = datasetService.execSelect(projectId, hasParentQuery);
-        while (parRs.hasNext()) {
-            Value v = parRs.next().getValue("c");
-            if (v != null) hasParentIris.add(v.stringValue());
+
+        CompletableFuture<Set<String>> allClassesFuture = CompletableFuture.supplyAsync(() -> {
+            Set<String> s = new java.util.HashSet<>();
+            TupleQueryResult r = datasetService.execSelect(projectId, allClassesQueryStr);
+            while (r.hasNext()) { Value v = r.next().getValue("c"); if (v != null) s.add(v.stringValue()); }
+            return s;
+        }, QUERY_POOL);
+
+        CompletableFuture<Set<String>> hasParentFuture = CompletableFuture.supplyAsync(() -> {
+            Set<String> s = new java.util.HashSet<>();
+            TupleQueryResult r = datasetService.execSelect(projectId, hasParentQueryStr);
+            while (r.hasNext()) { Value v = r.next().getValue("c"); if (v != null) s.add(v.stringValue()); }
+            return s;
+        }, QUERY_POOL);
+
+        Set<String> allClassIris;
+        Set<String> hasParentIris;
+        try {
+            allClassIris = allClassesFuture.get(50, java.util.concurrent.TimeUnit.SECONDS);
+            hasParentIris = hasParentFuture.get(50, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException | InterruptedException | java.util.concurrent.ExecutionException e) {
+            log.warn("[PERF] Orphan scan A/B timed out for project={} after 50s — returning phase1 only: {}", projectId, e.getMessage());
+            allClassesFuture.cancel(true);
+            hasParentFuture.cancel(true);
+            List<OntologyDto.TreeNode> fallback = new java.util.ArrayList<>(phase1);
+            fallback.sort(java.util.Comparator.comparing(n -> n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
+            List<OntologyDto.TreeNode> fallbackResult = fallback.size() > limit ? fallback.subList(0, limit) : fallback;
+            enrichWithEquivalentClasses(projectId, fallbackResult);
+            return fallbackResult;
         }
         long afterHasParent = System.currentTimeMillis() - startTime;
-        log.info("[PERF] Has-parent scan: {} IRIs in {}ms", hasParentIris.size(), afterHasParent - afterAllClasses);
+        log.info("[PERF] Parallel A+B scan: allClasses={} hasParent={} in {}ms (parallel wall-clock)",
+                allClassIris.size(), hasParentIris.size(), afterHasParent - p1Duration);
 
-        // Subtract in Java: orphans = all classes − has-named-parent − already in phase1
+        // Subtract in Java: candidates = all classes − has-named-parent − already in phase1
         allClassIris.removeAll(hasParentIris);
         allClassIris.removeAll(phase1Iris);
         List<String> orphanIris = new java.util.ArrayList<>(allClassIris);
         orphanIris.sort(java.util.Comparator.naturalOrder());
+        log.info("[PERF] Java-subtraction orphan candidates: {}", orphanIris.size());
+
+        // Step 2b: VALUES-bounded complex OWL expression parent check.
+        // The complex patterns (intersectionOf/equivalentClass/unionOf) run only on the N
+        // candidates, not all classes. GraphDB uses direct index lookup per VALUES entry.
+        // For GO-scale ontologies N ≈ 3 (the 3 root GO namespaces) — this runs in < 50ms.
+        // Safety: skip if candidates > 5000 (pathological disconnected ontology where the
+        // complex check is also unlikely to remove anything meaningful).
+        if (!orphanIris.isEmpty() && orphanIris.size() <= 5000) {
+            String complexCheckValues = orphanIris.stream()
+                    .map(iri -> "<" + iri + ">")
+                    .collect(java.util.stream.Collectors.joining(" "));
+            String complexParentCheckQuery = PREFIXES + """
+                SELECT DISTINCT ?c WHERE {
+                  VALUES ?c { %s }
+                  {
+                    ?c rdfs:subClassOf ?anon .
+                    ?anon owl:intersectionOf/rdf:rest*/rdf:first ?p .
+                    FILTER(isIRI(?p) && ?p != <http://www.w3.org/2002/07/owl#Thing> && ?p != ?c)
+                  } UNION {
+                    ?c owl:equivalentClass ?ec .
+                    ?ec owl:intersectionOf/rdf:rest*/rdf:first ?p .
+                    FILTER(isIRI(?p) && ?p != <http://www.w3.org/2002/07/owl#Thing> && ?p != ?c)
+                  } UNION {
+                    ?p owl:unionOf/rdf:rest*/rdf:first ?c .
+                    FILTER(isIRI(?p) && ?p != ?c)
+                  }
+                }
+                """.formatted(complexCheckValues);
+            try {
+                Set<String> hasComplexParent = new java.util.HashSet<>();
+                TupleQueryResult complexRs = datasetService.execSelect(projectId, complexParentCheckQuery);
+                while (complexRs.hasNext()) {
+                    Value v = complexRs.next().getValue("c");
+                    if (v != null) hasComplexParent.add(v.stringValue());
+                }
+                if (!hasComplexParent.isEmpty()) {
+                    orphanIris.removeAll(hasComplexParent);
+                    log.info("[PERF] Complex-expression check: removed {} false orphans, {} true orphans remain",
+                            hasComplexParent.size(), orphanIris.size());
+                }
+            } catch (Exception e) {
+                log.warn("[PERF] Complex parent check failed for project={}, proceeding without it: {}", projectId, e.getMessage());
+            }
+        } else if (orphanIris.size() > 5000) {
+            log.info("[PERF] Skipping complex parent check: {} candidates exceeds safety threshold (5000)", orphanIris.size());
+        }
+
         if (orphanIris.size() > limit) orphanIris = orphanIris.subList(0, limit);
-        log.info("[PERF] Java-subtraction orphans: {} candidates", orphanIris.size());
 
         List<OntologyDto.TreeNode> orphans = java.util.Collections.emptyList();
         if (!orphanIris.isEmpty()) {
-
-            if (!orphanIris.isEmpty()) {
-                String valuesBlock = orphanIris.stream()
-                        .map(iri -> "<" + iri + ">")
-                        .collect(java.util.stream.Collectors.joining(" "));
-                String hydrationQuery = PREFIXES + """
-                    SELECT ?c ?label ?description
-                    (EXISTS {
-                      { ?child rdfs:subClassOf ?c . }
-                      UNION { ?child owl:equivalentClass ?hcExpr . ?hcExpr owl:intersectionOf/rdf:rest*/rdf:first ?c . }
-                      UNION { ?child rdfs:subClassOf ?hcExpr . ?hcExpr owl:intersectionOf/rdf:rest*/rdf:first ?c . }
-                      FILTER(?child != ?c && isIRI(?child))
-                    } AS ?hasChildren)
-                    WHERE {
-                      VALUES ?c { %s }
-                      OPTIONAL { ?c rdfs:label ?label }
-                      OPTIONAL { ?c rdfs:comment ?description }
-                    }
-                    """.formatted(valuesBlock);
-                orphans = mapTreeNodes(projectId, hydrationQuery, null);
-            }
+            String valuesBlock = orphanIris.stream()
+                    .map(iri -> "<" + iri + ">")
+                    .collect(java.util.stream.Collectors.joining(" "));
+            String orphanHasChildrenExpr = largeGraph ? """
+                  ?child rdfs:subClassOf ?c .
+                  FILTER(?child != ?c && isIRI(?child))
+                  FILTER NOT EXISTS { ?child owl:deprecated true }
+                """ : """
+                  { ?child rdfs:subClassOf ?c . }
+                  UNION { ?child owl:equivalentClass ?hcExpr . ?hcExpr owl:intersectionOf/rdf:rest*/rdf:first ?c . }
+                  UNION { ?child rdfs:subClassOf ?hcExpr . ?hcExpr owl:intersectionOf/rdf:rest*/rdf:first ?c . }
+                  FILTER(?child != ?c && isIRI(?child))
+                """;
+            String hydrationQuery = PREFIXES + """
+                SELECT ?c ?label ?description
+                (EXISTS {
+                  %s
+                } AS ?hasChildren)
+                WHERE {
+                  VALUES ?c { %s }
+                  OPTIONAL { ?c rdfs:label ?label }
+                  OPTIONAL { ?c rdfs:comment ?description }
+                }
+                """.formatted(orphanHasChildrenExpr, valuesBlock);
+            orphans = mapTreeNodes(projectId, hydrationQuery, null);
         }
         long totalDuration = System.currentTimeMillis() - startTime;
         log.info("[PERF] Top-level classes phase 2 (orphans): {} new results, total {}ms", orphans.size(), totalDuration);
@@ -462,27 +550,85 @@ public class OntologyQueryService {
 
     /**
      * Get children of a specific class.
-     * OPTIMIZED: Results are cached for faster subsequent access.
-     * hasChildren is checked via EXISTS in the SPARQL query for accurate expand icons.
+     *
+     * Two-phase approach for large ontologies (≥500K triples) to avoid 252s+ queries
+     * on GO/Mondo-scale datasets. Small ontologies use the full OWL-DL query.
+     *
+     * Large (≥500K triples):
+     *   Phase 1 — PSO index scan for rdfs:subClassOf children only. No path expressions,
+     *   no DISTINCT across UNION, Fuseki can stream-stop at LIMIT.
+     *   Phase 2 — VALUES-bounded hydration with simple rdfs:subClassOf hasChildren.
+     *   GO/Mondo/OBO use only rdfs:subClassOf for hierarchy, so no correctness loss.
+     *
+     * Small (<500K triples):
+     *   Full OWL-DL query with equivalentClass/intersectionOf branches and complex
+     *   hasChildren — correct for Protégé-style defined-class hierarchies. Fast enough
+     *   at this scale (path traversals complete in <5s).
      */
     @Cacheable(value = "classChildren", key = "#projectId + '_' + #parentIri + '_' + #limit + '_' + #offset + '_' + (T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId() ?: 'public')")
     public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset) {
         safeIri(parentIri);
         long startTime = System.currentTimeMillis();
-        
-        // No ORDER BY: Fuseki can apply LIMIT early (stream-stop) instead of materializing
-        // all children, sorting, then cutting — critical for large taxonomy nodes.
-        // Sorting is done in Java after the fact; @Cacheable means cost is paid only once.
-        // DISTINCT prevents duplicate children when the ontology has redundant
-        // rdfs:subClassOf triples for the same (child, parent) pair — common in
-        // OWL/RDF serialisations that materialise inferred triples alongside asserted ones.
-        // FILTER isIRI excludes anonymous blank-node expressions that can appear as
-        // spurious children when complex restrictions are serialised.
-        // Exclude union members from asserted children.
-        // GO-plus uses: ParentClass owl:equivalentClass [ owl:unionOf (A B C) ]
-        // A, B, C may have explicit rdfs:subClassOf ParentClass triples (serialised inferences).
-        // In the ASSERTED hierarchy these should NOT appear as children of ParentClass —
-        // Protégé only shows them as children of their explicit named parents.
+
+        boolean largeGraph = datasetService.getGraphTripleCount(projectId) >= 500_000L;
+
+        if (largeGraph) {
+            // Phase 1: fast PSO index scan — no path expressions, Fuseki stream-stops at LIMIT.
+            String fetchQuery = PREFIXES + """
+                SELECT DISTINCT ?child WHERE {
+                  ?child rdfs:subClassOf <%s> .
+                  FILTER(isIRI(?child) && ?child != <%s>)
+                  %s
+                  FILTER NOT EXISTS { ?child owl:deprecated true }
+                }
+                LIMIT %d OFFSET %d
+                """.formatted(parentIri, parentIri,
+                        draftEntityHiddenFilter(projectId, "?child"),
+                        Math.max(1, limit), Math.max(0, offset));
+
+            List<String> childIris = new ArrayList<>();
+            TupleQueryResult fetchRs = datasetService.execSelect(projectId, fetchQuery);
+            while (fetchRs.hasNext()) {
+                Value v = fetchRs.next().getValue("child");
+                if (v != null) childIris.add(v.stringValue());
+            }
+            long fetchMs = System.currentTimeMillis() - startTime;
+            log.info("[PERF] children phase1 (large-graph) count={} in {}ms project={} parent={}",
+                    childIris.size(), fetchMs, projectId, parentIri);
+
+            if (childIris.isEmpty()) {
+                return java.util.Collections.emptyList();
+            }
+
+            // Phase 2: VALUES-bounded hydration — labels + hasChildren (rdfs:subClassOf only).
+            String valuesBlock = childIris.stream()
+                    .map(iri -> "<" + iri + ">")
+                    .collect(java.util.stream.Collectors.joining(" "));
+
+            String hydrateQuery = PREFIXES + """
+                SELECT ?child ?label ?description
+                (EXISTS {
+                  ?gc rdfs:subClassOf ?child .
+                  FILTER(isIRI(?gc) && ?gc != ?child)
+                  FILTER NOT EXISTS { ?gc owl:deprecated true }
+                } AS ?hasChildren)
+                WHERE {
+                  VALUES ?child { %s }
+                  OPTIONAL { ?child rdfs:label ?label }
+                  OPTIONAL { ?child rdfs:comment ?description }
+                }
+                """.formatted(valuesBlock);
+
+            List<OntologyDto.TreeNode> result = mapTreeNodes(projectId, hydrateQuery, parentIri);
+            result.sort(Comparator.comparing(n -> n.getLabel() == null ? "" : n.getLabel().toLowerCase(java.util.Locale.ROOT)));
+            enrichWithEquivalentClasses(projectId, result);
+
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("[PERF] children {} count={} time={}ms project={}", parentIri, result.size(), duration, projectId);
+            return result;
+        }
+
+        // Small ontology (<500K triples): full OWL-DL query with intersection/equivalentClass.
         String query = PREFIXES + """
             SELECT DISTINCT ?child ?label ?description ?hasChildren
             WHERE {
@@ -497,7 +643,6 @@ public class OntologyQueryService {
               }
               FILTER(isIRI(?child) && ?child != <%s>)
               %s
-              # Exclude union members: <%s> owl:equivalentClass/owl:unionOf/.../child
               FILTER NOT EXISTS {
                 { <%s> owl:unionOf/rdf:rest*/rdf:first ?child . }
                 UNION
@@ -521,7 +666,7 @@ public class OntologyQueryService {
             LIMIT %d OFFSET %d
             """.formatted(parentIri, parentIri, parentIri, parentIri,
                     draftEntityHiddenFilter(projectId, "?child"),
-                    parentIri, parentIri, parentIri, Math.max(1, limit), Math.max(0, offset));
+                    parentIri, parentIri, Math.max(1, limit), Math.max(0, offset));
 
         List<OntologyDto.TreeNode> result = mapTreeNodes(projectId, query, parentIri);
         result.sort(Comparator.comparing(n -> n.getLabel() == null ? "" : n.getLabel().toLowerCase(java.util.Locale.ROOT)));
@@ -529,7 +674,6 @@ public class OntologyQueryService {
 
         long duration = System.currentTimeMillis() - startTime;
         log.info("[PERF] children {} count={} time={}ms project={}", parentIri, result.size(), duration, projectId);
-
         return result;
     }
 

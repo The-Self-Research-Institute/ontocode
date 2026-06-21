@@ -119,7 +119,60 @@ export const draftTrackingService = {
   async clearAppliedDrafts(projectId: string): Promise<void> {
     await apiClient.delete(`/api/ontology/${projectId}/drafts/applied`);
   },
+
+  /**
+   * Initiate a copy-on-switch draft (copy main → draft graph asynchronously).
+   * Returns immediately; poll getDraftCopyStatus until status === 'READY'.
+   * Resolves with tripleCount + mainRevisionAtCopy on success.
+   * Rejects if an import is in progress (409).
+   */
+  async initiateDraftCopy(projectId: string, userId: string): Promise<{ tripleCount: number; mainRevisionAtCopy: number }> {
+    const response = await apiClient.post(`/api/ontology/${projectId}/draft/copy`, { userId });
+    const data = response.data || response;
+    if (!data.success) {
+      throw new Error(data.reason || 'Failed to initiate draft copy');
+    }
+    return { tripleCount: data.tripleCount, mainRevisionAtCopy: data.mainRevisionAtCopy };
+  },
+
+  /**
+   * Poll the status of an in-progress draft copy.
+   * Returns 'COPYING' | 'READY' | 'FAILED' | 'NOT_FOUND'
+   */
+  async getDraftCopyStatus(projectId: string, userId: string): Promise<'COPYING' | 'READY' | 'FAILED' | 'NOT_FOUND'> {
+    const response = await apiClient.get(
+      `/api/ontology/${projectId}/draft/copy/status`,
+      { userId }
+    );
+    const data = response.data || response;
+    return data.status as 'COPYING' | 'READY' | 'FAILED' | 'NOT_FOUND';
+  },
   
+  /**
+   * Fetch draft settings for a project (requireDraftForMembers, isOwner).
+   */
+  async getDraftSettings(projectId: string, userId: string): Promise<{
+    requireDraftForMembers: boolean;
+    isOwner: boolean;
+  }> {
+    const response = await apiClient.get(`/api/ontology/${projectId}/draft/settings`, { userId });
+    const data = response.data || response;
+    return {
+      requireDraftForMembers: Boolean(data.requireDraftForMembers),
+      isOwner: Boolean(data.isOwner),
+    };
+  },
+
+  /**
+   * Update requireDraftForMembers — owner only.
+   */
+  async setRequireDraftForMembers(projectId: string, userId: string, value: boolean): Promise<void> {
+    await apiClient.put(`/api/ontology/${projectId}/draft/settings`, {
+      userId,
+      requireDraftForMembers: value,
+    });
+  },
+
   /**
    * Generate a unique session ID
    */

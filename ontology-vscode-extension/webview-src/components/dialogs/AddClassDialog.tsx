@@ -6,6 +6,7 @@ interface AddClassDialogProps {
   onCreate: (name: string) => void;
   type: 'subclass' | 'sibling';
   parentLabel: string;
+  syncMode?: 'private' | 'public';
 }
 
 const AddClassDialog: React.FC<AddClassDialogProps> = ({
@@ -13,7 +14,8 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
   onClose,
   onCreate,
   type,
-  parentLabel
+  parentLabel,
+  syncMode = 'private',
 }) => {
   const [name, setName] = useState('');
 
@@ -82,6 +84,16 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
           <p className="text-[11px] text-gray-500">
             Tip: Keep names short and descriptive. You can edit descriptions and relationships after creation.
           </p>
+          <div className={`flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium border ${
+            syncMode === 'public'
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : 'bg-gray-50 border-gray-200 text-gray-600'
+          }`}>
+            <span className={`inline-block h-2 w-2 rounded-full flex-shrink-0 ${syncMode === 'public' ? 'bg-green-500' : 'bg-gray-400'}`} />
+            {syncMode === 'public'
+              ? 'Public Live — class will be applied to the shared ontology immediately.'
+              : 'Private Draft — class will be saved to your draft until you publish.'}
+          </div>
         </div>
         <div className="mt-6 flex justify-end gap-3">
           <button
