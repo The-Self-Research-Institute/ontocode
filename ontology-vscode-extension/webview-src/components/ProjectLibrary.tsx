@@ -153,6 +153,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingFile, setProcessingFile] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; fileId: string; fileName: string }>({
     show: false,
     fileId: "",
@@ -798,80 +799,86 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   };
 
   const handleFileClick = async (file: FileItem) => {
+    if (loadingFileId) return; // prevent double-click while a check is in progress
     setSelectedFile(file.id);
+    setLoadingFileId(file.id);
 
-    // Cloud-only: on FREE plan, non-owners must wait until the workspace owner
-    // has opened/imported the file into GraphDB. Desktop is single-user local —
-    // no teams, no owner/member distinction (see buildDesktopUser vs Mongo owner id).
-    if (!isDesktop()) {
-      // Wait for workspace data before deciding on plan/owner restrictions.
-      // Clicking before the async workspace API returns would wrongly treat the user
-      // as a "free non-owner" (workspaceOwnerId is null until the API responds).
-      if (!workspaceLoadedRef.current) {
-        await new Promise<void>((resolve) => {
-          const check = setInterval(() => {
-            if (workspaceLoadedRef.current) { clearInterval(check); resolve(); }
-          }, 100);
-          setTimeout(() => { clearInterval(check); resolve(); }, 3000);
-        });
-      }
+    try {
+      // Cloud-only: on FREE plan, non-owners must wait until the workspace owner
+      // has opened/imported the file into GraphDB. Desktop is single-user local —
+      // no teams, no owner/member distinction (see buildDesktopUser vs Mongo owner id).
+      if (!isDesktop()) {
+        // Wait for workspace data before deciding on plan/owner restrictions.
+        // Clicking before the async workspace API returns would wrongly treat the user
+        // as a "free non-owner" (workspaceOwnerId is null until the API responds).
+        if (!workspaceLoadedRef.current) {
+          await new Promise<void>((resolve) => {
+            const check = setInterval(() => {
+              if (workspaceLoadedRef.current) { clearInterval(check); resolve(); }
+            }, 100);
+            setTimeout(() => { clearInterval(check); resolve(); }, 3000);
+          });
+        }
 
-      const effectivePlan = (workspacePlanRef.current || user?.subscriptionPlan || "FREE").toUpperCase();
-      const isWorkspaceOwner =
-        !!workspaceOwnerIdRef.current &&
-        !!user?.userId &&
-        workspaceOwnerIdRef.current === user.userId;
+        const effectivePlan = (workspacePlanRef.current || user?.subscriptionPlan || "FREE").toUpperCase();
+        const isWorkspaceOwner =
+          !!workspaceOwnerIdRef.current &&
+          !!user?.userId &&
+          workspaceOwnerIdRef.current === user.userId;
 
-      if (effectivePlan === "FREE" && !isWorkspaceOwner) {
-        try {
-          const ontologyProjectId = `${projectId}--${file.id}`;
-          const graphCheck: any = await apiClient.get(
-            `/api/ontology/${encodeURIComponent(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(file.name)}&fileId=${encodeURIComponent(file.id)}`,
-          );
-          const graphData = graphCheck?.data || graphCheck;
-          if (!graphData?.exists || (graphData.graphSize ?? 0) <= 0) {
+        if (effectivePlan === "FREE" && !isWorkspaceOwner) {
+          try {
+            const ontologyProjectId = `${projectId}--${file.id}`;
+            const graphCheck: any = await apiClient.get(
+              `/api/ontology/${encodeURIComponent(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(file.name)}&fileId=${encodeURIComponent(file.id)}`,
+            );
+            const graphData = graphCheck?.data || graphCheck;
+            if (!graphData?.exists || (graphData.graphSize ?? 0) <= 0) {
+              setShowOwnerMustImportDialog(true);
+              return;
+            }
+          } catch {
             setShowOwnerMustImportDialog(true);
             return;
           }
-        } catch {
-          setShowOwnerMustImportDialog(true);
-          return;
-        }
-        // Falls through to onFileSelect if already in GraphDB
-      } else {
-        // Owner or paid plan: show import card for files not yet in GraphDB
+          // Falls through to onFileSelect if already in GraphDB
+        } else {
+          // Owner or paid plan: show import card for files not yet in GraphDB
 
-        // If we're already tracking this file's import, handle state transitions
-        const existingImport = fileImportStates[file.id];
-        if (existingImport) {
-          if (existingImport.status === 'COMPLETED') {
-            onFileSelect(file.id, file.name);
-          } else if (existingImport.status === 'FAILED') {
-            // Retry the import — previous attempt may have conflicted with an auto-triggered import
-            await startFileImport(file);
-          }
-          // IMPORTING: do nothing, card already shows the state
-          return;
-        }
-
-        // Check GraphDB — only navigate immediately if already imported
-        try {
-          const ontologyProjectId = `${projectId}--${file.id}`;
-          const graphCheck: any = await apiClient.get(
-            `/api/ontology/${encodeURIComponent(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(file.name)}&fileId=${encodeURIComponent(file.id)}`,
-          );
-          const graphData = graphCheck?.data || graphCheck;
-          if (!graphData?.exists || (graphData.graphSize ?? 0) <= 0) {
-            await startFileImport(file);
+          // If we're already tracking this file's import, handle state transitions
+          const existingImport = fileImportStates[file.id];
+          if (existingImport) {
+            if (existingImport.status === 'COMPLETED') {
+              onFileSelect(file.id, file.name);
+            } else if (existingImport.status === 'FAILED') {
+              // Retry the import — previous attempt may have conflicted with an auto-triggered import
+              await startFileImport(file);
+            }
+            // IMPORTING: do nothing, card already shows the state
             return;
           }
-        } catch {
-          // Can't check — fall through to normal open
+
+          // Check GraphDB — only navigate immediately if already imported
+          try {
+            const ontologyProjectId = `${projectId}--${file.id}`;
+            const graphCheck: any = await apiClient.get(
+              `/api/ontology/${encodeURIComponent(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(file.name)}&fileId=${encodeURIComponent(file.id)}`,
+            );
+            const graphData = graphCheck?.data || graphCheck;
+            if (!graphData?.exists || (graphData.graphSize ?? 0) <= 0) {
+              await startFileImport(file);
+              return;
+            }
+          } catch {
+            // Can't check — fall through to normal open
+          }
         }
       }
-    }
 
-    onFileSelect(file.id, file.name);
+      onFileSelect(file.id, file.name);
+    } finally {
+      setLoadingFileId(null);
+    }
   };
 
   const handleFileDoubleClick = (file: FileItem) => {
@@ -1182,16 +1189,22 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               const isQueued = isImporting && !!importState?.inQueue && (importState?.queuePosition ?? 0) > 0;
               const isProcessingNow = isImporting && !!importState?.inQueue && importState?.queuePosition === 0;
               const showQueueBadge = isQueued || isProcessingNow;
+              const isCheckingGraphDB = loadingFileId === file.id;
+              const isAnotherFileLoading = !!loadingFileId && !isCheckingGraphDB;
 
               return (
                 <div
                   key={file.id}
-                  onClick={() => !isImporting && handleFileClick(file)}
+                  onClick={() => !isImporting && !isCheckingGraphDB && !isAnotherFileLoading && handleFileClick(file)}
                   className={`relative overflow-hidden bg-white rounded-lg border-2 p-4 transition-all hover:shadow-lg ${
                     isImporting
                       ? isQueued
                         ? "border-purple-300 cursor-default"
                         : "border-blue-300 cursor-default"
+                      : isCheckingGraphDB
+                      ? 'border-purple-400 cursor-wait'
+                      : isAnotherFileLoading
+                      ? 'border-gray-200 cursor-wait opacity-60'
                       : isImportDone
                       ? 'border-green-400 cursor-pointer hover:border-green-500'
                       : isImportFailed
@@ -1202,21 +1215,23 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   }`}
                 >
                   {/* Progress bar stripe at bottom */}
-                  {isImporting && (
-                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-100">
+                  {(isImporting || isCheckingGraphDB) && (
+                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-purple-100">
                       <div
-                        className={`h-full bg-blue-500 transition-all duration-500 ${importProgress > 0 ? '' : 'animate-pulse w-1/3'}`}
-                        style={importProgress > 0 ? { width: `${Math.min(100, importProgress)}%` } : {}}
+                        className={`h-full transition-all duration-500 ${isCheckingGraphDB ? 'bg-purple-400 animate-pulse w-full' : `bg-blue-500 ${importProgress > 0 ? '' : 'animate-pulse w-1/3'}`}`}
+                        style={!isCheckingGraphDB && importProgress > 0 ? { width: `${Math.min(100, importProgress)}%` } : {}}
                       />
                     </div>
                   )}
 
                   <div className="flex items-start justify-between mb-3">
                     <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                      isImporting ? 'bg-blue-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
+                      isImporting ? 'bg-blue-100' : isCheckingGraphDB ? 'bg-purple-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
                     }`}>
                       {isImporting
                         ? <Loader2 size={24} className="text-blue-600 animate-spin" />
+                        : isCheckingGraphDB
+                        ? <Loader2 size={24} className="text-purple-500 animate-spin" />
                         : isImportDone
                         ? <CheckCircle2 size={24} className="text-green-600" />
                         : isImportFailed
@@ -1224,7 +1239,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                         : <FileText size={24} className="text-purple-600" />
                       }
                     </div>
-                    {!isImporting && (userProjectRole === "OWNER" ||
+                    {!isImporting && !isCheckingGraphDB && (userProjectRole === "OWNER" ||
                       userProjectRole === "ADMIN" ||
                       (userProjectRole === "EDITOR" && file.uploadedByUserId === user?.userId)) && (
                       <div className="relative">
@@ -1345,16 +1360,22 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   const importMessage = importState?.message || "";
                   const isQueued = isImporting && !!importState?.inQueue && (importState?.queuePosition ?? 0) > 0;
                   const isProcessingNow = isImporting && !!importState?.inQueue && importState?.queuePosition === 0;
+                  const isCheckingGraphDB = loadingFileId === file.id;
+                  const isAnotherFileLoading = !!loadingFileId && !isCheckingGraphDB;
 
                   return (
                     <tr
                       key={file.id}
-                      onClick={() => !isImporting && handleFileClick(file)}
+                      onClick={() => !isImporting && !isCheckingGraphDB && !isAnotherFileLoading && handleFileClick(file)}
                       className={`transition-colors ${
                         isImporting
                           ? isQueued
                             ? "bg-purple-50 cursor-default"
                             : "bg-blue-50 cursor-default"
+                          : isCheckingGraphDB
+                          ? 'bg-purple-50 cursor-wait'
+                          : isAnotherFileLoading
+                          ? 'cursor-wait opacity-60'
                           : isImportDone
                           ? 'bg-green-50 cursor-pointer hover:bg-green-100'
                           : isImportFailed
@@ -1367,10 +1388,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-3">
                           <div className={`w-8 h-8 rounded flex items-center justify-center ${
-                            isImporting ? 'bg-blue-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
+                            isImporting ? 'bg-blue-100' : isCheckingGraphDB ? 'bg-purple-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
                           }`}>
                             {isImporting
                               ? <Loader2 size={16} className="text-blue-600 animate-spin" />
+                              : isCheckingGraphDB
+                              ? <Loader2 size={16} className="text-purple-500 animate-spin" />
                               : isImportDone
                               ? <CheckCircle2 size={16} className="text-green-600" />
                               : isImportFailed
@@ -1379,9 +1402,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                             }
                           </div>
                           <div>
-                            <span className={`font-medium ${isImporting ? 'text-blue-800' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'}`}>
+                            <span className={`font-medium ${isImporting ? 'text-blue-800' : isCheckingGraphDB ? 'text-purple-700' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'}`}>
                               {file.name}
                             </span>
+                            {isCheckingGraphDB && (
+                              <div className="text-xs mt-0.5 text-purple-600">Opening…</div>
+                            )}
                             {isImporting && (
                               <div className={`text-xs mt-0.5 ${isQueued ? "text-purple-700" : "text-blue-600"}`}>
                                 {isQueued && (
