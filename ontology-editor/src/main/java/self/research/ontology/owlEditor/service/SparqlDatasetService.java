@@ -1935,6 +1935,18 @@ public class SparqlDatasetService {
             log.info("═══════════════════════════════════════════════════════════");
             log.info("✓ DIRECT HTTP UPLOAD COMPLETE for project: {}", projectId);
             log.info("  Verified triples: {}", verifiedSize);
+            // Re-seed tripleCountCache immediately so that the first topLevelClasses()
+            // call after import doesn't hit the 8-second COUNT timeout (which returns -1).
+            // invalidateContextCaches() above just cleared this entry.
+            if (verifiedSize > 0) {
+                tripleCountCache.put(projectId, verifiedSize);
+                if (verifiedSize >= 1_000_000L && projectRepoCache != null) {
+                    projectRepoCache.markKnownLarge(projectId);
+                    log.info("  [tripleCountCache] Seeded {} triples, marked knownLarge", verifiedSize);
+                } else {
+                    log.info("  [tripleCountCache] Seeded {} triples", verifiedSize);
+                }
+            }
             log.info("  TIMING BREAKDOWN:");
             log.info("    • HTTP upload + Fuseki indexing: {} ms ({} sec)", uploadMs, uploadMs / 1000);
             log.info("    • Verification: {} ms", verifyMs);
