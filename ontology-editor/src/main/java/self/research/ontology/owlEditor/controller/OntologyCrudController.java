@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
+import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
 
 import java.util.List;
@@ -39,6 +40,7 @@ public class OntologyCrudController {
     private final DraftTrackingService draftTrackingService;
     private final OntologyHistoryService historyService;
     private final CollaborativeEditService collaborativeEditService;
+    private final ProjectMetadataService metadataService;
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
@@ -48,18 +50,34 @@ public class OntologyCrudController {
     public OntologyCrudController(OntologyMutationService mutationService,
                                  DraftTrackingService draftTrackingService,
                                  OntologyHistoryService historyService,
-                                 CollaborativeEditService collaborativeEditService) {
+                                 CollaborativeEditService collaborativeEditService,
+                                 ProjectMetadataService metadataService) {
         this.mutationService = mutationService;
         this.draftTrackingService = draftTrackingService;
         this.historyService = historyService;
         this.collaborativeEditService = collaborativeEditService;
+        this.metadataService = metadataService;
     }
 
     @PostMapping("/mutations/{projectId}")
     public ResponseEntity<?> mutate(@PathVariable String projectId,
                                     @RequestBody MutationRequest request,
                                     @RequestParam(required = false, defaultValue = "true") boolean draft) {
-        
+
+        // Enforce requireDraftForMembers: silently redirect public mutations to draft if the
+        // project owner has turned on draft-only mode and this user is not the owner.
+        if (!draft && !desktopMode) {
+            String userId = request.userId() != null ? request.userId() : "anonymous";
+            if (metadataService.isRequireDraftForMembers(projectId)) {
+                String ownerEmail = metadataService.getOwnerEmail(projectId).orElse(null);
+                if (!userId.equals(ownerEmail)) {
+                    log.info("[MUTATION] requireDraftForMembers is on — redirecting public mutation to draft for user {} on project {}",
+                            userId, projectId);
+                    draft = true;
+                }
+            }
+        }
+
         if (draft) {
             // Private mode: persist to per-user draft named graph + MongoDB audit trail
             log.info("[MUTATION] Applying {} operations to draft graph for project {}",

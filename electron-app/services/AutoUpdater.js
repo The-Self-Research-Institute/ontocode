@@ -2,7 +2,10 @@
  * Auto-update via electron-updater (generic provider).
  * Checks the OntoCode API for latest.yml; user must click to download/install.
  */
-const { app, Notification } = require('electron');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
+const { app, Notification, shell } = require('electron');
 
 let autoUpdater = null;
 try {
@@ -16,6 +19,7 @@ const UPDATE_URL = process.env.ONTOCODE_UPDATE_URL
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const STARTUP_DELAY_MS = 30 * 1000;
+const MANUAL_DOWNLOAD_URL = 'https://ontocodeapi.selfresearch.org/api/downloads/windows-x64';
 
 let mainWindow = null;
 let intervalId = null;
@@ -42,6 +46,99 @@ function showNativeNotification(title, body) {
     if (Notification.isSupported()) {
         new Notification({ title, body }).show();
     }
+}
+
+function updaterCacheDir() {
+    return path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'ontocode-desktop-updater');
+}
+
+/** Resolve the downloaded NSIS installer from electron-updater's cache. */
+function resolveCachedInstallerPath() {
+    const cacheDir = updaterCacheDir();
+    const pendingDir = path.join(cacheDir, 'pending');
+    const infoPath = path.join(pendingDir, 'update-info.json');
+
+    if (fs.existsSync(infoPath)) {
+        try {
+            const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+            if (info?.fileName) {
+                const candidate = path.join(pendingDir, info.fileName);
+                if (fs.existsSync(candidate)) return candidate;
+            }
+        } catch (err) {
+            console.warn('[AutoUpdater] Could not read update-info.json:', err.message);
+        }
+    }
+
+    const fallbacks = [
+        path.join(pendingDir, 'windows-x64'),
+        path.join(cacheDir, 'installer.exe'),
+    ];
+    for (const candidate of fallbacks) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    return null;
+}
+
+/** Windows CreateProcess often refuses extensionless PE files — copy to .exe first. */
+function ensureInstallerExePath(sourcePath) {
+    if (sourcePath.toLowerCase().endsWith('.exe')) return sourcePath;
+    const dest = path.join(path.dirname(sourcePath), 'OntoCode-Update-Installer.exe');
+    try {
+        fs.copyFileSync(sourcePath, dest);
+        return dest;
+    } catch (err) {
+        console.warn('[AutoUpdater] Could not copy installer to .exe:', err.message);
+        return sourcePath;
+    }
+}
+
+function spawnDetached(cmd, args) {
+    return new Promise((resolve, reject) => {
+        try {
+            const child = spawn(cmd, args, {
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: false,
+            });
+            child.on('error', reject);
+            child.unref();
+            resolve(true);
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
+/** Launch NSIS installer directly (bypasses electron-updater path/extension bugs). */
+async function launchCachedInstaller(installerPath) {
+    const exePath = ensureInstallerExePath(installerPath);
+    const args = ['--updated', '--force-run'];
+    const elevate = path.join(process.resourcesPath, 'elevate.exe');
+
+    console.log('[AutoUpdater] Launching installer:', exePath);
+
+    try {
+        await spawnDetached(exePath, args);
+        return true;
+    } catch (err) {
+        console.warn('[AutoUpdater] Direct spawn failed:', err.message);
+    }
+
+    if (fs.existsSync(elevate)) {
+        try {
+            await spawnDetached(elevate, [exePath, ...args]);
+            return true;
+        } catch (err) {
+            console.warn('[AutoUpdater] elevate.exe spawn failed:', err.message);
+        }
+    }
+
+    const openErr = await shell.openPath(exePath);
+    if (openErr) {
+        throw new Error(openErr);
+    }
+    return true;
 }
 
 function configure() {
@@ -165,17 +262,39 @@ async function downloadUpdate() {
     }
 }
 
-function installUpdate() {
-    if (!autoUpdater || !app.isPackaged) return false;
-    autoUpdater.quitAndInstall(false, true);
-    return true;
+async function installUpdate() {
+    if (!app.isPackaged) return { ok: false, error: 'Updates only work in the installed desktop app' };
+
+    const cached = resolveCachedInstallerPath();
+    if (cached) {
+        try {
+            await launchCachedInstaller(cached);
+            setImmediate(() => app.quit());
+            return { ok: true };
+        } catch (err) {
+            const message = err?.message || String(err);
+            console.error('[AutoUpdater] Cached installer launch failed:', message);
+            broadcastStatus({ status: 'error', error: message });
+            return { ok: false, error: message, manualDownloadUrl: MANUAL_DOWNLOAD_URL };
+        }
+    }
+
+    if (autoUpdater) {
+        autoUpdater.quitAndInstall(false, true);
+        return { ok: true };
+    }
+
+    return { ok: false, error: 'No update downloaded yet', manualDownloadUrl: MANUAL_DOWNLOAD_URL };
 }
 
 function getStatus() {
+    const cached = resolveCachedInstallerPath();
     return {
         ...lastStatus,
         currentVersion: app.getVersion(),
         updateUrl: UPDATE_URL,
+        manualDownloadUrl: MANUAL_DOWNLOAD_URL,
+        cachedInstaller: cached || undefined,
     };
 }
 
@@ -194,4 +313,6 @@ module.exports = {
     downloadUpdate,
     installUpdate,
     getStatus,
+    resolveCachedInstallerPath,
+    MANUAL_DOWNLOAD_URL,
 };

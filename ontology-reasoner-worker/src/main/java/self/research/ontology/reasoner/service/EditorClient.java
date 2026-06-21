@@ -47,9 +47,15 @@ public class EditorClient {
         return -1;
     }
 
-    public InputStream openOntologyStream(String projectId) {
+    public InputStream openOntologyStream(String projectId, String userId) {
+        String url = editorUrl + "/internal/reasoning/" + projectId + "/export.ttl";
+        if (userId != null && !userId.isBlank()) {
+            try {
+                url += "?userId=" + java.net.URLEncoder.encode(userId, java.nio.charset.StandardCharsets.UTF_8);
+            } catch (Exception ignored) {}
+        }
         ResponseEntity<org.springframework.core.io.Resource> response = restTemplate.exchange(
-                editorUrl + "/internal/reasoning/" + projectId + "/export.ttl",
+                url,
                 HttpMethod.GET,
                 internalEntity(),
                 org.springframework.core.io.Resource.class);

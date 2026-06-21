@@ -8,6 +8,7 @@ import self.research.ontology.owlEditor.model.ImportOptions;
 import self.research.ontology.owlEditor.model.ImportQueueItem;
 import self.research.ontology.owlEditor.model.collaboration.QueueStatusMessage;
 
+import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,6 +18,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Manages import queue with notifications and statistics
@@ -30,6 +34,12 @@ public class ImportQueueManager {
     private final ProjectMetadataService metadataService;
     private final LinkedList<ImportQueueItem> queue = new LinkedList<>();
     private final Map<String, ImportQueueItem> activeImports = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService retryScheduler =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "import-retry-scheduler");
+                t.setDaemon(true);
+                return t;
+            });
 
     // Tuned via ONTOCODE_IMPORT_MAX_CONCURRENT env var in docker-compose.
     // With Apache Jena TDB2 (current triplestore), keep this at 1 on ALL tiers.
@@ -241,23 +251,22 @@ public class ImportQueueManager {
      * Schedule a retry for a failed import
      */
     private void scheduleRetry(ImportQueueItem item) {
-        new Thread(() -> {
-            try {
-                Thread.sleep(RETRY_DELAY_MS);
-                synchronized (this) {
-                    item.setStatus(ImportQueueItem.ImportStatus.QUEUED);
-                    item.setQueuePosition(queue.size() + 1);
-                    queue.addLast(item);
-                    log.info("[Queue] Re-queued project {} for retry (attempt {}/{})",
-                            item.getProjectId(), item.getRetryCount(), item.getMaxRetries());
-                    notifyQueueStatus(item.getProjectId());
-                    broadcastQueueStats();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.error("[Queue] Retry scheduling interrupted for project {}", item.getProjectId());
+        retryScheduler.schedule(() -> {
+            synchronized (this) {
+                item.setStatus(ImportQueueItem.ImportStatus.QUEUED);
+                item.setQueuePosition(queue.size() + 1);
+                queue.addLast(item);
+                log.info("[Queue] Re-queued project {} for retry (attempt {}/{})",
+                        item.getProjectId(), item.getRetryCount(), item.getMaxRetries());
+                notifyQueueStatus(item.getProjectId());
+                broadcastQueueStats();
             }
-        }).start();
+        }, RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        retryScheduler.shutdownNow();
     }
 
     /**
