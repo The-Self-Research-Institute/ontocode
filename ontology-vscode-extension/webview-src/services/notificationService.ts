@@ -48,6 +48,11 @@ class NotificationService {
   notify(options: NotificationOptions): void {
     if (this.isVSCode) {
       this.showVSCodeNotification(options);
+      // Also fire in-app toast so the message is visible inside the UI.
+      // OS notifications from Electron are easy to miss (they appear in the
+      // system tray and auto-dismiss). The toastCallbacks path adds the message
+      // to the collaboration notification panel, which is always on-screen.
+      this.toastCallbacks.forEach(cb => cb(options));
     } else {
       this.showWebNotification(options);
     }
