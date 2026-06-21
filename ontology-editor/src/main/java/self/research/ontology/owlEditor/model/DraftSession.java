@@ -28,6 +28,12 @@ public class DraftSession {
     /** Relative path under project dir, e.g. baselines/user123.owl */
     private String baselineSnapshotPath;
 
+    /**
+     * Tracks whether the full graph copy (copy-on-switch) is in progress, done, or failed.
+     * Null means this is a legacy session (overlay model) — use the old publish path.
+     */
+    private DraftCopyStatus copyStatus;
+
     public DraftSession() {
         this.baselineAt = LocalDateTime.now();
     }
@@ -60,4 +66,7 @@ public class DraftSession {
 
     public String getBaselineSnapshotPath() { return baselineSnapshotPath; }
     public void setBaselineSnapshotPath(String baselineSnapshotPath) { this.baselineSnapshotPath = baselineSnapshotPath; }
+
+    public DraftCopyStatus getCopyStatus() { return copyStatus; }
+    public void setCopyStatus(DraftCopyStatus copyStatus) { this.copyStatus = copyStatus; }
 }

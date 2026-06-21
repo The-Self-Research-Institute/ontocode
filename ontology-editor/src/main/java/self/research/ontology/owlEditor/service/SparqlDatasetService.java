@@ -1059,6 +1059,20 @@ public class SparqlDatasetService {
     }
 
     /**
+     * Apply SPARQL UPDATE to a copy-on-switch draft graph.
+     * Unlike the overlay model, both read (WHERE) and write target the draft graph itself
+     * because the draft is a full copy — no main-graph USING clause needed.
+     */
+    public void execDraftUpdateCopyOnSwitch(String projectId, String userId, String sparqlUpdate) {
+        String draftGraph = getDraftGraphUri(projectId, userId);
+        if (sparqlUpdate.toUpperCase().contains("WHERE")
+                && !sparqlUpdate.toUpperCase().contains("USING ")) {
+            sparqlUpdate = sparqlUpdate.replaceAll("(?i)\\bWHERE\\b", "USING <" + draftGraph + "> WHERE");
+        }
+        execUpdate(projectId, draftGraph, sparqlUpdate);
+    }
+
+    /**
      * Apply SPARQL UPDATE to a user's private draft named graph (not visible to other users on read).
      */
     public void execDraftUpdate(String projectId, String userId, String sparqlUpdate) {
@@ -1124,6 +1138,35 @@ public class SparqlDatasetService {
         String draftGraph = getDraftGraphUri(projectId, userId);
         execUpdate(projectId, draftGraph, "CLEAR GRAPH <" + draftGraph + ">");
         log.info("[DRAFT-GRAPH] Cleared draft graph {} for project {} user {}", draftGraph, projectId, userId);
+    }
+
+    /**
+     * Atomically publishes a copy-on-switch draft by moving the draft graph to main.
+     * SPARQL MOVE drops the destination, copies the source, then drops the source — one round-trip.
+     * Only call this when the draft graph is a full coherent snapshot (not an overlay).
+     */
+    public void moveDraftToMain(String projectId, String userId) {
+        String mainGraph = getGraphUri(projectId);
+        String draftGraph = getDraftGraphUri(projectId, userId);
+        String sparql = "MOVE GRAPH <" + draftGraph + "> TO <" + mainGraph + ">";
+        long start = System.nanoTime();
+        execUpdate(projectId, mainGraph, sparql);
+        log.info("[DRAFT-MOVE] MOVE GRAPH draft→main for project {} user {} in {}ms",
+                projectId, userId, elapsedMillis(start));
+    }
+
+    /**
+     * Full copy of the main graph into the user's draft graph (copy-on-switch model).
+     * The draft graph must be cleared before calling this.
+     */
+    public void copyMainGraphToDraft(String projectId, String userId) {
+        String mainGraph = getGraphUri(projectId);
+        String draftGraph = getDraftGraphUri(projectId, userId);
+        String sparql = "INSERT { GRAPH <" + draftGraph + "> { ?s ?p ?o } } WHERE { GRAPH <" + mainGraph + "> { ?s ?p ?o } }";
+        long start = System.nanoTime();
+        execUpdate(projectId, mainGraph, sparql);
+        log.info("[DRAFT-COPY] Copied main → draft for project {} user {} in {}ms",
+                projectId, userId, elapsedMillis(start));
     }
 
     public long countDraftTriples(String projectId, String userId) {
@@ -2532,10 +2575,28 @@ public class SparqlDatasetService {
      * the heap spike (StringWriter + String + ByteArrayInputStream = 3× graph size in RAM).
      */
     public void exportDatasetToStream(String projectId, RDFFormat format, OutputStream out) {
+        exportDatasetToStream(projectId, null, format, out);
+    }
+
+    /**
+     * Stream-export the dataset, optionally overlaying the user's private draft graph.
+     * When userId is provided, draft additions become visible to the reasoner.
+     * Note: draft-deleted entities from the main graph still appear (deletion markers are
+     * non-OWL predicates and are ignored by OWLAPI — they do not affect correctness for
+     * additions, which is the common private-mode use case).
+     */
+    public void exportDatasetToStream(String projectId, String userId, RDFFormat format, OutputStream out) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long exportStart = System.nanoTime();
             List<String> graphs = getAllGraphUris(conn, projectId);
+            if (userId != null && !userId.isBlank()) {
+                String draftGraph = SparqlGraphUris.userDraftGraph(projectId, userId);
+                if (!graphs.contains(draftGraph)) {
+                    graphs = new ArrayList<>(graphs);
+                    graphs.add(draftGraph);
+                }
+            }
             List<IRI> contexts = new ArrayList<>();
             for (String g : graphs) {
                 contexts.add(conn.getValueFactory().createIRI(g));
@@ -2544,8 +2605,8 @@ public class SparqlDatasetService {
                 Rio.createWriter(format, new OutputStreamWriter(out, StandardCharsets.UTF_8)),
                 contexts.toArray(new IRI[0])
             );
-            log.info("[TIMING] exportDatasetToStream for project {}: {} ms (format: {})",
-                     projectId, elapsedMillis(exportStart), format);
+            log.info("[TIMING] exportDatasetToStream for project {}: {} ms (format: {}, draftOverlay: {})",
+                     projectId, elapsedMillis(exportStart), format, userId != null && !userId.isBlank());
         } catch (Exception e) {
             log.error("Failed to stream-export dataset for project: {}", projectId, e);
             throw new RuntimeException("Failed to stream-export dataset", e);

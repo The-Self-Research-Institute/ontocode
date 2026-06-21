@@ -43,7 +43,8 @@ public class DraftTrackingService {
     private final DraftPublishService draftPublishService;
     private final MainGraphRevisionService mainGraphRevisionService;
     private final DraftPublishMergeService draftPublishMergeService;
-    
+    private final DraftCopyService draftCopyService;
+
     public DraftTrackingService(DraftChangeRepository draftRepository,
                                OntologyMutationService mutationService,
                                SparqlDatasetService datasetService,
@@ -55,7 +56,8 @@ public class DraftTrackingService {
                                CollaborativeEditService collaborativeEditService,
                                DraftPublishService draftPublishService,
                                MainGraphRevisionService mainGraphRevisionService,
-                               DraftPublishMergeService draftPublishMergeService) {
+                               DraftPublishMergeService draftPublishMergeService,
+                               DraftCopyService draftCopyService) {
         this.draftRepository = draftRepository;
         this.mutationService = mutationService;
         this.datasetService = datasetService;
@@ -68,6 +70,7 @@ public class DraftTrackingService {
         this.draftPublishService = draftPublishService;
         this.mainGraphRevisionService = mainGraphRevisionService;
         this.draftPublishMergeService = draftPublishMergeService;
+        this.draftCopyService = draftCopyService;
     }
     
     /**
@@ -81,7 +84,6 @@ public class DraftTrackingService {
         DraftChange draft = new DraftChange(projectId, userId, username, operationType, operationData);
         draft.setSessionId(sessionId);
         
-        draftPublishService.ensureBaseline(projectId, userId);
         return draftRepository.save(draft);
     }
     
@@ -118,7 +120,6 @@ public class DraftTrackingService {
             .peek(draft -> draft.setSessionId(sessionId))
             .collect(Collectors.toList());
         
-        draftPublishService.ensureBaseline(projectId, userId);
         return draftRepository.saveAll(drafts);
     }
     
@@ -219,9 +220,15 @@ public class DraftTrackingService {
                                                   Map<String, ConflictResolution> resolutions) {
         List<DraftChange> unappliedDrafts = getUnappliedDraftsForUser(projectId, userId);
 
+        // Copy-on-switch sessions: use atomic MOVE GRAPH instead of the old overlay merge.
+        if (draftCopyService.isReady(projectId, userId)) {
+            return applyDraftsViaMoveGraph(projectId, userId, force, unappliedDrafts);
+        }
+
+        // Legacy overlay path ↓
         if (unappliedDrafts.isEmpty()) {
             if (datasetService.hasActiveDraftOverlay(projectId, userId)) {
-                log.info("[DRAFT] No Mongo drafts but Fuseki draft graph has data — publishing for project {} user {}",
+                log.info("[DRAFT] No Mongo drafts but draft graph has data — publishing for project {} user {}",
                         projectId, userId);
                 datasetService.publishDraftGraphToMain(projectId, userId);
                 mainGraphRevisionService.incrementRevision(projectId);
@@ -288,6 +295,54 @@ public class DraftTrackingService {
         }
     }
     
+    /**
+     * Publish a copy-on-switch draft session atomically via SPARQL MOVE GRAPH.
+     * Conflict detection: if main has advanced since the copy, block unless force=true.
+     */
+    private ApplyDraftsResult applyDraftsViaMoveGraph(String projectId, String userId, boolean force,
+                                                      List<DraftChange> unappliedDrafts) {
+        long mainRevisionAtCopy = draftCopyService.getMainRevisionAtCopy(projectId, userId);
+        long currentRevision = mainGraphRevisionService.getRevision(projectId);
+
+        if (!force && mainRevisionAtCopy >= 0 && currentRevision > mainRevisionAtCopy) {
+            String message = "The shared ontology was updated while you were editing (revision "
+                    + mainRevisionAtCopy + " → " + currentRevision + "). "
+                    + "Review the changes or use force publish.";
+            log.warn("[DRAFT] Conflict blocked for project {} user {}: {}", projectId, userId, message);
+            return new ApplyDraftsResult(false, 0, message, true, null);
+        }
+
+        try {
+            log.info("[DRAFT] Publishing via MOVE GRAPH for project {} user {} (revision {} → {})",
+                    projectId, userId, mainRevisionAtCopy, currentRevision);
+            datasetService.moveDraftToMain(projectId, userId);
+            mainGraphRevisionService.incrementRevision(projectId);
+            draftPublishService.clearBaseline(projectId, userId);
+
+            if (!unappliedDrafts.isEmpty()) {
+                unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
+                        projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
+                recordDraftsAsChanges(projectId, unappliedDrafts);
+                unappliedDrafts.forEach(draft -> draft.setApplied(true));
+                draftRepository.saveAll(unappliedDrafts);
+            }
+
+            CompletableFuture.runAsync(() -> {
+                Map<String, Object> meta = indexService.computeMetadata(projectId);
+                meta.put("mainGraphRevision", mainGraphRevisionService.getRevision(projectId));
+                metadataService.writeMeta(projectId, meta);
+            }, metadataExecutor);
+
+            log.info("[DRAFT] MOVE GRAPH publish complete for project {} user {} ({} Mongo ops)",
+                    projectId, userId, unappliedDrafts.size());
+            return new ApplyDraftsResult(true, unappliedDrafts.size(),
+                    "Published draft successfully", false, null);
+        } catch (Exception e) {
+            log.error("[DRAFT] MOVE GRAPH publish failed for project {} user {}", projectId, userId, e);
+            return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+        }
+    }
+
     /**
      * Discard all unapplied drafts for a project
      */

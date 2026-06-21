@@ -54,6 +54,9 @@ public class OntologyMutationService {
     @Autowired(required = false) @Nullable
     private DesktopOwlApiMutationService desktopOwlApiMutationService;
 
+    @Autowired(required = false) @Nullable
+    private DraftCopyService draftCopyService;
+
     @Autowired @Lazy
     private MainGraphRevisionService mainGraphRevisionService;
 
@@ -131,8 +134,14 @@ public class OntologyMutationService {
             MutationContext.setOps(ops);
             long sparqlStart = System.currentTimeMillis();
             if (draft) {
-                datasetService.execDraftUpdate(projectId, userId, sparql);
-                markDraftDeletions(projectId, userId, ops);
+                boolean copyOnSwitch = draftCopyService != null && draftCopyService.isReady(projectId, userId);
+                if (copyOnSwitch) {
+                    // Draft is a full copy — WHERE reads from draft graph, no deletion markers needed.
+                    datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
+                } else {
+                    datasetService.execDraftUpdate(projectId, userId, sparql);
+                    markDraftDeletions(projectId, userId, ops);
+                }
             } else {
                 datasetService.execUpdate(projectId, sparql);
                 if (mainGraphRevisionService != null) {

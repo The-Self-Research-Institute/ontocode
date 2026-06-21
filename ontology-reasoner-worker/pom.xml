@@ -67,8 +67,8 @@
         </dependency>
         <dependency>
             <groupId>org.semanticweb.elk</groupId>
-            <artifactId>elk-owlapi5</artifactId>
-            <version>0.5.0</version>
+            <artifactId>elk-owlapi</artifactId>
+            <version>0.4.3</version>
             <exclusions>
                 <exclusion>
                     <groupId>net.sourceforge.owlapi</groupId>

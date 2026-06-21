@@ -171,6 +171,23 @@ public class ProjectMetadataService {
             projectId, ownerEmail, status.filename());
     }
     
+    public Optional<String> getOwnerEmail(String projectId) {
+        return projectRepository.findById(projectId)
+                .map(ProjectDocument::getOwnerEmail);
+    }
+
+    public boolean isRequireDraftForMembers(String projectId) {
+        return readMeta(projectId)
+                .map(m -> Boolean.TRUE.equals(m.get("requireDraftForMembers")))
+                .orElse(false);
+    }
+
+    public void setRequireDraftForMembers(String projectId, boolean value) {
+        Map<String, Object> meta = readMeta(projectId).map(HashMap::new).orElseGet(HashMap::new);
+        meta.put("requireDraftForMembers", value);
+        writeMeta(projectId, meta);
+    }
+
     /**
      * Get the updatedAt timestamp for a project
      */

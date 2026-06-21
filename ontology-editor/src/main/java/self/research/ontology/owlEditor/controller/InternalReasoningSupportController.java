@@ -36,8 +36,10 @@ public class InternalReasoningSupportController {
     }
 
     @GetMapping(value = "/reasoning/{projectId}/export.ttl", produces = "text/turtle")
-    public ResponseEntity<StreamingResponseBody> exportTurtle(@PathVariable String projectId) {
-        StreamingResponseBody body = out -> datasetService.exportDatasetToStream(projectId, RDFFormat.TURTLE, out);
+    public ResponseEntity<StreamingResponseBody> exportTurtle(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId) {
+        StreamingResponseBody body = out -> datasetService.exportDatasetToStream(projectId, userId, RDFFormat.TURTLE, out);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("text/turtle"))
                 .body(body);

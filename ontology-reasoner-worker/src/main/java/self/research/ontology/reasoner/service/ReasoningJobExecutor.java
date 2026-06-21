@@ -56,7 +56,7 @@ public class ReasoningJobExecutor {
                 ? Arrays.asList("subclasses", "instances")
                 : job.getQueryTypes();
 
-        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), ReasonerType.OPENLLET)) {
+        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), ReasonerType.OPENLLET, job.getOwnerEmail())) {
             OWLOntology ontology = session.ontology();
             OWLReasoner reasoner = session.reasoner();
             OWLClassExpression expr = parseClassExpression(ontology, job.getExpression());
@@ -89,25 +89,32 @@ public class ReasoningJobExecutor {
                 }
             }
 
-            return Map.of(
-                    "success", true,
-                    "query", job.getExpression(),
-                    "queryType", types,
-                    "results", results
-            );
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("query", job.getExpression());
+            response.put("queryType", types);
+            response.put("results", results);
+            if (session.downgradedWarning() != null) {
+                response.put("downgradedWarning", session.downgradedWarning());
+            }
+            return response;
         }
     }
 
     private Map<String, Object> executeConsistency(ReasoningJob job) throws Exception {
         ReasonerType type = parseReasonerType(job.getReasonerType());
-        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), type)) {
+        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
             OWLReasoner reasoner = session.reasoner();
+            ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
             boolean consistent = reasoner.isConsistent();
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.put("consistent", consistent);
-            result.put("reasonerType", type.getDisplayName());
+            result.put("reasonerType", effective.getDisplayName());
             result.put("projectId", job.getProjectId());
+            if (session.downgradedWarning() != null) {
+                result.put("downgradedWarning", session.downgradedWarning());
+            }
             if (!consistent) {
                 var unsat = reasoner.getUnsatisfiableClasses().getEntities();
                 OWLDataFactory df = session.ontology().getOWLOntologyManager().getOWLDataFactory();
@@ -122,42 +129,122 @@ public class ReasoningJobExecutor {
 
     private Map<String, Object> executeClassify(ReasoningJob job) throws Exception {
         ReasonerType type = parseReasonerType(job.getReasonerType());
-        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), type)) {
+        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
             OWLReasoner reasoner = session.reasoner();
+            ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
+
+            if (!reasoner.isConsistent()) {
+                return analyzeInconsistency(session.ontology());
+            }
+
             long start = System.currentTimeMillis();
-            precomputeHierarchy(reasoner, type);
+            precomputeHierarchy(reasoner, effective);
             long duration = System.currentTimeMillis() - start;
-            return Map.of(
-                    "success", true,
-                    "reasonerType", type.getDisplayName(),
-                    "durationMs", duration,
-                    "message", "Classification completed successfully"
-            );
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("reasonerType", effective.getDisplayName());
+            result.put("durationMs", duration);
+            result.put("message", "Classification completed successfully");
+            if (session.downgradedWarning() != null) {
+                result.put("downgradedWarning", session.downgradedWarning());
+            }
+            return result;
         }
+    }
+
+    private Map<String, Object> analyzeInconsistency(OWLOntology ontology) {
+        OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+        List<Map<String, Object>> issues = new ArrayList<>();
+
+        for (OWLNamedIndividual ind : ontology.getIndividualsInSignature()) {
+            List<OWLClassExpression> assertedTypes = EntitySearcher.getTypes(ind, ontology)
+                    .collect(Collectors.toList());
+            List<OWLClass> namedTypes = assertedTypes.stream()
+                    .filter(t -> !t.isAnonymous())
+                    .map(OWLClassExpression::asOWLClass)
+                    .collect(Collectors.toList());
+
+            // Typed to both C and complementOf(C)
+            for (OWLClass namedType : namedTypes) {
+                if (assertedTypes.contains(df.getOWLObjectComplementOf(namedType))) {
+                    Map<String, Object> issue = new HashMap<>();
+                    issue.put("type", "complement_conflict");
+                    issue.put("individual", label(ind, ontology));
+                    issue.put("iri", ind.getIRI().toString());
+                    issue.put("message", "\"" + label(ind, ontology) + "\" is assigned to both \""
+                            + label(namedType, ontology) + "\" and its complement — these cannot both be true.");
+                    issues.add(issue);
+                    break;
+                }
+            }
+
+            // Typed to two classes declared disjoint with each other
+            for (int i = 0; i < namedTypes.size(); i++) {
+                OWLClass typeA = namedTypes.get(i);
+                Set<OWLClass> disjointWithA = ontology.getDisjointClassesAxioms(typeA).stream()
+                        .flatMap(ax -> ax.getClassExpressions().stream())
+                        .filter(e -> !e.isAnonymous() && !e.equals(typeA))
+                        .map(OWLClassExpression::asOWLClass)
+                        .collect(Collectors.toSet());
+                for (int j = i + 1; j < namedTypes.size(); j++) {
+                    OWLClass typeB = namedTypes.get(j);
+                    if (disjointWithA.contains(typeB)) {
+                        Map<String, Object> issue = new HashMap<>();
+                        issue.put("type", "disjoint_conflict");
+                        issue.put("individual", label(ind, ontology));
+                        issue.put("iri", ind.getIRI().toString());
+                        issue.put("conflictingTypes", List.of(label(typeA, ontology), label(typeB, ontology)));
+                        issue.put("message", "\"" + label(ind, ontology) + "\" belongs to both \""
+                                + label(typeA, ontology) + "\" and \"" + label(typeB, ontology)
+                                + "\" — but these classes are declared disjoint.");
+                        issues.add(issue);
+                    }
+                }
+            }
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("inconsistent", true);
+        result.put("issues", issues);
+        String summary = issues.isEmpty()
+                ? "The ontology is logically inconsistent. The conflict may involve property restrictions or complex class expressions. Check your disjoint constraints and complement definitions."
+                : "Found " + issues.size() + " inconsistenc" + (issues.size() == 1 ? "y" : "ies") + " — see details below and fix them in the editor.";
+        result.put("message", summary);
+        return result;
     }
 
     private Map<String, Object> executeRealize(ReasoningJob job) throws Exception {
         ReasonerType type = parseReasonerType(job.getReasonerType());
-        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), type)) {
+        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
             OWLReasoner reasoner = session.reasoner();
+            ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
             long start = System.currentTimeMillis();
             reasoner.precomputeInferences(org.semanticweb.owlapi.reasoner.InferenceType.CLASS_ASSERTIONS);
             long duration = System.currentTimeMillis() - start;
-            return Map.of(
-                    "success", true,
-                    "reasonerType", type.getDisplayName(),
-                    "durationMs", duration,
-                    "message", "Realization completed successfully"
-            );
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("reasonerType", effective.getDisplayName());
+            result.put("durationMs", duration);
+            result.put("message", "Realization completed successfully");
+            if (session.downgradedWarning() != null) {
+                result.put("downgradedWarning", session.downgradedWarning());
+            }
+            return result;
         }
     }
 
     private Map<String, Object> executeFullRun(ReasoningJob job) throws Exception {
         ReasonerType type = parseReasonerType(job.getReasonerType());
-        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), type)) {
+        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
             OWLReasoner reasoner = session.reasoner();
+            ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
             Map<String, Object> result = new HashMap<>();
             long totalStart = System.currentTimeMillis();
+
+            if (session.downgradedWarning() != null) {
+                result.put("downgradedWarning", session.downgradedWarning());
+            }
 
             long t0 = System.currentTimeMillis();
             boolean consistent = reasoner.isConsistent();
@@ -170,7 +257,7 @@ public class ReasoningJobExecutor {
             }
 
             t0 = System.currentTimeMillis();
-            precomputeHierarchy(reasoner, type);
+            precomputeHierarchy(reasoner, effective);
             result.put("classificationMs", System.currentTimeMillis() - t0);
 
             t0 = System.currentTimeMillis();
@@ -178,7 +265,7 @@ public class ReasoningJobExecutor {
             result.put("realizationMs", System.currentTimeMillis() - t0);
 
             result.put("totalDurationMs", System.currentTimeMillis() - totalStart);
-            result.put("reasonerType", type.getDisplayName());
+            result.put("reasonerType", effective.getDisplayName());
             result.put("success", true);
             result.put("message", "Reasoning completed successfully");
             return result;
@@ -201,11 +288,12 @@ public class ReasoningJobExecutor {
         if (raw == null || raw.isBlank()) {
             return ReasonerType.OPENLLET;
         }
-        String normalized = raw.toUpperCase(Locale.ROOT);
-        if ("HERMIT".equals(normalized)) {
+        try {
+            return ReasonerType.valueOf(raw.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            log.warn("Unknown reasoner type '{}', falling back to OPENLLET", raw);
             return ReasonerType.OPENLLET;
         }
-        return ReasonerType.valueOf(normalized);
     }
 
     private OWLClassExpression parseClassExpression(OWLOntology ontology, String expression) {
