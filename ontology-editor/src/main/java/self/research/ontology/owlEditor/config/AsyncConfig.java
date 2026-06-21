@@ -90,9 +90,28 @@ public class AsyncConfig implements AsyncConfigurer {
         return executor;
     }
 
-    @Override 
-    public Executor getAsyncExecutor() { 
-        return owlParsingExecutor(); 
+    /**
+     * Dedicated lane for copy-on-switch draft graph copies (full SPARQL INSERT WHERE).
+     * Serial by design: concurrent full-graph copies would double memory/IO pressure.
+     */
+    @Bean(name = "draftCopyExecutor")
+    public Executor draftCopyExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(20);
+        executor.setThreadNamePrefix("draft-copy-");
+        executor.setKeepAliveSeconds(60);
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(120);
+        executor.initialize();
+        return executor;
+    }
+
+    @Override
+    public Executor getAsyncExecutor() {
+        return owlParsingExecutor();
     }
     
     @Override 

@@ -376,7 +376,7 @@ let isInstallingUpdate = false;
 
 /** Stop bundled JVM/Mongo before NSIS runs — otherwise quitAndInstall can restart without applying. */
 async function installAppUpdate() {
-    if (isInstallingUpdate) return false;
+    if (isInstallingUpdate) return { ok: false, error: 'Update already in progress' };
     isInstallingUpdate = true;
     isQuitting = true;
     try {
@@ -385,7 +385,12 @@ async function installAppUpdate() {
         console.warn('[Update] Shutdown before install:', err?.message || err);
     }
     servicesRunning = false;
-    return autoUpdater.installUpdate();
+    const result = await autoUpdater.installUpdate();
+    if (!result?.ok) {
+        isInstallingUpdate = false;
+        isQuitting = false;
+    }
+    return result;
 }
 
 app.on('before-quit', (event) => {
