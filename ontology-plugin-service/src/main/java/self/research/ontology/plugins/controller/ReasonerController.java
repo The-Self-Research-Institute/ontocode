@@ -22,6 +22,7 @@ import self.research.ontology.plugins.service.ReasonerType;
 import self.research.ontology.plugins.service.ReasonerWorkerClient;
 
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -85,14 +86,21 @@ public class ReasonerController {
     // "Manager on ontology ... is null" error on the next OWLAPI call.
     private final Map<String, OWLOntologyManager> managerRefs = new ConcurrentHashMap<>();
 
+    // Per-project load locks: prevents two concurrent requests from both missing
+    // the ontologyCache, each creating a different OWLOntologyManager, and then
+    // overwriting each other's managerRefs entry — which would make the first
+    // manager GC-eligible while the ReasonerService cache still holds the first
+    // OWLOntology (whose WeakReference to that manager then goes null).
+    private final ConcurrentHashMap<String, Object> loadLocks = new ConcurrentHashMap<>();
+
     // Async classification task tracking
     private final ConcurrentHashMap<String, Map<String, Object>> classifyTasks = new ConcurrentHashMap<>();
     private final ExecutorService classifyExecutor = Executors.newFixedThreadPool(2);
 
     /**
-     * Extract base project ID from partition format.
-     * Partition IDs use format: proj-xxx--partition-uuid
-     * Example: proj-33c06f4a--5c615441-ee3f-4d6d-b77d-6555cc7833e8 → proj-33c06f4a
+     * Extract parent project prefix from hierarchical IDs ({@code proj-xxx--fileId}).
+     * Canonical project IDs are often the full string ({@code proj-xxx--uuid}); try that
+     * first in {@link #loadOntology} and only fall back to this prefix when needed.
      */
     private String extractBaseProjectId(String projectId) {
         if (projectId == null || !projectId.contains("--")) {
@@ -108,53 +116,104 @@ public class ReasonerController {
      * 1. Editor service (for ontologies being edited)
      * 2. GridFS (for uploaded ontologies)
      * 3. Local filesystem (development fallback)
+     *
+     * Tries the full {@code projectId} first (e.g. {@code proj-abc--uuid}), then the parent
+     * prefix before the first {@code --} for legacy partition/file-scoped IDs.
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
 
-        // Extract base projectId if this is a partition ID (format: proj-xxx--partition-uuid)
-        String baseProjectId = extractBaseProjectId(projectId);
-        if (ontologyCache.containsKey(baseProjectId)) {
-            log.info("Returning cached ontology for project: {}", baseProjectId);
-            return ontologyCache.get(baseProjectId);
+        OWLOntology ontology = tryLoadOntologyForId(projectId);
+        if (ontology != null) {
+            return ontology;
         }
 
-        // 1. Try editor service first (for ontologies being edited in the IDE)
-        OWLOntology editorOntology = loadOntologyFromEditorService(baseProjectId);
-        if (editorOntology != null) {
-            ontologyCache.put(baseProjectId, editorOntology);
-            return editorOntology;
-        }
-
-        // 2. Try GridFS (for uploaded ontologies)
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(baseProjectId)));
-        if (file == null) {
-            log.warn("File not found with metadata.projectId={}, trying filename", baseProjectId);
-            file = gridfs.findOne(new Query(Criteria.where("filename").is(baseProjectId + ".owl")));
-        }
-
-        if (file != null) {
-            log.info("Found ontology file in GridFS: {}", file.getFilename());
-            GridFsResource resource = gridfs.getResource(file);
-            try (InputStream inputStream = resource.getInputStream()) {
-                OWLOntology ontology = loadOntologyFromStream(baseProjectId, inputStream, "GridFS file " + file.getFilename());
+        if (projectId != null && projectId.contains("--")) {
+            String baseProjectId = extractBaseProjectId(projectId);
+            if (!baseProjectId.equals(projectId)) {
+                log.info("Ontology not found for full id {}; trying parent prefix {}", projectId, baseProjectId);
+                ontology = tryLoadOntologyForId(baseProjectId);
                 if (ontology != null) {
-                    ontologyCache.put(baseProjectId, ontology);
                     return ontology;
                 }
             }
         }
 
-        // 3. Fallback: try loading from local filesystem (dev convenience)
-        OWLOntology filesystemOntology = loadOntologyFromFilesystem(baseProjectId);
-        if (filesystemOntology != null) {
-            ontologyCache.put(baseProjectId, filesystemOntology);
-            return filesystemOntology;
+        String triedIds = projectId;
+        if (projectId != null && projectId.contains("--")) {
+            triedIds = projectId + " and " + extractBaseProjectId(projectId);
+        }
+        log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", triedIds);
+        throw new RuntimeException("Ontology file not found for project: " + triedIds +
+            ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.");
+    }
+
+    private OWLOntology tryLoadOntologyForId(String lookupId) throws Exception {
+        if (lookupId == null || lookupId.isBlank()) {
+            return null;
+        }
+        // Fast path: return cached without acquiring a lock.
+        OWLOntology cached = ontologyCache.get(lookupId);
+        if (cached != null) {
+            log.info("Returning cached ontology for project: {}", lookupId);
+            return cached;
         }
 
-        log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", baseProjectId);
-        throw new RuntimeException("Ontology file not found for project: " + baseProjectId + 
-            ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.");
+        // Serialize concurrent loads for the same projectId. Without this, two
+        // requests arriving simultaneously (e.g. via Promise.all) both miss the
+        // cache, each create a separate OWLOntologyManager, and the second
+        // overwrites managerRefs[lookupId] — leaving the first manager with no
+        // strong reference so the GC collects it while the ReasonerService cache
+        // still holds the first OWLOntology. That OWLOntology's WeakReference to
+        // the now-collected manager then goes null, producing:
+        // "Manager on ontology ... is null".
+        Object lock = loadLocks.computeIfAbsent(lookupId, k -> new Object());
+        synchronized (lock) {
+            // Double-check inside the lock in case another thread just finished loading.
+            cached = ontologyCache.get(lookupId);
+            if (cached != null) {
+                log.info("Returning cached ontology for project: {} (loaded by concurrent thread)", lookupId);
+                return cached;
+            }
+
+            OWLOntology editorOntology = loadOntologyFromEditorService(lookupId);
+            if (editorOntology != null) {
+                ontologyCache.put(lookupId, editorOntology);
+                return editorOntology;
+            }
+
+            GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(lookupId)));
+            if (file == null) {
+                log.warn("File not found with metadata.projectId={}, trying filename", lookupId);
+                file = gridfs.findOne(new Query(Criteria.where("filename").is(lookupId + ".owl")));
+            }
+
+            if (file != null) {
+                log.info("Found ontology file in GridFS: {}", file.getFilename());
+                GridFsResource resource = gridfs.getResource(file);
+                try (InputStream inputStream = resource.getInputStream()) {
+                    OWLOntology ontology = loadOntologyFromStream(lookupId, inputStream, "GridFS file " + file.getFilename());
+                    if (ontology != null) {
+                        ontologyCache.put(lookupId, ontology);
+                        return ontology;
+                    }
+                }
+            }
+
+            OWLOntology filesystemOntology = loadOntologyFromFilesystem(lookupId);
+            if (filesystemOntology != null) {
+                ontologyCache.put(lookupId, filesystemOntology);
+                return filesystemOntology;
+            }
+
+            return null;
+        }
+    }
+
+    private String editorOntologyFileUrl(String projectId) {
+        String encoded = java.net.URLEncoder.encode(projectId, StandardCharsets.UTF_8).replace("+", "%20");
+        String base = editorServiceUrl.endsWith("/") ? editorServiceUrl.substring(0, editorServiceUrl.length() - 1) : editorServiceUrl;
+        return base + "/api/ontology-file/" + encoded;
     }
 
     /**
@@ -164,7 +223,7 @@ public class ReasonerController {
     private OWLOntology loadOntologyFromEditorService(String projectId) {
         log.debug("Attempting to fetch from editor service at: {}", editorServiceUrl);
         try {
-            String url = editorServiceUrl + "/api/ontology-file/" + projectId;
+            String url = editorOntologyFileUrl(projectId);
             log.info("Fetching ontology from editor service: {}", url);
             
             ResponseEntity<byte[]> response = restTemplate.getForEntity(url, byte[].class);
@@ -669,6 +728,35 @@ public class ReasonerController {
             Map<String, Object> diagnosis = new HashMap<>();
             diagnosis.put("projectId", projectId);
             diagnosis.put("timestamp", new java.util.Date());
+            diagnosis.put("editorServiceUrl", editorServiceUrl);
+
+            // Check editor service for full ID and parent prefix (if applicable)
+            List<String> idsToTry = new ArrayList<>();
+            idsToTry.add(projectId);
+            if (projectId != null && projectId.contains("--")) {
+                String baseId = extractBaseProjectId(projectId);
+                if (!baseId.equals(projectId)) {
+                    idsToTry.add(baseId);
+                }
+            }
+            Map<String, Object> editorChecks = new LinkedHashMap<>();
+            for (String id : idsToTry) {
+                Map<String, Object> check = new HashMap<>();
+                try {
+                    String url = editorOntologyFileUrl(id);
+                    check.put("url", url);
+                    ResponseEntity<byte[]> response = restTemplate.getForEntity(url, byte[].class);
+                    check.put("httpStatus", response.getStatusCode().value());
+                    byte[] body = response.getBody();
+                    check.put("bytes", body != null ? body.length : 0);
+                    check.put("available", response.getStatusCode() == HttpStatus.OK && body != null && body.length > 0);
+                } catch (Exception e) {
+                    check.put("available", false);
+                    check.put("error", e.getMessage());
+                }
+                editorChecks.put(id, check);
+            }
+            diagnosis.put("editorService", editorChecks);
             
             // Check GridFS by metadata.projectId
             GridFSFile fileByMetadata = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
