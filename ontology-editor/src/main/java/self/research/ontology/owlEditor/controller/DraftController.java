@@ -6,6 +6,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.DraftCopyStatus;
+import self.research.ontology.owlEditor.model.merge.ConflictResolution;
+import self.research.ontology.owlEditor.model.merge.ResolutionAction;
 import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.service.DraftPublishAnalysis;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
@@ -159,13 +161,29 @@ public class DraftController {
             @PathVariable String projectId,
             @RequestParam String userId,
             @RequestParam(required = false, defaultValue = "false") boolean force,
-            @RequestParam(required = false, defaultValue = "false") boolean merge) {
+            @RequestParam(required = false, defaultValue = "false") boolean merge,
+            @RequestBody(required = false) Map<String, Map<String, String>> resolutionsBody) {
         try {
             log.info("[DRAFT API] Applying drafts for project {} user {} (force={}, merge={})",
                     projectId, userId, force, merge);
 
+            Map<String, ConflictResolution> resolutions = null;
+            if (merge && resolutionsBody != null && !resolutionsBody.isEmpty()) {
+                resolutions = new HashMap<>();
+                for (Map.Entry<String, Map<String, String>> entry : resolutionsBody.entrySet()) {
+                    String actionStr = entry.getValue() != null ? entry.getValue().get("action") : null;
+                    if (actionStr != null) {
+                        ConflictResolution cr = new ConflictResolution();
+                        try { cr.setAction(ResolutionAction.valueOf(actionStr)); } catch (IllegalArgumentException ignored) {}
+                        String suffix = entry.getValue().get("renameSuffix");
+                        if (suffix != null) cr.setRenameSuffix(suffix);
+                        resolutions.put(entry.getKey(), cr);
+                    }
+                }
+            }
+
             DraftTrackingService.ApplyDraftsResult result =
-                draftTrackingService.applyDrafts(projectId, userId, force, merge);
+                draftTrackingService.applyDrafts(projectId, userId, force, merge, resolutions);
 
             if (result.isConflictBlocked()) {
                 Map<String, Object> body = new HashMap<>();

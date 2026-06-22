@@ -29,6 +29,8 @@ import java.util.Locale;
 
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.ImportOptions;
+import self.research.ontology.owlEditor.model.merge.ConflictResolution;
+import self.research.ontology.owlEditor.model.merge.ResolutionAction;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
@@ -1001,7 +1003,8 @@ public class ProjectLoadController {
             @RequestParam(required = false) String userId,
             @RequestParam(required = false) String username,
             @RequestParam(required = false, defaultValue = "false") boolean force,
-            @RequestParam(required = false, defaultValue = "false") boolean merge) {
+            @RequestParam(required = false, defaultValue = "false") boolean merge,
+            @RequestBody(required = false) Map<String, Map<String, String>> resolutionsBody) {
         
         // Get or create a lock object for this project
         Object lock = projectSaveLocks.computeIfAbsent(projectId, k -> new Object());
@@ -1024,8 +1027,22 @@ public class ProjectLoadController {
 
                 // STEP 2: Publish only this user's draft graph to main
                 log.info("[SAVE] Applying drafts to GraphDB...");
+                Map<String, ConflictResolution> resolutions = null;
+                if (merge && resolutionsBody != null && !resolutionsBody.isEmpty()) {
+                    resolutions = new java.util.HashMap<>();
+                    for (Map.Entry<String, Map<String, String>> entry : resolutionsBody.entrySet()) {
+                        String actionStr = entry.getValue() != null ? entry.getValue().get("action") : null;
+                        if (actionStr != null) {
+                            ConflictResolution cr = new ConflictResolution();
+                            try { cr.setAction(ResolutionAction.valueOf(actionStr)); } catch (IllegalArgumentException ignored) {}
+                            String suffix = entry.getValue().get("renameSuffix");
+                            if (suffix != null) cr.setRenameSuffix(suffix);
+                            resolutions.put(entry.getKey(), cr);
+                        }
+                    }
+                }
                 DraftTrackingService.ApplyDraftsResult draftResult =
-                        draftTrackingService.applyDrafts(projectId, effectiveUserId, force, merge);
+                        draftTrackingService.applyDrafts(projectId, effectiveUserId, force, merge, resolutions);
 
                 if (draftResult.isConflictBlocked()) {
                     log.warn("[SAVE] Publish blocked for project {} user {}: {}",

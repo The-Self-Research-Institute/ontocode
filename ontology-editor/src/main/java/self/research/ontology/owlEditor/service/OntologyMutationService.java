@@ -160,6 +160,10 @@ public class OntologyMutationService {
                     // Axiom-level deletes/updates must target the main graph directly because
                     // DELETE DATA { GRAPH <draftGraph> { ... } } is a no-op when the triple lives
                     // in the main graph. Split ops into two buckets and execute accordingly.
+                    //
+                    // Additionally, mirror delete/update ops to the draft graph so that axioms
+                    // added during this draft session (stored in the draft graph) are also removed.
+                    // When the triple is not in the draft graph the mirror execute is a safe no-op.
                     boolean allOpsNeedMain = ops.stream().allMatch(op -> MAIN_GRAPH_MODIFY_OPS.contains(op.type()));
                     boolean anyOpNeedsMain = ops.stream().anyMatch(op -> MAIN_GRAPH_MODIFY_OPS.contains(op.type()));
 
@@ -169,6 +173,8 @@ public class OntologyMutationService {
                         if (mainGraphRevisionService != null) {
                             mainGraphRevisionService.incrementRevision(projectId);
                         }
+                        // Mirror to draft graph: removes axioms that were added in this draft session.
+                        datasetService.execDraftUpdate(projectId, userId, sparql);
                     } else if (anyOpNeedsMain) {
                         // Mixed batch: split into main-graph ops and draft-graph ops, run separately.
                         List<MutationOp> mainOps = ops.stream()
@@ -187,6 +193,8 @@ public class OntologyMutationService {
                         if (mainGraphRevisionService != null) {
                             mainGraphRevisionService.incrementRevision(projectId);
                         }
+                        // Mirror delete/update ops to draft graph, then apply draft-only ops.
+                        datasetService.execDraftUpdate(projectId, userId, mainSparql);
                         datasetService.execDraftUpdate(projectId, userId, draftSparql);
                     } else {
                         datasetService.execDraftUpdate(projectId, userId, sparql);

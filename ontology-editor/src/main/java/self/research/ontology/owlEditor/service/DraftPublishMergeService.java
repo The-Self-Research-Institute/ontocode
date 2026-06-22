@@ -123,22 +123,26 @@ public class DraftPublishMergeService {
             return conflicts;
         }
         try {
-            Optional<DraftSession> sessionOpt = sessionRepository.findByProjectIdAndUserId(projectId, userId);
-            if (sessionOpt.isEmpty() || sessionOpt.get().getBaselineSnapshotPath() == null) {
-                return conflicts;
-            }
-            Path baselinePath = storageManager.projectDir(projectId)
-                    .resolve(sessionOpt.get().getBaselineSnapshotPath());
-            if (!Files.exists(baselinePath)) {
-                return conflicts;
-            }
-
-            String baselineRdf = Files.readString(baselinePath);
-            OWLOntology baseline = mergeService.loadOntologyFromRdf(baselineRdf);
-            OWLOntology ours = buildOursOntology(projectId, userId, baselineRdf);
             String mainRdf = datasetService.exportNamedGraph(
                     projectId, datasetService.getGraphUri(projectId), RDFFormat.RDFXML);
             OWLOntology theirs = mergeService.loadOntologyFromRdf(mainRdf);
+
+            // Build ours ontology: use baseline+draft when snapshot exists, fall back to draft graph only.
+            Optional<DraftSession> sessionOpt = sessionRepository.findByProjectIdAndUserId(projectId, userId);
+            String baselineSnapshotPath = sessionOpt.map(DraftSession::getBaselineSnapshotPath).orElse(null);
+            Path baselinePath = baselineSnapshotPath != null
+                    ? storageManager.projectDir(projectId).resolve(baselineSnapshotPath)
+                    : null;
+            OWLOntology ours;
+            if (baselinePath != null && Files.exists(baselinePath)) {
+                String baselineRdf = Files.readString(baselinePath);
+                ours = buildOursOntology(projectId, userId, baselineRdf);
+            } else {
+                // No baseline snapshot (copy-on-switch session): load draft graph directly.
+                String draftGraph = datasetService.getDraftGraphUri(projectId, userId);
+                String draftRdf = datasetService.exportNamedGraph(projectId, draftGraph, RDFFormat.RDFXML);
+                ours = mergeService.loadOntologyFromRdf(draftRdf != null ? draftRdf : mainRdf);
+            }
 
             List<Map<String, Object>> enriched = new java.util.ArrayList<>();
             for (Map<String, Object> row : conflicts) {
@@ -146,7 +150,6 @@ public class DraftPublishMergeService {
                 String iriStr = (String) row.get("entityIRI");
                 if (iriStr != null) {
                     IRI iri = IRI.create(iriStr);
-                    copy.put("baselineAxioms", summarizeAxioms(baseline, iri));
                     copy.put("yourAxioms", summarizeAxioms(ours, iri));
                     copy.put("mainAxioms", summarizeAxioms(theirs, iri));
                 }

@@ -22,16 +22,13 @@ public class OntologySessionService {
     private final EditorClient editorClient;
     private final OntologyCache ontologyCache;
     private final long hermitMaxTriples;
-    private final long elkMaxTriples;
 
     public OntologySessionService(EditorClient editorClient,
                                   OntologyCache ontologyCache,
-                                  @Value("${ontocode.reasoning.large-triple-threshold:500000}") long hermitMaxTriples,
-                                  @Value("${ontocode.reasoner.elk-max-triples:5000000}") long elkMaxTriples) {
+                                  @Value("${ontocode.reasoning.large-triple-threshold:500000}") long hermitMaxTriples) {
         this.editorClient = editorClient;
         this.ontologyCache = ontologyCache;
         this.hermitMaxTriples = hermitMaxTriples;
-        this.elkMaxTriples = elkMaxTriples;
     }
 
     public ReasoningSession openSession(String projectId, ReasonerType reasonerType) throws Exception {
@@ -48,12 +45,6 @@ public class OntologySessionService {
             log.warn("[Reasoner] Could not read triple count for {} — assuming large ontology, forcing ELK", projectId);
         }
 
-        if (tripleCount > elkMaxTriples) {
-            throw new IllegalArgumentException(
-                    "This ontology is too large for in-memory reasoning (" + tripleCount + " triples). "
-                            + "Try the SPARQL tab or a smaller scope.");
-        }
-
         ReasonerType effectiveType = reasonerType;
         String downgradedWarning = null;
 
@@ -66,6 +57,12 @@ public class OntologySessionService {
                     + "for OWL EL ontologies.";
             log.info("[Reasoner] Auto-downgraded {} → ELK for project {} ({} > {} threshold or size unknown)",
                     reasonerType, projectId, sizeDesc, hermitMaxTriples);
+        } else if (effectiveType == ReasonerType.ELK && !tripleCountUnknown && tripleCount > hermitMaxTriples) {
+            // ELK explicitly selected on a large ontology — inform the user of OWL EL profile limitations
+            downgradedWarning = "ELK is running on a large ontology (" + tripleCount + " triples). "
+                    + "Results may take several minutes. "
+                    + "Note: ELK covers the OWL EL profile — cardinality restrictions, allValuesFrom, "
+                    + "and complement/union axioms will not be inferred.";
         }
 
         // Cache lookup: only for main-graph exports (draft overlay is user-specific, skip caching)

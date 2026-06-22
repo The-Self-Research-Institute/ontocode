@@ -558,13 +558,16 @@ public class OntologyQueryController {
     @GetMapping("/classes/usage/{projectId}")
     public ResponseEntity<?> classUsage(@PathVariable String projectId,
                                        @RequestParam String classIri) {
-        // 1. Desktop fast path: OWLAPI in-memory (Protégé-parity, covers all axiom types)
-        if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+        String usageUserId = SparqlQueryContext.getUserId();
+        boolean usageHasDraft = usageUserId != null && datasetService != null
+                && datasetService.hasActiveDraftOverlay(projectId, usageUserId);
+        // 1. Desktop fast path: OWLAPI in-memory — skip when user has active draft overlay
+        if (!usageHasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     desktopHierarchyService.classUsage(projectId, classIri)));
         }
-        // 2. Cloud fast path: pre-computed MongoDB index (O(1), built at import time)
-        if (entityUsageIndexService != null) {
+        // 2. Cloud fast path: pre-computed MongoDB index — skip when draft is active (index is main-graph-only)
+        if (!usageHasDraft && entityUsageIndexService != null) {
             var cached = entityUsageIndexService.getUsage(projectId, classIri);
             if (cached.isPresent()) {
                 return ResponseEntity.ok(Map.of("success", true, "data", cached.get(), "source", "index"));
@@ -630,8 +633,16 @@ public class OntologyQueryController {
     public ResponseEntity<?> classDetails(@PathVariable String projectId,
                                          @RequestParam String classIri,
                                          jakarta.servlet.http.HttpServletRequest httpRequest) {
+        // Skip OWLAPI and MongoDB cache when the user has an active draft overlay:
+        // OWLAPI only knows the main graph; MongoDB cache is also main-graph-only.
+        // SPARQL path uses buildFromClause which adds FROM <draftGraph> automatically
+        // when SparqlQueryContext.getUserId() is set (done by SparqlQueryContextInterceptor).
+        String ctxUserId = SparqlQueryContext.getUserId();
+        boolean hasDraft = ctxUserId != null && datasetService != null
+                && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
+
         // 1. OWLAPI in-memory (desktop / warm cloud) — instant, Protégé-parity
-        if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+        if (!hasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             Map<String, Object> details = new java.util.LinkedHashMap<>(
                     desktopHierarchyService.classDetails(projectId, classIri));
             if (!details.isEmpty()) {
@@ -639,7 +650,7 @@ public class OntologyQueryController {
             }
         }
         // 2. MongoDB persistent cache — survives restarts, shared across pods
-        if (classDetailCacheService != null) {
+        if (!hasDraft && classDetailCacheService != null) {
             var cached = classDetailCacheService.getDetails(projectId, classIri);
             if (cached.isPresent()) {
                 return ResponseEntity.ok(Map.of("success", true, "data", cached.get()));
@@ -667,13 +678,17 @@ public class OntologyQueryController {
     @GetMapping("/classes/annotations/{projectId}")
     public ResponseEntity<?> classAnnotations(@PathVariable String projectId,
                                               @RequestParam String classIri) {
+        String annCtxUserId = SparqlQueryContext.getUserId();
+        boolean annHasDraft = annCtxUserId != null && datasetService != null
+                && datasetService.hasActiveDraftOverlay(projectId, annCtxUserId);
+
         // 1. OWLAPI in-memory
-        if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+        if (!annHasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     desktopHierarchyService.classAnnotations(projectId, classIri)));
         }
         // 2. MongoDB — annotations extracted from stored classDetails document
-        if (classDetailCacheService != null) {
+        if (!annHasDraft && classDetailCacheService != null) {
             var cached = classDetailCacheService.getAnnotations(projectId, classIri);
             if (cached.isPresent()) {
                 return ResponseEntity.ok(Map.of("success", true, "data", cached.get()));
@@ -681,7 +696,7 @@ public class OntologyQueryController {
         }
         // 3. SPARQL fallback — store as partial doc so subsequent annotation requests hit MongoDB
         Map<String, Object> annotations = queryService.classAnnotations(projectId, classIri);
-        if (classDetailCacheService != null && !annotations.isEmpty()) {
+        if (!annHasDraft && classDetailCacheService != null && !annotations.isEmpty()) {
             classDetailCacheService.putAnnotationsIfAbsent(projectId, classIri, annotations);
         }
         return ResponseEntity.ok(Map.of("success", true, "data", annotations));
@@ -690,7 +705,10 @@ public class OntologyQueryController {
     @GetMapping("/classes/instances/{projectId}")
     public ResponseEntity<?> classInstances(@PathVariable String projectId,
                                            @RequestParam String classIri) {
-        if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+        String instUserId = SparqlQueryContext.getUserId();
+        boolean instHasDraft = instUserId != null && datasetService != null
+                && datasetService.hasActiveDraftOverlay(projectId, instUserId);
+        if (!instHasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(desktopHierarchyService.classInstances(projectId, classIri));
         }
         List<Map<String, Object>> instances = queryService.getClassInstances(projectId, classIri);

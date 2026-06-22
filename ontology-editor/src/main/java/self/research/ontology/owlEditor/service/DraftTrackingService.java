@@ -222,7 +222,7 @@ public class DraftTrackingService {
 
         // Copy-on-switch sessions: use atomic MOVE GRAPH instead of the old overlay merge.
         if (draftCopyService.isReady(projectId, userId)) {
-            return applyDraftsViaMoveGraph(projectId, userId, force, unappliedDrafts);
+            return applyDraftsViaMoveGraph(projectId, userId, force, merge, unappliedDrafts);
         }
 
         // Legacy overlay path ↓
@@ -240,7 +240,7 @@ public class DraftTrackingService {
             return new ApplyDraftsResult(true, 0, "No drafts to apply", false, null);
         }
 
-        DraftPublishAnalysis analysis = draftPublishService.analyze(projectId, userId, unappliedDrafts);
+        DraftPublishAnalysis analysis = draftPublishService.analyze(projectId, userId, unappliedDrafts, true);
         if (analysis.isBlocked(force) && !merge) {
             String message = analysis.getConflictType() == DraftPublishAnalysis.ConflictType.IRI_OVERLAP
                     ? "Publish blocked: your draft touches entities changed by others since you started editing"
@@ -299,12 +299,13 @@ public class DraftTrackingService {
      * Publish a copy-on-switch draft session atomically via SPARQL MOVE GRAPH.
      * Conflict detection: if main has advanced since the copy, block unless force=true.
      */
-    private ApplyDraftsResult applyDraftsViaMoveGraph(String projectId, String userId, boolean force,
+    private ApplyDraftsResult applyDraftsViaMoveGraph(String projectId, String userId, boolean force, boolean merge,
                                                       List<DraftChange> unappliedDrafts) {
         long mainRevisionAtCopy = draftCopyService.getMainRevisionAtCopy(projectId, userId);
         long currentRevision = mainGraphRevisionService.getRevision(projectId);
 
-        if (!force && mainRevisionAtCopy >= 0 && currentRevision > mainRevisionAtCopy) {
+        // Block if main changed since copy, unless user explicitly approved (force or merge).
+        if (!force && !merge && mainRevisionAtCopy >= 0 && currentRevision > mainRevisionAtCopy) {
             String message = "The shared ontology was updated while you were editing (revision "
                     + mainRevisionAtCopy + " → " + currentRevision + "). "
                     + "Review the changes or use force publish.";
