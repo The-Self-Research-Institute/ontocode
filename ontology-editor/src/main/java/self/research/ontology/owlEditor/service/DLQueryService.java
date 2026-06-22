@@ -47,7 +47,7 @@ public class DLQueryService {
 
     public DLQueryService(GridFsTemplate gridfs,
                           SparqlDatasetService datasetService,
-                          @Value("${ontocode.reasoner.max-triples:1000000}") long maxReasonerTriples) {
+                          @Value("${ontocode.reasoner.max-triples:5000000}") long maxReasonerTriples) {
         this.gridfs = gridfs;
         this.datasetService = datasetService;
         this.maxReasonerTriples = maxReasonerTriples;

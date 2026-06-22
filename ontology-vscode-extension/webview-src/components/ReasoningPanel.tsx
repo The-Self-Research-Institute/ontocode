@@ -19,6 +19,9 @@ interface ReasonerResult {
   consistencyCheckMs?: number;
   totalDurationMs?: number;
   downgradedWarning?: string;
+  tooLargeForReasoner?: boolean;
+  suggestedReasoner?: string;
+  tripleCount?: number;
 }
 
 interface InferredAxiom {
@@ -47,6 +50,7 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary']));
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastPathRef = useRef<string | null>(null);
 
   const toggleSection = (section: string) => {
     const newExpanded = new Set(expandedSections);
@@ -81,6 +85,20 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  const extractErrorMessage = (error: any): string => {
+    // Try to get the friendly message from the response body first (backend sets it there)
+    const fromBody = error?.response?.data?.message || error?.response?.data?.error;
+    if (fromBody) return fromBody;
+    // Network / timeout errors
+    if (error?.code === 'ECONNABORTED' || error?.message?.toLowerCase().includes('timeout')) {
+      return 'Reasoning timed out. Try ELK for large ontologies.';
+    }
+    if (error?.code === 'ERR_NETWORK' || error?.message?.toLowerCase().includes('network')) {
+      return 'Cannot reach the reasoning service. Please check your connection.';
+    }
+    return error?.message || 'Reasoning failed — please try again.';
+  };
+
   const pollReasoningJob = async (jobId: string, timeoutMs = 30 * 60 * 1000): Promise<ReasonerResult> => {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
@@ -100,8 +118,9 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
     return { success: false, message: 'Reasoning timed out. Try again later.' };
   };
 
-  const postReasoningTask = async (path: string): Promise<ReasonerResult> => {
-    const response: any = await apiClient.post(path, null, { params: { reasonerType } });
+  const postReasoningTask = async (path: string, overrideReasonerType?: string): Promise<ReasonerResult> => {
+    const rt = overrideReasonerType ?? reasonerType;
+    const response: any = await apiClient.post(path, null, { params: { reasonerType: rt } });
     if (response?.async && response?.jobId) {
       return pollReasoningJob(response.jobId);
     }
@@ -110,19 +129,21 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
 
   // Run full reasoning
   const runFullReasoning = async () => {
+    const path = `/api/ontology/${projectId}/reasoner/run`;
+    lastPathRef.current = path;
     setIsRunning(true);
     setResult(null);
     setInferredAxioms([]);
     startTimer();
 
     try {
-      const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/run`);
+      const response = await postReasoningTask(path);
       setResult(response);
       if (response.success) {
         fetchInferredAxioms();
       }
     } catch (error: any) {
-      setResult({ success: false, message: error.message || 'Reasoning failed' });
+      setResult({ success: false, message: extractErrorMessage(error) });
     } finally {
       stopTimer();
       setIsRunning(false);
@@ -131,15 +152,17 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
 
   // Check consistency only
   const checkConsistency = async () => {
+    const path = `/api/ontology/${projectId}/reasoner/consistency`;
+    lastPathRef.current = path;
     setIsRunning(true);
     setResult(null);
     startTimer();
 
     try {
-      const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/consistency`);
+      const response = await postReasoningTask(path);
       setResult(response);
     } catch (error: any) {
-      setResult({ success: false, message: error.message || 'Consistency check failed' });
+      setResult({ success: false, message: extractErrorMessage(error) });
     } finally {
       stopTimer();
       setIsRunning(false);
@@ -148,14 +171,17 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
 
   // Classify ontology
   const classify = async () => {
+    const path = `/api/ontology/${projectId}/reasoner/classify`;
+    lastPathRef.current = path;
     setIsRunning(true);
+    setResult(null);
     startTimer();
 
     try {
-      const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/classify`);
+      const response = await postReasoningTask(path);
       setResult(response);
     } catch (error: any) {
-      setResult({ success: false, message: error.message || 'Classification failed' });
+      setResult({ success: false, message: extractErrorMessage(error) });
     } finally {
       stopTimer();
       setIsRunning(false);
@@ -164,14 +190,17 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
 
   // Realize ontology
   const realize = async () => {
+    const path = `/api/ontology/${projectId}/reasoner/realize`;
+    lastPathRef.current = path;
     setIsRunning(true);
+    setResult(null);
     startTimer();
 
     try {
-      const response = await postReasoningTask(`/api/ontology/${projectId}/reasoner/realize`);
+      const response = await postReasoningTask(path);
       setResult(response);
     } catch (error: any) {
-      setResult({ success: false, message: error.message || 'Realization failed' });
+      setResult({ success: false, message: extractErrorMessage(error) });
     } finally {
       stopTimer();
       setIsRunning(false);
@@ -228,6 +257,34 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
       fetchStats();
     }
   }, [projectId, reasonerType]);
+
+  // Auto-expand results section whenever a new result arrives
+  useEffect(() => {
+    if (result) {
+      setExpandedSections(s => new Set([...s, 'summary']));
+    }
+  }, [result]);
+
+  const switchToElkAndRetry = async () => {
+    if (!lastPathRef.current) return;
+    setReasonerType('ELK');
+    setResult(null);
+    setInferredAxioms([]);
+    setIsRunning(true);
+    startTimer();
+    try {
+      const response = await postReasoningTask(lastPathRef.current, 'ELK');
+      setResult(response);
+      if (response.success) {
+        fetchInferredAxioms();
+      }
+    } catch (error: any) {
+      setResult({ success: false, message: extractErrorMessage(error) });
+    } finally {
+      stopTimer();
+      setIsRunning(false);
+    }
+  };
 
   const Section: React.FC<{
     id: string;
@@ -358,8 +415,37 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
           </Section>
         )}
 
+        {/* Too-large-for-reasoner blocking banner */}
+        {result?.tooLargeForReasoner && (
+          <div className="rounded-xl border-2 border-orange-300 bg-orange-50 p-5 space-y-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={24} className="text-orange-600 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-semibold text-orange-900 text-base">
+                  {reasonerType} cannot handle this ontology
+                </h3>
+                <p className="text-sm text-orange-800 mt-1">
+                  {result.tripleCount
+                    ? `This ontology has ${result.tripleCount.toLocaleString()} triples — `
+                    : 'This ontology is too large — '}
+                  {reasonerType} will not complete at this scale.
+                  Only <strong>ELK</strong> is supported for large ontologies.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={switchToElkAndRetry}
+              disabled={isRunning}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-orange-300 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              <Play size={14} />
+              Switch to ELK and retry
+            </button>
+          </div>
+        )}
+
         {/* Result Summary */}
-        {result && (
+        {result && !result.tooLargeForReasoner && (
           <Section id="summary" title="Reasoning Results" icon={
             result.success ? 
               <CheckCircle size={20} className="text-green-600" /> : 
@@ -397,7 +483,7 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
                 </div>
                 
                 <p className="text-sm text-gray-700 ml-7">
-                  {result.message || `Reasoner: ${result.reasonerType || reasonerType}`}
+                  {result.message || (result as any).error || `Reasoner: ${result.reasonerType || reasonerType}`}
                 </p>
               </div>
 
@@ -453,7 +539,7 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
               )}
 
               {/* Inconsistency Issues */}
-              {result.inconsistent && (
+              {(result.inconsistent || result.consistent === false) && (
                 <div className="p-4 bg-orange-50 rounded-lg border border-orange-300">
                   <div className="flex items-center gap-2 mb-3">
                     <AlertTriangle size={20} className="text-orange-600" />

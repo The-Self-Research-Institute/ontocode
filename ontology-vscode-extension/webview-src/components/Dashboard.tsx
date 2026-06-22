@@ -2250,7 +2250,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (startData?.taskId) {
         const taskId = startData.taskId;
         const POLL_INTERVAL = 3000; // 3 seconds
-        const MAX_POLL_TIME = 600_000; // 10 minutes
+        const MAX_POLL_TIME = 1_800_000; // 30 minutes — large ontologies (e.g. Mondo 3.1M triples) need time to load
 
         const pollForResult = async (): Promise<any> => {
           const deadline = Date.now() + MAX_POLL_TIME;
@@ -2268,7 +2268,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
             // still RUNNING — continue polling
           }
-          throw new Error("Classification timed out after 10 minutes");
+          throw new Error("Classification timed out after 30 minutes");
         };
 
         const [classificationResponse, statsResponse] = await Promise.all([

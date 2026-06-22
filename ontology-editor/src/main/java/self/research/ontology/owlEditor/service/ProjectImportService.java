@@ -44,6 +44,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -66,6 +67,7 @@ public class ProjectImportService {
     private final Set<String> importReservations = ConcurrentHashMap.newKeySet();
 
     private final Executor owlParsingExecutor;
+    private final Executor metadataExecutor;
     private final SparqlDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
@@ -95,6 +97,12 @@ public class ProjectImportService {
     private HierarchyIndexService hierarchyIndexService;
 
     @Autowired(required = false) @Nullable
+    private EntityUsageIndexService entityUsageIndexService;
+
+    @Autowired(required = false) @Nullable
+    private ClassDetailCacheService classDetailCacheService;
+
+    @Autowired(required = false) @Nullable
     private ProjectRepository projectRepository;
 
     @Autowired(required = false) @Nullable
@@ -104,6 +112,7 @@ public class ProjectImportService {
     private boolean owlApiFirst;
 
     public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
+                                @Qualifier("metadataExecutor") Executor metadataExecutor,
                                 SparqlDatasetService datasetService,
                                 OntologyIndexService indexService,
                                 ProjectMetadataService metadataService,
@@ -112,6 +121,7 @@ public class ProjectImportService {
                                 ImportQueueManager queueManager,
                                 ImportTimeEstimator timeEstimator) {
         this.owlParsingExecutor = owlParsingExecutor;
+        this.metadataExecutor = metadataExecutor;
         this.datasetService = datasetService;
         this.indexService = indexService;
         this.metadataService = metadataService;
@@ -720,13 +730,58 @@ public class ProjectImportService {
                 log.warn("[Import {}] Cache eviction failed (non-fatal): {}", projectId, cacheEx.getMessage());
             }
 
+            // Hierarchy snapshot: own executor, starts immediately — users need the tree right away.
             if (hierarchyIndexService != null) {
                 try {
                     hierarchyIndexService.evict(projectId);
                     hierarchyIndexService.scheduleBuild(projectId);
-                    log.info("[Import {}] Scheduled Protégé-parity hierarchy snapshot build", projectId);
+                    log.info("[Import {}] Scheduled hierarchy snapshot build", projectId);
                 } catch (Exception hx) {
                     log.warn("[Import {}] Hierarchy snapshot schedule failed (non-fatal): {}", projectId, hx.getMessage());
+                }
+            }
+
+            // Annotation pre-warm: starts immediately, fast (~60s for Mondo).
+            // Entity usage index: chained to start AFTER annotation pre-warm finishes.
+            // This prevents both from hammering Fuseki at the same time right after import,
+            // ensuring annotations are in MongoDB before the heavier usage-index queries begin.
+            if (classDetailCacheService != null) {
+                try {
+                    classDetailCacheService.dropAll(projectId);
+                    CompletableFuture<Void> annotationsDone = classDetailCacheService.scheduleBuildAnnotations(projectId);
+                    log.info("[Import {}] Scheduled annotation pre-warm (fast path, ~60s)", projectId);
+
+                    if (entityUsageIndexService != null) {
+                        final EntityUsageIndexService usageIndexRef = entityUsageIndexService;
+                        entityUsageIndexService.dropAll(projectId);
+                        annotationsDone.whenCompleteAsync((v, ex) -> {
+                            try {
+                                log.info("[Import {}] Annotation pre-warm done — starting entity usage index build", projectId);
+                                usageIndexRef.scheduleBuild(projectId);
+                            } catch (Exception ux) {
+                                log.warn("[Import {}] Entity usage index schedule failed (non-fatal): {}", projectId, ux.getMessage());
+                            }
+                        }, metadataExecutor);
+                    }
+                } catch (Exception cx) {
+                    log.warn("[Import {}] Annotation pre-warm schedule failed (non-fatal): {}", projectId, cx.getMessage());
+                    // Fall back: start usage index immediately if annotation pre-warm failed to schedule
+                    if (entityUsageIndexService != null) {
+                        try {
+                            entityUsageIndexService.dropAll(projectId);
+                            entityUsageIndexService.scheduleBuild(projectId);
+                        } catch (Exception ux) {
+                            log.warn("[Import {}] Entity usage index fallback schedule failed: {}", projectId, ux.getMessage());
+                        }
+                    }
+                }
+            } else if (entityUsageIndexService != null) {
+                try {
+                    entityUsageIndexService.dropAll(projectId);
+                    entityUsageIndexService.scheduleBuild(projectId);
+                    log.info("[Import {}] Scheduled entity usage index build", projectId);
+                } catch (Exception ux) {
+                    log.warn("[Import {}] Entity usage index schedule failed (non-fatal): {}", projectId, ux.getMessage());
                 }
             }
 

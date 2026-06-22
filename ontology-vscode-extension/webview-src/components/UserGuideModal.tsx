@@ -169,7 +169,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
               )}
               <div style={styles.tocItem} onClick={() => scrollToSection("section-project")}>
                 <FolderPlus size={18} style={{ color: "#10b981" }} />
-                <span>5. Create a Project</span>
+                <span>{desktop ? '1' : '5'}. Create a Project</span>
               </div>
               {!desktop && (
                 <div style={styles.tocItem} onClick={() => scrollToSection("section-assign")}>
@@ -179,19 +179,19 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
               )}
               <div style={styles.tocItem} onClick={() => scrollToSection("section-file")}>
                 <FileText size={18} style={{ color: "#3b82f6" }} />
-                <span>7. Create a New File</span>
+                <span>{desktop ? '2' : '7'}. Create a New File</span>
               </div>
               <div style={styles.tocItem} onClick={() => scrollToSection("section-collaboration")}>
                 <Share2 size={18} style={{ color: "#8b5cf6" }} />
-                <span>8. Collaboration</span>
+                <span>{desktop ? '3' : '8'}. Collaboration</span>
               </div>
               <div style={styles.tocItem} onClick={() => scrollToSection("section-report")}>
                 <Bug size={18} style={{ color: "#ef4444" }} />
-                <span>8. Report an Issue</span>
+                <span>{desktop ? '4' : '9'}. Report an Issue</span>
               </div>
               <div style={styles.tocItem} onClick={() => scrollToSection("section-codeview")}>
                 <Code size={18} style={{ color: "#06b6d4" }} />
-                <span>10. Code View</span>
+                <span>{desktop ? '5' : '10'}. Code View</span>
               </div>
             </div>
           </div>
@@ -674,7 +674,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             <button onClick={() => toggleSection("project")} style={styles.sectionHeader}>
               {expandedSections.project ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <FolderPlus size={20} style={{ color: "#10b981" }} />
-              <span style={styles.sectionTitle}>5. How to Create a Project</span>
+              <span style={styles.sectionTitle}>{desktop ? '1' : '5'}. How to Create a Project</span>
             </button>
 
             {expandedSections.project && (
@@ -884,7 +884,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             <button onClick={() => toggleSection("createFile")} style={styles.sectionHeader}>
               {expandedSections.createFile ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <FileText size={20} style={{ color: "#8b5cf6" }} />
-              <span style={styles.sectionTitle}>7. How to Create a New File</span>
+              <span style={styles.sectionTitle}>{desktop ? '2' : '7'}. How to Create a New File</span>
             </button>
 
             {expandedSections.createFile && (
@@ -1024,7 +1024,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             <button onClick={() => toggleSection("collaboration")} style={styles.sectionHeader}>
               {expandedSections.collaboration ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <Share2 size={20} style={{ color: "#8b5cf6" }} />
-              <span style={styles.sectionTitle}>8. Collaboration</span>
+              <span style={styles.sectionTitle}>{desktop ? '3' : '8'}. Collaboration</span>
             </button>
 
             {expandedSections.collaboration && (
@@ -1176,7 +1176,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             <button onClick={() => toggleSection("reportIssue")} style={styles.sectionHeader}>
               {expandedSections.reportIssue ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <Bug size={20} style={{ color: "#ef4444" }} />
-              <span style={styles.sectionTitle}>9. How to Report an Issue</span>
+              <span style={styles.sectionTitle}>{desktop ? '4' : '9'}. How to Report an Issue</span>
             </button>
 
             {expandedSections.reportIssue && (
@@ -1349,7 +1349,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             <button onClick={() => toggleSection("codeView")} style={styles.sectionHeader}>
               {expandedSections.codeView ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <Code size={20} style={{ color: "#06b6d4" }} />
-              <span style={styles.sectionTitle}>10. Code View</span>
+              <span style={styles.sectionTitle}>{desktop ? '5' : '10'}. Code View</span>
             </button>
 
             {expandedSections.codeView && (

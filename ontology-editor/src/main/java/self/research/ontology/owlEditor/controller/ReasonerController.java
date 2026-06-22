@@ -20,6 +20,7 @@ import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.ReasoningJobSubmitService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.common.ReasoningFriendlyErrors;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -60,7 +61,7 @@ public class ReasonerController {
     private EditorReasonerCacheService editorReasonerCache;
 
     // Ontologies above this triple count are rejected before export to prevent OOM
-    @Value("${ontocode.reasoner.max-triples:1000000}")
+    @Value("${ontocode.reasoner.max-triples:5000000}")
     private long maxReasonerTriples;
 
     /**
@@ -176,10 +177,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error refreshing reasoner", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -203,10 +201,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error stopping reasoner", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -256,21 +251,8 @@ public class ReasonerController {
             return ResponseEntity.ok(result);
             
         } catch (Exception e) {
-            log.error("Error checking consistency for project: " + projectId, e);
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("success", false);
-            errorResponse.put("error", e.getMessage());
-            errorResponse.put("errorType", e.getClass().getSimpleName());
-            errorResponse.put("projectId", projectId);
-            
-            // Include stack trace in development
-            if (log.isDebugEnabled()) {
-                java.io.StringWriter sw = new java.io.StringWriter();
-                e.printStackTrace(new java.io.PrintWriter(sw));
-                errorResponse.put("stackTrace", sw.toString());
-            }
-            
-            return ResponseEntity.status(500).body(errorResponse);
+            log.error("Error checking consistency for project: {}", projectId, e);
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -309,10 +291,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error during classification", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -351,10 +330,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error during realization", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -401,10 +377,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error getting inferred axioms", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -443,10 +416,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error getting inferred superclasses", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -506,10 +476,7 @@ public class ReasonerController {
 
         } catch (Exception e) {
             log.error("Error getting inferred subclasses", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -621,10 +588,7 @@ public class ReasonerController {
             }
         } catch (Exception e) {
             log.error("Error getting inferred class hierarchy", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -800,10 +764,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting inferred object property hierarchy", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -883,10 +844,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting inferred data property hierarchy", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
                         
@@ -1035,10 +993,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error getting inferred instances", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1077,10 +1032,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting all inferred individuals", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1126,10 +1078,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting inferred types for individual {}", individualIri, e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1153,10 +1102,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting inferred annotation property hierarchy", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1188,10 +1134,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting inferred datatypes", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1243,7 +1186,7 @@ public class ReasonerController {
             return ResponseEntity.ok(Map.of("success", true, "data", result));
         } catch (Exception e) {
             log.error("Error getting inferred class details", e);
-            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1328,7 +1271,7 @@ public class ReasonerController {
             return ResponseEntity.ok(Map.of("success", true, "data", result));
         } catch (Exception e) {
             log.error("Error getting inferred property details", e);
-            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1353,10 +1296,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error getting reasoner stats", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1421,10 +1361,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error running reasoner", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1444,10 +1381,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error clearing cache", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1468,6 +1402,18 @@ public class ReasonerController {
         return splitIndex >= 0 && splitIndex < iri.length() - 1
             ? iri.substring(splitIndex + 1)
             : iri;
+    }
+
+    private Map<String, Object> friendlyError(Exception e) {
+        String msg = ReasoningFriendlyErrors.forUser(e.getMessage());
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", false);
+        body.put("message", msg);
+        String raw = e.getMessage() != null ? e.getMessage().toLowerCase(java.util.Locale.ROOT) : "";
+        if (raw.contains("too large") || (raw.contains("triples") && raw.contains("limit"))) {
+            body.put("tooLargeForReasoner", true);
+        }
+        return body;
     }
 
     private String formatAxiom(OWLAxiom axiom, OWLOntology ontology) {

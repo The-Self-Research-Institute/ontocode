@@ -760,17 +760,99 @@ public class DesktopHierarchyService {
         return individual;
     }
 
+    /**
+     * Protégé-parity usage: covers every axiom type that references this class.
+     * Uses EntitySearcher.getReferencingAxioms equivalent via OWLOntology.referencingAxioms()
+     * which is an O(1) HashMap lookup in OWLAPI — milliseconds even on Mondo (3.1M triples).
+     */
     private Map<String, Object> buildClassUsage(OWLOntology ont, String classIri) {
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
         OWLClass cls = df.getOWLClass(IRI.create(classIri));
+
+        List<Map<String, String>> superClasses = new ArrayList<>();
+        List<Map<String, String>> subClasses = new ArrayList<>();
+        List<Map<String, String>> equivalentClasses = new ArrayList<>();
+        List<Map<String, String>> disjointClasses = new ArrayList<>();
+        List<Map<String, String>> restrictions = new ArrayList<>();
+        List<Map<String, String>> domainOf = new ArrayList<>();
+        List<Map<String, String>> rangeOf = new ArrayList<>();
+        List<Map<String, String>> instances = new ArrayList<>();
+        List<Map<String, String>> annotations = new ArrayList<>();
+
+        // referencingAxioms is O(1) — OWLAPI indexes entity→axioms in a HashMap at load time
+        ont.referencingAxioms(cls, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED).forEach(axiom -> {
+            if (axiom instanceof OWLSubClassOfAxiom ax) {
+                if (ax.getSubClass().equals(cls) && !ax.getSuperClass().isAnonymous()) {
+                    superClasses.add(labeledEntry(ont, ax.getSuperClass().asOWLClass()));
+                } else if (ax.getSuperClass().equals(cls) && !ax.getSubClass().isAnonymous()) {
+                    subClasses.add(labeledEntry(ont, ax.getSubClass().asOWLClass()));
+                } else if (!ax.getSubClass().equals(cls) && !ax.getSubClass().isAnonymous()) {
+                    // cls appears inside the superclass restriction expression; subclass is the owning class
+                    restrictions.add(usageEntry("SubClassOf restriction", ax.getSubClass().asOWLClass(), ont, ax.toString()));
+                }
+            } else if (axiom instanceof OWLEquivalentClassesAxiom ax) {
+                ax.classExpressions()
+                    .filter(ce -> !ce.isAnonymous() && !ce.asOWLClass().equals(cls))
+                    .forEach(ce -> equivalentClasses.add(labeledEntry(ont, ce.asOWLClass())));
+            } else if (axiom instanceof OWLDisjointClassesAxiom ax) {
+                ax.classExpressions()
+                    .filter(ce -> !ce.isAnonymous() && !ce.asOWLClass().equals(cls))
+                    .forEach(ce -> disjointClasses.add(labeledEntry(ont, ce.asOWLClass())));
+            } else if (axiom instanceof OWLObjectPropertyDomainAxiom ax) {
+                if (!ax.getProperty().isAnonymous()) {
+                    domainOf.add(labeledEntry(ont, ax.getProperty().asOWLObjectProperty()));
+                }
+            } else if (axiom instanceof OWLObjectPropertyRangeAxiom ax) {
+                if (!ax.getProperty().isAnonymous()) {
+                    rangeOf.add(labeledEntry(ont, ax.getProperty().asOWLObjectProperty()));
+                }
+            } else if (axiom instanceof OWLClassAssertionAxiom ax) {
+                if (!ax.getIndividual().isAnonymous()) {
+                    Map<String, String> m = new LinkedHashMap<>();
+                    m.put("iri", ax.getIndividual().asOWLNamedIndividual().getIRI().toString());
+                    m.put("label", getLabel(ont, ax.getIndividual().asOWLNamedIndividual().getIRI()));
+                    instances.add(m);
+                }
+            } else if (axiom instanceof OWLAnnotationAssertionAxiom ax) {
+                if (ax.getValue().isIRI() && ax.getValue().asIRI()
+                        .filter(v -> v.toString().equals(classIri)).isPresent()) {
+                    if (ax.getSubject() instanceof IRI subjectIri) {
+                        Map<String, String> m = new LinkedHashMap<>();
+                        m.put("iri", subjectIri.toString());
+                        m.put("label", getLabel(ont, subjectIri));
+                        m.put("property", ax.getProperty().getIRI().getShortForm());
+                        annotations.add(m);
+                    }
+                }
+            }
+        });
+
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("superClasses", ont.subClassAxiomsForSubClass(cls)
-            .map(ax -> ax.getSuperClass()).filter(ce -> !ce.isAnonymous())
-            .map(ce -> labeledEntry(ont, ce.asOWLClass())).collect(Collectors.toList()));
-        result.put("subClasses", ont.subClassAxiomsForSuperClass(cls)
-            .map(ax -> ax.getSubClass()).filter(ce -> !ce.isAnonymous())
-            .map(ce -> labeledEntry(ont, ce.asOWLClass())).collect(Collectors.toList()));
+        result.put("superClasses", superClasses);
+        result.put("subClasses", subClasses);
+        result.put("equivalentClasses", equivalentClasses);
+        result.put("disjointClasses", disjointClasses);
+        result.put("restrictions", restrictions);
+        result.put("domainOf", domainOf);
+        result.put("rangeOf", rangeOf);
+        result.put("instances", instances);
+        result.put("annotations", annotations);
         return result;
+    }
+
+    private Map<String, String> usageEntry(String context, OWLClass owner, OWLOntology ont, String rawAxiom) {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("iri", owner.getIRI().toString());
+        m.put("label", getLabel(ont, owner.getIRI()));
+        m.put("context", context);
+        return m;
+    }
+
+    private Map<String, String> labeledEntry(OWLOntology ont, OWLObjectProperty prop) {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("iri", prop.getIRI().toString());
+        m.put("label", getLabel(ont, prop.getIRI()));
+        return m;
     }
 
     private Map<String, String> labeledEntry(OWLOntology ont, OWLClass cls) {

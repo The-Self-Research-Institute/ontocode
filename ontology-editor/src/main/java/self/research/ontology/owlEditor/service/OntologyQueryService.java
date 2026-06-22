@@ -1950,27 +1950,62 @@ public class OntologyQueryService {
             }
         }
         
-        // 7. Find restrictions using this class (owl:onClass)
+        // 7. Find restrictions using this class as filler or qualified class.
+        // Covers: someValuesFrom (existential), allValuesFrom (universal),
+        //         onClass (qualified cardinality), hasValue (nominals).
+        // Also traverses the blank-node restriction up to its owning named class
+        // via SubClassOf or EquivalentClass — that is what Protégé "Usage" shows.
         String restrictionQuery = PREFIXES + """
-            SELECT DISTINCT ?restriction ?onProp ?propLabel WHERE {
-              ?restriction a owl:Restriction ;
-                           owl:onClass <%s> ;
-                           owl:onProperty ?onProp .
+            SELECT DISTINCT ?ownerClass ?ownerLabel ?onProp ?propLabel ?restrictionType WHERE {
+              {
+                ?restriction owl:someValuesFrom <%s> ; owl:onProperty ?onProp .
+                BIND("some" AS ?restrictionType)
+              } UNION {
+                ?restriction owl:allValuesFrom <%s> ; owl:onProperty ?onProp .
+                BIND("all" AS ?restrictionType)
+              } UNION {
+                ?restriction owl:onClass <%s> ; owl:onProperty ?onProp .
+                BIND("qualified" AS ?restrictionType)
+              } UNION {
+                ?restriction owl:hasValue <%s> ; owl:onProperty ?onProp .
+                BIND("hasValue" AS ?restrictionType)
+              }
+
+              # Traverse from blank-node restriction to the named class that owns it
+              {
+                ?ownerClass rdfs:subClassOf ?restriction .
+                FILTER(isIRI(?ownerClass))
+              } UNION {
+                ?ownerClass owl:equivalentClass ?restriction .
+                FILTER(isIRI(?ownerClass))
+              } UNION {
+                # Restriction nested in an intersection/union expression
+                ?container owl:intersectionOf|owl:unionOf ?list .
+                ?list rdf:rest*/rdf:first ?restriction .
+                { ?ownerClass rdfs:subClassOf ?container . FILTER(isIRI(?ownerClass)) }
+                UNION
+                { ?ownerClass owl:equivalentClass ?container . FILTER(isIRI(?ownerClass)) }
+              }
+
               OPTIONAL { ?onProp rdfs:label ?propLabel }
+              OPTIONAL { ?ownerClass rdfs:label ?ownerLabel }
             }
-            """.formatted(classIri);
+            LIMIT 500
+            """.formatted(classIri, classIri, classIri, classIri);
         TupleQueryResult restrictions = datasetService.execSelect(projectId, restrictionQuery);
         while (restrictions.hasNext()) {
             BindingSet sol = restrictions.next();
             Map<String, String> usage = new LinkedHashMap<>();
             usage.put("type", "restriction");
-            String restrictionIri = resource(sol, "restriction");
+            String ownerIri = resource(sol, "ownerClass");
             String onPropIri = resource(sol, "onProp");
-            if (restrictionIri != null && onPropIri != null) {
-                usage.put("subject", restrictionIri);
+            if (ownerIri != null && onPropIri != null) {
                 String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : localName(onPropIri);
-                usage.put("subjectLabel", "Restriction on " + propLabel);
-                usage.put("context", "Used in restriction");
+                String restrictionType = sol.hasBinding("restrictionType") ? literal(sol, "restrictionType") : "some";
+                String ownerLabel = sol.hasBinding("ownerLabel") ? literal(sol, "ownerLabel") : localName(ownerIri);
+                usage.put("subject", ownerIri);
+                usage.put("subjectLabel", ownerLabel);
+                usage.put("context", "SubClassOf " + propLabel + " " + restrictionType + " <this>");
                 usages.add(usage);
             }
         }
@@ -2257,7 +2292,6 @@ public class OntologyQueryService {
      * Response shape is a strict subset of {@link #classDetails} so the
      * frontend can merge results without schema translation.
      */
-    @Cacheable(value = "classAnnotations", key = "#projectId + '_' + #classIri", sync = true)
     public Map<String, Object> classAnnotations(String projectId, String classIri) {
         safeIri(classIri);
         Map<String, Object> result = new LinkedHashMap<>();
@@ -2306,7 +2340,6 @@ public class OntologyQueryService {
         return result;
     }
 
-    @Cacheable(value = "classDetails", key = "#projectId + '_' + #classIri", sync = true)
     public Map<String, Object> classDetails(String projectId, String classIri) {
         safeIri(classIri);
         long startTime = System.currentTimeMillis();

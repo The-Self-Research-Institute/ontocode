@@ -65,10 +65,13 @@
             <artifactId>jfact</artifactId>
             <version>5.0.3</version>
         </dependency>
+        <!-- ELK: OWL EL reasoner. io.github.liveontologies:elk-owlapi:0.6.0 supports OWLAPI 5.x.
+             The old org.semanticweb.elk:elk-owlapi:0.4.3 was OWLAPI 4-only (NoSuchMethodError on
+             OWLAPI 5.5.0). Exclude transitive OWLAPI so our managed owlapi-distribution 5.5.0 wins. -->
         <dependency>
-            <groupId>org.semanticweb.elk</groupId>
+            <groupId>io.github.liveontologies</groupId>
             <artifactId>elk-owlapi</artifactId>
-            <version>0.4.3</version>
+            <version>0.6.0</version>
             <exclusions>
                 <exclusion>
                     <groupId>net.sourceforge.owlapi</groupId>
@@ -77,6 +80,10 @@
                 <exclusion>
                     <groupId>net.sourceforge.owlapi</groupId>
                     <artifactId>owlapi-apibinding</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-distribution</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>

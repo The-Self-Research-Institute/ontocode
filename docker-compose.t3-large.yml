@@ -4,8 +4,8 @@
 # Usage:
 #   docker compose -f docker-compose.production.yml -f docker-compose.t3-large.yml up -d
 #
-# NOTE: Reasoner is limited to 500K triples on this tier (vs 1M default) to prevent OOM.
-# Upgrade to t3.xlarge for heavier reasoning workloads or larger ontologies.
+# NOTE: Reasoner is limited to 2M triples on this tier (vs 5M production default) to reduce OOM risk.
+# Upgrade to t3.xlarge / r6i for heavier reasoning workloads or larger ontologies.
 
 services:
   mongo:
@@ -44,8 +44,8 @@ services:
       JAVA_OPTS: "-Xms512m -Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
       ONTOCODE_IMPORT_MAX_CONCURRENT: 1
       ONTOCODE_FASTOPEN_AUTO_WARM: "false"
-      # Tighter reasoner limit on 8 GB tier — prevents OOM from in-memory export of large ontologies
-      ONTOCODE_REASONER_MAX_TRIPLES: 500000
+      # Raised from 500K — still below production 5M cap due to 8 GB / 2g editor heap.
+      ONTOCODE_REASONER_MAX_TRIPLES: 2000000
       ONTOCODE_DLQUERY_MAX_CONCURRENT: 1
       ONTOCODE_DLQUERY_SLOT_BUDGET: 1
     deploy:

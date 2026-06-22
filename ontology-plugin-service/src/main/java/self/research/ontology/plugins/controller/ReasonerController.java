@@ -78,6 +78,13 @@ public class ReasonerController {
         }
     );
 
+    // Keeps a strong reference to each manager so the GC cannot collect it.
+    // OWLAPI 5.x stores the manager as a WeakReference inside OWLOntologyImpl;
+    // without this map the manager is eligible for GC as soon as the local variable
+    // in loadOntologyFromStream() goes out of scope, which causes the
+    // "Manager on ontology ... is null" error on the next OWLAPI call.
+    private final Map<String, OWLOntologyManager> managerRefs = new ConcurrentHashMap<>();
+
     // Async classification task tracking
     private final ConcurrentHashMap<String, Map<String, Object>> classifyTasks = new ConcurrentHashMap<>();
     private final ExecutorService classifyExecutor = Executors.newFixedThreadPool(2);
@@ -185,6 +192,7 @@ public class ReasonerController {
             log.info("Loading ontology for {} from {}", projectId, sourceDescription);
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
             log.info("Ontology loaded successfully: {} axioms", ontology.getAxiomCount());
+            managerRefs.put(projectId, manager);
             return ontology;
         } catch (Exception e) {
             log.error("Failed to load ontology from {}", sourceDescription, e);
@@ -635,6 +643,7 @@ public class ReasonerController {
         try {
             reasonerService.clearCache();
             ontologyCache.clear();
+            managerRefs.clear();
             
             return ResponseEntity.ok(Map.of(
                 "success", true,

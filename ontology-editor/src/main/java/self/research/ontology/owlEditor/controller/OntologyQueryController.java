@@ -17,6 +17,8 @@ import self.research.ontology.owlEditor.service.owlapi.OwlApiDatatypeQueryServic
 import self.research.ontology.owlEditor.service.owlapi.OwlApiIndividualQueryService;
 import self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext;
 import self.research.ontology.owlEditor.service.owlapi.OwlApiPropertyQueryService;
+import self.research.ontology.owlEditor.service.ClassDetailCacheService;
+import self.research.ontology.owlEditor.service.EntityUsageIndexService;
 import self.research.ontology.owlEditor.service.HierarchyIndexService;
 import self.research.ontology.owlEditor.service.OntologyMetadataService;
 import self.research.ontology.owlEditor.service.OntologyQueryService;
@@ -57,6 +59,12 @@ public class OntologyQueryController {
 
     @Autowired(required = false) @Nullable
     private OwlApiDatatypeQueryService owlApiDatatypeQueryService;
+
+    @Autowired(required = false) @Nullable
+    private EntityUsageIndexService entityUsageIndexService;
+
+    @Autowired(required = false) @Nullable
+    private ClassDetailCacheService classDetailCacheService;
 
     @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.DesktopOntologyLoader desktopOntologyLoader;
@@ -550,11 +558,19 @@ public class OntologyQueryController {
     @GetMapping("/classes/usage/{projectId}")
     public ResponseEntity<?> classUsage(@PathVariable String projectId,
                                        @RequestParam String classIri) {
-        // Desktop fast path: compute usage from OWLAPI in-memory model
+        // 1. Desktop fast path: OWLAPI in-memory (Protégé-parity, covers all axiom types)
         if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     desktopHierarchyService.classUsage(projectId, classIri)));
         }
+        // 2. Cloud fast path: pre-computed MongoDB index (O(1), built at import time)
+        if (entityUsageIndexService != null) {
+            var cached = entityUsageIndexService.getUsage(projectId, classIri);
+            if (cached.isPresent()) {
+                return ResponseEntity.ok(Map.of("success", true, "data", cached.get(), "source", "index"));
+            }
+        }
+        // 3. Fallback: live SPARQL query (slower, blank-node traversal)
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.classUsage(projectId, classIri)));
     }
@@ -614,14 +630,19 @@ public class OntologyQueryController {
     public ResponseEntity<?> classDetails(@PathVariable String projectId,
                                          @RequestParam String classIri,
                                          jakarta.servlet.http.HttpServletRequest httpRequest) {
-        // Fast-open: OWLAPI in-memory class details (~5ms) including supplements
-        // (disjointUnion, hasKey, GCIs, inferred axioms, multi-valued annotations).
-        // Falls through to full SPARQL when the OWLAPI model is not warmed.
+        // 1. OWLAPI in-memory (desktop / warm cloud) — instant, Protégé-parity
         if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             Map<String, Object> details = new java.util.LinkedHashMap<>(
                     desktopHierarchyService.classDetails(projectId, classIri));
             if (!details.isEmpty()) {
                 return ResponseEntity.ok(Map.of("success", true, "data", details));
+            }
+        }
+        // 2. MongoDB persistent cache — survives restarts, shared across pods
+        if (classDetailCacheService != null) {
+            var cached = classDetailCacheService.getDetails(projectId, classIri);
+            if (cached.isPresent()) {
+                return ResponseEntity.ok(Map.of("success", true, "data", cached.get()));
             }
         }
         try {
@@ -630,8 +651,12 @@ public class OntologyQueryController {
                 if (ctx != null) return ResponseEntity.status(499).build();
             }
         } catch (Exception ignored) {}
-        return ResponseEntity.ok(Map.of("success", true, "data",
-                queryService.classDetails(projectId, classIri)));
+        // 3. SPARQL fallback — store result in MongoDB for next request
+        Map<String, Object> details = queryService.classDetails(projectId, classIri);
+        if (classDetailCacheService != null && !details.isEmpty()) {
+            classDetailCacheService.putDetails(projectId, classIri, details);
+        }
+        return ResponseEntity.ok(Map.of("success", true, "data", details));
     }
 
     /**
@@ -642,12 +667,24 @@ public class OntologyQueryController {
     @GetMapping("/classes/annotations/{projectId}")
     public ResponseEntity<?> classAnnotations(@PathVariable String projectId,
                                               @RequestParam String classIri) {
+        // 1. OWLAPI in-memory
         if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     desktopHierarchyService.classAnnotations(projectId, classIri)));
         }
-        return ResponseEntity.ok(Map.of("success", true, "data",
-                queryService.classAnnotations(projectId, classIri)));
+        // 2. MongoDB — annotations extracted from stored classDetails document
+        if (classDetailCacheService != null) {
+            var cached = classDetailCacheService.getAnnotations(projectId, classIri);
+            if (cached.isPresent()) {
+                return ResponseEntity.ok(Map.of("success", true, "data", cached.get()));
+            }
+        }
+        // 3. SPARQL fallback — store as partial doc so subsequent annotation requests hit MongoDB
+        Map<String, Object> annotations = queryService.classAnnotations(projectId, classIri);
+        if (classDetailCacheService != null && !annotations.isEmpty()) {
+            classDetailCacheService.putAnnotationsIfAbsent(projectId, classIri, annotations);
+        }
+        return ResponseEntity.ok(Map.of("success", true, "data", annotations));
     }
 
     @GetMapping("/classes/instances/{projectId}")

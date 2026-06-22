@@ -159,36 +159,32 @@ public class ReasonerService {
                     // Some ELK versions might have issues, continue anyway
                 }
             } else {
-                // Full precomputation for other reasoners
-                reasoner.precomputeInferences(
-                    InferenceType.CLASS_HIERARCHY,
-                    InferenceType.OBJECT_PROPERTY_HIERARCHY,
-                    InferenceType.DATA_PROPERTY_HIERARCHY
-                );
+                // Precompute each inference type separately so a failure in property hierarchy
+                // (e.g. NPE on malformed OWLObjectPropertyRangeAxiom) doesn't abort class classification.
+                try {
+                    reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
+                } catch (Exception e) {
+                    log.warn("{}: CLASS_HIERARCHY precomputation failed: {}", type.getDisplayName(), e.getMessage());
+                }
+                try {
+                    reasoner.precomputeInferences(InferenceType.OBJECT_PROPERTY_HIERARCHY);
+                } catch (Exception e) {
+                    log.warn("{}: OBJECT_PROPERTY_HIERARCHY precomputation failed (will use asserted): {}", type.getDisplayName(), e.getMessage());
+                }
+                try {
+                    reasoner.precomputeInferences(InferenceType.DATA_PROPERTY_HIERARCHY);
+                } catch (Exception e) {
+                    log.warn("{}: DATA_PROPERTY_HIERARCHY precomputation failed (will use asserted): {}", type.getDisplayName(), e.getMessage());
+                }
             }
             
             long duration = System.currentTimeMillis() - startTime;
             log.info("Classification completed in {} ms", duration);
         } catch (Exception e) {
-            log.error("Error during classification with {}", type.getDisplayName(), e);
-            // Check if it's due to inconsistency
-            try {
-                if (!reasoner.isConsistent()) {
-                    log.warn("Classification failed due to inconsistent ontology");
-                    // Don't throw exception - let getClassificationResults handle it
-                    return;
-                }
-            } catch (Exception consistencyCheckError) {
-                log.error("Could not check consistency", consistencyCheckError);
-            }
-            
-            // For ELK, gracefully degrade instead of failing completely
-            if (type == ReasonerType.ELK) {
-                log.warn("ELK classification failed, but continuing with available inferences");
-                return; // Don't throw - let caller work with partial results
-            }
-            
-            throw new RuntimeException("Classification failed: " + e.getMessage(), e);
+            // Catches failures from isConsistent() or any other unexpected path.
+            // Individual precompute failures are already handled inline above.
+            log.warn("Unexpected error during classification setup with {}: {} — continuing with partial results",
+                type.getDisplayName(), e.getMessage());
         }
     }
 

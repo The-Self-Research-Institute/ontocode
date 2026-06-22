@@ -21,7 +21,7 @@ public class OntologySpringCacheEvictionService {
 
     private static final List<String> PREFIX_KEY_CACHES = List.of(
             "topLevelClasses", "classChildren", "allClasses", "ontologyProperties",
-            "ontologyIndividuals", "classDetails", "classAnnotations", "classInstances"
+            "ontologyIndividuals", "classInstances"
     );
 
     private static final List<String> EXACT_KEY_CACHES = List.of(
