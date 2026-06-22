@@ -86,16 +86,20 @@ export const draftTrackingService = {
   },
 
   /**
-   * Apply drafts for one user to GraphDB (used during save)
+   * Apply drafts for one user to GraphDB (used during save).
+   * Pass merge=true with per-conflict resolutions for three-way merge.
    */
   async applyDrafts(
     projectId: string,
     userId: string,
     force = false,
+    merge = false,
+    resolutions?: Record<string, { action: string; renameSuffix?: string }>,
   ): Promise<{ success: boolean; appliedCount: number; message: string }> {
-    const response = await apiClient.post(
-      `/api/ontology/${projectId}/drafts/apply?userId=${encodeURIComponent(userId)}${force ? "&force=true" : ""}`,
-    );
+    let url = `/api/ontology/${projectId}/drafts/apply?userId=${encodeURIComponent(userId)}`;
+    if (force) url += '&force=true';
+    if (merge) url += '&merge=true';
+    const response = await apiClient.post(url, merge && resolutions ? resolutions : undefined);
     return response.data;
   },
 

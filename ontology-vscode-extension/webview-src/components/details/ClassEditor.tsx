@@ -417,8 +417,10 @@ const ClassEditor: React.FC<{
     (async () => {
       const t1 = performance.now();
       try {
+        const annUserId = user?.email || user?.userId;
+        const annUserParam = annUserId ? `&userId=${encodeURIComponent(annUserId)}` : '';
         const annResp = await apiClient.get<any>(
-          `/api/ontology/classes/annotations/${projectId}?classIri=${encodeURIComponent(currentId)}`,
+          `/api/ontology/classes/annotations/${projectId}?classIri=${encodeURIComponent(currentId)}${annUserParam}`,
           undefined,
           { signal },
         );
@@ -602,8 +604,13 @@ const ClassEditor: React.FC<{
   const loadClassDetails = async (signal?: AbortSignal) => {
     setLoadingDetails(true);
     try {
+      // Pass userId so the backend includes the user's draft graph in SPARQL reads.
+      // SparqlQueryContextInterceptor reads it from the request param; buildFromClause
+      // then adds FROM <draftGraph> to every execSelect, making draft additions visible.
+      const userId = user?.email || user?.userId;
+      const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
       const response = await apiClient.get<any>(
-        `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}`,
+        `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}`,
         undefined,
         signal ? { signal } : undefined,
       );

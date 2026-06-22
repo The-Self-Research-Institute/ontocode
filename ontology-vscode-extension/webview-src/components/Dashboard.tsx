@@ -1634,15 +1634,23 @@ const Dashboard: React.FC<DashboardProps> = ({
     isOpen: boolean;
     title: string;
     message: string;
-    onMerge: () => void;
+    conflicts: Array<{
+      entityIRI: string;
+      entityLabel?: string;
+      changedBy?: string;
+      yourAxioms?: string;
+      mainAxioms?: string;
+    }>;
     onForce: () => void;
   }>({
     isOpen: false,
     title: "",
     message: "",
-    onMerge: () => {},
+    conflicts: [],
     onForce: () => {},
   });
+  // Per-conflict resolution choices: entityIRI → action ("KEEP_SOURCE" | "KEEP_TARGET" | "MERGE")
+  const [conflictResolutions, setConflictResolutions] = useState<Record<string, string>>({});
 
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -7761,15 +7769,20 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, selectedReasoner, fetchReasonerBundle, user]);
 
   // Save changes to backend (publishes only this user's draft to main graph)
-  const handleSave = useCallback(async (options?: { force?: boolean; merge?: boolean }) => {
+  const handleSave = useCallback(async (options?: {
+    force?: boolean;
+    merge?: boolean;
+    resolutions?: Record<string, { action: string }>;
+  }) => {
     const forcePublish = options?.force ?? false;
     const mergePublish = options?.merge ?? false;
+    const mergeResolutions = options?.resolutions;
     console.log("[DEBUG] handleSave called", { forcePublish, mergePublish });
     if (!projectId || isSaving) return;
 
     const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
 
-    const performSave = async (force: boolean, merge: boolean) => {
+    const performSave = async (force: boolean, merge: boolean, resolutions?: Record<string, { action: string }>) => {
       setIsSaving(true);
       console.log("[Dashboard] 💾 Saving changes to backend...");
 
@@ -7784,7 +7797,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (merge) params.set("merge", "true");
       const saveUrl = `/api/ontology/save/${projectId}?${params.toString()}`;
       console.log("[Dashboard] 📤 Save URL:", saveUrl);
-      const response = await apiClient.post(saveUrl);
+      const response = await apiClient.post(saveUrl, merge && resolutions ? resolutions : undefined);
       const duration = Date.now() - startTime;
 
       console.log(`[Dashboard] Save response received after ${duration}ms:`, response);
@@ -7810,37 +7823,34 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
 
     try {
-      await performSave(forcePublish, mergePublish);
+      await performSave(forcePublish, mergePublish, mergeResolutions);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409 && error.data) {
         const conflictType = error.data.conflictType as string | undefined;
         const conflicts = (error.data.conflicts as Array<Record<string, string>>) || [];
         const mainChanged = Boolean(error.data.mainChangedSinceDraft);
 
-        let message = error.message || "Your draft conflicts with changes on the shared ontology.";
+        let message = "";
         if (conflictType === "IRI_OVERLAP" && conflicts.length > 0) {
-          const lines = conflicts.slice(0, 8).map((c) => {
-            const label = c.entityLabel || c.entityIRI || "Unknown entity";
-            const by = c.changedBy ? ` (changed by ${c.changedBy})` : "";
-            return `• ${label}${by}`;
-          });
-          if (conflicts.length > 8) {
-            lines.push(`• …and ${conflicts.length - 8} more`);
-          }
-          message = `These entities were changed by someone else since you started your draft:\n\n${lines.join("\n")}\n\nUse Merge & publish for OWLAPI three-way merge, or Publish anyway to overwrite blindly.`;
+          message = `${conflicts.length} ${conflicts.length === 1 ? "entity was" : "entities were"} changed by someone else since you started your draft. Review each conflict below and choose how to resolve it.`;
         } else if (conflictType === "MAIN_CHANGED" || mainChanged) {
-          message =
-            "The shared ontology was updated while you were editing.\n\nMerge & publish rebases your changes onto the current main graph. Publish anyway uses a simple graph union.";
+          message = "The shared ontology was updated while you were editing. Review the changes below and choose how to resolve each conflict.";
+        } else {
+          message = (error.data.message as string | undefined) || (error.data.error as string | undefined) || error.message || "Your draft conflicts with changes on the shared ontology.";
         }
 
+        setConflictResolutions({});
         setPublishConflictDialog({
           isOpen: true,
-          title: conflictType === "IRI_OVERLAP" ? "Publish conflict" : "Shared ontology changed",
+          title: conflictType === "IRI_OVERLAP" ? "Merge conflicts" : "Shared ontology changed",
           message,
-          onMerge: () => {
-            setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }));
-            void handleSave({ merge: true });
-          },
+          conflicts: conflicts.map((c) => ({
+            entityIRI: c.entityIRI || "",
+            entityLabel: c.entityLabel,
+            changedBy: c.changedBy,
+            yourAxioms: c.yourAxioms,
+            mainAxioms: c.mainAxioms,
+          })),
           onForce: () => {
             setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }));
             void handleSave({ force: true });
@@ -15359,41 +15369,137 @@ const Dashboard: React.FC<DashboardProps> = ({
         confirmText={confirmDialog.confirmLabel}
         cancelText={confirmDialog.cancelLabel}
       />
-      {publishConflictDialog.isOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+      {publishConflictDialog.isOpen && (() => {
+        const conflicts = publishConflictDialog.conflicts;
+        const resolvedCount = conflicts.filter((c) => conflictResolutions[c.entityIRI]).length;
+        const allResolved = conflicts.length > 0 && resolvedCount === conflicts.length;
+        return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9999] p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200">
+              <div className="flex-shrink-0 w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center">
                 <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900">{publishConflictDialog.title}</h3>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-gray-900">{publishConflictDialog.title}</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{publishConflictDialog.message}</p>
+              </div>
+              {conflicts.length > 0 && (
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
+                  {resolvedCount}/{conflicts.length} resolved
+                </span>
+              )}
             </div>
-            <p className="text-sm text-gray-600 mb-6 whitespace-pre-line">{publishConflictDialog.message}</p>
-            <div className="flex flex-wrap justify-end gap-3">
-              <button
-                onClick={() => setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }))}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                Cancel
-              </button>
+
+            {/* Conflict list */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {conflicts.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-8">No per-entity conflicts detected. You can merge or force publish.</p>
+              ) : conflicts.map((c) => {
+                const label = c.entityLabel || c.entityIRI.split(/[#/]/).pop() || c.entityIRI;
+                const chosen = conflictResolutions[c.entityIRI];
+                return (
+                  <div key={c.entityIRI} className={`border rounded-lg overflow-hidden transition-colors ${chosen ? "border-green-300 bg-green-50/30" : "border-gray-200"}`}>
+                    {/* Entity header */}
+                    <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-200">
+                      <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                      </svg>
+                      <span className="text-sm font-medium text-gray-800 flex-1 truncate" title={c.entityIRI}>{label}</span>
+                      {c.changedBy && <span className="text-xs text-gray-400">changed by {c.changedBy}</span>}
+                      {chosen && (
+                        <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
+                          {chosen === "KEEP_TARGET" ? "Keeping theirs" : chosen === "KEEP_SOURCE" ? "Keeping mine" : "Keeping both"}
+                        </span>
+                      )}
+                    </div>
+                    {/* Left / Right axiom comparison */}
+                    <div className="grid grid-cols-2 divide-x divide-gray-200">
+                      <div className="p-3">
+                        <div className="text-xs font-semibold text-blue-700 mb-1.5 flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+                          Public (theirs)
+                        </div>
+                        <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono leading-relaxed min-h-[40px]">
+                          {c.mainAxioms || <span className="text-gray-400 italic">No axioms</span>}
+                        </pre>
+                      </div>
+                      <div className="p-3">
+                        <div className="text-xs font-semibold text-purple-700 mb-1.5 flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-purple-500 inline-block"></span>
+                          Your draft
+                        </div>
+                        <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono leading-relaxed min-h-[40px]">
+                          {c.yourAxioms || <span className="text-gray-400 italic">No axioms</span>}
+                        </pre>
+                      </div>
+                    </div>
+                    {/* Resolution buttons */}
+                    <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-t border-gray-200">
+                      <span className="text-xs text-gray-500 mr-1">Use:</span>
+                      {(["KEEP_TARGET", "KEEP_SOURCE", "MERGE"] as const).map((action) => {
+                        const labels: Record<string, string> = { KEEP_TARGET: "Keep Theirs", KEEP_SOURCE: "Keep Mine", MERGE: "Keep Both" };
+                        const colors: Record<string, string> = {
+                          KEEP_TARGET: chosen === action ? "bg-blue-600 text-white border-blue-600" : "bg-white text-blue-700 border-blue-300 hover:bg-blue-50",
+                          KEEP_SOURCE: chosen === action ? "bg-purple-600 text-white border-purple-600" : "bg-white text-purple-700 border-purple-300 hover:bg-purple-50",
+                          MERGE: chosen === action ? "bg-green-600 text-white border-green-600" : "bg-white text-green-700 border-green-300 hover:bg-green-50",
+                        };
+                        return (
+                          <button
+                            key={action}
+                            onClick={() => setConflictResolutions((prev) => ({ ...prev, [c.entityIRI]: action }))}
+                            className={`px-3 py-1 text-xs font-medium rounded border transition-colors ${colors[action]}`}
+                          >
+                            {labels[action]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
               <button
                 onClick={publishConflictDialog.onForce}
-                className="px-4 py-2 text-sm font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100"
+                className="px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100"
               >
-                Publish anyway
+                Overwrite (force publish)
               </button>
-              <button
-                onClick={publishConflictDialog.onMerge}
-                className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700"
-              >
-                Merge &amp; publish
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }))}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={conflicts.length > 0 && !allResolved}
+                  onClick={() => {
+                    setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }));
+                    const resolutions: Record<string, { action: string }> = {};
+                    Object.entries(conflictResolutions).forEach(([iri, action]) => { resolutions[iri] = { action }; });
+                    void handleSave({ merge: true, resolutions: Object.keys(resolutions).length > 0 ? resolutions : undefined });
+                  }}
+                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                    conflicts.length > 0 && !allResolved
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-purple-600 text-white hover:bg-purple-700"
+                  }`}
+                >
+                  {allResolved || conflicts.length === 0 ? "Apply & Publish" : `Resolve ${conflicts.length - resolvedCount} more…`}
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
       {/* Dedicated Unsaved Changes Warning Dialog */}
       {unsavedChangesDialog.isOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">

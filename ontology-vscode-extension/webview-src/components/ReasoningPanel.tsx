@@ -634,7 +634,14 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
                   Still running — this is normal.{' '}
                   {reasonerType === 'HERMIT' || reasonerType === 'PELLET'
                     ? 'HermiT/Pellet can take 15–40 minutes on large ontologies (100MB+).'
+                    : reasonerType === 'ELK'
+                    ? 'ELK is classifying the ontology. Large ontologies (5M+ triples) can take several minutes.'
                     : 'Processing is active.'}
+                </p>
+              )}
+              {elapsedSeconds >= 120 && reasonerType === 'ELK' && (
+                <p className="text-xs text-gray-500 max-w-sm mx-auto">
+                  ELK covers the OWL EL profile. Cardinality restrictions, allValuesFrom, and complement/union axioms are not inferred.
                 </p>
               )}
               {elapsedSeconds >= 120 && (reasonerType === 'HERMIT' || reasonerType === 'PELLET') && (
