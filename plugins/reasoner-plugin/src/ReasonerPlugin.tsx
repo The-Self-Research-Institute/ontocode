@@ -221,16 +221,22 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
           // Worker returns inconsistent:true + issues:[...] when ontology has disjoint/complement conflicts
           if (result.inconsistent) {
             const issues: any[] = result.issues || [];
-            let detail = result.message || 'The ontology is inconsistent.';
-            if (issues.length > 0) {
-              detail += '\n\nConflicts found:\n' + issues
-                .slice(0, 10)
-                .map((iss: any) => `• ${iss.message || JSON.stringify(iss)}`)
-                .join('\n');
-              if (issues.length > 10) {
-                detail += `\n• …and ${issues.length - 10} more`;
-              }
-            }
+            // Build issue messages for the error display
+            const issueMessages = issues.slice(0, 10).map((iss: any) => iss.message || JSON.stringify(iss));
+            const detail = issues.length > 0
+              ? issueMessages.join('\n')
+              : (result.message || 'The ontology is inconsistent.');
+            // Update the Consistency panel to reflect actual state found during classification
+            setConsistencyResult({
+              isConsistent: false,
+              duration: result.durationMs || duration,
+              timestamp: new Date().toISOString(),
+              errors: issueMessages,
+              unsatisfiableClasses: issues.map((iss: any) => ({
+                iri: iss.iri || '',
+                label: iss.individual || iss.message || 'Unknown'
+              }))
+            });
             setError(detail);
             setClassificationResult({
               timestamp: new Date().toISOString(),
@@ -299,6 +305,16 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       setError(errorMsg);
+      // If classification failed due to inconsistency, flip the consistency panel
+      if (task === 'classification' && errorMsg.toLowerCase().includes('inconsistent')) {
+        setConsistencyResult({
+          isConsistent: false,
+          duration: 0,
+          timestamp: new Date().toISOString(),
+          errors: [errorMsg],
+          unsatisfiableClasses: []
+        });
+      }
       setStatus({ isRunning: false, message: `${task} failed` });
     }
   }, [projectId, ontologyIri, apiBaseUrl, config, onInferredAxiomsChange]);

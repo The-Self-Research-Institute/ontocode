@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
+import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.ReasoningJobSubmitService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.common.ReasoningFriendlyErrors;
@@ -59,6 +60,12 @@ public class ReasonerController {
 
     @Autowired
     private EditorReasonerCacheService editorReasonerCache;
+
+    @Autowired(required = false)
+    private ReasonerWorkerClient reasonerWorkerClient;
+
+    @Value("${ontocode.reasoner-worker.enabled:false}")
+    private boolean reasonerWorkerEnabled;
 
     // Ontologies above this triple count are rejected before export to prevent OOM
     @Value("${ontocode.reasoner.max-triples:5000000}")
@@ -157,6 +164,38 @@ public class ReasonerController {
             log.error("Error loading ontology from GridFS", e);
             throw e;
         }
+    }
+
+    /**
+     * Submit a hierarchy job to the reasoner-worker and block until completed (max 60s).
+     * Returns the job result on success, or null if the worker is unavailable.
+     */
+    private Map<String, Object> submitHierarchyJobAndWait(String jobType, String projectId, String reasonerType) {
+        if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
+            return null;
+        }
+        Map<String, Object> submitted = reasonerWorkerClient.submitJob(jobType, projectId, null, null, reasonerType, null);
+        if (Boolean.FALSE.equals(submitted.get("success"))) {
+            log.warn("Worker rejected {} job for {}: {}", jobType, projectId, submitted.get("error"));
+            return null;
+        }
+        String jobId = String.valueOf(submitted.get("jobId"));
+        long deadline = System.currentTimeMillis() + 60_000;
+        while (System.currentTimeMillis() < deadline) {
+            try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+            Map<String, Object> job = reasonerWorkerClient.getJob(jobId);
+            if (job == null) break;
+            String status = String.valueOf(job.getOrDefault("status", ""));
+            if ("COMPLETED".equals(status)) {
+                return job; // worker flattens result fields into the top-level response
+            }
+            if ("FAILED".equals(status)) {
+                log.warn("Worker {} job {} failed: {}", jobType, jobId, job.get("error"));
+                return null;
+            }
+        }
+        log.warn("Worker {} job {} timed out after 60s for project {}", jobType, jobId, projectId);
+        return null;
     }
 
     @PostMapping("/{projectId}/reasoner/refresh")
@@ -498,6 +537,13 @@ public class ReasonerController {
             @RequestParam(defaultValue = "OPENLLET") String reasonerType
     ) {
         try {
+            Map<String, Object> workerResult = submitHierarchyJobAndWait("REASONER_HIERARCHY", projectId, reasonerType);
+            if (workerResult != null) {
+                Map<String, Object> response = new HashMap<>(workerResult);
+                response.put("projectId", projectId);
+                response.put("lazy", true);
+                return ResponseEntity.ok(response);
+            }
             OWLOntology ontology = loadOntology(projectId);
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
 
@@ -691,6 +737,12 @@ public class ReasonerController {
             @RequestParam(defaultValue = "OPENLLET") String reasonerType
     ) {
         try {
+            Map<String, Object> workerResult = submitHierarchyJobAndWait("REASONER_OBJ_PROP_HIERARCHY", projectId, reasonerType);
+            if (workerResult != null) {
+                Map<String, Object> response = new HashMap<>(workerResult);
+                response.put("projectId", projectId);
+                return ResponseEntity.ok(response);
+            }
             OWLOntology ontology = loadOntology(projectId);
             // HERMIT → OPENLLET (binary compat); ELK → OPENLLET (ELK has no property hierarchy support)
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") || reasonerType.equalsIgnoreCase("ELK")
@@ -778,6 +830,12 @@ public class ReasonerController {
             @RequestParam(defaultValue = "OPENLLET") String reasonerType
     ) {
         try {
+            Map<String, Object> workerResult = submitHierarchyJobAndWait("REASONER_DATA_PROP_HIERARCHY", projectId, reasonerType);
+            if (workerResult != null) {
+                Map<String, Object> response = new HashMap<>(workerResult);
+                response.put("projectId", projectId);
+                return ResponseEntity.ok(response);
+            }
             OWLOntology ontology = loadOntology(projectId);
             // HERMIT → OPENLLET (binary compat); ELK → OPENLLET (ELK has no property hierarchy support)
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") || reasonerType.equalsIgnoreCase("ELK")
