@@ -21,7 +21,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 public class OntologyMutationService {
@@ -56,6 +58,12 @@ public class OntologyMutationService {
 
     @Autowired(required = false) @Nullable
     private DraftCopyService draftCopyService;
+
+    @Autowired(required = false) @Nullable
+    private EntityUsageIndexService entityUsageIndexService;
+
+    @Autowired(required = false) @Nullable
+    private ClassDetailCacheService classDetailCacheService;
 
     @Autowired @Lazy
     private MainGraphRevisionService mainGraphRevisionService;
@@ -124,6 +132,15 @@ public class OntologyMutationService {
                 if (hierarchyIndexService != null) {
                     hierarchyIndexService.markStale(projectId);
                 }
+                if (entityUsageIndexService != null || classDetailCacheService != null) {
+                    List<String> affectedIris = ops.stream()
+                        .flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri()))
+                        .filter(Objects::nonNull)
+                        .distinct()
+                        .toList();
+                    if (entityUsageIndexService != null) entityUsageIndexService.invalidate(projectId, affectedIris);
+                    if (classDetailCacheService != null) classDetailCacheService.invalidate(projectId, affectedIris);
+                }
                 graphGeneratingService.clearGraphCache();
                 if (visualizationController != null) {
                     visualizationController.clearCache(projectId);
@@ -190,6 +207,15 @@ public class OntologyMutationService {
             topLevelCacheService.evict(projectId);
             if (hierarchyIndexService != null) {
                 hierarchyIndexService.markStale(projectId);
+            }
+            if (!draft && (entityUsageIndexService != null || classDetailCacheService != null)) {
+                List<String> affectedIris = ops.stream()
+                    .flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri()))
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .toList();
+                if (entityUsageIndexService != null) entityUsageIndexService.invalidate(projectId, affectedIris);
+                if (classDetailCacheService != null) classDetailCacheService.invalidate(projectId, affectedIris);
             }
 
             // Clear graph cache after mutations

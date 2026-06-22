@@ -70,6 +70,14 @@
                 <version>${owlapi.version}</version>
             </dependency>
 
+            <!-- Pin owlapi-impl so ELK's transitive owlapi-impl (5.1.20) is forced up to 5.5.0,
+                 keeping the whole platform on a single OWLAPI version (avoids api/impl skew). -->
+            <dependency>
+                <groupId>net.sourceforge.owlapi</groupId>
+                <artifactId>owlapi-impl</artifactId>
+                <version>${owlapi.version}</version>
+            </dependency>
+
             <!-- SWRL API -->
             <dependency>
                 <groupId>edu.stanford.swrl</groupId>

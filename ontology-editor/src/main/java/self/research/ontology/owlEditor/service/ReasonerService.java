@@ -69,7 +69,9 @@ public class ReasonerService {
                     InferenceType.CLASS_ASSERTIONS
                 );
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // Throwable: some reasoner libraries raise Errors (e.g. NoSuchMethodError) during
+            // precompute rather than at creation — never let those crash the request.
             log.warn("Failed to precompute inferences, some results might be incomplete: {}", e.getMessage());
         }
 
@@ -114,12 +116,13 @@ public class ReasonerService {
 
                 case ELK:
                     // ELK: consequence-based OWL EL reasoner — 10-100x faster than HermiT,
-                    // fraction of memory usage. Falls back to Structural if ontology uses
-                    // non-EL constructs (cardinality, negation, universal restrictions).
+                    // fraction of memory usage. Uses io.github.liveontologies:elk-owlapi:0.6.0
+                    // (OWLAPI 5-compatible). Falls back to Structural if ELK can't handle the
+                    // ontology (non-EL constructs) or hits a library error.
                     log.info("Using ELK reasoner (OWL EL profile)");
                     try {
                         return new ElkReasonerFactory().createReasoner(ontology, config);
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         log.warn("ELK failed (ontology may use non-EL constructs): {}. Falling back to Structural.", e.getMessage());
                         return new StructuralReasonerFactory().createReasoner(ontology, config);
                     }
@@ -129,7 +132,10 @@ public class ReasonerService {
                     log.info("Using Structural reasoner (basic)");
                     return new StructuralReasonerFactory().createReasoner(ontology, config);
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // Catch Throwable (not just Exception) so binary-incompatibility Errors such as
+            // NoSuchMethodError from a reasoner library degrade to the Structural reasoner
+            // instead of bubbling up to the controller and surfacing as a UI "Reasoner error".
             log.error("Failed to create {} reasoner, falling back to Structural", type, e);
             return new StructuralReasonerFactory().createReasoner(ontology, config);
         }

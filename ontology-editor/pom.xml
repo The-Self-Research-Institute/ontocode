@@ -110,7 +110,9 @@
         <dependency>
             <groupId>net.sourceforge.owlapi</groupId>
             <artifactId>org.semanticweb.hermit</artifactId>
-            <version>1.4.3.456</version>
+            <!-- 1.4.5.519 is OWLAPI 5.5.0-compatible; matches plugin-service & reasoner-worker.
+                 The older 1.4.3.456 had a NoSuchMethodError on OWLOntologyID.getDefaultDocumentIRI(). -->
+            <version>1.4.5.519</version>
         </dependency>
 
         <dependency>
@@ -126,13 +128,15 @@
             <version>2.6.5</version>
         </dependency>
 
-        <!-- ELK: incremental OWL EL reasoner — 10-100x faster than HermiT on large ontologies,
-             fraction of the memory. Supports OWL EL profile (SubClassOf, EquivalentClasses,
-             ObjectSomeValuesFrom, ObjectIntersectionOf). Excludes OWLAPI 4 to avoid conflict. -->
+        <!-- ELK: incremental OWL EL reasoner — 10-100x faster than HermiT on large ontologies.
+             Use the maintained io.github.liveontologies coordinate (0.6.0), which supports
+             OWLAPI 5.x. The old org.semanticweb.elk:elk-owlapi:0.4.3 was OWLAPI 4-only and threw
+             NoSuchMethodError (OWLObjectSomeValuesFrom.getFiller()) on OWLAPI 5.5.0.
+             Exclude transitive OWLAPI artifacts so our managed owlapi-distribution 5.5.0 wins. -->
         <dependency>
-            <groupId>org.semanticweb.elk</groupId>
+            <groupId>io.github.liveontologies</groupId>
             <artifactId>elk-owlapi</artifactId>
-            <version>0.4.3</version>
+            <version>0.6.0</version>
             <exclusions>
                 <exclusion>
                     <groupId>net.sourceforge.owlapi</groupId>
@@ -141,6 +145,10 @@
                 <exclusion>
                     <groupId>net.sourceforge.owlapi</groupId>
                     <artifactId>owlapi-apibinding</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-distribution</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
