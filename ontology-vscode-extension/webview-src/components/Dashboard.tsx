@@ -3782,7 +3782,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 .then(({ requireDraftForMembers: rdm, isOwner }) => {
                   setRequireDraftForMembers(rdm);
                   setIsProjectOwner(isOwner);
-                  if (rdm && !isOwner) {
+                  if (rdm && !isOwner && !isProjectViewerRole) {
                     // Force into draft mode regardless of saved preference
                     setSyncMode('private');
                     ontologyMutationService.setRealTimeSync(false);
@@ -8062,6 +8062,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         } catch (checkErr) {
           console.warn("[Dashboard] GraphDB check failed, falling back to full upload:", checkErr);
           console.log(`[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (MISS/ERROR)`);
+        }
+
+        // Viewers can only read data already loaded by the project owner — never import.
+        if (isViewOnlyMember) {
+          notificationService.error("Not Available", "This file hasn't been loaded yet. Ask the project owner to open it first.");
+          setIsInitialLoading(false);
+          setIsHierarchyLoading(false);
+          setIsMetadataLoading(false);
+          setIsPropertiesLoading(false);
+          setIsIndividualsLoading(false);
+          setIsAnnotationPropertiesLoading(false);
+          setIsDatatypesLoading(false);
+          return;
         }
 
         notificationService.info("Loading File", `Loading ${fileName}...`);
@@ -15717,6 +15730,17 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </span>
                 )}
               </span>
+              {isProjectViewerRole && (
+                <span
+                  className="flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded text-[10px] font-semibold select-none"
+                  title="You are viewing the published version of this ontology. Contact the project owner for edit access."
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                  </svg>
+                  Public View
+                </span>
+              )}
               <button
                 onClick={() => setShowThemeSettings(true)}
                 className="ontocode-icon-hover-accent cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 text-xs p-2 rounded-md"
