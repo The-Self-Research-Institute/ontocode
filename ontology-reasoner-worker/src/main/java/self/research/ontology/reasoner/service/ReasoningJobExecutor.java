@@ -40,6 +40,9 @@ public class ReasoningJobExecutor {
 
     public Map<String, Object> execute(ReasoningJob job) throws Exception {
         return switch (job.getJobType()) {
+            case REASONER_HIERARCHY -> executeHierarchy(job);
+            case REASONER_OBJ_PROP_HIERARCHY -> executeObjPropHierarchy(job);
+            case REASONER_DATA_PROP_HIERARCHY -> executeDataPropHierarchy(job);
             case DL_QUERY -> executeDlQuery(job);
             case REASONER_CONSISTENCY -> executeConsistency(job);
             case REASONER_CLASSIFY -> executeClassify(job);
@@ -370,5 +373,239 @@ public class ReasoningJobExecutor {
             }
         }
         return entity.getIRI().getShortForm();
+    }
+
+    // ─── Hierarchy job implementations ───────────────────────────────────────
+
+    private static final int INITIAL_HIERARCHY_DEPTH = 3;
+
+    private Map<String, Object> executeHierarchy(ReasoningJob job) throws Exception {
+        ReasonerType type = parseReasonerType(job.getReasonerType());
+        // HermiT binary-compat: use Openllet; ELK is fine for class hierarchy
+        if (type == ReasonerType.HERMIT) type = ReasonerType.OPENLLET;
+        try (OntologySessionService.ReasoningSession session =
+                     sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
+            OWLReasoner reasoner = session.reasoner();
+            ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
+            OWLOntology ontology = session.ontology();
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+
+            precomputeHierarchy(reasoner, effective);
+
+            OWLClass thing = df.getOWLThing();
+            OWLClass nothing = df.getOWLNothing();
+            Set<String> visited = new HashSet<>();
+            Map<String, Object> root = buildClassNode(ontology, reasoner, thing, visited, INITIAL_HIERARCHY_DEPTH);
+            List<Map<String, Object>> hierarchy = new ArrayList<>();
+            hierarchy.add(root);
+            if (reasoner.getUnsatisfiableClasses().getSize() > 1
+                    || !reasoner.getSubClasses(nothing, true).isEmpty()) {
+                hierarchy.add(buildClassNode(ontology, reasoner, nothing, visited, INITIAL_HIERARCHY_DEPTH));
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("hierarchy", hierarchy);
+            result.put("reasonerType", effective.getDisplayName());
+            result.put("totalClasses", visited.size());
+            if (session.downgradedWarning() != null) result.put("downgradedWarning", session.downgradedWarning());
+            return result;
+        }
+    }
+
+    private Map<String, Object> executeObjPropHierarchy(ReasoningJob job) throws Exception {
+        ReasonerType type = parseReasonerType(job.getReasonerType());
+        // ELK has no property hierarchy — use Openllet
+        if (type == ReasonerType.ELK || type == ReasonerType.HERMIT) type = ReasonerType.OPENLLET;
+        try (OntologySessionService.ReasoningSession session =
+                     sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
+            OWLReasoner reasoner = session.reasoner();
+            ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
+            OWLOntology ontology = session.ontology();
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            OWLObjectProperty topProp = df.getOWLTopObjectProperty();
+
+            precomputeHierarchy(reasoner, effective);
+
+            Set<String> visited = new HashSet<>();
+            Map<String, Object> root;
+            try {
+                root = buildObjectPropertyNode(ontology, reasoner, topProp, visited);
+            } catch (UnsupportedOperationException e) {
+                root = Map.of("id", topProp.getIRI().toString(), "label", "owl:topObjectProperty",
+                        "children", List.of(), "hasChildren", false, "type", "ObjectProperty");
+            }
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> children = (List<Map<String, Object>>) root.get("children");
+            if (children.isEmpty()) {
+                List<Map<String, Object>> asserted = ontology.getObjectPropertiesInSignature().stream()
+                        .filter(p -> !p.isOWLTopObjectProperty() && !p.isOWLBottomObjectProperty())
+                        .map(p -> Map.<String, Object>of("id", p.getIRI().toString(), "label", label(p, ontology),
+                                "children", List.of(), "hasChildren", false, "type", "ObjectProperty"))
+                        .collect(Collectors.toList());
+                root = new HashMap<>(root);
+                root.put("children", asserted);
+                root.put("hasChildren", !asserted.isEmpty());
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("hierarchy", List.of(root));
+            result.put("reasonerType", effective.getDisplayName());
+            if (session.downgradedWarning() != null) result.put("downgradedWarning", session.downgradedWarning());
+            return result;
+        }
+    }
+
+    private Map<String, Object> executeDataPropHierarchy(ReasoningJob job) throws Exception {
+        ReasonerType type = parseReasonerType(job.getReasonerType());
+        if (type == ReasonerType.ELK || type == ReasonerType.HERMIT) type = ReasonerType.OPENLLET;
+        try (OntologySessionService.ReasoningSession session =
+                     sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
+            OWLReasoner reasoner = session.reasoner();
+            ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
+            OWLOntology ontology = session.ontology();
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            OWLDataProperty topProp = df.getOWLTopDataProperty();
+
+            precomputeHierarchy(reasoner, effective);
+
+            Set<String> visited = new HashSet<>();
+            Map<String, Object> root;
+            try {
+                root = buildDataPropertyNode(ontology, reasoner, topProp, visited);
+            } catch (UnsupportedOperationException e) {
+                root = Map.of("id", topProp.getIRI().toString(), "label", "owl:topDataProperty",
+                        "children", List.of(), "hasChildren", false, "type", "DataProperty");
+            }
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> children = (List<Map<String, Object>>) root.get("children");
+            if (children.isEmpty()) {
+                List<Map<String, Object>> asserted = ontology.getDataPropertiesInSignature().stream()
+                        .filter(p -> !p.isOWLTopDataProperty() && !p.isOWLBottomDataProperty())
+                        .map(p -> Map.<String, Object>of("id", p.getIRI().toString(), "label", label(p, ontology),
+                                "children", List.of(), "hasChildren", false, "type", "DataProperty"))
+                        .collect(Collectors.toList());
+                root = new HashMap<>(root);
+                root.put("children", asserted);
+                root.put("hasChildren", !asserted.isEmpty());
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("hierarchy", List.of(root));
+            result.put("reasonerType", effective.getDisplayName());
+            if (session.downgradedWarning() != null) result.put("downgradedWarning", session.downgradedWarning());
+            return result;
+        }
+    }
+
+    private Map<String, Object> buildClassNode(OWLOntology ontology, OWLReasoner reasoner,
+                                               OWLClass owlClass, Set<String> visited, int maxDepth) {
+        String iri = owlClass.getIRI().toString();
+        List<Map<String, String>> equivalentClasses = reasoner.getEquivalentClasses(owlClass).getEntities().stream()
+                .filter(cls -> !cls.equals(owlClass))
+                .map(cls -> Map.of("iri", cls.getIRI().toString(), "label", label(cls, ontology)))
+                .collect(Collectors.toList());
+
+        if (visited.contains(iri) && !owlClass.isOWLThing() && !owlClass.isOWLNothing()) {
+            return Map.of("id", iri, "label", label(owlClass, ontology),
+                    "children", List.of(), "hasChildren", false, "equivalentClasses", equivalentClasses);
+        }
+        visited.add(iri);
+
+        org.semanticweb.owlapi.reasoner.NodeSet<OWLClass> subClassesNodeSet =
+                reasoner.getSubClasses(owlClass, true);
+        boolean hasAnyChildren = subClassesNodeSet.getFlattened().stream()
+                .anyMatch(c -> !c.isOWLNothing() && !c.equals(owlClass));
+
+        List<Map<String, Object>> children = new ArrayList<>();
+        if (maxDepth > 0) {
+            for (org.semanticweb.owlapi.reasoner.Node<OWLClass> subClassNode : subClassesNodeSet) {
+                OWLClass representative = subClassNode.getRepresentativeElement();
+                if (representative.isOWLNothing() && !owlClass.isOWLThing()) continue;
+                if (representative.equals(owlClass)) continue;
+                children.add(buildClassNode(ontology, reasoner, representative, visited, maxDepth - 1));
+            }
+            children.sort(Comparator.comparing(m -> m.get("label").toString()));
+        }
+
+        Map<String, Object> node = new HashMap<>();
+        node.put("id", iri);
+        node.put("label", label(owlClass, ontology));
+        node.put("children", children);
+        node.put("hasChildren", hasAnyChildren);
+        node.put("type", "Class");
+        node.put("equivalentClasses", equivalentClasses);
+        if (owlClass.isOWLNothing() || !reasoner.isSatisfiable(owlClass)) {
+            node.put("isUnsatisfiable", true);
+        }
+        return node;
+    }
+
+    private Map<String, Object> buildObjectPropertyNode(OWLOntology ontology, OWLReasoner reasoner,
+                                                        OWLObjectProperty property, Set<String> visited) {
+        String iri = property.getIRI().toString();
+        List<Map<String, String>> equivalentProperties =
+                reasoner.getEquivalentObjectProperties(property).getEntities().stream()
+                        .filter(p -> !p.equals(property) && !p.isAnonymous())
+                        .map(p -> Map.of("iri", p.asOWLObjectProperty().getIRI().toString(),
+                                "label", label(p.asOWLObjectProperty(), ontology)))
+                        .collect(Collectors.toList());
+
+        if (visited.contains(iri) && !property.isOWLTopObjectProperty()) {
+            return Map.of("id", iri, "label", label(property, ontology),
+                    "children", List.of(), "hasChildren", false, "equivalentProperties", equivalentProperties);
+        }
+        visited.add(iri);
+
+        List<Map<String, Object>> children = new ArrayList<>();
+        for (org.semanticweb.owlapi.reasoner.Node<OWLObjectPropertyExpression> node :
+                reasoner.getSubObjectProperties(property, true)) {
+            OWLObjectPropertyExpression rep = node.getRepresentativeElement();
+            if (rep.isAnonymous()) continue;
+            OWLObjectProperty sub = rep.asOWLObjectProperty();
+            if (sub.isOWLBottomObjectProperty() || sub.equals(property)) continue;
+            children.add(buildObjectPropertyNode(ontology, reasoner, sub, visited));
+        }
+        children.sort(Comparator.comparing(m -> m.get("label").toString()));
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", iri);
+        result.put("label", label(property, ontology));
+        result.put("children", children);
+        result.put("hasChildren", !children.isEmpty());
+        result.put("type", "ObjectProperty");
+        result.put("equivalentProperties", equivalentProperties);
+        return result;
+    }
+
+    private Map<String, Object> buildDataPropertyNode(OWLOntology ontology, OWLReasoner reasoner,
+                                                      OWLDataProperty property, Set<String> visited) {
+        String iri = property.getIRI().toString();
+        if (visited.contains(iri) && !property.isOWLTopDataProperty()) {
+            return Map.of("id", iri, "label", label(property, ontology),
+                    "children", List.of(), "hasChildren", false, "type", "DataProperty");
+        }
+        visited.add(iri);
+
+        List<Map<String, Object>> children = new ArrayList<>();
+        for (org.semanticweb.owlapi.reasoner.Node<OWLDataProperty> node :
+                reasoner.getSubDataProperties(property, true)) {
+            OWLDataProperty sub = node.getRepresentativeElement();
+            if (sub.isOWLBottomDataProperty() || sub.equals(property)) continue;
+            children.add(buildDataPropertyNode(ontology, reasoner, sub, visited));
+        }
+        children.sort(Comparator.comparing(m -> m.get("label").toString()));
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", iri);
+        result.put("label", label(property, ontology));
+        result.put("children", children);
+        result.put("hasChildren", !children.isEmpty());
+        result.put("type", "DataProperty");
+        return result;
     }
 }

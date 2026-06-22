@@ -2314,6 +2314,15 @@ const Dashboard: React.FC<DashboardProps> = ({
   const loadInferredHierarchy = useCallback(async () => {
     if (!projectId) return;
 
+    // HermiT/Pellet cannot handle large ontologies — auto-downgrade to ELK above 500K triples.
+    // The editor service also enforces this server-side, but doing it here avoids a wasted round-trip.
+    const HEAVY_REASONER_TRIPLE_LIMIT = 500_000;
+    const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
+    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
+    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > HEAVY_REASONER_TRIPLE_LIMIT)
+      ? 'ELK'
+      : selectedReasoner;
+
     const fetchWithReasoner = async (reasoner: string) => {
       const response = await apiClient.get<any>(
         `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=${reasoner}`,
@@ -2332,10 +2341,14 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
 
     try {
-      const payload = await fetchWithReasoner(selectedReasoner);
+      const payload = await fetchWithReasoner(effectiveReasoner);
 
-      // Backend signals timeout — auto-retry with STRUCTURAL (no reasoning, always fast)
-      if (payload?.timeout && selectedReasoner !== 'STRUCTURAL') {
+      // Backend signals ontology is too large — retry with STRUCTURAL (no inference, always fast)
+      if (payload?.tooLargeForReasoner && effectiveReasoner !== 'STRUCTURAL') {
+        const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
+        applyPayload(fallbackPayload);
+      // Backend signals timeout — auto-retry with STRUCTURAL
+      } else if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
         const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
         applyPayload(fallbackPayload);
       } else {
@@ -2345,50 +2358,45 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.error("[Dashboard] Failed to load inferred class hierarchy:", error);
       setInferredClassHierarchy([]);
     }
-  }, [projectId, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner, normalizeHierarchyNode]);
+  }, [projectId, metadata, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner, normalizeHierarchyNode]);
 
   const loadInferredObjectPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log("[Dashboard] Loading inferred object property hierarchy...");
+    const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
+    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
+    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-object-property-hierarchy?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-object-property-hierarchy?reasonerType=${effectiveReasoner}`,
       );
       const payload = res?.data || res;
+      if (payload?.tooLargeForReasoner) { setInferredObjectPropertyHierarchy([]); return; }
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      console.log(
-        "[Dashboard] Inferred object properties loaded:",
-        Array.isArray(hierarchy) ? hierarchy.length : 0,
-        "items",
-      );
       setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred object property hierarchy:", error);
       setInferredObjectPropertyHierarchy([]);
     }
-  }, [projectId, selectedReasoner]);
+  }, [projectId, metadata, selectedReasoner]);
 
   const loadInferredDataPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log("[Dashboard] Loading inferred data property hierarchy...");
+    const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
+    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
+    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-data-property-hierarchy?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-data-property-hierarchy?reasonerType=${effectiveReasoner}`,
       );
       const payload = res?.data || res;
+      if (payload?.tooLargeForReasoner) { setInferredDataPropertyHierarchy([]); return; }
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      console.log("[Dashboard] Inferred data properties response:", payload);
-      console.log(
-        "[Dashboard] Inferred data properties loaded:",
-        Array.isArray(hierarchy) ? hierarchy.length : 0,
-        "items",
-      );
       setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred data property hierarchy:", error);
       setInferredDataPropertyHierarchy([]);
     }
-  }, [projectId, selectedReasoner]);
+  }, [projectId, metadata, selectedReasoner]);
 
   const loadInferredAnnotationPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;

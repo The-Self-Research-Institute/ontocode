@@ -16,7 +16,10 @@ public class ReasoningJob {
         REASONER_CONSISTENCY,
         REASONER_CLASSIFY,
         REASONER_REALIZE,
-        REASONER_RUN
+        REASONER_RUN,
+        REASONER_HIERARCHY,
+        REASONER_OBJ_PROP_HIERARCHY,
+        REASONER_DATA_PROP_HIERARCHY
     }
 
     public enum Status {
