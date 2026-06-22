@@ -31,11 +31,11 @@ services:
 
   gateway:
     environment:
-      JAVA_OPTS: -Xms128m -Xmx1024m -XX:+UseG1GC
+      JAVA_OPTS: -Xms128m -Xmx640m -XX:+UseG1GC
     deploy:
       resources:
         limits:
-          memory: 2g
+          memory: 1g
 
   owl-editor:
     environment:
@@ -44,7 +44,7 @@ services:
       ONTOCODE_DLQUERY_MAX_CONCURRENT: 2
       ONTOCODE_DLQUERY_SLOT_BUDGET: 2
       ONTOCODE_REASONER_WORKER_ENABLED: "true"
-      ONTOCODE_REASONER_MAX_TRIPLES: 5000000
+      ONTOCODE_REASONER_MAX_TRIPLES: 20000000
     deploy:
       resources:
         limits:
@@ -55,6 +55,8 @@ services:
       JAVA_OPTS: "-Xms3g -Xmx10g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof"
       ONTOCODE_REASONING_MAX_CONCURRENT: 2
       ONTOCODE_REASONING_SLOT_BUDGET: 2
+      ONTOCODE_REASONER_MAX_TRIPLES: 20000000
+      ONTOCODE_REASONER_ELK_MAX_TRIPLES: 20000000
     deploy:
       resources:
         limits:
@@ -70,11 +72,11 @@ services:
 
   plugin-service:
     environment:
-      JAVA_OPTS: -Xms128m -Xmx384m -XX:+UseG1GC
+      JAVA_OPTS: -Xms256m -Xmx1g -XX:+UseG1GC
     deploy:
       resources:
         limits:
-          memory: 512m
+          memory: 1.5g
 
   webapp:
     deploy:
