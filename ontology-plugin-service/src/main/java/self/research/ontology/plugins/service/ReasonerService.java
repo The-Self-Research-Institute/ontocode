@@ -1,5 +1,6 @@
 package self.research.ontology.plugins.service;
 
+import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
@@ -21,6 +22,14 @@ import java.util.stream.Collectors;
 public class ReasonerService {
 
     private static final Logger log = LoggerFactory.getLogger(ReasonerService.class);
+
+    // Shared data factory — independent of any per-ontology OWLOntologyManager.
+    // OWLAPI 5.x OWLOntologyImpl holds its manager via a WeakReference; if that
+    // manager is collected, ontology.getOWLOntologyManager() returns null. Using
+    // a separate shared factory ensures basic axiom/entity creation never fails
+    // due to a collected manager.
+    private static final OWLDataFactory DATA_FACTORY =
+            OWLManager.createOWLOntologyManager().getOWLDataFactory();
 
     private final Map<String, OWLReasoner> reasonerCache = new HashMap<>();
     
@@ -119,10 +128,9 @@ public class ReasonerService {
             
             Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
             Set<OWLClass> unsatisfiable = bottomNode.getEntities();
-            
+
             // Remove owl:Nothing from results
-            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
-            unsatisfiable.remove(df.getOWLNothing());
+            unsatisfiable.remove(DATA_FACTORY.getOWLNothing());
             
             log.info("Found {} unsatisfiable classes", unsatisfiable.size());
             return unsatisfiable;
@@ -196,8 +204,7 @@ public class ReasonerService {
         Map<String, Object> results = new HashMap<>();
         
         try {
-            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
-            OWLClass owlThing = df.getOWLThing();
+            OWLClass owlThing = DATA_FACTORY.getOWLThing();
             
             // Check consistency first
             boolean isConsistent = true;
@@ -267,7 +274,7 @@ public class ReasonerService {
                 try {
                     Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
                     Set<OWLClass> unsatisfiable = new HashSet<>(bottomNode.getEntities());
-                    unsatisfiable.remove(df.getOWLNothing());
+                    unsatisfiable.remove(DATA_FACTORY.getOWLNothing());
                     
                     unsatisfiableList = unsatisfiable.stream()
                         .map(cls -> Map.of(
@@ -303,7 +310,7 @@ public class ReasonerService {
                 }
             } else {
                 try {
-                    OWLObjectProperty topObjectProp = df.getOWLTopObjectProperty();
+                    OWLObjectProperty topObjectProp = DATA_FACTORY.getOWLTopObjectProperty();
                     Set<OWLObjectProperty> processedObjProps = new HashSet<>();
                     buildObjectPropertyHierarchy(reasoner, ontology, topObjectProp, objectPropertyHierarchy, processedObjProps, 0);
                     
@@ -354,7 +361,7 @@ public class ReasonerService {
                 }
             } else {
                 try {
-                    OWLDataProperty topDataProp = df.getOWLTopDataProperty();
+                    OWLDataProperty topDataProp = DATA_FACTORY.getOWLTopDataProperty();
                     Set<OWLDataProperty> processedDataProps = new HashSet<>();
                     buildDataPropertyHierarchy(reasoner, ontology, topDataProp, dataPropertyHierarchy, processedDataProps, 0);
                     
@@ -738,20 +745,14 @@ public class ReasonerService {
                 Set<OWLClass> superClasses = getInferredSuperClasses(ontology, owlClass, type);
                 for (OWLClass superClass : superClasses) {
                     if (!superClass.isOWLThing()) {
-                        OWLAxiom axiom = ontology.getOWLOntologyManager()
-                            .getOWLDataFactory()
-                            .getOWLSubClassOfAxiom(owlClass, superClass);
-                        inferredAxioms.add(axiom);
+                        inferredAxioms.add(DATA_FACTORY.getOWLSubClassOfAxiom(owlClass, superClass));
                     }
                 }
-                
+
                 // Inferred instance axioms
                 Set<OWLNamedIndividual> instances = getInferredInstances(ontology, owlClass, type);
                 for (OWLNamedIndividual individual : instances) {
-                    OWLAxiom axiom = ontology.getOWLOntologyManager()
-                        .getOWLDataFactory()
-                        .getOWLClassAssertionAxiom(owlClass, individual);
-                    inferredAxioms.add(axiom);
+                    inferredAxioms.add(DATA_FACTORY.getOWLClassAssertionAxiom(owlClass, individual));
                 }
             }
             
@@ -845,7 +846,7 @@ public class ReasonerService {
             try {
                 Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
                 Set<OWLClass> unsatisfiable = new HashSet<>(bottomNode.getEntities());
-                unsatisfiable.remove(ontology.getOWLOntologyManager().getOWLDataFactory().getOWLNothing());
+                unsatisfiable.remove(DATA_FACTORY.getOWLNothing());
                 
                 if (!unsatisfiable.isEmpty()) {
                     Map<String, Object> cause = new HashMap<>();
