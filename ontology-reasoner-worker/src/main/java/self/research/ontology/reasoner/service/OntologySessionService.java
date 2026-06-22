@@ -95,12 +95,15 @@ public class OntologySessionService {
             log.info("Loaded ontology for {} ({} axioms, userId={}, reasoner={})",
                     projectId, ontology.getAxiomCount(), userId, effectiveType);
 
-            if (cacheEligible && revision >= 0) {
+            boolean storedInCache = cacheEligible && revision >= 0;
+            if (storedInCache) {
                 ontologyCache.put(projectId, revision, manager, ontology);
             }
 
             OWLReasoner reasoner = EphemeralReasonerFactory.create(ontology, effectiveType);
-            return new ReasoningSession(manager, ontology, reasoner, effectiveType, downgradedWarning, false);
+            // If stored in cache the manager lifetime is owned by OntologyCache — don't remove on close.
+            // fromCache=true suppresses the manager.removeOntology() call in ReasoningSession.close().
+            return new ReasoningSession(storedInCache ? null : manager, ontology, reasoner, effectiveType, downgradedWarning, storedInCache);
         }
     }
 
