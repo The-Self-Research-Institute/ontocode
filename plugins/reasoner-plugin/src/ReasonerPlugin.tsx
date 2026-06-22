@@ -162,7 +162,14 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
           if (!statusRes.ok) throw new Error(`Poll failed: ${statusRes.statusText}`);
           const statusData = await statusRes.json();
           if (statusData.status === 'COMPLETED') { result = statusData; break; }
-          if (statusData.status === 'FAILED') throw new Error(statusData.error || 'Classification failed');
+          if (statusData.status === 'FAILED') {
+            const failErr = statusData.error || 'Classification failed';
+            const failIssues: any[] = statusData.issues || [];
+            const failDetail = failIssues.length > 0
+              ? failErr + '\n\nConflicts found:\n' + failIssues.slice(0, 10).map((iss: any) => `• ${iss.message || JSON.stringify(iss)}`).join('\n')
+              : failErr;
+            throw new Error(failDetail);
+          }
           setStatus({ isRunning: true, currentTask: task, progress: 0, message: 'Classifying... (still running)' });
         }
         if (result.taskId && result.status === 'RUNNING') {
@@ -211,6 +218,30 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
           break;
           
         case 'classification':
+          // Worker returns inconsistent:true + issues:[...] when ontology has disjoint/complement conflicts
+          if (result.inconsistent) {
+            const issues: any[] = result.issues || [];
+            let detail = result.message || 'The ontology is inconsistent.';
+            if (issues.length > 0) {
+              detail += '\n\nConflicts found:\n' + issues
+                .slice(0, 10)
+                .map((iss: any) => `• ${iss.message || JSON.stringify(iss)}`)
+                .join('\n');
+              if (issues.length > 10) {
+                detail += `\n• …and ${issues.length - 10} more`;
+              }
+            }
+            setError(detail);
+            setClassificationResult({
+              timestamp: new Date().toISOString(),
+              duration: result.durationMs || duration,
+              classHierarchy: [],
+              equivalentClasses: [],
+              unsatisfiableClasses: []
+            });
+            break;
+          }
+
           // Map unsatisfiable classes to proper format
           const classUnsatisfiable = (result.unsatisfiableClasses || []).map((item: any) => {
             if (typeof item === 'string') {
@@ -220,7 +251,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
             }
             return item;
           });
-          
+
           setClassificationResult({
             timestamp: new Date().toISOString(),
             duration: result.durationMs || duration,
