@@ -24,6 +24,11 @@ export interface MutationOp {
 // fetchProjects() will call setRealTimeSync(false) if the project should start in private mode.
 let realTimeSyncEnabled = true;
 
+// When true, all mutations are blocked at the client layer — the project requires Draft Mode
+// and the user has not yet started their draft copy. The callback fires so Dashboard can show the dialog.
+let draftEditBlocked = false;
+let onDraftEditBlocked: (() => void) | null = null;
+
 /** True when edits should go to the per-user draft graph (private mode). */
 export function isPrivateEditMode(): boolean {
   return !realTimeSyncEnabled;
@@ -37,6 +42,12 @@ export const ontologyMutationService = {
   setRealTimeSync(enabled: boolean) {
     realTimeSyncEnabled = enabled;
     console.log(`[MutationService] Real-time sync ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  },
+
+  /** Block/unblock direct edits when a project requires Draft Mode for members. */
+  setDraftRequired(blocked: boolean, onBlocked?: () => void) {
+    draftEditBlocked = blocked;
+    onDraftEditBlocked = onBlocked ?? null;
   },
 
   isPrivateEditMode,
@@ -57,6 +68,14 @@ export const ontologyMutationService = {
     // Public/shared mode: write directly to the project main graph.
     const useDraft = resolveUseDraft(draft);
     const actor = resolveMutationActor(userId, username);
+
+    // Block mutations for members who must use Draft Mode but haven't started their copy yet.
+    if (draftEditBlocked) {
+      if (onDraftEditBlocked) onDraftEditBlocked();
+      const e = new Error('This project requires Draft Mode for editing. Start your private copy to make changes.');
+      (e as any).reason = 'draftRequired';
+      throw e;
+    }
 
     console.log(`[MutationService] 🔄 Applying mutations to ${projectId}`,ops, {
       opsCount: ops.length,

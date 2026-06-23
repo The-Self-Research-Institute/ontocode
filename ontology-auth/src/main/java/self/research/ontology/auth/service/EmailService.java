@@ -188,7 +188,7 @@ public class EmailService {
                         </div>
                         
                         <p class="footer">
-                            This invitation will expire on %s. If you didn't expect this invitation, you can safely ignore this email.
+                            If you didn't expect this invitation, you can safely ignore this email.
                         </p>
                     </div>
                 </div>
@@ -203,8 +203,7 @@ public class EmailService {
             vscodeInvitationLink,
             webviewLink,
             webviewLink,
-            vscodeInvitationLink,
-            invitation.getExpiresAt().toString()
+            vscodeInvitationLink
         );
 
         try {

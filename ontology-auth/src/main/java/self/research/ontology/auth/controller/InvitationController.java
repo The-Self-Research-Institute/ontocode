@@ -202,10 +202,7 @@ public class InvitationController {
             Map<String, Object> response = new HashMap<>();
             response.put("invitation", convertToDTO(invitation));
             
-            if (invitation.isExpired()) {
-                response.put("expired", true);
-                response.put("message", "This invitation has expired");
-            } else if ("ACCEPTED".equals(invitation.getStatus())) {
+            if ("ACCEPTED".equals(invitation.getStatus())) {
                 response.put("alreadyAccepted", true);
                 response.put("message", "This invitation has already been accepted");
             } else if ("CANCELLED".equals(invitation.getStatus())) {
@@ -441,11 +438,11 @@ public class InvitationController {
             }
             
             Invitation invitation = existingInvitation.get();
-            
-            // Extend expiry and reset status — keep the same token so old email links stay valid.
-            // Generating a new token on every resend would invalidate any previously-sent links
-            // and cause "Invalid Invitation" errors for recipients who already opened the old email.
-            invitation.setExpiresAt(LocalDateTime.now().plusDays(7));
+
+            if ("ACCEPTED".equals(invitation.getStatus())) {
+                return ResponseEntity.badRequest().body(Map.of("error", "This user has already accepted the invitation and is a workspace member"));
+            }
+
             invitation.setStatus("PENDING");
             invitation = invitationRepository.save(invitation);
 
@@ -536,10 +533,6 @@ public class InvitationController {
             
             Workspace workspace = workspaceOpt.get();
             
-            // Generate new token and extend expiry
-            String newToken = UUID.randomUUID().toString().replace("-", "");
-            invitation.setInvitationToken(newToken);
-            invitation.setExpiresAt(java.time.LocalDateTime.now().plusDays(7));
             invitation.setStatus("PENDING");
             invitationService.saveInvitation(invitation);
             
@@ -573,7 +566,6 @@ public class InvitationController {
         dto.put("role", invitation.getRole());
         dto.put("status", invitation.getStatus());
         dto.put("createdAt", invitation.getCreatedAt().toString());
-        dto.put("expiresAt", invitation.getExpiresAt().toString());
         if (invitation.getAcceptedAt() != null) {
             dto.put("acceptedAt", invitation.getAcceptedAt().toString());
         }
