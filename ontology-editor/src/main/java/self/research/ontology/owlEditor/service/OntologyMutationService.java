@@ -216,12 +216,17 @@ public class OntologyMutationService {
                 }
             }
 
-            // Restrictions: fail fast if GraphDB did not persist the blank-node axiom
+            // Restrictions: fail fast if GraphDB did not persist the blank-node axiom.
+            // Scope verification to the graph that was written (main vs draft), not the
+            // user's draft read scope from SparqlQueryContext.
+            String verifyGraphUri = draft
+                    ? datasetService.getDraftGraphUri(projectId, userId)
+                    : datasetService.getGraphUri(projectId);
             for (MutationOp op : ops) {
                 if ("addDataRestriction".equals(op.type())) {
-                    verifyRestrictionInserted(projectId, op, true);
+                    verifyRestrictionInserted(projectId, verifyGraphUri, op, true);
                 } else if ("addObjectRestriction".equals(op.type())) {
-                    verifyRestrictionInserted(projectId, op, false);
+                    verifyRestrictionInserted(projectId, verifyGraphUri, op, false);
                 }
             }
         } catch (Exception e) {
@@ -1119,7 +1124,8 @@ public class OntologyMutationService {
      * Confirm a restriction axiom is readable from GraphDB immediately after INSERT.
      * Throws if the triple pattern is missing (catches silent no-ops from bad SPARQL injection).
      */
-    private void verifyRestrictionInserted(String projectId, MutationOp op, boolean isDataRestriction) {
+    private void verifyRestrictionInserted(String projectId, String graphUri, MutationOp op,
+                                           boolean isDataRestriction) {
         String classIri = op.iri();
         String propertyIri = op.property();
         String restrictionType = op.restrictionType();
@@ -1169,8 +1175,8 @@ public class OntologyMutationService {
               %s
             }
             """.formatted(classIri, axiomPredicate, propertyIri, restrictionPattern);
-        log.info("[MUTATION] Verifying restriction insertion: {}", verifyQuery);
-        boolean found = datasetService.execAsk(projectId, verifyQuery);
+        log.info("[MUTATION] Verifying restriction insertion in graph {}: {}", graphUri, verifyQuery);
+        boolean found = datasetService.execAskInGraph(projectId, graphUri, verifyQuery);
         if (!found) {
             log.error("[MUTATION] Restriction verification FAILED for class={} property={} type={} filler={}",
                     classIri, propertyIri, restrictionType, fillerIri);
