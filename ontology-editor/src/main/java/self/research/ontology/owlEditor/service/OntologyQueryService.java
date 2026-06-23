@@ -860,7 +860,7 @@ public class OntologyQueryService {
             }
             // Fetch all annotation values for this property
             String annQuery = PREFIXES + """
-                SELECT ?prop ?value WHERE {
+                SELECT DISTINCT ?prop ?value WHERE {
                   <%s> ?prop ?value .
                   FILTER(isLiteral(?value) || isIRI(?value))
                   {
@@ -2298,7 +2298,7 @@ public class OntologyQueryService {
         result.put("id", classIri);
 
         String annQuery = PREFIXES + """
-            SELECT ?prop ?value WHERE {
+            SELECT DISTINCT ?prop ?value WHERE {
               <%s> ?prop ?value .
               FILTER(isLiteral(?value) || isIRI(?value))
               {
@@ -2357,7 +2357,7 @@ public class OntologyQueryService {
         // --- Annotations query ---
         CompletableFuture<TupleQueryResult> annFuture = CompletableFuture.supplyAsync(() -> {
             String annQuery = PREFIXES + """
-                SELECT ?prop ?value WHERE {
+                SELECT DISTINCT ?prop ?value WHERE {
                   <%s> ?prop ?value .
                   FILTER(isLiteral(?value) || isIRI(?value))
                   {
@@ -3211,7 +3211,7 @@ public class OntologyQueryService {
 
         CompletableFuture<TupleQueryResult> annFuture = CompletableFuture.supplyAsync(() -> {
             String annQuery = PREFIXES + """
-                SELECT ?prop ?value WHERE {
+                SELECT DISTINCT ?prop ?value WHERE {
                   <%s> ?prop ?value .
                   FILTER(isLiteral(?value) || isIRI(?value))
                   {
@@ -3757,7 +3757,7 @@ public class OntologyQueryService {
         
         // Get annotations
         String annQuery = PREFIXES + """
-            SELECT ?prop ?value WHERE {
+            SELECT DISTINCT ?prop ?value WHERE {
               <%s> ?prop ?value .
               FILTER(isLiteral(?value) || isIRI(?value))
               {

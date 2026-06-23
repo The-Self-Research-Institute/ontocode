@@ -105,22 +105,28 @@ public class ReasonerController {
         }
 
         // Try to load from Fuseki/TDB2 by streaming to a temp file then parsing.
-        // Replaces the old StringWriter → String → ByteArrayInputStream path, which
-        // allocated the full graph 3× in heap before the OWL API even started parsing.
+        // Uses N-Triples format (same as the reasoner worker) with explicit OWLAPI format
+        // declaration to avoid auto-detect overhead and ensure correct parsing of large exports.
         Path tempFile = null;
         try {
             log.info("Attempting to load ontology from Fuseki for project: {}", projectId);
-            tempFile = Files.createTempFile("reasoner-" + projectId + "-", ".ttl");
+            tempFile = Files.createTempFile("reasoner-" + projectId + "-", ".nt");
             try (OutputStream out = Files.newOutputStream(tempFile)) {
-                datasetService.exportDatasetToStream(projectId, RDFFormat.TURTLE, out);
+                datasetService.exportDatasetToStream(projectId, RDFFormat.NTRIPLES, out);
             }
             long tempBytes = Files.size(tempFile);
             log.info("Streamed ontology to temp file: {} bytes", tempBytes);
             if (tempBytes > 0) {
                 OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
                 try (InputStream in = Files.newInputStream(tempFile)) {
-                    OWLOntology ontology = manager.loadOntologyFromOntologyDocument(in);
-                    log.info("Ontology loaded from Fuseki stream: {} axioms", ontology.getAxiomCount());
+                    org.semanticweb.owlapi.io.StreamDocumentSource source =
+                        new org.semanticweb.owlapi.io.StreamDocumentSource(
+                            in,
+                            IRI.create("urn:ontocode:stats:" + projectId),
+                            new org.semanticweb.owlapi.formats.NTriplesDocumentFormat(),
+                            "application/n-triples");
+                    OWLOntology ontology = manager.loadOntologyFromOntologyDocument(source);
+                    log.info("Ontology loaded from Fuseki stream: {} axioms, {} classes", ontology.getAxiomCount(), ontology.getClassesInSignature().size());
                     editorReasonerCache.putOntology(projectId, ontology);
                     return ontology;
                 }

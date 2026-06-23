@@ -6650,6 +6650,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], classInstanceCounts);
       setClassHierarchy(hierarchyWithCounts);
+      setIsHierarchyLoading(false);
       console.log("[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy");
 
       // Re-load children for all previously expanded nodes to preserve tree state.
@@ -6675,6 +6676,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setLoadingStatusMessage("Ontology editor is busy — still loading…");
       } else {
         console.error("[Dashboard] Failed to refresh class hierarchy:", error);
+        setIsHierarchyLoading(false);
       }
     } finally {
       classHierarchyRefreshInFlight.current = false;
@@ -9072,16 +9074,27 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         markAsUnsaved();
 
-        console.log("[handleAddClassInline] Class created, refreshing from GraphDB...");
-        // Add a small delay to ensure backend has processed the class
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        // Ensure parent is expanded so the new child is visible
+        setExpandedNodes((prev) => (prev.includes(parentIri) ? prev : [...prev, parentIri]));
 
-        await refreshClassHierarchy();
+        // Targeted refresh: reload only the parent's children instead of the full hierarchy.
+        // For large ontologies (60k+ classes) a full refreshClassHierarchy() takes many seconds
+        // and wipes the optimistic update in the meantime. Clearing + reloading just the parent
+        // is one API call and keeps the rest of the tree stable.
+        await new Promise((resolve) => setTimeout(resolve, 300));
 
-        // Re-expand the parent node after refresh to ensure it stays open
-        if (parentIri && !expandedNodes.includes(parentIri)) {
-          setExpandedNodes((prev) => [...prev, parentIri]);
-        }
+        // Clear the parent's cached children so loadChildren makes a fresh API call
+        setClassHierarchy((prev) => {
+          const clearParentChildren = (nodes: TreeNode[]): TreeNode[] =>
+            nodes.map((n) => {
+              if (n.id === parentIri) return { ...n, children: [] };
+              if (n.children) return { ...n, children: clearParentChildren(n.children) };
+              return n;
+            });
+          return clearParentChildren(prev);
+        });
+
+        await loadChildren(parentIri);
 
         console.log("[handleAddClassInline] Refresh complete");
         showNotification(`Class "${name}" created successfully!`);
@@ -9091,7 +9104,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         throw error;
       }
     },
-    [projectId, metadata, classHierarchy, user, refreshClassHierarchy, showNotification, expandedNodes, markAsUnsaved],
+    [projectId, metadata, classHierarchy, user, loadChildren, showNotification, expandedNodes, markAsUnsaved],
   );
 
   const handleAddItem = useCallback(

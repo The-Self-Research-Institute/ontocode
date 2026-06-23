@@ -251,6 +251,7 @@ const ClassEditor: React.FC<{
   const [activeTab, setActiveTab] = useState<"annotations" | "usage" | "description">("annotations");
   const [loadingAnnotations, setLoadingAnnotations] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [loadingDetailsElapsed, setLoadingDetailsElapsed] = useState(0);
   const [axiomsLoaded, setAxiomsLoaded] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
 
@@ -603,6 +604,10 @@ const ClassEditor: React.FC<{
 
   const loadClassDetails = async (signal?: AbortSignal) => {
     setLoadingDetails(true);
+    setLoadingDetailsElapsed(0);
+    const elapsedTimer = setInterval(() => {
+      setLoadingDetailsElapsed((s) => s + 1);
+    }, 1000);
     try {
       // Pass userId so the backend includes the user's draft graph in SPARQL reads.
       // SparqlQueryContextInterceptor reads it from the request param; buildFromClause
@@ -677,7 +682,9 @@ const ClassEditor: React.FC<{
         friendlyApiErrorMessage(error, "Could not load class axioms"),
       );
     } finally {
+      clearInterval(elapsedTimer);
       setLoadingDetails(false);
+      setLoadingDetailsElapsed(0);
     }
   };
 
@@ -1946,9 +1953,22 @@ const ClassEditor: React.FC<{
             )}
 
             {loadingDetails && !axiomsLoaded && (
-              <div className="flex items-center justify-center min-h-[160px] py-8 bg-white border border-t-0 border-gray-200 rounded-b-sm text-sm text-gray-500">
-                <div className="animate-spin mr-2 h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full" />
-                Loading axioms and restrictions…
+              <div className="flex flex-col items-center justify-center min-h-[160px] py-8 bg-white border border-t-0 border-gray-200 rounded-b-sm text-sm text-gray-500 gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full" />
+                  <span>
+                    Loading axioms and restrictions
+                    {loadingDetailsElapsed > 0 && (
+                      <span className="ml-1 text-gray-400">({loadingDetailsElapsed}s)</span>
+                    )}
+                    …
+                  </span>
+                </div>
+                {loadingDetailsElapsed >= 15 && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 max-w-sm text-center">
+                    Still running — querying a large ontology via SPARQL. First load can take up to 90 seconds; subsequent loads are cached.
+                  </p>
+                )}
               </div>
             )}
 
