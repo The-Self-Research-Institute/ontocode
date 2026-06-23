@@ -1144,18 +1144,18 @@ public class OntologyMutationService {
             case "value" -> "?r owl:hasValue <" + fillerIri + "> .";
             case "min" -> {
                 int card = cardinality != null ? cardinality : 1;
-                yield "?r owl:minQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger ; "
-                        + onFillerPred + " <" + fillerIri + "> .";
+                yield "?r owl:minQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n"
+                        + "?r " + onFillerPred + " <" + fillerIri + "> .";
             }
             case "max" -> {
                 int card = cardinality != null ? cardinality : 1;
-                yield "?r owl:maxQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger ; "
-                        + onFillerPred + " <" + fillerIri + "> .";
+                yield "?r owl:maxQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n"
+                        + "?r " + onFillerPred + " <" + fillerIri + "> .";
             }
             case "exactly" -> {
                 int card = cardinality != null ? cardinality : 1;
-                yield "?r owl:qualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger ; "
-                        + onFillerPred + " <" + fillerIri + "> .";
+                yield "?r owl:qualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n"
+                        + "?r " + onFillerPred + " <" + fillerIri + "> .";
             }
             default -> null;
         };
@@ -1165,9 +1165,8 @@ public class OntologyMutationService {
         String verifyQuery = PREFIXES + """
             ASK WHERE {
               <%s> %s ?r .
-              ?r a owl:Restriction ;
-                 owl:onProperty <%s> ;
-                 %s
+              ?r owl:onProperty <%s> .
+              %s
             }
             """.formatted(classIri, axiomPredicate, propertyIri, restrictionPattern);
         log.info("[MUTATION] Verifying restriction insertion: {}", verifyQuery);

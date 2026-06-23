@@ -333,6 +333,8 @@ const ClassEditor: React.FC<{
   const [classInstances, setClassInstances] = useState<Individual[]>([]);
   const [loadingInstances, setLoadingInstances] = useState(false);
   const descriptionAbortRef = useRef<AbortController | null>(null);
+  const detailsLoadGenRef = useRef(0);
+  const isSavingAxiomRef = useRef(false);
   const [editingInstanceId, setEditingInstanceId] = useState<string | undefined>();
 
   // General Class Axioms State (GCAs - SubClassOf with anonymous subclass)
@@ -465,6 +467,8 @@ const ClassEditor: React.FC<{
     const handleRemoteEdit = (e: Event) => {
       const edit = (e as CustomEvent).detail;
       if (!edit || edit.nodeId !== item.id) return;
+      // Ignore collaboration echoes from our own in-flight save; handleAddAxiom reloads after success.
+      if (isSavingAxiomRef.current) return;
       // Any change targeting this class IRI should refresh the details panel
       const CLASS_CHANGE_TYPES = new Set([
         "CLASS_MODIFIED", "CLASS_RENAMED",
@@ -602,7 +606,8 @@ const ClassEditor: React.FC<{
     }
   };
 
-  const loadClassDetails = async (signal?: AbortSignal) => {
+  const loadClassDetails = async (signal?: AbortSignal): Promise<any | null> => {
+    const loadGen = ++detailsLoadGenRef.current;
     setLoadingDetails(true);
     setLoadingDetailsElapsed(0);
     const elapsedTimer = setInterval(() => {
@@ -620,9 +625,23 @@ const ClassEditor: React.FC<{
         undefined,
         signal ? { signal } : undefined,
       );
+      if (loadGen !== detailsLoadGenRef.current) {
+        console.log("[ClassEditor] Discarding stale class details response");
+        return null;
+      }
       // Backend returns {success: true, data: {...}}
       let details = response?.data?.data || response?.data || response;
-      console.log("[ClassEditor] Class details loaded:", details);
+      const equivAxioms = details?.equivalentClassesAxioms || [];
+      const restrictionEquivs = equivAxioms.filter(
+        (a: Axiom) => a.isRestriction === true || a.isRestriction === "true",
+      );
+      console.log("[ClassEditor] Class details loaded:", {
+        id: details?.id,
+        equivalentCount: equivAxioms.length,
+        restrictionEquivCount: restrictionEquivs.length,
+        restrictionEquivs: restrictionEquivs.map((a: Axiom) => a.definition),
+        full: details,
+      });
 
       // Desktop / OWLAPI fast-open already embeds structural-reasoner inferred axioms
       // (~5ms). Do NOT call Openllet here — it precomputes the whole ontology and
@@ -676,7 +695,9 @@ const ClassEditor: React.FC<{
       };
       console.log("[ClassEditor] Updated item:", updatedItem);
       onUpdate(updatedItem);
+      return details;
     } catch (error) {
+      if (loadGen !== detailsLoadGenRef.current) return null;
       console.error("Failed to load class details:", error);
       notificationService.error(
         "Description not ready",
@@ -684,9 +705,63 @@ const ClassEditor: React.FC<{
       );
     } finally {
       clearInterval(elapsedTimer);
-      setLoadingDetails(false);
-      setLoadingDetailsElapsed(0);
+      if (loadGen === detailsLoadGenRef.current) {
+        setLoadingDetails(false);
+        setLoadingDetailsElapsed(0);
+      }
     }
+    return null;
+  };
+
+  const axiomListForType = (details: any, axiomType: AxiomType): Axiom[] | undefined => {
+    if (!details) return undefined;
+    if (axiomType === "EquivalentTo") return details.equivalentClassesAxioms;
+    if (axiomType === "SubClassOf") return details.subClassOfAxioms;
+    return details.disjointClassesAxioms;
+  };
+
+  const restrictionMatchesAxiom = (
+    axiom: Axiom,
+    restrictionData: RestrictionData,
+    axiomType: AxiomType,
+  ): boolean => {
+    const isRestriction = axiom.isRestriction === true || axiom.isRestriction === "true";
+    if (!isRestriction) return false;
+    if (axiom.type !== axiomType) return false;
+    if (axiom.propertyIri !== restrictionData.propertyIri) return false;
+    if (axiom.restrictionType !== restrictionData.restrictionType) return false;
+    if (axiom.fillerIri !== restrictionData.fillerIri) return false;
+    if (restrictionData.cardinality != null) {
+      const card = typeof axiom.cardinality === "string" ? parseInt(axiom.cardinality, 10) : axiom.cardinality;
+      if (card !== restrictionData.cardinality) return false;
+    }
+    return true;
+  };
+
+  const reloadDetailsUntilRestrictionVisible = async (
+    restrictionData: RestrictionData,
+    axiomType: AxiomType,
+    maxAttempts = 6,
+    delayMs = 500,
+  ): Promise<void> => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const details = await loadClassDetails();
+      const axioms = axiomListForType(details, axiomType) || [];
+      const found = axioms.some((a) => restrictionMatchesAxiom(a, restrictionData, axiomType));
+      if (found) {
+        console.log(`[ClassEditor] Restriction visible after attempt ${attempt}`);
+        return;
+      }
+      if (attempt < maxAttempts) {
+        console.log(`[ClassEditor] Restriction not visible yet (attempt ${attempt}/${maxAttempts}), retrying...`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    console.warn("[ClassEditor] Restriction not found in class details after retries");
+    notificationService.warning(
+      "Restriction may not be visible yet",
+      "The save succeeded but the new restriction is not showing. Refresh the Description tab or reload the project.",
+    );
   };
 
   const loadDescription = async () => {
@@ -998,6 +1073,7 @@ const ClassEditor: React.FC<{
       classHierarchyLength: classHierarchy.length,
     });
     setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       // If we have structured restriction data, use the specific restriction methods
       // NOTE: DisjointWith does NOT support restrictions - it's only for class-to-class disjointness
@@ -1061,10 +1137,9 @@ const ClassEditor: React.FC<{
           );
         }
         // Allow GraphDB to index the new restriction before reloading
-        // Qualified cardinality restrictions (min/max/exactly) require more time
         const isCardinalityRestriction = ["min", "max", "exactly"].includes(restrictionData.restrictionType);
-        await new Promise((resolve) => setTimeout(resolve, isCardinalityRestriction ? 1500 : 800));
-        await loadClassDetails();
+        await new Promise((resolve) => setTimeout(resolve, isCardinalityRestriction ? 1500 : 400));
+        await reloadDetailsUntilRestrictionVisible(restrictionData, type);
         return;
       }
 
@@ -1172,6 +1247,7 @@ const ClassEditor: React.FC<{
       notificationService.error("Add Axiom Failed", `Failed to add axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
