@@ -930,6 +930,7 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("[ClassEditor] handleEditorConfirm failed:", error);
       notificationService.error("Save Failed", `Failed to save axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      throw error;
     } finally {
       setIsEditorOpen(false);
       setEditorType(null);
@@ -1024,6 +1025,8 @@ const ClassEditor: React.FC<{
             restrictionData.restrictionType,
             restrictionData.fillerIri,
             restrictionData.cardinality,
+            user?.email,
+            user?.username || user?.email,
           );
         } else if (restrictionData.type === "dataRestriction") {
           if (!restrictionData.propertyIri || !restrictionData.fillerIri) {
@@ -1052,6 +1055,8 @@ const ClassEditor: React.FC<{
             restrictionData.restrictionType as "some" | "only" | "min" | "max" | "exactly",
             restrictionData.fillerIri,
             restrictionData.cardinality,
+            user?.email,
+            user?.username || user?.email,
           );
         }
         // Allow GraphDB to index the new restriction before reloading
@@ -2193,6 +2198,7 @@ const ClassEditor: React.FC<{
           setEditorAllowedTabs(undefined);
         }}
         onConfirm={handleEditorConfirm}
+        axiomType={editorType === 'EquivalentTo' ? 'EquivalentTo' : 'SubClassOf'}
         title={editorTitle}
         initialValue={editorExistingValue}
         initialClassIri={editorInitialClassIri}

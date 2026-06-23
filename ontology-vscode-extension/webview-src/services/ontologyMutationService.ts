@@ -83,6 +83,13 @@ export const ontologyMutationService = {
         (e as any).reason = 'viewOnly';
         throw e;
       }
+      if (err?.status === 409 && err?.data?.draftCopyNotReady) {
+        const e = new Error(
+          'Private draft is still copying the ontology. Wait a moment and try again, or switch to Public mode.',
+        );
+        (e as any).reason = 'draftCopyNotReady';
+        throw e;
+      }
       throw err;
     }
   },
@@ -1081,13 +1088,15 @@ export const ontologyMutationService = {
    * This sends structured data that the backend can process without Manchester parsing
    */
   async addObjectRestriction(
-    projectId: string, 
-    classIri: string, 
+    projectId: string,
+    classIri: string,
     axiomType: 'EquivalentTo' | 'SubClassOf',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value',
     fillerClassIri: string,
-    cardinality?: number
+    cardinality?: number,
+    userId?: string,
+    username?: string
   ): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addObjectRestriction',
@@ -1097,7 +1106,7 @@ export const ontologyMutationService = {
       target: fillerClassIri,
       cardinality: cardinality,
       axiomType // EquivalentTo or SubClassOf
-    }], undefined);
+    }], undefined, userId, username);
   },
 
   /**
@@ -1111,7 +1120,9 @@ export const ontologyMutationService = {
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly',
     datatypeIri: string,
-    cardinality?: number
+    cardinality?: number,
+    userId?: string,
+    username?: string
   ): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addDataRestriction',
@@ -1121,7 +1132,7 @@ export const ontologyMutationService = {
       target: datatypeIri,
       cardinality: cardinality,
       axiomType
-    }], undefined);
+    }], undefined, userId, username);
   },
 
   /**
