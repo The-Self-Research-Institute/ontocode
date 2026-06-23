@@ -884,14 +884,14 @@ type AnnotationMap = Record<string, string | string[]>;
 const flattenAnnotations = (annotations?: AnnotationMap) => {
   const rows: Array<{ property: string; value: string; rowKey: string }> = [];
   if (!annotations) return rows;
+  const seen = new Set<string>();
   Object.entries(annotations).forEach(([property, rawValue]) => {
     const values = Array.isArray(rawValue) ? rawValue : [rawValue];
-    values.forEach((value, index) => {
-      rows.push({
-        property,
-        value,
-        rowKey: `${property}::${index}::${value}`,
-      });
+    values.forEach((value) => {
+      const key = `${property}::${value}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push({ property, value, rowKey: key });
     });
   });
   return rows;

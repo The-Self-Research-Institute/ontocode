@@ -20,7 +20,9 @@ export interface MutationOp {
 // Global flag to control real-time sync behavior
 // When true: changes apply immediately (for shared files)
 // When false: changes save as drafts (for private files)
-let realTimeSyncEnabled = false;
+// Default matches the React syncMode default of "public" (line ~1538 in Dashboard.tsx).
+// fetchProjects() will call setRealTimeSync(false) if the project should start in private mode.
+let realTimeSyncEnabled = true;
 
 /** True when edits should go to the per-user draft graph (private mode). */
 export function isPrivateEditMode(): boolean {
