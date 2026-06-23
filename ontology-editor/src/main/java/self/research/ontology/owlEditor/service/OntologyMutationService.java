@@ -473,9 +473,9 @@ public class OntologyMutationService {
                 boolean isDataRestriction = "DataRestriction".equals(op.axiomType());
                 String restrictionBody = buildRestrictionBody(op.property(), op.restrictionType(), op.target(), op.cardinality(), isDataRestriction);
                 if (restrictionBody.isEmpty()) return "";
-                return "INSERT {\n"
+                return "INSERT DATA {\n"
                     + "<" + op.iri() + "> rdfs:domain " + restrictionBody + " .\n"
-                    + "} WHERE {}";
+                    + "}";
             } else {
                 return "INSERT DATA {\n"
                     + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
@@ -494,9 +494,9 @@ public class OntologyMutationService {
                 boolean isDataRestriction = "DataRestriction".equals(op.axiomType());
                 String restrictionBody = buildRestrictionBody(op.property(), op.restrictionType(), op.target(), op.cardinality(), isDataRestriction);
                 if (restrictionBody.isEmpty()) return "";
-                return "INSERT {\n"
+                return "INSERT DATA {\n"
                     + "<" + op.iri() + "> rdfs:range " + restrictionBody + " .\n"
-                    + "} WHERE {}";
+                    + "}";
             } else if (op.target() != null && op.target().contains("[")) {
                 String drSparql = buildDatatypeRestrictionSparql(op.iri(), op.target(), "rdfs:range");
                 if (!drSparql.isEmpty()) return drSparql;
@@ -1061,10 +1061,13 @@ public class OntologyMutationService {
             return "";
         }
 
+        // INSERT DATA (not INSERT…WHERE) so injectGraphContext wraps the triple block
+        // reliably. INSERT…WHERE + blank-node restrictions was producing malformed
+        // GRAPH clauses and restrictions never persisted in Fuseki.
         String sparql = """
-            INSERT {
+            INSERT DATA {
               <%s> %s %s .
-            } WHERE { }
+            }
             """.formatted(classIri, axiomPredicate, restrictionBody);
             
         log.info("[MUTATION]   Generated restriction SPARQL: {}", sparql);
@@ -1164,7 +1167,7 @@ public class OntologyMutationService {
         // Build an RDF list using blank nodes
         // Format: _:b1 rdf:first <member1>; rdf:rest _:b2. _:b2 rdf:first <member2>; rdf:rest rdf:nil.
         StringBuilder insertBuilder = new StringBuilder();
-        insertBuilder.append("INSERT {\n");
+        insertBuilder.append("INSERT DATA {\n");
         insertBuilder.append("  <").append(classIri).append("> owl:disjointUnionOf _:list0 .\n");
         
         for (int i = 0; i < memberIris.length; i++) {
@@ -1177,7 +1180,7 @@ public class OntologyMutationService {
                 .append("             rdf:rest ").append(nextList).append(" .\n");
         }
         
-        insertBuilder.append("} WHERE { }");
+        insertBuilder.append("}\n");
         
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated disjoint union SPARQL:");
@@ -1224,7 +1227,7 @@ public class OntologyMutationService {
         
         // Build an RDF list using blank nodes
         StringBuilder insertBuilder = new StringBuilder();
-        insertBuilder.append("INSERT {\n");
+        insertBuilder.append("INSERT DATA {\n");
         insertBuilder.append("  <").append(classIri).append("> owl:hasKey _:keyList0 .\n");
         
         for (int i = 0; i < propertyIris.length; i++) {
@@ -1235,7 +1238,7 @@ public class OntologyMutationService {
             insertBuilder.append("             rdf:rest ").append(nextList).append(" .\n");
         }
         
-        insertBuilder.append("} WHERE { }");
+        insertBuilder.append("}\n");
         
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated has key SPARQL: {}", sparql);
@@ -1275,7 +1278,7 @@ public class OntologyMutationService {
      */
     private String buildPropertyChainSparql(String propertyIri, String[] chainPropertyIris) {
         log.info("[MUTATION] buildPropertyChainSparql: property={}, chain={}", propertyIri, String.join(" o ", chainPropertyIris));
-        StringBuilder sb = new StringBuilder("INSERT {\n");
+        StringBuilder sb = new StringBuilder("INSERT DATA {\n");
         sb.append("  <").append(propertyIri).append("> owl:propertyChainAxiom _:chain0 .\n");
         for (int i = 0; i < chainPropertyIris.length; i++) {
             String cur = "_:chain" + i;
@@ -1283,7 +1286,7 @@ public class OntologyMutationService {
             sb.append("  ").append(cur).append(" rdf:first <").append(chainPropertyIris[i].trim()).append("> ;\n");
             sb.append("             rdf:rest ").append(next).append(" .\n");
         }
-        sb.append("} WHERE { }");
+        sb.append("}\n");
         return sb.toString();
     }
 
@@ -1330,7 +1333,7 @@ public class OntologyMutationService {
         
         // Build an RDF list for the intersection members
         StringBuilder insertBuilder = new StringBuilder();
-        insertBuilder.append("INSERT {\n");
+        insertBuilder.append("INSERT DATA {\n");
         insertBuilder.append("  <").append(classIri).append("> ").append(axiomPredicate).append(" _:intersection .\n");
         insertBuilder.append("  _:intersection owl:intersectionOf _:list0 .\n");
         
@@ -1342,7 +1345,7 @@ public class OntologyMutationService {
             insertBuilder.append("             rdf:rest ").append(nextList).append(" .\n");
         }
         
-        insertBuilder.append("} WHERE { }");
+        insertBuilder.append("}\n");
         
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated intersection SPARQL: {}", sparql);
@@ -1363,7 +1366,7 @@ public class OntologyMutationService {
         
         // Build an RDF list for the union members
         StringBuilder insertBuilder = new StringBuilder();
-        insertBuilder.append("INSERT {\n");
+        insertBuilder.append("INSERT DATA {\n");
         insertBuilder.append("  <").append(classIri).append("> ").append(axiomPredicate).append(" _:union .\n");
         insertBuilder.append("  _:union owl:unionOf _:list0 .\n");
         
@@ -1375,7 +1378,7 @@ public class OntologyMutationService {
             insertBuilder.append("             rdf:rest ").append(nextList).append(" .\n");
         }
         
-        insertBuilder.append("} WHERE { }");
+        insertBuilder.append("}\n");
 
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated union SPARQL: {}", sparql);
@@ -1388,7 +1391,7 @@ public class OntologyMutationService {
      */
     private String buildGCAIntersectionSparql(String classIri, String[] memberIris) {
         log.info("[MUTATION] buildGCAIntersectionSparql: classIri={}, members={}", classIri, String.join(", ", memberIris));
-        StringBuilder sb = new StringBuilder("INSERT {\n");
+        StringBuilder sb = new StringBuilder("INSERT DATA {\n");
         sb.append("  _:gcaIntersection owl:intersectionOf _:gcaList0 .\n");
         sb.append("  _:gcaIntersection rdfs:subClassOf <").append(classIri).append("> .\n");
         for (int i = 0; i < memberIris.length; i++) {
@@ -1397,7 +1400,7 @@ public class OntologyMutationService {
             sb.append("  ").append(cur).append(" rdf:first <").append(memberIris[i].trim()).append("> ;\n");
             sb.append("             rdf:rest ").append(next).append(" .\n");
         }
-        sb.append("} WHERE { }");
+        sb.append("}\n");
         return sb.toString();
     }
 
@@ -1407,7 +1410,7 @@ public class OntologyMutationService {
      */
     private String buildGCAUnionSparql(String classIri, String[] memberIris) {
         log.info("[MUTATION] buildGCAUnionSparql: classIri={}, members={}", classIri, String.join(", ", memberIris));
-        StringBuilder sb = new StringBuilder("INSERT {\n");
+        StringBuilder sb = new StringBuilder("INSERT DATA {\n");
         sb.append("  _:gcaUnion owl:unionOf _:gcaList0 .\n");
         sb.append("  _:gcaUnion rdfs:subClassOf <").append(classIri).append("> .\n");
         for (int i = 0; i < memberIris.length; i++) {
@@ -1416,7 +1419,7 @@ public class OntologyMutationService {
             sb.append("  ").append(cur).append(" rdf:first <").append(memberIris[i].trim()).append("> ;\n");
             sb.append("             rdf:rest ").append(next).append(" .\n");
         }
-        sb.append("} WHERE { }");
+        sb.append("}\n");
         return sb.toString();
     }
 
@@ -1434,11 +1437,11 @@ public class OntologyMutationService {
         String axiomPredicate = getAxiomPredicate(axiomType);
         
         String sparql = """
-            INSERT {
+            INSERT DATA {
               <%s> %s [
                 owl:complementOf <%s>
               ] .
-            } WHERE { }
+            }
             """.formatted(classIri, axiomPredicate, complementIri);
         
         log.info("[MUTATION]   Generated complement SPARQL: {}", sparql);
@@ -1459,7 +1462,7 @@ public class OntologyMutationService {
         
         // Build an RDF list for the oneOf individuals
         StringBuilder insertBuilder = new StringBuilder();
-        insertBuilder.append("INSERT {\n");
+        insertBuilder.append("INSERT DATA {\n");
         insertBuilder.append("  <").append(classIri).append("> ").append(axiomPredicate).append(" _:oneOf .\n");
         insertBuilder.append("  _:oneOf owl:oneOf _:list0 .\n");
         
@@ -1471,7 +1474,7 @@ public class OntologyMutationService {
             insertBuilder.append("             rdf:rest ").append(nextList).append(" .\n");
         }
         
-        insertBuilder.append("} WHERE { }");
+        insertBuilder.append("}\n");
         
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated oneOf SPARQL: {}", sparql);
@@ -1553,13 +1556,13 @@ public class OntologyMutationService {
         List<DatatypeFacet> facets = parseDatatypeFacets(facetsRaw, datatypeIri);
 
         StringBuilder insert = new StringBuilder();
-        insert.append(PREFIXES).append("INSERT {\n");
+        insert.append(PREFIXES).append("INSERT DATA {\n");
         insert.append("  <").append(subjectIri).append("> ").append(predicate).append(" _:dr .\n");
         insert.append("  _:dr a rdfs:Datatype ;\n");
         insert.append("       owl:onDatatype <").append(datatypeIri).append(">");
 
         if (facets.isEmpty()) {
-            insert.append(" .\n} WHERE {}");
+            insert.append(" .\n}\n");
             return insert.toString();
         }
 
@@ -1578,7 +1581,7 @@ public class OntologyMutationService {
             }
             insert.append(" .\n");
         }
-        insert.append("} WHERE {}");
+        insert.append("}\n");
         return insert.toString();
     }
 

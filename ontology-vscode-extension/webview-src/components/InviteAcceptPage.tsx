@@ -260,24 +260,29 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
 
                     </div>
 
-                    <button
-                        onClick={handleAcceptInvitation}
-                        disabled={accepting}
-                        className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {accepting ? 'Accepting...' : user ? 'Accept Invitation' : 'Sign Up & Accept'}
-                    </button>
-
-                    {!user && (
-                        <p className="text-center text-sm text-gray-600 mt-4">
-                            Already have an account?{' '}
+                    {user ? (
+                        <button
+                            onClick={handleAcceptInvitation}
+                            disabled={accepting}
+                            className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {accepting ? 'Accepting...' : 'Accept Invitation'}
+                        </button>
+                    ) : (
+                        <div className="flex flex-col gap-3">
                             <button
                                 onClick={() => onLoginRequired && onLoginRequired(invitation?.inviteeEmail || '')}
-                                className="text-purple-600 hover:text-purple-700 font-medium"
+                                className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
                             >
-                                Login
+                                Login & Accept
                             </button>
-                        </p>
+                            <button
+                                onClick={handleAcceptInvitation}
+                                className="w-full px-6 py-3 border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 transition-colors font-medium"
+                            >
+                                Sign Up & Accept
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>

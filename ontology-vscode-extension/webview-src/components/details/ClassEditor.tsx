@@ -614,8 +614,9 @@ const ClassEditor: React.FC<{
       // then adds FROM <draftGraph> to every execSelect, making draft additions visible.
       const userId = user?.email || user?.userId;
       const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
+      // Bust any intermediary cache after mutations so new restrictions appear immediately.
       const response = await apiClient.get<any>(
-        `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}`,
+        `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}&_=${Date.now()}`,
         undefined,
         signal ? { signal } : undefined,
       );
