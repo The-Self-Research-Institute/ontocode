@@ -3869,7 +3869,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
             if (!shouldApplyDirectly && projectId && !isShared && !isNonWorkspaceMode) {
               const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
-              startDraftCopySession(projectId, effectiveUserId);
+              startDraftCopySession(projectId, effectiveUserId, { showModal: true });
             }
 
             // Check requireDraftForMembers — if on and user is not owner, override to draft.
@@ -3887,7 +3887,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     // preference restore above; avoids racing two copies on the same draft graph.
                     if (shouldApplyDirectly) {
                       const innerUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
-                      startDraftCopySession(projectId, innerUserId);
+                      startDraftCopySession(projectId, innerUserId, { showModal: true });
                     }
                   }
                 })
@@ -16739,6 +16739,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         onCancel={() => {
           if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
           setDraftCopyPhase('idle');
+          // Revert to public mode — the copy either failed or was blocked, so there is no
+          // usable draft graph. Staying in private with no copy would cause 409 on every edit.
+          if (draftCopyPhase === 'failed' || draftCopyPhase === 'import-blocked') {
+            setSyncMode('public');
+            ontologyMutationService.setRealTimeSync(true);
+            if (projectId) {
+              localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
+              userPreferencesService.saveSyncMode(projectId, 'public');
+            }
+          }
         }}
       />
 

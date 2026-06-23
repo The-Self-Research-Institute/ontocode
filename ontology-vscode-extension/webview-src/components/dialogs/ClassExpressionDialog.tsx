@@ -29,6 +29,8 @@ interface ClassExpressionDialogProps {
   initialTab?: 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
   /** Restrict which tabs are shown. If not specified, all tabs are shown. */
   allowedTabs?: TabType[];
+  /** Parent axiom type — EquivalentTo vs SubClassOf for restriction creators. */
+  axiomType?: 'EquivalentTo' | 'SubClassOf';
   initialRestrictionData?: {
     propertyIri?: string;
     restrictionType?: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value';
@@ -81,6 +83,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   initialTab,
   initialRestrictionData,
   allowedTabs,
+  axiomType = 'SubClassOf',
   projectId,
   expandedNodes = [],
   onToggleNode,
@@ -441,8 +444,11 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   }, [projectId, activeTab, manchesterExpression]);
 
   const handleConfirm = async () => {
+    if (isSavingConfirm) return;
+
     console.log('[ClassExpressionDialog] handleConfirm called', {
       activeTab,
+      axiomType,
       selectedClass: selectedClass?.id,
       selectedClassLabel: selectedClass?.label,
       selectedProperty: selectedProperty?.id,
@@ -471,7 +477,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         if (selectedProperty && restrictionFiller) {
           restrictionData = {
             type: 'objectRestriction',
-            axiomType: 'SubClassOf', // Default - caller can change this if needed
+            axiomType,
             propertyIri: selectedProperty.id,
             restrictionType: restrictionType,
             fillerIri: restrictionFiller.id,
@@ -510,7 +516,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           console.log('[ClassExpressionDialog] dataRestriction fillerIri:', fillerIri);
           restrictionData = {
             type: 'dataRestriction',
-            axiomType: 'SubClassOf', // Default - caller can change this if needed
+            axiomType,
             propertyIri: selectedDataProperty.id,
             restrictionType: dataRestrictionType,
             fillerIri: fillerIri,
@@ -523,8 +529,15 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
     if (expression) {
       console.log('[ClassExpressionDialog] Calling onConfirm with expression:', expression);
-      onConfirm(expression, restrictionData);
-      handleClose();
+      setIsSavingConfirm(true);
+      try {
+        await onConfirm(expression, restrictionData);
+        handleClose();
+      } catch (error) {
+        console.error('[ClassExpressionDialog] onConfirm failed:', error);
+      } finally {
+        setIsSavingConfirm(false);
+      }
     } else {
       console.warn('[ClassExpressionDialog] No expression to confirm! activeTab:', activeTab, 'selectedClass:', selectedClass);
     }
@@ -852,11 +865,17 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
   const manchesterKeywords = ['and', 'or', 'not', 'some', 'only', 'min', 'max', 'exactly', 'value'];
 
-  const isOkEnabled =
+  const topObjectPropertyIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
+  const topDataPropertyIri = 'http://www.w3.org/2002/07/owl#topDataProperty';
+
+  const isOkEnabled = !isSavingConfirm && (
     (activeTab === 'hierarchy' && selectedClass !== null) ||
-    (activeTab === 'objectRestriction' && selectedProperty && restrictionFiller) ||
+    (activeTab === 'objectRestriction' && selectedProperty && restrictionFiller
+      && selectedProperty.id !== topObjectPropertyIri) ||
     (activeTab === 'classExpression' && manchesterExpression.trim()) ||
-    (activeTab === 'dataRestriction' && selectedDataProperty);
+    (activeTab === 'dataRestriction' && selectedDataProperty
+      && selectedDataProperty.id !== topDataPropertyIri)
+  );
   
   // Debug logging for OK button state
   useEffect(() => {
@@ -1312,11 +1331,12 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
             Cancel
           </button>
           <button
-            onClick={handleConfirm}
+            onClick={() => void handleConfirm()}
             disabled={!isOkEnabled}
-            className="px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-2"
           >
-            OK
+            {isSavingConfirm && <Loader2 size={14} className="animate-spin" />}
+            {isSavingConfirm ? 'Saving…' : 'OK'}
           </button>
         </div>
       </div>
