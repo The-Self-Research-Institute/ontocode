@@ -7050,18 +7050,25 @@ const Dashboard: React.FC<DashboardProps> = ({
           const classId = (edit as any).nodeId || (edit as any).iri || (edit as any).id;
           if (classId) {
             console.log(`[Dashboard] Fetching details for modified class: ${classId}`);
+            const userId = user?.email || user?.userId;
+            const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
             // Add delay to ensure backend is ready
             setTimeout(() => {
               apiClient
-                .get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}`)
+                .get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}${userParam}&_=${Date.now()}`)
                 .then((response) => {
-                  const newData = response.data || response;
-                  // Ensure ID is present
-                  if (!newData.id && newData.iri) {
-                    newData.id = newData.iri;
+                  const details = response?.data?.data || response?.data || response;
+                  if (!details || typeof details !== "object" || details.success) {
+                    console.warn("[Dashboard] Unexpected class details response shape:", details);
+                    return;
                   }
-                  console.log("[Dashboard] Received updated class data:", newData);
-                  updateItemInState(newData);
+                  const merged = {
+                    ...selectedItem,
+                    ...details,
+                    id: details.id || details.iri || classId,
+                  };
+                  console.log("[Dashboard] Received updated class data:", merged);
+                  updateItemInState(merged);
                   console.log("[Dashboard] ✅ Class updated in state");
                 })
                 .catch((error) => console.error("[Dashboard] Failed to refresh class details:", error));

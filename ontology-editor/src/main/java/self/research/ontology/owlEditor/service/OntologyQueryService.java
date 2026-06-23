@@ -1444,153 +1444,208 @@ public class OntologyQueryService {
     }
 
     /**
-     * Render a Manchester-style class expression for a blank node (restriction, and/or/not, etc.).
+     * SPARQL for restriction axioms on a class. Uses top-level UNION branches instead of
+     * OPTIONAL { UNION ... BIND } + FILTER(BOUND), which GraphDB often evaluates as empty.
      */
-    private String describeBlankNodeManchester(String projectId, String blankNodeId) {
+    private String buildClassRestrictionSparql(String classIri, String axiomProperty) {
+        return buildClassRestrictionSparql(classIri, axiomProperty, false);
+    }
+
+    private String buildClassRestrictionSparql(String classIri, String axiomProperty, boolean distinct) {
+        String selectKw = distinct ? "SELECT DISTINCT" : "SELECT";
+        String link = "<%s> %s ?restriction .\n?restriction owl:onProperty ?prop .".formatted(classIri, axiomProperty);
+        return PREFIXES + """
+            %s ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card WHERE {
+              {
+                %s
+                ?restriction owl:someValuesFrom ?filler .
+                BIND("some" AS ?restrictionType)
+              } UNION {
+                %s
+                ?restriction owl:allValuesFrom ?filler .
+                BIND("only" AS ?restrictionType)
+              } UNION {
+                %s
+                ?restriction owl:hasValue ?filler .
+                BIND("value" AS ?restrictionType)
+              } UNION {
+                %s
+                ?restriction owl:hasSelf true .
+                BIND("Self" AS ?filler) .
+                BIND("some" AS ?restrictionType)
+              } UNION {
+                %s
+                ?restriction owl:minQualifiedCardinality ?card .
+                BIND("min" AS ?restrictionType)
+                OPTIONAL { ?restriction owl:onClass ?filler }
+                OPTIONAL { ?restriction owl:onDataRange ?filler }
+              } UNION {
+                %s
+                ?restriction owl:maxQualifiedCardinality ?card .
+                BIND("max" AS ?restrictionType)
+                OPTIONAL { ?restriction owl:onClass ?filler }
+                OPTIONAL { ?restriction owl:onDataRange ?filler }
+              } UNION {
+                %s
+                ?restriction owl:qualifiedCardinality ?card .
+                BIND("exactly" AS ?restrictionType)
+                OPTIONAL { ?restriction owl:onClass ?filler }
+                OPTIONAL { ?restriction owl:onDataRange ?filler }
+              } UNION {
+                %s
+                ?restriction owl:minCardinality ?card .
+                FILTER NOT EXISTS { ?restriction owl:minQualifiedCardinality ?any }
+                BIND("min" AS ?restrictionType)
+                BIND(owl:Thing AS ?filler)
+              } UNION {
+                %s
+                ?restriction owl:maxCardinality ?card .
+                FILTER NOT EXISTS { ?restriction owl:maxQualifiedCardinality ?any }
+                BIND("max" AS ?restrictionType)
+                BIND(owl:Thing AS ?filler)
+              } UNION {
+                %s
+                ?restriction owl:cardinality ?card .
+                FILTER NOT EXISTS { ?restriction owl:qualifiedCardinality ?any }
+                BIND("exactly" AS ?restrictionType)
+                BIND(owl:Thing AS ?filler)
+              }
+              OPTIONAL { ?prop rdfs:label ?propLabel }
+              OPTIONAL { ?filler rdfs:label ?fillerLabel }
+            }
+            """.formatted(selectKw, link, link, link, link, link, link, link, link, link, link);
+    }
+
+    private String normalizeBlankNodeId(String blankNodeId) {
+        if (blankNodeId == null) return "";
+        return blankNodeId.startsWith("_:") ? blankNodeId.substring(2) : blankNodeId;
+    }
+
+    private boolean blankNodeBindingMatches(BindingSet sol, String var, String normalizedId) {
+        if (normalizedId == null || normalizedId.isBlank() || !sol.hasBinding(var)) {
+            return false;
+        }
+        Value node = sol.getValue(var);
+        if (node == null || !node.isBNode()) {
+            return false;
+        }
+        String id = node.stringValue();
+        return normalizedId.equals(id);
+    }
+
+    private String formatRestrictionManchester(BindingSet sol) {
+        String propIri = resource(sol, "prop");
+        String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : formatIriWithPrefix(propIri);
+        String restrictionType = sol.hasBinding("restrictionType") ? literal(sol, "restrictionType") : "some";
+        String fillerIri = sol.hasBinding("filler") ? sol.getValue("filler").stringValue() : "";
+        String fillerLabel = sol.hasBinding("fillerLabel") ? literal(sol, "fillerLabel") : formatIriWithPrefix(fillerIri);
+        String cardinality = sol.hasBinding("card") ? literal(sol, "card") : "";
+        if ("Self".equals(fillerLabel)) {
+            return propLabel + " some Self";
+        }
+        if (!cardinality.isEmpty()) {
+            return propLabel + " " + restrictionType + " " + cardinality + " " + fillerLabel;
+        }
+        return propLabel + " " + restrictionType + " " + fillerLabel;
+    }
+
+    /**
+     * Render a Manchester-style class expression for a blank node (restriction, and/or/not, etc.).
+     * Uses class-anchored SPARQL and matches blank nodes by RDF4J internal ID in Java — GraphDB
+     * does not reliably support STR(?bnode) = "bN" filters.
+     */
+    private String describeBlankNodeManchester(String projectId, String classIri, String blankNodeId) {
         if (blankNodeId == null || blankNodeId.isBlank()) return null;
         if (blankNodeId.startsWith("http://") || blankNodeId.startsWith("https://") || blankNodeId.startsWith("urn:")) {
             return null;
         }
+        String normId = normalizeBlankNodeId(blankNodeId);
 
-        String restriction = describeBlankNodeRestriction(projectId, blankNodeId);
-        if (restriction != null && !restriction.isBlank()) return restriction;
+        if (classIri != null && !classIri.isBlank()) {
+            for (String axiomProperty : List.of("owl:equivalentClass", "rdfs:subClassOf")) {
+                try {
+                    TupleQueryResult rs = datasetService.execSelect(projectId, buildClassRestrictionSparql(classIri, axiomProperty));
+                    while (rs.hasNext()) {
+                        BindingSet sol = rs.next();
+                        if (blankNodeBindingMatches(sol, "restriction", normId)) {
+                            return formatRestrictionManchester(sol);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("Could not describe restriction for {} via {}: {}", blankNodeId, axiomProperty, e.getMessage());
+                }
+            }
 
-        List<String> intersection = describeBlankNodeMemberList(projectId, blankNodeId, "intersectionOf");
-        if (!intersection.isEmpty()) return String.join(" and ", intersection);
+            List<String> intersection = describeBlankNodeMemberListForClass(projectId, classIri, normId, "intersectionOf");
+            if (!intersection.isEmpty()) return String.join(" and ", intersection);
 
-        List<String> union = describeBlankNodeMemberList(projectId, blankNodeId, "unionOf");
-        if (!union.isEmpty()) return String.join(" or ", union);
+            List<String> union = describeBlankNodeMemberListForClass(projectId, classIri, normId, "unionOf");
+            if (!union.isEmpty()) return String.join(" or ", union);
 
-        String complement = describeBlankNodeComplement(projectId, blankNodeId);
-        if (complement != null && !complement.isBlank()) return "not " + complement;
+            String complement = describeBlankNodeComplementForClass(projectId, classIri, normId);
+            if (complement != null && !complement.isBlank()) return "not " + complement;
 
-        List<String> oneOf = describeBlankNodeMemberList(projectId, blankNodeId, "oneOf");
-        if (!oneOf.isEmpty()) return "{" + String.join(", ", oneOf) + "}";
+            List<String> oneOf = describeBlankNodeMemberListForClass(projectId, classIri, normId, "oneOf");
+            if (!oneOf.isEmpty()) return "{" + String.join(", ", oneOf) + "}";
+        }
 
         return null;
     }
 
-    private String blankNodeFilterClause(String var, String blankNodeId) {
-        String nodeKey = blankNodeId.startsWith("_:") ? blankNodeId.substring(2) : blankNodeId;
-        String escaped = nodeKey.replace("\\", "\\\\").replace("\"", "\\\"");
-        // GraphDB/RDF4J may return STR(?bnode) with or without the "_:" prefix.
-        return String.format(
-                "FILTER(isBlank(%s) && (STR(%s) = \"%s\" || STR(%s) = \"_:%s\"))",
-                var, var, escaped, var, escaped);
-    }
-
-    private String describeBlankNodeRestriction(String projectId, String blankNodeId) {
-        String query = PREFIXES + """
-            SELECT ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card WHERE {
-              ?bnode a owl:Restriction ;
-                     owl:onProperty ?prop .
-              %s
-              OPTIONAL { ?prop rdfs:label ?propLabel }
-              OPTIONAL {
-                { ?bnode owl:someValuesFrom ?filler . BIND("some" AS ?restrictionType) }
-                UNION { ?bnode owl:allValuesFrom ?filler . BIND("only" AS ?restrictionType) }
-                UNION { ?bnode owl:hasValue ?filler . BIND("value" AS ?restrictionType) }
-                UNION { ?bnode owl:hasSelf true . BIND("Self" AS ?filler) . BIND("some" AS ?restrictionType) }
-                UNION { ?bnode owl:minQualifiedCardinality ?card . BIND("min" AS ?restrictionType) }
-                UNION { ?bnode owl:maxQualifiedCardinality ?card . BIND("max" AS ?restrictionType) }
-                UNION { ?bnode owl:qualifiedCardinality ?card . BIND("exactly" AS ?restrictionType) }
-                UNION {
-                  ?bnode owl:minCardinality ?card .
-                  FILTER NOT EXISTS { ?bnode owl:minQualifiedCardinality ?any }
-                  BIND("min" AS ?restrictionType)
-                  BIND(owl:Thing AS ?filler)
-                }
-                UNION {
-                  ?bnode owl:maxCardinality ?card .
-                  FILTER NOT EXISTS { ?bnode owl:maxQualifiedCardinality ?any }
-                  BIND("max" AS ?restrictionType)
-                  BIND(owl:Thing AS ?filler)
-                }
-                UNION {
-                  ?bnode owl:cardinality ?card .
-                  FILTER NOT EXISTS { ?bnode owl:qualifiedCardinality ?any }
-                  BIND("exactly" AS ?restrictionType)
-                  BIND(owl:Thing AS ?filler)
-                }
-              }
-              OPTIONAL { ?bnode owl:onClass ?filler }
-              OPTIONAL { ?bnode owl:onDataRange ?filler }
-              OPTIONAL { ?filler rdfs:label ?fillerLabel }
-              FILTER(BOUND(?restrictionType))
-            }
-            LIMIT 1
-            """.formatted(blankNodeFilterClause("?bnode", blankNodeId));
-        try {
-            TupleQueryResult rs = datasetService.execSelect(projectId, query);
-            if (!rs.hasNext()) return null;
-            BindingSet sol = rs.next();
-            String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : localName(resource(sol, "prop"));
-            String filler = resourceOrBlank(sol, "filler");
-            String fillerLabel = sol.hasBinding("fillerLabel") ? literal(sol, "fillerLabel")
-                    : (filler != null ? localName(filler) : "");
-            String restrictionType = literal(sol, "restrictionType");
-            String card = literal(sol, "card");
-            if ("Self".equals(fillerLabel)) {
-                return propLabel + " some Self";
-            }
-            if (!card.isBlank()) {
-                return propLabel + " " + restrictionType + " " + card + " " + fillerLabel;
-            }
-            return propLabel + " " + restrictionType + " " + fillerLabel;
-        } catch (Exception e) {
-            log.debug("Could not describe restriction for {}: {}", blankNodeId, e.getMessage());
-            return null;
-        }
-    }
-
-    private List<String> describeBlankNodeMemberList(String projectId, String blankNodeId, String listPred) {
+    private List<String> describeBlankNodeMemberListForClass(String projectId, String classIri,
+                                                             String normalizedBlankId, String listPred) {
         String owlPred = "intersectionOf".equals(listPred) ? "owl:intersectionOf"
                 : "unionOf".equals(listPred) ? "owl:unionOf" : "owl:oneOf";
         String query = PREFIXES + """
-            SELECT ?member ?memberLabel WHERE {
+            SELECT ?bnode ?member ?memberLabel WHERE {
+              <%s> (owl:equivalentClass|rdfs:subClassOf) ?bnode .
+              FILTER(isBlank(?bnode))
               ?bnode %s ?list .
               ?list rdf:rest*/rdf:first ?member .
-              %s
               OPTIONAL { ?member rdfs:label ?memberLabel }
             }
-            """.formatted(owlPred, blankNodeFilterClause("?bnode", blankNodeId));
+            """.formatted(classIri, owlPred);
         List<String> labels = new ArrayList<>();
         try {
             TupleQueryResult rs = datasetService.execSelect(projectId, query);
             while (rs.hasNext()) {
                 BindingSet sol = rs.next();
+                if (!blankNodeBindingMatches(sol, "bnode", normalizedBlankId)) continue;
                 String member = resourceOrBlank(sol, "member");
                 if (member == null) continue;
                 String label = sol.hasBinding("memberLabel") ? literal(sol, "memberLabel") : localName(member);
                 labels.add(label.isBlank() ? member : label);
             }
         } catch (Exception e) {
-            log.debug("Could not describe {} for {}: {}", listPred, blankNodeId, e.getMessage());
+            log.debug("Could not describe {} for {}: {}", listPred, normalizedBlankId, e.getMessage());
         }
         return labels;
     }
 
-    private String describeBlankNodeComplement(String projectId, String blankNodeId) {
+    private String describeBlankNodeComplementForClass(String projectId, String classIri, String normalizedBlankId) {
         String query = PREFIXES + """
-            SELECT ?complement ?complementLabel WHERE {
+            SELECT ?bnode ?complement ?complementLabel WHERE {
+              <%s> (owl:equivalentClass|rdfs:subClassOf) ?bnode .
+              FILTER(isBlank(?bnode))
               ?bnode owl:complementOf ?complement .
-              %s
               OPTIONAL { ?complement rdfs:label ?complementLabel }
             }
-            LIMIT 1
-            """.formatted(blankNodeFilterClause("?bnode", blankNodeId));
+            LIMIT 50
+            """.formatted(classIri);
         try {
             TupleQueryResult rs = datasetService.execSelect(projectId, query);
-            if (!rs.hasNext()) return null;
-            BindingSet sol = rs.next();
-            String complement = resourceOrBlank(sol, "complement");
-            if (complement == null) return null;
-            String label = sol.hasBinding("complementLabel") ? literal(sol, "complementLabel") : localName(complement);
-            return label.isBlank() ? complement : label;
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                if (!blankNodeBindingMatches(sol, "bnode", normalizedBlankId)) continue;
+                String complement = resourceOrBlank(sol, "complement");
+                if (complement == null) return null;
+                String label = sol.hasBinding("complementLabel") ? literal(sol, "complementLabel") : localName(complement);
+                return label.isBlank() ? complement : label;
+            }
         } catch (Exception e) {
-            log.debug("Could not describe complement for {}: {}", blankNodeId, e.getMessage());
-            return null;
+            log.debug("Could not describe complement for {}: {}", normalizedBlankId, e.getMessage());
         }
+        return null;
     }
 
     private String resourceOrBlank(BindingSet sol, String var) {
@@ -2391,58 +2446,9 @@ public class OntologyQueryService {
         }, queryPool);
         
         // --- SubClassOf restrictions ---
-        CompletableFuture<TupleQueryResult> subClassRestrictionFuture = CompletableFuture.supplyAsync(() -> {
-            String subClassRestrictionQuery = PREFIXES + """
-                SELECT DISTINCT ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card ?propType WHERE {
-                  <%s> rdfs:subClassOf ?restriction .
-                  ?restriction a owl:Restriction ;
-                              owl:onProperty ?prop .
-                  OPTIONAL { ?prop rdfs:label ?propLabel }
-                  OPTIONAL { ?prop a ?propType . FILTER(?propType IN (owl:ObjectProperty, owl:DatatypeProperty)) }
-                  OPTIONAL {
-                    { ?restriction owl:someValuesFrom ?filler . BIND("some" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:allValuesFrom ?filler . BIND("only" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:hasValue ?filler . BIND("value" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:hasSelf true . BIND("Self" AS ?filler) . BIND("some" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:minQualifiedCardinality ?card . BIND("min" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:maxQualifiedCardinality ?card . BIND("max" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:qualifiedCardinality ?card . BIND("exactly" AS ?restrictionType) }
-                    UNION
-                    {
-                      ?restriction owl:minCardinality ?card .
-                      FILTER NOT EXISTS { ?restriction owl:minQualifiedCardinality ?any }
-                      BIND("min" AS ?restrictionType)
-                      BIND(owl:Thing AS ?filler)
-                    }
-                    UNION
-                    {
-                      ?restriction owl:maxCardinality ?card .
-                      FILTER NOT EXISTS { ?restriction owl:maxQualifiedCardinality ?any }
-                      BIND("max" AS ?restrictionType)
-                      BIND(owl:Thing AS ?filler)
-                    }
-                    UNION
-                    {
-                      ?restriction owl:cardinality ?card .
-                      FILTER NOT EXISTS { ?restriction owl:qualifiedCardinality ?any }
-                      BIND("exactly" AS ?restrictionType)
-                      BIND(owl:Thing AS ?filler)
-                    }
-                  }
-                  OPTIONAL { ?restriction owl:onClass ?filler }
-                  OPTIONAL { ?restriction owl:onDataRange ?filler }
-                  OPTIONAL { ?filler rdfs:label ?fillerLabel }
-                  FILTER(BOUND(?restrictionType))
-                }
-                """.formatted(classIri);
-            return datasetService.execSelect(projectId, subClassRestrictionQuery);
-        }, queryPool);
+        CompletableFuture<TupleQueryResult> subClassRestrictionFuture = CompletableFuture.supplyAsync(() ->
+            datasetService.execSelect(projectId, buildClassRestrictionSparql(classIri, "rdfs:subClassOf", true)),
+            queryPool);
         
         // --- SubClassOf anonymous expressions (intersection / union / complement merged) ---
         CompletableFuture<TupleQueryResult> subClassAnonymousFuture = CompletableFuture.supplyAsync(() -> {
@@ -2489,57 +2495,9 @@ public class OntologyQueryService {
         }, queryPool);
         
         // --- EquivalentClass restrictions ---
-        CompletableFuture<TupleQueryResult> equivRestrictionFuture = CompletableFuture.supplyAsync(() -> {
-            String q = PREFIXES + """
-                SELECT ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card WHERE {
-                  <%s> owl:equivalentClass ?restriction .
-                  ?restriction a owl:Restriction ;
-                              owl:onProperty ?prop .
-                  OPTIONAL { ?prop rdfs:label ?propLabel }
-                  OPTIONAL {
-                    { ?restriction owl:someValuesFrom ?filler . BIND("some" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:allValuesFrom ?filler . BIND("only" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:hasValue ?filler . BIND("value" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:hasSelf true . BIND("Self" AS ?filler) . BIND("some" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:minQualifiedCardinality ?card . BIND("min" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:maxQualifiedCardinality ?card . BIND("max" AS ?restrictionType) }
-                    UNION
-                    { ?restriction owl:qualifiedCardinality ?card . BIND("exactly" AS ?restrictionType) }
-                    UNION
-                    {
-                      ?restriction owl:minCardinality ?card .
-                      FILTER NOT EXISTS { ?restriction owl:minQualifiedCardinality ?any }
-                      BIND("min" AS ?restrictionType)
-                      BIND(owl:Thing AS ?filler)
-                    }
-                    UNION
-                    {
-                      ?restriction owl:maxCardinality ?card .
-                      FILTER NOT EXISTS { ?restriction owl:maxQualifiedCardinality ?any }
-                      BIND("max" AS ?restrictionType)
-                      BIND(owl:Thing AS ?filler)
-                    }
-                    UNION
-                    {
-                      ?restriction owl:cardinality ?card .
-                      FILTER NOT EXISTS { ?restriction owl:qualifiedCardinality ?any }
-                      BIND("exactly" AS ?restrictionType)
-                      BIND(owl:Thing AS ?filler)
-                    }
-                  }
-                  OPTIONAL { ?restriction owl:onClass ?filler }
-                  OPTIONAL { ?restriction owl:onDataRange ?filler }
-                  OPTIONAL { ?filler rdfs:label ?fillerLabel }
-                  FILTER(BOUND(?restrictionType))
-                }
-                """.formatted(classIri);
-            return datasetService.execSelect(projectId, q);
-        }, queryPool);
+        CompletableFuture<TupleQueryResult> equivRestrictionFuture = CompletableFuture.supplyAsync(() ->
+            datasetService.execSelect(projectId, buildClassRestrictionSparql(classIri, "owl:equivalentClass")),
+            queryPool);
         
         // --- EquivalentClass anonymous expressions (intersection/union/complement/oneOf merged) ---
         CompletableFuture<TupleQueryResult> equivAnonymousFuture = CompletableFuture.supplyAsync(() -> {
@@ -3173,7 +3131,7 @@ public class OntologyQueryService {
                         axiom.put("manchester", known);
                         axiom.put("definition", known);
                     } else {
-                        String manchester = describeBlankNodeManchester(projectId, superIri);
+                        String manchester = describeBlankNodeManchester(projectId, classIri, superIri);
                         if (manchester != null && !manchester.isBlank()) {
                             axiom.put("manchester", manchester);
                             axiom.put("definition", manchester);
@@ -3617,7 +3575,7 @@ public class OntologyQueryService {
                 boolean navigable = superIri.startsWith("http://") || superIri.startsWith("https://") || superIri.startsWith("urn:");
                 axiom.put("navigable", String.valueOf(navigable));
                 if (!navigable) {
-                    String manchester = describeBlankNodeManchester(projectId, superIri);
+                    String manchester = describeBlankNodeManchester(projectId, classIri, superIri);
                     if (manchester != null && !manchester.isBlank()) {
                         axiom.put("manchester", manchester);
                         axiom.put("definition", manchester);
