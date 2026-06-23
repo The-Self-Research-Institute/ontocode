@@ -1025,9 +1025,22 @@ public class SparqlDatasetService {
     }
 
     /**
-     * Execute a SPARQL ASK query
+     * Execute a SPARQL ASK query. Read scope follows {@link SparqlQueryContext} (draft graph
+     * when the user has a ready draft copy).
      */
     public boolean execAsk(String projectId, String sparqlQuery) {
+        return execAsk(projectId, sparqlQuery, null);
+    }
+
+    /**
+     * Execute a SPARQL ASK query against a specific named graph (ignores draft read scope).
+     * Used after mutations to verify writes landed in the same graph that was updated.
+     */
+    public boolean execAskInGraph(String projectId, String graphUri, String sparqlQuery) {
+        return execAsk(projectId, sparqlQuery, graphUri);
+    }
+
+    private boolean execAsk(String projectId, String sparqlQuery, String forceGraphUri) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         String graphUri = binding.graphUri();
 
@@ -1037,7 +1050,9 @@ public class SparqlDatasetService {
             // ASK queries legally omit the WHERE keyword (ASK { } is valid SPARQL), so we
             // cannot rely on finding WHERE — fall back to injecting FROM before the opening brace.
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
-                String fromClause = buildFromClause(conn, projectId);
+                String fromClause = forceGraphUri != null
+                        ? "FROM <" + forceGraphUri + ">"
+                        : buildFromClause(conn, projectId);
                 if (sparqlQuery.toUpperCase().contains("WHERE")) {
                     sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE", fromClause + " WHERE");
                 } else {
@@ -1046,7 +1061,8 @@ public class SparqlDatasetService {
                 }
             }
 
-            log.info("[GRAPHDB] Executing ASK query for project: {}", projectId);
+            log.info("[GRAPHDB] Executing ASK query for project: {} graph={}", projectId,
+                    forceGraphUri != null ? forceGraphUri : graphUri);
             long askStart = System.nanoTime();
             BooleanQuery query = conn.prepareBooleanQuery(sparqlQuery);
             query.setIncludeInferred(false);
