@@ -76,6 +76,15 @@ public class ProjectRepoCache {
     private final Map<String, Object> loadLocks = new ConcurrentHashMap<>();
 
     /**
+     * Tracks the timestamp of the last evict() call per project.
+     * Used to discard in-flight CONSTRUCT loads that started before a mutation committed.
+     * Race: evict() can be called while a load is mid-CONSTRUCT. Since the cache was empty
+     * at evict time, cache.remove() is a no-op. When the load finishes and calls cache.put(),
+     * it would store a pre-mutation snapshot. This map lets load() detect that case and discard.
+     */
+    private final ConcurrentHashMap<String, Long> lastEvictedAtMs = new ConcurrentHashMap<>();
+
+    /**
      * Projects confirmed to exceed noCacheThreshold — skip COUNT query on subsequent requests.
      * Cleared on evict() so a project that shrinks below the threshold gets re-evaluated.
      */
@@ -153,6 +162,16 @@ public class ProjectRepoCache {
                 if (loaded == null) {
                     return null;
                 }
+                // Discard if a mutation evicted the project while we were loading.
+                // load() records loadStartedAt; if evict() ran after that, the
+                // snapshot is stale — don't cache it.
+                Long evictedAt = lastEvictedAtMs.get(projectId);
+                if (evictedAt != null && loaded.loadStartedAt < evictedAt) {
+                    try { loaded.repo.shutDown(); } catch (Exception ignore) {}
+                    log.info("[MEMCACHE] Discarding stale snapshot for project={} (load started {}ms before eviction)",
+                            projectId, evictedAt - loaded.loadStartedAt);
+                    return null;
+                }
                 evictIfNeeded();
                 cache.put(projectId, loaded);
                 long ms = System.currentTimeMillis() - start;
@@ -175,6 +194,10 @@ public class ProjectRepoCache {
      * Drop the cached repo for {@code projectId}. Call after every mutation.
      */
     public void evict(String projectId) {
+        // Record eviction timestamp BEFORE removing from cache so any concurrent
+        // load() that is still mid-CONSTRUCT will see this marker and discard its
+        // stale pre-mutation snapshot instead of re-populating the cache with it.
+        lastEvictedAtMs.put(projectId, System.currentTimeMillis());
         Entry removed = cache.remove(projectId);
         if (removed != null) {
             try { removed.repo.shutDown(); } catch (Exception ignore) {}
@@ -205,6 +228,11 @@ public class ProjectRepoCache {
     }
 
     private Entry load(String projectId, Loader loader) throws Exception {
+        // Snapshot the eviction timestamp before we start the CONSTRUCT query.
+        // If evict() is called while the CONSTRUCT is in-flight, lastEvictedAtMs
+        // will be updated and we discard the load result rather than caching stale data.
+        long loadStartedAt = System.currentTimeMillis();
+
         SailRepository repo = new SailRepository(new MemoryStore());
         repo.init();
 
@@ -232,7 +260,7 @@ public class ProjectRepoCache {
             try { repo.shutDown(); } catch (Exception ignore) {}
             throw e;
         }
-        return new Entry(repo, triples);
+        return new Entry(repo, triples, loadStartedAt);
     }
 
     private void evictIfNeeded() {
@@ -299,11 +327,13 @@ public class ProjectRepoCache {
     private static final class Entry {
         final Repository repo;
         final long triples;
+        final long loadStartedAt;
         volatile long lastAccessMs;
 
-        Entry(Repository repo, long triples) {
+        Entry(Repository repo, long triples, long loadStartedAt) {
             this.repo = repo;
             this.triples = triples;
+            this.loadStartedAt = loadStartedAt;
             this.lastAccessMs = System.currentTimeMillis();
         }
 
