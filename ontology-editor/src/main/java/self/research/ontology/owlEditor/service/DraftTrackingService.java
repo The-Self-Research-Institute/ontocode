@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DraftChange;
+import self.research.ontology.owlEditor.model.DraftCopyStatus;
 import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.model.merge.ConflictResolution;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
@@ -220,79 +221,58 @@ public class DraftTrackingService {
                                                   Map<String, ConflictResolution> resolutions) {
         List<DraftChange> unappliedDrafts = getUnappliedDraftsForUser(projectId, userId);
 
-        // Copy-on-switch sessions: use atomic MOVE GRAPH instead of the old overlay merge.
-        if (draftCopyService.isReady(projectId, userId)) {
-            return applyDraftsViaMoveGraph(projectId, userId, force, merge, unappliedDrafts);
+        if (!draftCopyService.isReady(projectId, userId)) {
+            DraftCopyStatus status = draftCopyService.getStatus(projectId, userId);
+            if (status == DraftCopyStatus.COPYING) {
+                return new ApplyDraftsResult(false, 0,
+                        "Draft graph copy still in progress — wait before publishing", false, null);
+            }
+            if (unappliedDrafts.isEmpty()) {
+                return new ApplyDraftsResult(true, 0, "No drafts to apply", false, null);
+            }
+            return new ApplyDraftsResult(false, 0,
+                    "Draft session not ready — switch to private mode and wait for the graph copy", false, null);
         }
 
-        // Legacy overlay path ↓
-        if (unappliedDrafts.isEmpty()) {
-            if (datasetService.hasActiveDraftOverlay(projectId, userId)) {
-                log.info("[DRAFT] No Mongo drafts but draft graph has data — publishing for project {} user {}",
-                        projectId, userId);
-                datasetService.publishDraftGraphToMain(projectId, userId);
+        if (merge) {
+            DraftPublishAnalysis analysis = draftPublishService.analyze(projectId, userId, unappliedDrafts, true);
+            if (analysis.isBlocked(force)) {
+                String message = analysis.getConflictType() == DraftPublishAnalysis.ConflictType.IRI_OVERLAP
+                        ? "Publish blocked: your draft touches entities changed by others since you started editing"
+                        : "Publish blocked: the shared ontology changed since your draft started — review, merge, or force publish";
+                log.warn("[DRAFT] {} for project {} user {}", message, projectId, userId);
+                return new ApplyDraftsResult(false, 0, message, true, analysis);
+            }
+            try {
+                draftPublishMergeService.publishWithThreeWayMerge(projectId, userId, analysis, resolutions);
                 mainGraphRevisionService.incrementRevision(projectId);
                 draftPublishService.clearBaseline(projectId, userId);
-                return new ApplyDraftsResult(true, 0,
-                        "Published draft graph overlay", false, null);
+                finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
+                return new ApplyDraftsResult(true, unappliedDrafts.size(),
+                        "Published draft with merge", false, analysis);
+            } catch (Exception e) {
+                log.error("[DRAFT] Merge publish failed for project {} user {}", projectId, userId, e);
+                return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
             }
-            log.info("[DRAFT] No drafts to apply for project {} user {}", projectId, userId);
-            return new ApplyDraftsResult(true, 0, "No drafts to apply", false, null);
         }
 
-        DraftPublishAnalysis analysis = draftPublishService.analyze(projectId, userId, unappliedDrafts, true);
-        if (analysis.isBlocked(force) && !merge) {
-            String message = analysis.getConflictType() == DraftPublishAnalysis.ConflictType.IRI_OVERLAP
-                    ? "Publish blocked: your draft touches entities changed by others since you started editing"
-                    : "Publish blocked: the shared ontology changed since your draft started — review, merge, or force publish";
-            log.warn("[DRAFT] {} for project {} user {}", message, projectId, userId);
-            return new ApplyDraftsResult(false, 0, message, true, analysis);
+        return applyDraftsViaMoveGraph(projectId, userId, force, false, unappliedDrafts);
+    }
+
+    private void finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
+        if (unappliedDrafts.isEmpty()) {
+            return;
         }
-
-        try {
-            log.info("[DRAFT] Publishing {} draft changes for project {} user {} (merge={})",
-                    unappliedDrafts.size(), projectId, userId, merge);
-
-            if (merge) {
-                draftPublishMergeService.publishWithThreeWayMerge(
-                        projectId, userId, analysis, resolutions);
-            } else {
-                datasetService.publishDraftGraphToMain(projectId, userId);
-            }
-            mainGraphRevisionService.incrementRevision(projectId);
-            draftPublishService.clearBaseline(projectId, userId);
-
-            unappliedDrafts.forEach(draft -> {
-                MutationOp op = draftToMutationOp(draft);
-                collaborativeEditService.broadcastMutation(
-                    projectId,
-                    op,
-                    draft.getUserId(),
-                    draft.getUsername()
-                );
-            });
-
-            recordDraftsAsChanges(projectId, unappliedDrafts);
-
-            unappliedDrafts.forEach(draft -> draft.setApplied(true));
-            draftRepository.saveAll(unappliedDrafts);
-
-            log.info("[DRAFT] Successfully applied {} drafts for project {} user {}",
-                    unappliedDrafts.size(), projectId, userId);
-
-            CompletableFuture.runAsync(() -> {
-                Map<String, Object> meta = indexService.computeMetadata(projectId);
-                meta.put("mainGraphRevision", mainGraphRevisionService.getRevision(projectId));
-                metadataService.writeMeta(projectId, meta);
-            }, metadataExecutor);
-
-            return new ApplyDraftsResult(true, unappliedDrafts.size(),
-                "Successfully applied " + unappliedDrafts.size() + " draft changes", false, analysis);
-
-        } catch (Exception e) {
-            log.error("[DRAFT] Failed to apply drafts for project {} user {}", projectId, userId, e);
-            return new ApplyDraftsResult(false, 0, "Failed to apply drafts: " + e.getMessage(), false, null);
-        }
+        unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
+                projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
+        recordDraftsAsChanges(projectId, unappliedDrafts);
+        unappliedDrafts.forEach(draft -> draft.setApplied(true));
+        draftRepository.saveAll(unappliedDrafts);
+        CompletableFuture.runAsync(() -> {
+            Map<String, Object> meta = indexService.computeMetadata(projectId);
+            meta.put("mainGraphRevision", mainGraphRevisionService.getRevision(projectId));
+            metadataService.writeMeta(projectId, meta);
+        }, metadataExecutor);
     }
     
     /**

@@ -27,6 +27,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Service;
+import self.research.ontology.owlEditor.model.DraftCopyStatus;
 import self.research.ontology.owlEditor.model.ImportOptions;
 
 import jakarta.annotation.PreDestroy;
@@ -117,6 +118,9 @@ public class SparqlDatasetService {
 
     @Autowired(required = false)
     private self.research.ontology.owlEditor.repository.ProjectRepository projectRepository;
+
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.repository.DraftSessionRepository draftSessionRepository;
 
     // Shared repository connection (legacy / fallback for existing data)
     private Repository repository;
@@ -595,10 +599,15 @@ public class SparqlDatasetService {
 
     private String resolveDraftGraphUriForRead(String projectId) {
         String userId = SparqlQueryContext.getUserId();
-        if (userId == null || userId.isBlank()) {
+        if (!isDraftCopyReady(projectId, userId)) {
             return null;
         }
         return getDraftGraphUri(projectId, userId);
+    }
+
+    private boolean isDraftCopyReadyForRead(String projectId) {
+        String userId = SparqlQueryContext.getUserId();
+        return isDraftCopyReady(projectId, userId);
     }
 
     /**
@@ -748,8 +757,8 @@ public class SparqlDatasetService {
      * @param includeInferred false to skip transitive/OWL inference (much faster on large repos)
      */
     public TupleQueryResult execSelect(String projectId, String sparqlQuery, boolean includeInferred) {
-        // Draft overlay is per-user; in-memory cache cannot include another user's draft graph.
-        boolean draftScope = resolveDraftGraphUriForRead(projectId) != null;
+        // Copy-on-switch draft is per-user; in-memory cache cannot include another user's draft graph.
+        boolean draftScope = isDraftCopyReadyForRead(projectId);
         if (!includeInferred && !draftScope && projectRepoCache != null && projectRepoCache.isEnabled()) {
             TupleQueryResult cached = trySelectFromMemCache(projectId, sparqlQuery);
             if (cached != null) {
@@ -1059,9 +1068,7 @@ public class SparqlDatasetService {
     }
 
     /**
-     * Apply SPARQL UPDATE to a copy-on-switch draft graph.
-     * Unlike the overlay model, both read (WHERE) and write target the draft graph itself
-     * because the draft is a full copy — no main-graph USING clause needed.
+     * Apply SPARQL UPDATE to the user's copy-on-switch draft graph (full main snapshot).
      */
     public void execDraftUpdateCopyOnSwitch(String projectId, String userId, String sparqlUpdate) {
         String draftGraph = getDraftGraphUri(projectId, userId);
@@ -1070,68 +1077,6 @@ public class SparqlDatasetService {
             sparqlUpdate = sparqlUpdate.replaceAll("(?i)\\bWHERE\\b", "USING <" + draftGraph + "> WHERE");
         }
         execUpdate(projectId, draftGraph, sparqlUpdate);
-    }
-
-    /**
-     * Apply SPARQL UPDATE to a user's private draft named graph (not visible to other users on read).
-     */
-    public void execDraftUpdate(String projectId, String userId, String sparqlUpdate) {
-        String mainGraph = getGraphUri(projectId);
-        String draftGraph = getDraftGraphUri(projectId, userId);
-        if (sparqlUpdate.toUpperCase().contains("WHERE")
-                && !sparqlUpdate.toUpperCase().contains("USING ")) {
-            // Insert USING right before each WHERE clause (must follow DELETE/INSERT, not precede PREFIXes).
-            // WITH + USING is invalid per SPARQL 1.1 §3.1.3, so injectGraphContext will wrap
-            // the DELETE/INSERT template bodies with GRAPH <draftGraph> instead of using WITH.
-            sparqlUpdate = sparqlUpdate.replaceAll("(?i)\\bWHERE\\b", "USING <" + mainGraph + "> WHERE");
-        }
-        execUpdate(projectId, draftGraph, sparqlUpdate);
-    }
-
-    /**
-     * Mark an entity as deleted in the user's draft overlay (hides it from their reads until publish).
-     */
-    public void markDraftEntityDeleted(String projectId, String userId, String entityIri) {
-        if (entityIri == null || entityIri.isBlank()) {
-            return;
-        }
-        String draftGraph = getDraftGraphUri(projectId, userId);
-        String sparql = "INSERT DATA { <" + entityIri + "> <" + SparqlGraphUris.DELETED_PREDICATE + "> \"true\" . }";
-        execUpdate(projectId, draftGraph, sparql);
-    }
-
-    /**
-     * Merge a user's draft named graph into the project main graph, then clear the draft graph.
-     */
-    public void publishDraftGraphToMain(String projectId, String userId) {
-        String mainGraph = getGraphUri(projectId);
-        String draftGraph = getDraftGraphUri(projectId, userId);
-        String deletedPred = SparqlGraphUris.DELETED_PREDICATE;
-
-        String copyTriples = """
-            INSERT { GRAPH <%s> { ?s ?p ?o } }
-            WHERE {
-              GRAPH <%s> { ?s ?p ?o }
-              FILTER(?p != <%s>)
-            }
-            """.formatted(mainGraph, draftGraph, deletedPred);
-
-        String applyDeletions = """
-            DELETE { GRAPH <%s> { ?s ?p ?o } }
-            WHERE {
-              GRAPH <%s> { ?del <%s> "true" }
-              GRAPH <%s> { ?s ?p ?o }
-              FILTER(?s = ?del || ?o = ?del)
-            }
-            """.formatted(mainGraph, draftGraph, deletedPred, mainGraph);
-
-        String clearDraft = "CLEAR SILENT GRAPH <" + draftGraph + ">";
-
-        execUpdate(projectId, mainGraph, copyTriples);
-        execUpdate(projectId, mainGraph, applyDeletions);
-        execUpdate(projectId, mainGraph, clearDraft);
-        invalidateDerivedCachesAfterUpdate(projectId);
-        log.info("[DRAFT-GRAPH] Published draft graph {} → main for project {} user {}", draftGraph, projectId, userId);
     }
 
     public void clearDraftGraph(String projectId, String userId) {
@@ -1143,8 +1088,6 @@ public class SparqlDatasetService {
 
     /**
      * Atomically publishes a copy-on-switch draft by moving the draft graph to main.
-     * SPARQL MOVE drops the destination, copies the source, then drops the source — one round-trip.
-     * Only call this when the draft graph is a full coherent snapshot (not an overlay).
      */
     public void moveDraftToMain(String projectId, String userId) {
         String mainGraph = getGraphUri(projectId);
@@ -1184,23 +1127,25 @@ public class SparqlDatasetService {
     }
 
     /**
-     * True when the user has unpublished draft overlay data (triples and/or deletion markers).
-     * Used to route reads through SPARQL (main + draft graphs) instead of stale OWLAPI cache.
+     * True when the user has a ready copy-on-switch draft session (reads/writes use draft graph).
      */
+    public boolean hasActiveDraftSession(String projectId, String userId) {
+        return isDraftCopyReady(projectId, userId);
+    }
+
+    /** @deprecated Use {@link #hasActiveDraftSession} */
+    @Deprecated
     public boolean hasActiveDraftOverlay(String projectId, String userId) {
-        if (userId == null || userId.isBlank()) {
+        return hasActiveDraftSession(projectId, userId);
+    }
+
+    private boolean isDraftCopyReady(String projectId, String userId) {
+        if (userId == null || userId.isBlank() || draftSessionRepository == null) {
             return false;
         }
-        try {
-            if (countDraftTriples(projectId, userId) > 0) {
-                return true;
-            }
-            return !getDraftDeletedIris(projectId, userId).isEmpty();
-        } catch (Exception e) {
-            log.debug("[DRAFT-GRAPH] hasActiveDraftOverlay failed for project {} user {}: {}",
-                    projectId, userId, e.getMessage());
-            return false;
-        }
+        return draftSessionRepository.findByProjectIdAndUserId(projectId, userId)
+                .map(s -> s.getCopyStatus() == DraftCopyStatus.READY)
+                .orElse(false);
     }
 
     public long countMainGraphTriples(String projectId) {
@@ -1234,11 +1179,15 @@ public class SparqlDatasetService {
     }
 
     public void replaceMainGraphFromRdf(String projectId, String rdfContent, org.eclipse.rdf4j.rio.RDFFormat format) {
+        replaceNamedGraphFromRdf(projectId, getGraphUri(projectId), rdfContent, format);
+    }
+
+    public void replaceNamedGraphFromRdf(String projectId, String graphUri, String rdfContent,
+                                         org.eclipse.rdf4j.rio.RDFFormat format) {
         if (rdfContent == null || rdfContent.isBlank()) {
             throw new IllegalArgumentException("RDF content is empty");
         }
         ProjectGraphBinding binding = resolveBinding(projectId, false);
-        String graphUri = getGraphUri(projectId);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             IRI graphIri = conn.getValueFactory().createIRI(graphUri);
             conn.begin();
@@ -1248,33 +1197,11 @@ public class SparqlDatasetService {
             }
             conn.commit();
             invalidateDerivedCachesAfterUpdate(projectId);
-            log.info("[DRAFT-MERGE] Replaced main graph for project {} ({} bytes)", projectId, rdfContent.length());
+            log.info("[DRAFT-GRAPH] Replaced graph {} for project {} ({} bytes)", graphUri, projectId, rdfContent.length());
         } catch (Exception e) {
-            log.error("Failed to replace main graph for project {}", projectId, e);
-            throw new RuntimeException("Failed to replace main graph", e);
+            log.error("Failed to replace graph {} for project {}", graphUri, projectId, e);
+            throw new RuntimeException("Failed to replace named graph", e);
         }
-    }
-
-    public Set<String> getDraftDeletedIris(String projectId, String userId) {
-        String draftGraph = getDraftGraphUri(projectId, userId);
-        String sparql = """
-            SELECT ?e WHERE {
-              GRAPH <%s> { ?e <%s> "true" }
-            }
-            """.formatted(draftGraph, SparqlGraphUris.DELETED_PREDICATE);
-        Set<String> deleted = new LinkedHashSet<>();
-        try (TupleQueryResult result = execSelect(projectId, sparql)) {
-            while (result.hasNext()) {
-                BindingSet row = result.next();
-                if (row.getValue("e") instanceof org.eclipse.rdf4j.model.IRI iri) {
-                    deleted.add(iri.stringValue());
-                }
-            }
-        } catch (Exception e) {
-            log.debug("[DRAFT-GRAPH] deleted-iris query failed for project {} user {}: {}",
-                    projectId, userId, e.getMessage());
-        }
-        return deleted;
     }
 
     private void execUpdate(String projectId, String targetGraphUri, String sparqlUpdate) {
@@ -2602,23 +2529,19 @@ public class SparqlDatasetService {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long exportStart = System.nanoTime();
-            List<String> graphs = getAllGraphUris(conn, projectId);
-            if (userId != null && !userId.isBlank()) {
-                String draftGraph = SparqlGraphUris.userDraftGraph(projectId, userId);
-                if (!graphs.contains(draftGraph)) {
-                    graphs = new ArrayList<>(graphs);
-                    graphs.add(draftGraph);
-                }
-            }
             List<IRI> contexts = new ArrayList<>();
-            for (String g : graphs) {
-                contexts.add(conn.getValueFactory().createIRI(g));
+            if (userId != null && !userId.isBlank() && isDraftCopyReady(projectId, userId)) {
+                contexts.add(conn.getValueFactory().createIRI(getDraftGraphUri(projectId, userId)));
+            } else {
+                for (String g : getAllGraphUris(conn, projectId)) {
+                    contexts.add(conn.getValueFactory().createIRI(g));
+                }
             }
             conn.export(
                 Rio.createWriter(format, new OutputStreamWriter(out, StandardCharsets.UTF_8)),
                 contexts.toArray(new IRI[0])
             );
-            log.info("[TIMING] exportDatasetToStream for project {}: {} ms (format: {}, draftOverlay: {})",
+            log.info("[TIMING] exportDatasetToStream for project {}: {} ms (format: {}, draftSession: {})",
                      projectId, elapsedMillis(exportStart), format, userId != null && !userId.isBlank());
         } catch (Exception e) {
             log.error("Failed to stream-export dataset for project: {}", projectId, e);
@@ -3207,12 +3130,11 @@ public class SparqlDatasetService {
     }
 
     private String buildFromClause(RepositoryConnection conn, String projectId) {
-        List<String> graphs = getAllGraphUris(conn, projectId);
-        String draftGraph = resolveDraftGraphUriForRead(projectId);
-        if (draftGraph != null && !graphs.contains(draftGraph)) {
-            graphs = new ArrayList<>(graphs);
-            graphs.add(draftGraph);
+        String userId = SparqlQueryContext.getUserId();
+        if (isDraftCopyReady(projectId, userId)) {
+            return "FROM <" + getDraftGraphUri(projectId, userId) + ">";
         }
+        List<String> graphs = getAllGraphUris(conn, projectId);
         StringBuilder builder = new StringBuilder();
         for (String g : graphs) {
             builder.append("FROM <").append(g).append("> ");

@@ -60,6 +60,7 @@ import ontologyMutationService from "../services/ontologyMutationService";
 import expressionService, { isManchesterClassExpression, isSimpleOntologyIri } from "../services/expressionService";
 import undoRedoService from "../services/undoRedoService";
 import { draftTrackingService } from "../services/draftTrackingService";
+import { userPreferencesService } from "../services/userPreferencesService";
 import { notificationService } from "../services/notificationService";
 import { syncService } from "../services/syncService";
 import type {
@@ -1546,6 +1547,76 @@ const Dashboard: React.FC<DashboardProps> = ({
   const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conflictCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const startDraftCopySession = useCallback((
+    targetProjectId: string,
+    userId: string,
+    options?: { showModal?: boolean; onReady?: () => void }
+  ) => {
+    if (!targetProjectId || !userId) return;
+
+    const pollUntilReady = () => {
+      const pollRef = options?.showModal ? draftCopyPollRef : autoDraftPollRef;
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
+        try {
+          const status = await draftTrackingService.getDraftCopyStatus(targetProjectId, userId);
+          if (status === 'READY') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            options?.onReady?.();
+            if (options?.showModal) {
+              setDraftCopyPhase('ready');
+              setTimeout(() => setDraftCopyPhase('idle'), 2000);
+            } else {
+              setAutoDraftStatus('ready');
+              setTimeout(() => setAutoDraftStatus('idle'), 3000);
+            }
+          } else if (status === 'FAILED') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            if (options?.showModal) setDraftCopyPhase('failed');
+            else setAutoDraftStatus('idle');
+          }
+        } catch {
+          if (pollRef.current) clearInterval(pollRef.current);
+          if (options?.showModal) setDraftCopyPhase('failed');
+        }
+      }, 2000);
+    };
+
+    draftTrackingService.getDraftCopyStatus(targetProjectId, userId).then((status) => {
+      if (status === 'READY') {
+        options?.onReady?.();
+        return;
+      }
+      if (options?.showModal) setDraftCopyPhase('copying');
+      else setAutoDraftStatus('copying');
+
+      const beginCopy = () => {
+        draftTrackingService.initiateDraftCopy(targetProjectId, userId)
+          .then(({ tripleCount }) => {
+            if (options?.showModal) setDraftCopyTripleCount(tripleCount);
+            pollUntilReady();
+          })
+          .catch((err: any) => {
+            if (options?.showModal) {
+              if (err?.response?.status === 409 || (err?.message || '').includes('import')) {
+                setDraftCopyPhase('import-blocked');
+              } else {
+                setDraftCopyPhase('failed');
+              }
+            } else {
+              setAutoDraftStatus('idle');
+            }
+          });
+      };
+
+      if (status === 'COPYING') {
+        pollUntilReady();
+      } else {
+        beginCopy();
+      }
+    }).catch(() => {});
+  }, []);
 
   // Track background import progress (visible after user clicks "Continue Working")
   const [backgroundImportActive, setBackgroundImportActive] = useState(false);
@@ -3768,20 +3839,37 @@ const Dashboard: React.FC<DashboardProps> = ({
 
             // Configure mutation service: shared/live OR non-workspace web direct-write.
             // Desktop and private web projects use per-user draft graphs until Save.
-            // For workspace private projects, respect the user's saved preference across refreshes.
+            // For workspace private projects, DB preference takes priority (cross-device);
+            // localStorage is the fast local fallback when the DB call hasn't resolved yet.
             const syncModeKey = projectId ? `ontocode_sync_mode_${projectId}` : null;
             const savedSyncMode = syncModeKey ? localStorage.getItem(syncModeKey) : null;
             let shouldApplyDirectly: boolean;
             if (isNonWorkspaceMode || isShared) {
               shouldApplyDirectly = true;
-            } else if (savedSyncMode !== null) {
-              shouldApplyDirectly = savedSyncMode === "public";
             } else {
-              // New default: public (no draft until user explicitly switches to draft mode)
-              shouldApplyDirectly = true;
+              // Fetch from DB (cross-device); fall back to localStorage then default (public).
+              let dbSyncMode: 'public' | 'private' | null = null;
+              if (projectId) {
+                dbSyncMode = await userPreferencesService.getSyncMode(projectId);
+              }
+              if (dbSyncMode !== null) {
+                shouldApplyDirectly = dbSyncMode === "public";
+                // Keep localStorage in sync with the DB value.
+                if (syncModeKey) localStorage.setItem(syncModeKey, dbSyncMode);
+              } else if (savedSyncMode !== null) {
+                shouldApplyDirectly = savedSyncMode === "public";
+              } else {
+                // New default: public (no draft until user explicitly switches to draft mode)
+                shouldApplyDirectly = true;
+              }
             }
             ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
             setSyncMode(shouldApplyDirectly ? "public" : "private");
+
+            if (!shouldApplyDirectly && projectId && !isShared && !isNonWorkspaceMode) {
+              const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+              startDraftCopySession(projectId, effectiveUserId);
+            }
 
             // Check requireDraftForMembers — if on and user is not owner, override to draft
             if (projectId && !isNonWorkspaceMode && !isShared) {
@@ -3791,26 +3879,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   setRequireDraftForMembers(rdm);
                   setIsProjectOwner(isOwner);
                   if (rdm && !isOwner && !isProjectViewerRole) {
-                    // Force into draft mode regardless of saved preference
                     setSyncMode('private');
                     ontologyMutationService.setRealTimeSync(false);
-                    // Auto-start draft copy in background (silently)
-                    setAutoDraftStatus('copying');
-                    draftTrackingService.initiateDraftCopy(projectId, effectiveUserId)
-                      .catch(() => {/* ignore — existing draft session or import active */});
-                    autoDraftPollRef.current = setInterval(async () => {
-                      try {
-                        const status = await draftTrackingService.getDraftCopyStatus(projectId, effectiveUserId);
-                        if (status === 'READY') {
-                          if (autoDraftPollRef.current) clearInterval(autoDraftPollRef.current);
-                          setAutoDraftStatus('ready');
-                          setTimeout(() => setAutoDraftStatus('idle'), 3000);
-                        } else if (status === 'FAILED') {
-                          if (autoDraftPollRef.current) clearInterval(autoDraftPollRef.current);
-                          setAutoDraftStatus('idle');
-                        }
-                      } catch { /* keep polling */ }
-                    }, 3000);
+                    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+                    startDraftCopySession(projectId, effectiveUserId);
                   }
                 })
                 .catch(() => { /* getDraftSettings failed — non-blocking */ });
@@ -4644,7 +4716,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Update real-time sync status based on collaboration state
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !user?.userId) return;
 
     const activeUsersInProject = Array.from(collaboration.state.activeUsers.values()).filter(
       (u) => u.projectId === projectId && u.userId !== user?.userId,
@@ -15673,41 +15745,17 @@ const Dashboard: React.FC<DashboardProps> = ({
             const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
 
             if (syncMode === "public") {
-              // public → private: initiate copy-on-switch, show progress modal
               if (!projectId) return;
-              setDraftCopyPhase('copying');
-              draftTrackingService.initiateDraftCopy(projectId, effectiveUserId)
-                .then(({ tripleCount }) => {
-                  setDraftCopyTripleCount(tripleCount);
-                  // Poll until READY or FAILED
-                  draftCopyPollRef.current = setInterval(async () => {
-                    try {
-                      const status = await draftTrackingService.getDraftCopyStatus(projectId, effectiveUserId);
-                      if (status === 'READY') {
-                        if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
-                        setDraftCopyPhase('ready');
-                        setSyncMode('private');
-                        ontologyMutationService.setRealTimeSync(false);
-                        localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'private');
-                        setTimeout(() => setDraftCopyPhase('idle'), 2000);
-                        notificationService.info("Draft Mode Active", "Editing your private draft — changes won't affect others until you publish.");
-                      } else if (status === 'FAILED') {
-                        if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
-                        setDraftCopyPhase('failed');
-                      }
-                    } catch {
-                      if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
-                      setDraftCopyPhase('failed');
-                    }
-                  }, 2000);
-                })
-                .catch((err: any) => {
-                  if (err?.response?.status === 409 || (err?.message || '').includes('import')) {
-                    setDraftCopyPhase('import-blocked');
-                  } else {
-                    setDraftCopyPhase('failed');
-                  }
-                });
+              startDraftCopySession(projectId, effectiveUserId, {
+                showModal: true,
+                onReady: () => {
+                  setSyncMode('private');
+                  ontologyMutationService.setRealTimeSync(false);
+                  localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'private');
+                  userPreferencesService.saveSyncMode(projectId, 'private');
+                  notificationService.info("Draft Mode Active", "Editing your private draft — changes won't affect others until you publish.");
+                },
+              });
             } else {
               // private → public: apply draft (MOVE GRAPH), return to live mode
               if (projectId && hasUnsavedChanges) {
@@ -15719,6 +15767,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     setSyncMode('public');
                     ontologyMutationService.setRealTimeSync(true);
                     localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
+                    userPreferencesService.saveSyncMode(projectId, 'public');
                     notificationService.success("Published", "Your draft is now live.");
                   })
                   .catch(() => {
@@ -15731,7 +15780,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                 }
                 setSyncMode('public');
                 ontologyMutationService.setRealTimeSync(true);
-                if (projectId) localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
+                if (projectId) {
+                  localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
+                  userPreferencesService.saveSyncMode(projectId, 'public');
+                }
                 notificationService.success("Back to Live Mode", "Changes will be applied immediately.");
               }
             }

@@ -75,16 +75,16 @@ public class DraftPublishMergeService {
                                          Map<String, ConflictResolution> resolutions) throws Exception {
         Optional<DraftSession> sessionOpt = sessionRepository.findByProjectIdAndUserId(projectId, userId);
         if (sessionOpt.isEmpty() || sessionOpt.get().getBaselineSnapshotPath() == null) {
-            log.warn("[DRAFT-MERGE] No baseline snapshot — falling back to graph union publish");
-            datasetService.publishDraftGraphToMain(projectId, userId);
+            log.warn("[DRAFT-MERGE] No baseline snapshot — publishing via MOVE GRAPH");
+            datasetService.moveDraftToMain(projectId, userId);
             return;
         }
 
         Path baselinePath = storageManager.projectDir(projectId)
                 .resolve(sessionOpt.get().getBaselineSnapshotPath());
         if (!Files.exists(baselinePath)) {
-            log.warn("[DRAFT-MERGE] Baseline file missing — falling back to graph union publish");
-            datasetService.publishDraftGraphToMain(projectId, userId);
+            log.warn("[DRAFT-MERGE] Baseline file missing — publishing via MOVE GRAPH");
+            datasetService.moveDraftToMain(projectId, userId);
             return;
         }
 
@@ -163,22 +163,12 @@ public class DraftPublishMergeService {
     }
 
     private OWLOntology buildOursOntology(String projectId, String userId, String baselineRdf) throws Exception {
-        OWLOntology ours = mergeService.loadOntologyFromRdf(baselineRdf);
-        var manager = ours.getOWLOntologyManager();
-
         String draftGraph = datasetService.getDraftGraphUri(projectId, userId);
         String draftRdf = datasetService.exportNamedGraph(projectId, draftGraph, RDFFormat.RDFXML);
         if (draftRdf != null && !draftRdf.isBlank()) {
-            OWLOntology draftDelta = mergeService.loadOntologyFromRdf(draftRdf);
-            for (OWLAxiom axiom : draftDelta.getAxioms()) {
-                manager.addAxiom(ours, axiom);
-            }
+            return mergeService.loadOntologyFromRdf(draftRdf);
         }
-
-        for (String deleted : datasetService.getDraftDeletedIris(projectId, userId)) {
-            mergeService.removeEntityFromOntology(ours, IRI.create(deleted));
-        }
-        return ours;
+        return mergeService.loadOntologyFromRdf(baselineRdf);
     }
 
     private String summarizeAxioms(OWLOntology ontology, IRI entityIRI) {

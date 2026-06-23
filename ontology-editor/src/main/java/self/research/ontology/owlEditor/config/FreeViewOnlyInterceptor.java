@@ -38,7 +38,8 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
 
     // PUT/DELETE paths allowed for FREE plan (non-ontology operations)
     private static final List<String> FREE_PUT_DELETE_ALLOW_PATTERNS = List.of(
-        "/api/sparql/*/queries/**"  // manage saved SPARQL query templates
+        "/api/sparql/*/queries/**",  // manage saved SPARQL query templates
+        "/api/preferences/**"        // per-user UI preferences (sync mode, etc.)
     );
 
     @Value("${ontocode.desktop.mode:false}")

@@ -30,7 +30,6 @@ public class DraftSession {
 
     /**
      * Tracks whether the full graph copy (copy-on-switch) is in progress, done, or failed.
-     * Null means this is a legacy session (overlay model) — use the old publish path.
      */
     private DraftCopyStatus copyStatus;
 
