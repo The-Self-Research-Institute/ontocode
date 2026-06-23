@@ -53,10 +53,7 @@ public class InvitationService {
             invitation = existingInvitation.get();
             log.info("Found existing pending invitation for: {}. Resending...", inviteeEmail);
             
-            // Update invitation timestamp and generate new token
-            invitation.setInvitationToken(generateInvitationToken());
             invitation.setCreatedAt(java.time.LocalDateTime.now());
-            invitation.setExpiresAt(java.time.LocalDateTime.now().plusDays(7));
             invitation = invitationRepository.save(invitation);
         } else {
             // Create new invitation
@@ -108,13 +105,7 @@ public class InvitationService {
         if (!invitation.isPending()) {
             throw new IllegalArgumentException("Invitation is not pending");
         }
-        
-        if (invitation.isExpired()) {
-            invitation.setStatus("EXPIRED");
-            invitationRepository.save(invitation);
-            throw new IllegalArgumentException("Invitation has expired");
-        }
-        
+
         // Update invitation status
         invitation.setStatus("ACCEPTED");
         invitation.setAcceptedAt(LocalDateTime.now());

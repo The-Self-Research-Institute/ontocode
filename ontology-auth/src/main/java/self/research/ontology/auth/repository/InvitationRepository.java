@@ -21,6 +21,4 @@ public interface InvitationRepository extends MongoRepository<Invitation, String
     Optional<Invitation> findByInviteeEmailAndWorkspaceId(String inviteeEmail, String workspaceId);
     
     boolean existsByInvitationToken(String invitationToken);
-
-    List<Invitation> findByStatusAndExpiresAtBefore(String status, java.time.LocalDateTime cutoff);
 }

@@ -196,6 +196,7 @@ const TopMenuBar = ({
   isProjectOwner,
   autoDraftStatus,
   onToggleRequireDraftForMembers,
+  onSwitchToDraftMode,
   isReasonerRunning,
   isReasonerLoading,
   isReasonerSynced,
@@ -240,6 +241,7 @@ const TopMenuBar = ({
   isProjectOwner?: boolean;
   autoDraftStatus?: 'idle' | 'copying' | 'ready';
   onToggleRequireDraftForMembers?: () => void;
+  onSwitchToDraftMode?: () => void;
   isReasonerRunning?: boolean;
   isReasonerLoading?: boolean;
   isReasonerSynced?: boolean;
@@ -807,18 +809,41 @@ const TopMenuBar = ({
             Draft ready
           </span>
         )}
-        <span className={`hidden sm:inline text-xs font-medium ${syncMode === "public" ? "text-green-600" : "text-gray-500"}`}>
+        <span className={`hidden sm:inline text-xs font-medium ${
+          requireDraftForMembers && !isProjectOwner && syncMode === 'public'
+            ? "text-amber-600"
+            : syncMode === "public" ? "text-green-600" : "text-gray-500"
+        }`}>
           {requireDraftForMembers && !isProjectOwner
-            ? "Draft Mode (required)"
+            ? (syncMode === 'public' ? "Public (View Only)" : "Draft Mode")
             : syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
         </span>
-        {(!requireDraftForMembers || isProjectOwner) && (
+        {requireDraftForMembers && !isProjectOwner && syncMode === 'public' ? (
+          // Non-owner member in view-only mode: offer explicit switch to draft
+          <button
+            onClick={onSwitchToDraftMode}
+            className="ml-1 flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
+            title="Start your private draft copy to make edits"
+          >
+            Switch to Draft Mode
+          </button>
+        ) : requireDraftForMembers && !isProjectOwner && syncMode === 'private' ? (
+          // Non-owner member in draft mode: allow switching back to view-only public
+          <button
+            onClick={onToggleSyncMode}
+            className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 bg-gray-300"
+            title="Switch back to Public view-only mode"
+          >
+            <span className="inline-block h-3 w-3 transform rounded-full bg-white transition-transform translate-x-1" />
+          </button>
+        ) : (
+          // Owner or non-requireDraft project: show the normal toggle
           <button
             onClick={onToggleSyncMode}
             className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
               syncMode === "public" ? "bg-green-500" : "bg-gray-300"
             }`}
-            title={syncMode === "public" ? "Switch to Private Draft Mode" : "Switch to Public Live Mode"}
+            title={syncMode === "public" ? "Switch to Draft Mode" : "View Public (draft preserved)"}
           >
             <span
               className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
@@ -1187,7 +1212,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const viewOnlyMessage = isProjectViewerRole
     ? "You have view-only access to this project. Contact the project owner to request edit permissions."
     : "You have view-only access. Upgrade your plan to edit.";
-  const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | 'viewer' | null>(null);
+  const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | 'viewer' | 'draftRequired' | null>(null);
   const handleViewOnlyAction = () => setShowProPromptType(isProjectViewerRole ? 'viewer' : 'edit');
   const handleExportProAction = () => setShowProPromptType('export');
   const [showThemeSettings, setShowThemeSettings] = useState(false);
@@ -1617,6 +1642,25 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     }).catch(() => {});
   }, []);
+
+  // Callback shared by the "Switch to Draft Mode" toolbar button and the draftRequired dialog button.
+  const handleSwitchToDraftMode = useCallback(() => {
+    setShowProPromptType(null);
+    if (!projectId) return;
+    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+    // Unblock mutations — they will now target the draft graph (realTimeSync=false after copy is ready).
+    ontologyMutationService.setDraftRequired(false);
+    startDraftCopySession(projectId, effectiveUserId, {
+      showModal: true,
+      onReady: () => {
+        setSyncMode('private');
+        ontologyMutationService.setRealTimeSync(false);
+        localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'private');
+        userPreferencesService.saveSyncMode(projectId, 'private');
+        notificationService.info("Draft Mode Active", "Editing your private draft — changes won't affect others until you publish.");
+      },
+    });
+  }, [projectId, user, startDraftCopySession]);
 
   // Track background import progress (visible after user clicks "Continue Working")
   const [backgroundImportActive, setBackgroundImportActive] = useState(false);
@@ -3865,6 +3909,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               shouldApplyDirectly = true;
             }
             ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
+            ontologyMutationService.setDraftRequired(false); // Clear any stale block from a prior project.
             setSyncMode(shouldApplyDirectly ? "public" : "private");
 
             if (!shouldApplyDirectly && projectId && !isShared && !isNonWorkspaceMode) {
@@ -3872,8 +3917,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               startDraftCopySession(projectId, effectiveUserId, { showModal: true });
             }
 
-            // Check requireDraftForMembers — if on and user is not owner, override to draft.
-            // Guard: skip startDraftCopySession if we already started one above (!shouldApplyDirectly).
+            // Check requireDraftForMembers — members stay in public view-only until they
+            // explicitly choose "Switch to Draft Mode"; no auto-copy on project open.
             if (projectId && !isNonWorkspaceMode && !isShared) {
               const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
               draftTrackingService.getDraftSettings(projectId, effectiveUserId)
@@ -3881,14 +3926,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                   setRequireDraftForMembers(rdm);
                   setIsProjectOwner(isOwner);
                   if (rdm && !isOwner && !isProjectViewerRole) {
-                    setSyncMode('private');
-                    ontologyMutationService.setRealTimeSync(false);
-                    // Only start a new copy session if one was not already started by the
-                    // preference restore above; avoids racing two copies on the same draft graph.
                     if (shouldApplyDirectly) {
-                      const innerUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
-                      startDraftCopySession(projectId, innerUserId, { showModal: true });
+                      // Member has no saved draft preference (public view) — block direct mutations
+                      // so they must explicitly switch to Draft Mode before editing.
+                      ontologyMutationService.setDraftRequired(true, () => setShowProPromptType('draftRequired'));
                     }
+                    // When !shouldApplyDirectly: preference restore already started the copy above;
+                    // mutations are already going to the draft graph — no block needed.
                   }
                 })
                 .catch(() => { /* getDraftSettings failed — non-blocking */ });
@@ -15729,6 +15773,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           requireDraftForMembers={requireDraftForMembers}
           isProjectOwner={isProjectOwner}
           autoDraftStatus={autoDraftStatus}
+          onSwitchToDraftMode={handleSwitchToDraftMode}
           onToggleRequireDraftForMembers={() => {
             if (!projectId || !isProjectOwner) return;
             const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
@@ -15752,6 +15797,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
             if (syncMode === "public") {
               if (!projectId) return;
+              // Clear any draft-required block before starting the copy.
+              ontologyMutationService.setDraftRequired(false);
               startDraftCopySession(projectId, effectiveUserId, {
                 showModal: true,
                 onReady: () => {
@@ -15763,34 +15810,17 @@ const Dashboard: React.FC<DashboardProps> = ({
                 },
               });
             } else {
-              // private → public: apply draft (MOVE GRAPH), return to live mode
-              if (projectId && hasUnsavedChanges) {
-                draftTrackingService.applyDrafts(projectId, effectiveUserId)
-                  .then(() => {
-                    setHasUnsavedChanges(false);
-                    setDraftCount(0);
-                    setPublishConflictStatus('idle');
-                    setSyncMode('public');
-                    ontologyMutationService.setRealTimeSync(true);
-                    localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
-                    userPreferencesService.saveSyncMode(projectId, 'public');
-                    notificationService.success("Published", "Your draft is now live.");
-                  })
-                  .catch(() => {
-                    notificationService.error("Publish Failed", "Could not publish your draft. Still in Draft Mode — try again.");
-                  });
-              } else {
-                // No unsaved changes — discard draft graph and switch back
-                if (projectId) {
-                  draftTrackingService.discardDrafts(projectId, effectiveUserId).catch(() => {});
-                }
-                setSyncMode('public');
-                ontologyMutationService.setRealTimeSync(true);
-                if (projectId) {
-                  localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
-                  userPreferencesService.saveSyncMode(projectId, 'public');
-                }
-                notificationService.success("Back to Live Mode", "Changes will be applied immediately.");
+              // private → public: just switch view mode; draft graph is preserved for all users.
+              // Use the Merge Wizard to publish changes when ready.
+              setSyncMode('public');
+              ontologyMutationService.setRealTimeSync(true);
+              if (projectId) {
+                localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
+                userPreferencesService.saveSyncMode(projectId, 'public');
+              }
+              notificationService.info("Public View", "Your draft is preserved — toggle back to Draft Mode to resume editing.");
+              if (requireDraftForMembers && !isProjectOwner) {
+                ontologyMutationService.setDraftRequired(true, () => setShowProPromptType('draftRequired'));
               }
             }
           }}
@@ -16125,7 +16155,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         metadata={metadata}
       />
 
-      {/* View-Only Upgrade Prompt */}
+      {/* View-Only / Draft-Required Prompt */}
       {showProPromptType && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]" onClick={() => setShowProPromptType(null)}>
           <div
@@ -16133,23 +16163,41 @@ const Dashboard: React.FC<DashboardProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             {/* Top accent bar */}
-            <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500" />
+            <div className={`h-1.5 w-full bg-gradient-to-r ${
+              showProPromptType === 'draftRequired'
+                ? 'from-purple-500 via-violet-500 to-indigo-500'
+                : 'from-violet-500 via-purple-500 to-indigo-500'
+            }`} />
 
             {/* Header */}
             <div className="px-6 pt-5 pb-4 flex items-start gap-4">
-              <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                  <line x1="2" y1="2" x2="22" y2="22"/>
-                </svg>
+              <div className={`flex-shrink-0 w-11 h-11 rounded-xl flex items-center justify-center ${
+                showProPromptType === 'draftRequired'
+                  ? 'bg-purple-50 border border-purple-200'
+                  : 'bg-amber-50 border border-amber-200'
+              }`}>
+                {showProPromptType === 'draftRequired' ? (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-purple-500">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                  </svg>
+                ) : (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                    <line x1="2" y1="2" x2="22" y2="22"/>
+                  </svg>
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-[15px] font-semibold text-gray-900 leading-tight">
-                  {showProPromptType === 'export' ? 'Pro Feature' : 'View-Only Access'}
+                  {showProPromptType === 'export' ? 'Pro Feature'
+                    : showProPromptType === 'draftRequired' ? 'Draft Mode Required'
+                    : 'View-Only Access'}
                 </h3>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  {showProPromptType === 'viewer'
+                  {showProPromptType === 'draftRequired'
+                    ? 'This project requires Draft Mode for editing'
+                    : showProPromptType === 'viewer'
                     ? 'You are a viewer on this project'
                     : <>Your account is on the <span className="font-medium text-gray-500">Free plan</span></>}
                 </p>
@@ -16168,7 +16216,9 @@ const Dashboard: React.FC<DashboardProps> = ({
             {/* Body */}
             <div className="px-6 pb-5">
               <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
-                {showProPromptType === 'export' ? (
+                {showProPromptType === 'draftRequired' ? (
+                  <>The project owner has configured this project so members must work in <span className="font-medium text-gray-800">Draft Mode</span>. You can browse and explore the shared ontology now — start your private copy to make edits.</>
+                ) : showProPromptType === 'export' ? (
                   <>Ontology export is a <span className="font-medium text-gray-800">premium feature</span>. To unlock this and other advanced tools, upgrade to a <span className="font-medium text-gray-800">Pro plan / Enterprise plan</span>.</>
                 ) : showProPromptType === 'viewer' ? (
                   <>You can <span className="font-medium text-gray-800">browse and explore</span> this ontology, but editing is restricted to <span className="font-medium text-gray-800">editors and above</span>.</>
@@ -16181,7 +16231,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
                 </svg>
-                {showProPromptType === 'viewer' ? (
+                {showProPromptType === 'draftRequired' ? (
+                  <span>Your edits will be saved to a <span className="font-medium text-gray-800">private copy</span> and won't affect others until you publish.</span>
+                ) : showProPromptType === 'viewer' ? (
                   <span>Contact the <span className="font-medium text-gray-800">project owner</span> to request edit permissions.</span>
                 ) : (
                   <span>Ask your <span className="font-medium text-gray-800">workspace owner</span> to upgrade to Pro to unlock {showProPromptType === 'export' ? 'exporting' : 'editing for all members'}.</span>
@@ -16190,12 +16242,20 @@ const Dashboard: React.FC<DashboardProps> = ({
             </div>
 
             {/* Footer */}
-            <div className="px-6 pb-5 flex justify-end">
+            <div className="px-6 pb-5 flex justify-end gap-2">
+              {showProPromptType === 'draftRequired' && (
+                <button
+                  onClick={handleSwitchToDraftMode}
+                  className="px-5 py-2 text-sm font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition-colors"
+                >
+                  Switch to Draft Mode
+                </button>
+              )}
               <button
                 onClick={() => setShowProPromptType(null)}
                 className="px-5 py-2 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-700 transition-colors"
               >
-                Got it
+                {showProPromptType === 'draftRequired' ? 'Stay in View Mode' : 'Got it'}
               </button>
             </div>
           </div>
@@ -16747,6 +16807,10 @@ const Dashboard: React.FC<DashboardProps> = ({
             if (projectId) {
               localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
               userPreferencesService.saveSyncMode(projectId, 'public');
+            }
+            // Re-arm the draft-required block so the member stays in view-only mode.
+            if (requireDraftForMembers && !isProjectOwner) {
+              ontologyMutationService.setDraftRequired(true, () => setShowProPromptType('draftRequired'));
             }
           }
         }}
