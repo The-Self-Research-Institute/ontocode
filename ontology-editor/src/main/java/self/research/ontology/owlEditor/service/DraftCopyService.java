@@ -121,5 +121,8 @@ public class DraftCopyService {
             s.setCopyStatus(status);
             sessionRepository.save(s);
         });
+        // Evict the short-lived TTL cache in SparqlDatasetService so the next read
+        // immediately sees the new status instead of waiting for the TTL to expire.
+        datasetService.evictDraftReadyCache(projectId, userId);
     }
 }

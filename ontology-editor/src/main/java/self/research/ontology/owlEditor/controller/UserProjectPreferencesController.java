@@ -2,6 +2,10 @@ package self.research.ontology.owlEditor.controller;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.config.JwtClaimUtils;
@@ -22,6 +26,7 @@ public class UserProjectPreferencesController {
     private static final Set<String> VALID_SYNC_MODES = Set.of("public", "private");
 
     private final UserProjectPreferencesRepository preferencesRepository;
+    private final MongoTemplate mongoTemplate;
 
     @GetMapping("/{projectId}")
     public ResponseEntity<Map<String, Object>> getPreferences(
@@ -54,13 +59,14 @@ public class UserProjectPreferencesController {
             return ResponseEntity.badRequest().body(Map.of("error", "syncMode must be 'public' or 'private'"));
         }
 
-        UserProjectPreferences prefs = preferencesRepository
-                .findByUserEmailAndProjectId(email, projectId)
-                .orElse(new UserProjectPreferences(email, projectId, syncMode));
-
-        prefs.setSyncMode(syncMode);
-        prefs.setUpdatedAt(Instant.now());
-        preferencesRepository.save(prefs);
+        // Atomic upsert: avoids duplicate-key errors when concurrent toggles race on a missing record.
+        Query query = Query.query(Criteria.where("userEmail").is(email).and("projectId").is(projectId));
+        Update update = new Update()
+                .set("syncMode", syncMode)
+                .set("updatedAt", Instant.now())
+                .setOnInsert("userEmail", email)
+                .setOnInsert("projectId", projectId);
+        mongoTemplate.upsert(query, update, UserProjectPreferences.class);
 
         log.debug("[Preferences] {} set syncMode={} for project {}", email, syncMode, projectId);
         return ResponseEntity.ok(Map.of("syncMode", syncMode));

@@ -1787,8 +1787,7 @@ public class OntologyMutationService {
 
     private void requireDraftCopyReady(String projectId, String userId) {
         if (draftCopyService == null || !draftCopyService.isReady(projectId, userId)) {
-            throw new IllegalArgumentException(
-                    "Private draft is not ready yet. Wait for the graph copy to finish before editing.");
+            throw new DraftNotReadyException();
         }
     }
 

@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import self.research.ontology.owlEditor.service.DraftNotReadyException;
 
 import java.util.Map;
 
@@ -25,6 +26,18 @@ public class GlobalExceptionHandler {
     public void handleClientAbort(AsyncRequestNotUsableException ex) {
         log.debug("Client disconnected before response was fully sent (ignored): {}", ex.getMessage());
         // Do NOT attempt to write a response – the socket is already closed.
+    }
+
+    // 409 when the copy-on-switch draft graph isn't ready yet — all mutation paths hit this
+    @ExceptionHandler(DraftNotReadyException.class)
+    public ResponseEntity<Map<String, Object>> handleDraftNotReady(DraftNotReadyException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of(
+                        "success", false,
+                        "draftCopyNotReady", true,
+                        "error", ex.getMessage()
+                ));
     }
 
     // 400 for explicit bad-input rejections (e.g. ontology too large for reasoning)
