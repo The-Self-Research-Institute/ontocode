@@ -545,10 +545,13 @@ public class ProjectService {
         Project.ProjectMember member = project.getMember(userId);
         if (member != null) {
             String role = member.getRole();
-            return "OWNER".equals(role) || "ADMIN".equals(role) || "EDITOR".equals(role);
+            if ("OWNER".equals(role) || "ADMIN".equals(role) || "EDITOR".equals(role)) {
+                return true;
+            }
+            // VIEWER: fall through to workspace admin check — ws OWNER/ADMIN may still write
         }
-        
-        // Workspace owners/admins also have edit permission
+
+        // Workspace OWNER/ADMIN always have edit permission, even when their project role is VIEWER
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
         if (workspaceOpt.isPresent()) {
             if (!canUseWorkspace(workspaceOpt.get())) {
@@ -643,8 +646,9 @@ public class ProjectService {
             throw new SecurityException("Workspace payment is pending. Complete payment to continue.");
         }
         
-        // Check if user has access to this project
-        if (!project.hasMember(userId)) {
+        // Check if user has access to this project.
+        // Workspace OWNER/ADMIN can access any project in their workspace without being a member.
+        if (!project.hasMember(userId) && !isWorkspaceOwnerOrAdmin(project.getWorkspaceId(), userId)) {
             throw new SecurityException("User does not have access to this project");
         }
         

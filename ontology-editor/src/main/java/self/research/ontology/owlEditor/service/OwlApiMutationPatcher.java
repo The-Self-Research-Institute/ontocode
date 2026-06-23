@@ -38,6 +38,7 @@ public class OwlApiMutationPatcher {
             "addSubPropertyOf", "deleteSubPropertyOf",
             "deleteClass",
             "addObjectRestriction", "deleteObjectRestriction",
+            "addDataRestriction", "deleteDataRestriction",
             "addPropertyChain", "deletePropertyChain",
             "createObjectProperty", "createDataProperty", "createAnnotationProperty",
             "deleteObjectProperty", "deleteDataProperty", "deleteAnnotationProperty",
@@ -308,6 +309,12 @@ public class OwlApiMutationPatcher {
             }
             case "deleteObjectRestriction" -> {
                 yield removeObjectRestriction(df, op, toRemove);
+            }
+            case "addDataRestriction" -> {
+                yield addDataRestriction(df, op, toAdd);
+            }
+            case "deleteDataRestriction" -> {
+                yield removeDataRestriction(df, op, toRemove);
             }
             case "addPropertyChain" -> {
                 yield addPropertyChain(df, op, toAdd);
@@ -629,15 +636,11 @@ public class OwlApiMutationPatcher {
 
     private boolean addObjectRestriction(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
         Optional<OWLClass> subject = namedClass(op.iri(), df);
-        Optional<OWLClass> filler = namedClass(op.target(), df);
-        if (subject.isEmpty() || filler.isEmpty() || op.property() == null || op.restrictionType() == null) {
-            return false;
-        }
-        if (op.cardinality() != null) {
+        if (subject.isEmpty() || op.property() == null || op.restrictionType() == null || op.target() == null) {
             return false;
         }
         OWLObjectPropertyExpression prop = df.getOWLObjectProperty(IRI.create(op.property()));
-        OWLClassExpression restriction = buildNamedObjectRestriction(df, prop, op.restrictionType(), filler.get());
+        OWLClassExpression restriction = buildObjectRestriction(df, prop, op.restrictionType(), op.target(), op.cardinality());
         if (restriction == null) {
             return false;
         }
@@ -651,15 +654,11 @@ public class OwlApiMutationPatcher {
 
     private boolean removeObjectRestriction(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toRemove) {
         Optional<OWLClass> subject = namedClass(op.iri(), df);
-        Optional<OWLClass> filler = namedClass(op.target(), df);
-        if (subject.isEmpty() || filler.isEmpty() || op.property() == null || op.restrictionType() == null) {
-            return false;
-        }
-        if (op.cardinality() != null) {
+        if (subject.isEmpty() || op.property() == null || op.restrictionType() == null || op.target() == null) {
             return false;
         }
         OWLObjectPropertyExpression prop = df.getOWLObjectProperty(IRI.create(op.property()));
-        OWLClassExpression restriction = buildNamedObjectRestriction(df, prop, op.restrictionType(), filler.get());
+        OWLClassExpression restriction = buildObjectRestriction(df, prop, op.restrictionType(), op.target(), op.cardinality());
         if (restriction == null) {
             return false;
         }
@@ -671,15 +670,101 @@ public class OwlApiMutationPatcher {
         return true;
     }
 
-    private OWLClassExpression buildNamedObjectRestriction(OWLDataFactory df,
-                                                             OWLObjectPropertyExpression property,
-                                                             String restrictionType,
-                                                             OWLClass filler) {
+    private boolean addDataRestriction(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toAdd) {
+        Optional<OWLClass> subject = namedClass(op.iri(), df);
+        if (subject.isEmpty() || op.property() == null || op.restrictionType() == null || op.target() == null) {
+            return false;
+        }
+        OWLDataPropertyExpression prop = df.getOWLDataProperty(IRI.create(op.property()));
+        OWLClassExpression restriction = buildDataRestriction(df, prop, op.restrictionType(), op.target(), op.cardinality());
+        if (restriction == null) {
+            return false;
+        }
+        OWLAxiom axiom = classExpressionAxiom(df, subject.get(), restriction, op.axiomType());
+        if (axiom == null) {
+            return false;
+        }
+        toAdd.add(axiom);
+        return true;
+    }
+
+    private boolean removeDataRestriction(OWLDataFactory df, OntologyMutationService.MutationOp op, Set<OWLAxiom> toRemove) {
+        Optional<OWLClass> subject = namedClass(op.iri(), df);
+        if (subject.isEmpty() || op.property() == null || op.restrictionType() == null || op.target() == null) {
+            return false;
+        }
+        OWLDataPropertyExpression prop = df.getOWLDataProperty(IRI.create(op.property()));
+        OWLClassExpression restriction = buildDataRestriction(df, prop, op.restrictionType(), op.target(), op.cardinality());
+        if (restriction == null) {
+            return false;
+        }
+        OWLAxiom axiom = classExpressionAxiom(df, subject.get(), restriction, op.axiomType());
+        if (axiom == null) {
+            return false;
+        }
+        toRemove.add(axiom);
+        return true;
+    }
+
+    private OWLClassExpression buildObjectRestriction(OWLDataFactory df,
+                                                      OWLObjectPropertyExpression property,
+                                                      String restrictionType,
+                                                      String fillerIri,
+                                                      Integer cardinality) {
         return switch (restrictionType) {
-            case "some" -> df.getOWLObjectSomeValuesFrom(property, filler);
-            case "only" -> df.getOWLObjectAllValuesFrom(property, filler);
+            case "some" -> {
+                Optional<OWLClass> filler = namedClass(fillerIri, df);
+                yield filler.map(f -> df.getOWLObjectSomeValuesFrom(property, f)).orElse(null);
+            }
+            case "only" -> {
+                Optional<OWLClass> filler = namedClass(fillerIri, df);
+                yield filler.map(f -> df.getOWLObjectAllValuesFrom(property, f)).orElse(null);
+            }
+            case "value" -> df.getOWLObjectHasValue(property, df.getOWLNamedIndividual(IRI.create(fillerIri)));
+            case "min", "max", "exactly" -> {
+                Optional<OWLClass> filler = namedClass(fillerIri, df);
+                if (filler.isEmpty()) yield null;
+                int card = cardinality != null ? cardinality : 1;
+                yield switch (restrictionType) {
+                    case "min" -> df.getOWLObjectMinCardinality(card, property, filler.get());
+                    case "max" -> df.getOWLObjectMaxCardinality(card, property, filler.get());
+                    default -> df.getOWLObjectExactCardinality(card, property, filler.get());
+                };
+            }
             default -> null;
         };
+    }
+
+    private OWLClassExpression buildDataRestriction(OWLDataFactory df,
+                                                    OWLDataPropertyExpression property,
+                                                    String restrictionType,
+                                                    String fillerIri,
+                                                    Integer cardinality) {
+        OWLDataRange dataRange = resolveDataRange(df, fillerIri);
+        if (dataRange == null) {
+            return null;
+        }
+        return switch (restrictionType) {
+            case "some" -> df.getOWLDataSomeValuesFrom(property, dataRange);
+            case "only" -> df.getOWLDataAllValuesFrom(property, dataRange);
+            case "value" -> null;
+            case "min", "max", "exactly" -> {
+                int card = cardinality != null ? cardinality : 1;
+                yield switch (restrictionType) {
+                    case "min" -> df.getOWLDataMinCardinality(card, property, dataRange);
+                    case "max" -> df.getOWLDataMaxCardinality(card, property, dataRange);
+                    default -> df.getOWLDataExactCardinality(card, property, dataRange);
+                };
+            }
+            default -> null;
+        };
+    }
+
+    private OWLDataRange resolveDataRange(OWLDataFactory df, String fillerIri) {
+        if (fillerIri == null || fillerIri.isBlank()) {
+            return null;
+        }
+        return df.getOWLDatatype(IRI.create(fillerIri));
     }
 
     private OWLAxiom classExpressionAxiom(OWLDataFactory df,
