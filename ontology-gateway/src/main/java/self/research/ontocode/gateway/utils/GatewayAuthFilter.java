@@ -39,7 +39,11 @@ public class GatewayAuthFilter implements GlobalFilter, Ordered {
             "/api/auth/desktop/**",
             "/api/downloads/**",
             "/api/plugins/*/download",
-            "/actuator/health"
+            "/actuator/health",
+            "/api/invitations/details/**",
+            "/api/invitations/request-resend/**",
+            "/api/billing/plans",
+            "/api/billing/webhook"
     );
 
     @Value("${jwt.secret:}")
