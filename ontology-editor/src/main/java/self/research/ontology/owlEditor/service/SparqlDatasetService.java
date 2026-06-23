@@ -1095,6 +1095,7 @@ public class SparqlDatasetService {
         String sparql = "MOVE GRAPH <" + draftGraph + "> TO <" + mainGraph + ">";
         long start = System.nanoTime();
         execUpdate(projectId, mainGraph, sparql);
+        evictDraftReadyCache(projectId, userId);
         log.info("[DRAFT-MOVE] MOVE GRAPH draft→main for project {} user {} in {}ms",
                 projectId, userId, elapsedMillis(start));
     }
@@ -1139,13 +1140,36 @@ public class SparqlDatasetService {
         return hasActiveDraftSession(projectId, userId);
     }
 
+    // Short-lived TTL cache: avoids a MongoDB round-trip on every SPARQL read in draft scope.
+    // Key = "projectId\0userId", value = [result(0/1), expiryEpochMs].
+    // 5-second TTL is safe: the transition READY→true fires only on copy completion or
+    // publish, both infrequent relative to the poll interval already used by the UI.
+    private static final long DRAFT_READY_CACHE_TTL_MS = 5_000;
+    private final java.util.concurrent.ConcurrentHashMap<String, long[]> draftReadyCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     private boolean isDraftCopyReady(String projectId, String userId) {
         if (userId == null || userId.isBlank() || draftSessionRepository == null) {
             return false;
         }
-        return draftSessionRepository.findByProjectIdAndUserId(projectId, userId)
+        String key = projectId + " " + userId;
+        long[] cached = draftReadyCache.get(key);
+        if (cached != null && System.currentTimeMillis() < cached[1]) {
+            return cached[0] == 1L;
+        }
+        boolean result = draftSessionRepository.findByProjectIdAndUserId(projectId, userId)
                 .map(s -> s.getCopyStatus() == DraftCopyStatus.READY)
                 .orElse(false);
+        draftReadyCache.put(key, new long[]{result ? 1L : 0L,
+                System.currentTimeMillis() + DRAFT_READY_CACHE_TTL_MS});
+        return result;
+    }
+
+    /** Evict the draft-ready cache entry when the session transitions (copy complete, publish, discard). */
+    public void evictDraftReadyCache(String projectId, String userId) {
+        if (projectId != null && userId != null) {
+            draftReadyCache.remove(projectId + " " + userId);
+        }
     }
 
     public long countMainGraphTriples(String projectId) {

@@ -3839,29 +3839,30 @@ const Dashboard: React.FC<DashboardProps> = ({
 
             // Configure mutation service: shared/live OR non-workspace web direct-write.
             // Desktop and private web projects use per-user draft graphs until Save.
-            // For workspace private projects, DB preference takes priority (cross-device);
-            // localStorage is the fast local fallback when the DB call hasn't resolved yet.
+            // localStorage is the immediate source (written on every explicit toggle, so it is
+            // always up-to-date on the same device). On first visit to a project on a new
+            // device (no localStorage entry), we await the DB once to pick up a cross-device
+            // preference. That await only blocks on genuine first-visit; all other loads are instant.
             const syncModeKey = projectId ? `ontocode_sync_mode_${projectId}` : null;
             const savedSyncMode = syncModeKey ? localStorage.getItem(syncModeKey) : null;
             let shouldApplyDirectly: boolean;
             if (isNonWorkspaceMode || isShared) {
               shouldApplyDirectly = true;
-            } else {
-              // Fetch from DB (cross-device); fall back to localStorage then default (public).
-              let dbSyncMode: 'public' | 'private' | null = null;
-              if (projectId) {
-                dbSyncMode = await userPreferencesService.getSyncMode(projectId);
-              }
+            } else if (savedSyncMode !== null) {
+              // Trust localStorage — it is written on every mode change, so it reflects the
+              // most recent choice made on any device that also had a copy of this browser storage.
+              shouldApplyDirectly = savedSyncMode === "public";
+            } else if (projectId) {
+              // First visit on this device: fetch from DB (one-time cost) for cross-device restore.
+              const dbSyncMode = await userPreferencesService.getSyncMode(projectId);
               if (dbSyncMode !== null) {
                 shouldApplyDirectly = dbSyncMode === "public";
-                // Keep localStorage in sync with the DB value.
                 if (syncModeKey) localStorage.setItem(syncModeKey, dbSyncMode);
-              } else if (savedSyncMode !== null) {
-                shouldApplyDirectly = savedSyncMode === "public";
               } else {
-                // New default: public (no draft until user explicitly switches to draft mode)
                 shouldApplyDirectly = true;
               }
+            } else {
+              shouldApplyDirectly = true;
             }
             ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
             setSyncMode(shouldApplyDirectly ? "public" : "private");
@@ -3871,7 +3872,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               startDraftCopySession(projectId, effectiveUserId);
             }
 
-            // Check requireDraftForMembers — if on and user is not owner, override to draft
+            // Check requireDraftForMembers — if on and user is not owner, override to draft.
+            // Guard: skip startDraftCopySession if we already started one above (!shouldApplyDirectly).
             if (projectId && !isNonWorkspaceMode && !isShared) {
               const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
               draftTrackingService.getDraftSettings(projectId, effectiveUserId)
@@ -3881,8 +3883,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                   if (rdm && !isOwner && !isProjectViewerRole) {
                     setSyncMode('private');
                     ontologyMutationService.setRealTimeSync(false);
-                    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
-                    startDraftCopySession(projectId, effectiveUserId);
+                    // Only start a new copy session if one was not already started by the
+                    // preference restore above; avoids racing two copies on the same draft graph.
+                    if (shouldApplyDirectly) {
+                      const innerUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+                      startDraftCopySession(projectId, innerUserId);
+                    }
                   }
                 })
                 .catch(() => { /* getDraftSettings failed — non-blocking */ });
