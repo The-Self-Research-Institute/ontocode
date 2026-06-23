@@ -168,7 +168,7 @@ public class OntologyMutationService {
             if (hierarchyIndexService != null) {
                 hierarchyIndexService.markStale(projectId);
             }
-            if (!draft && (entityUsageIndexService != null || classDetailCacheService != null)) {
+            if (entityUsageIndexService != null || classDetailCacheService != null) {
                 List<String> affectedIris = ops.stream()
                     .flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri()))
                     .filter(Objects::nonNull)

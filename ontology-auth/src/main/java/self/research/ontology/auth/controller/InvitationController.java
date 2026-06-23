@@ -442,14 +442,14 @@ public class InvitationController {
             
             Invitation invitation = existingInvitation.get();
             
-            // Create new invitation with fresh token and expiry
-            String newToken = UUID.randomUUID().toString().replace("-", "");
-            invitation.setInvitationToken(newToken);
-            invitation.setExpiresAt(LocalDateTime.now().plusDays(7)); // 7 days validity
+            // Extend expiry and reset status — keep the same token so old email links stay valid.
+            // Generating a new token on every resend would invalidate any previously-sent links
+            // and cause "Invalid Invitation" errors for recipients who already opened the old email.
+            invitation.setExpiresAt(LocalDateTime.now().plusDays(7));
             invitation.setStatus("PENDING");
             invitation = invitationRepository.save(invitation);
-            
-            // Send email with new token
+
+            // Resend the email with the same (now re-valid) token
             invitationService.sendInvitationEmail(invitation, workspace);
             
             log.info("Invitation resent successfully to {}", request.email);
