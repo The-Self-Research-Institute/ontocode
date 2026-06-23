@@ -113,8 +113,11 @@ public class OntologyMutationService {
         
         // Check if we have any actual statements after filtering
         if (sparql.trim().equals(PREFIXES.trim())) {
-            log.warn("[MUTATION] No valid operations to apply after filtering");
-            return;
+            String opTypes = ops.stream().map(MutationOp::type).collect(Collectors.joining(", "));
+            log.error("[MUTATION] No valid SPARQL produced for ops: {}", opTypes);
+            throw new IllegalArgumentException(
+                    "Mutation could not be applied: missing required fields or unsupported restriction type (ops: "
+                            + opTypes + ")");
         }
         
         log.info("[MUTATION] Generated SPARQL (BEFORE graph injection):");
@@ -471,11 +474,9 @@ public class OntologyMutationService {
             if (op.restrictionType() != null) {
                 // Domain is a restriction
                 boolean isDataRestriction = "DataRestriction".equals(op.axiomType());
-                String restrictionBody = buildRestrictionBody(op.property(), op.restrictionType(), op.target(), op.cardinality(), isDataRestriction);
-                if (restrictionBody.isEmpty()) return "";
-                return "INSERT DATA {\n"
-                    + "<" + op.iri() + "> rdfs:domain " + restrictionBody + " .\n"
-                    + "}";
+                return buildRestrictionInsertData(
+                        op.iri(), "rdfs:domain", op.property(), op.restrictionType(), op.target(),
+                        op.cardinality(), isDataRestriction);
             } else {
                 return "INSERT DATA {\n"
                     + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
@@ -492,11 +493,9 @@ public class OntologyMutationService {
             if (op.restrictionType() != null) {
                 // Range is a restriction
                 boolean isDataRestriction = "DataRestriction".equals(op.axiomType());
-                String restrictionBody = buildRestrictionBody(op.property(), op.restrictionType(), op.target(), op.cardinality(), isDataRestriction);
-                if (restrictionBody.isEmpty()) return "";
-                return "INSERT DATA {\n"
-                    + "<" + op.iri() + "> rdfs:range " + restrictionBody + " .\n"
-                    + "}";
+                return buildRestrictionInsertData(
+                        op.iri(), "rdfs:range", op.property(), op.restrictionType(), op.target(),
+                        op.cardinality(), isDataRestriction);
             } else if (op.target() != null && op.target().contains("[")) {
                 String drSparql = buildDatatypeRestrictionSparql(op.iri(), op.target(), "rdfs:range");
                 if (!drSparql.isEmpty()) return drSparql;
@@ -1054,24 +1053,57 @@ public class OntologyMutationService {
             };
         }
         
-        String restrictionBody = buildRestrictionBody(propertyIri, restrictionType, fillerIri, cardinality, isDataRestriction);
-        
-        if (restrictionBody.isEmpty()) {
+        String sparql = buildRestrictionInsertData(
+                classIri, axiomPredicate, propertyIri, restrictionType, fillerIri, cardinality, isDataRestriction);
+        if (sparql.isEmpty()) {
             log.warn("[MUTATION] Unknown restriction type: {}", restrictionType);
             return "";
         }
-
-        // INSERT DATA (not INSERT…WHERE) so injectGraphContext wraps the triple block
-        // reliably. INSERT…WHERE + blank-node restrictions was producing malformed
-        // GRAPH clauses and restrictions never persisted in Fuseki.
-        String sparql = """
-            INSERT DATA {
-              <%s> %s %s .
-            }
-            """.formatted(classIri, axiomPredicate, restrictionBody);
-            
         log.info("[MUTATION]   Generated restriction SPARQL: {}", sparql);
         return sparql;
+    }
+
+    /**
+     * Build INSERT DATA for a class/property restriction using explicit blank-node
+     * triples ({@code _:ontocodeR}). GraphDB/RDF4J often rejects or mishandles Turtle
+     * {@code [ ... ]} blank-node syntax inside INSERT DATA after graph injection.
+     */
+    private String buildRestrictionInsertData(String subjectIri, String axiomPredicate,
+                                              String propertyIri, String restrictionType,
+                                              String fillerIri, Integer cardinality,
+                                              boolean isDataRestriction) {
+        if (subjectIri == null || propertyIri == null || restrictionType == null || fillerIri == null) {
+            return "";
+        }
+        String bn = "_:ontocodeR";
+        StringBuilder triples = new StringBuilder();
+        triples.append("<").append(subjectIri).append("> ").append(axiomPredicate).append(" ").append(bn).append(" .\n");
+        triples.append(bn).append(" a owl:Restriction .\n");
+        triples.append(bn).append(" owl:onProperty <").append(propertyIri).append("> .\n");
+
+        switch (restrictionType) {
+            case "some" -> triples.append(bn).append(" owl:someValuesFrom <").append(fillerIri).append("> .\n");
+            case "only" -> triples.append(bn).append(" owl:allValuesFrom <").append(fillerIri).append("> .\n");
+            case "value" -> triples.append(bn).append(" owl:hasValue <").append(fillerIri).append("> .\n");
+            case "min", "max", "exactly" -> {
+                int card = cardinality != null ? cardinality : 1;
+                String onClassPred = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
+                String cardPred = switch (restrictionType) {
+                    case "min" -> "owl:minQualifiedCardinality";
+                    case "max" -> "owl:maxQualifiedCardinality";
+                    default -> "owl:qualifiedCardinality";
+                };
+                triples.append(bn).append(" ").append(cardPred)
+                        .append(" \"").append(card).append("\"^^xsd:nonNegativeInteger .\n");
+                triples.append(bn).append(" ").append(onClassPred)
+                        .append(" <").append(fillerIri).append("> .\n");
+            }
+            default -> {
+                return "";
+            }
+        }
+
+        return "INSERT DATA {\n" + triples + "}";
     }
     
     /**

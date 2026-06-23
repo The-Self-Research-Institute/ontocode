@@ -1473,7 +1473,10 @@ public class OntologyQueryService {
     private String blankNodeFilterClause(String var, String blankNodeId) {
         String nodeKey = blankNodeId.startsWith("_:") ? blankNodeId.substring(2) : blankNodeId;
         String escaped = nodeKey.replace("\\", "\\\\").replace("\"", "\\\"");
-        return String.format("FILTER(isBlank(%s) && STR(%s) = \"%s\")", var, var, escaped);
+        // GraphDB/RDF4J may return STR(?bnode) with or without the "_:" prefix.
+        return String.format(
+                "FILTER(isBlank(%s) && (STR(%s) = \"%s\" || STR(%s) = \"_:%s\"))",
+                var, var, escaped, var, escaped);
     }
 
     private String describeBlankNodeRestriction(String projectId, String blankNodeId) {
@@ -2791,8 +2794,8 @@ public class OntologyQueryService {
         Set<String> seenRestrictions = new LinkedHashSet<>();
         while (subClassRestrictionRs.hasNext()) {
             BindingSet sol = subClassRestrictionRs.next();
-            String restrictionNode = sol.getValue("restriction").stringValue();
-            if (seenRestrictions.contains(restrictionNode)) {
+            String restrictionNode = resourceOrBlank(sol, "restriction");
+            if (restrictionNode == null || seenRestrictions.contains(restrictionNode)) {
                 continue;
             }
             seenRestrictions.add(restrictionNode);
@@ -2881,7 +2884,8 @@ public class OntologyQueryService {
         while (equivRestrictionRs.hasNext()) {
             BindingSet sol = equivRestrictionRs.next();
             Map<String, String> axiom = new LinkedHashMap<>();
-            String restrictionNode = sol.getValue("restriction").stringValue();
+            String restrictionNode = resourceOrBlank(sol, "restriction");
+            if (restrictionNode == null) continue;
             String propIri = resource(sol, "prop");
             String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : formatIriWithPrefix(propIri);
             String restrictionType = sol.hasBinding("restrictionType") ? literal(sol, "restrictionType") : "some";
@@ -3134,6 +3138,19 @@ public class OntologyQueryService {
         TupleQueryResult ancestorRs = ancestorFuture.join();
         List<Map<String, String>> anonymousAncestorAxioms = new ArrayList<>();
         Set<String> seenAncestors = new LinkedHashSet<>();
+        // Reuse restriction/complex definitions already resolved in this request — avoids
+        // follow-up SPARQL that matches blank nodes by STR(?bnode) (unreliable in GraphDB).
+        Map<String, String> knownBlankDefinitions = new LinkedHashMap<>();
+        for (Map<String, String> ax : subClassAxioms) {
+            if (ax.get("id") != null && ax.get("definition") != null) {
+                knownBlankDefinitions.put(ax.get("id"), ax.get("definition"));
+            }
+        }
+        for (Map<String, String> ax : equivAxioms) {
+            if (ax.get("id") != null && ax.get("definition") != null) {
+                knownBlankDefinitions.put(ax.get("id"), ax.get("definition"));
+            }
+        }
         while (ancestorRs.hasNext()) {
             BindingSet sol = ancestorRs.next();
             String superIri = resourceOrBlank(sol, "super");
@@ -3151,12 +3168,18 @@ public class OntologyQueryService {
                 boolean navigable = superIri.startsWith("http://") || superIri.startsWith("https://") || superIri.startsWith("urn:");
                 axiom.put("navigable", String.valueOf(navigable));
                 if (!navigable) {
-                    String manchester = describeBlankNodeManchester(projectId, superIri);
-                    if (manchester != null && !manchester.isBlank()) {
-                        axiom.put("manchester", manchester);
-                        axiom.put("definition", manchester);
+                    String known = knownBlankDefinitions.get(superIri);
+                    if (known != null && !known.isBlank()) {
+                        axiom.put("manchester", known);
+                        axiom.put("definition", known);
                     } else {
-                        axiom.put("definition", "Anonymous superclass");
+                        String manchester = describeBlankNodeManchester(projectId, superIri);
+                        if (manchester != null && !manchester.isBlank()) {
+                            axiom.put("manchester", manchester);
+                            axiom.put("definition", manchester);
+                        } else {
+                            axiom.put("definition", "Anonymous superclass");
+                        }
                     }
                 } else {
                     axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(superIri));
