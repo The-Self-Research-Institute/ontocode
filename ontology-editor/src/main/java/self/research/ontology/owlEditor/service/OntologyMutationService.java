@@ -215,6 +215,15 @@ public class OntologyMutationService {
                     }
                 }
             }
+
+            // Restrictions: fail fast if GraphDB did not persist the blank-node axiom
+            for (MutationOp op : ops) {
+                if ("addDataRestriction".equals(op.type())) {
+                    verifyRestrictionInserted(projectId, op, true);
+                } else if ("addObjectRestriction".equals(op.type())) {
+                    verifyRestrictionInserted(projectId, op, false);
+                }
+            }
         } catch (Exception e) {
             log.error("[MUTATION] ❌ Failed to apply mutations: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to apply mutations", e);
@@ -1104,6 +1113,72 @@ public class OntologyMutationService {
         }
 
         return "INSERT DATA {\n" + triples + "}";
+    }
+
+    /**
+     * Confirm a restriction axiom is readable from GraphDB immediately after INSERT.
+     * Throws if the triple pattern is missing (catches silent no-ops from bad SPARQL injection).
+     */
+    private void verifyRestrictionInserted(String projectId, MutationOp op, boolean isDataRestriction) {
+        String classIri = op.iri();
+        String propertyIri = op.property();
+        String restrictionType = op.restrictionType();
+        String fillerIri = op.target();
+        String axiomType = op.axiomType();
+        Integer cardinality = op.cardinality();
+        if (classIri == null || propertyIri == null || restrictionType == null || fillerIri == null) {
+            return;
+        }
+        String axiomPredicate = "rdfs:subClassOf";
+        if (axiomType != null) {
+            axiomPredicate = switch (axiomType) {
+                case "EquivalentTo" -> "owl:equivalentClass";
+                case "DisjointWith" -> "owl:disjointWith";
+                default -> "rdfs:subClassOf";
+            };
+        }
+        String onFillerPred = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
+        String restrictionPattern = switch (restrictionType) {
+            case "some" -> "?r owl:someValuesFrom <" + fillerIri + "> .";
+            case "only" -> "?r owl:allValuesFrom <" + fillerIri + "> .";
+            case "value" -> "?r owl:hasValue <" + fillerIri + "> .";
+            case "min" -> {
+                int card = cardinality != null ? cardinality : 1;
+                yield "?r owl:minQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger ; "
+                        + onFillerPred + " <" + fillerIri + "> .";
+            }
+            case "max" -> {
+                int card = cardinality != null ? cardinality : 1;
+                yield "?r owl:maxQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger ; "
+                        + onFillerPred + " <" + fillerIri + "> .";
+            }
+            case "exactly" -> {
+                int card = cardinality != null ? cardinality : 1;
+                yield "?r owl:qualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger ; "
+                        + onFillerPred + " <" + fillerIri + "> .";
+            }
+            default -> null;
+        };
+        if (restrictionPattern == null) {
+            return;
+        }
+        String verifyQuery = PREFIXES + """
+            ASK WHERE {
+              <%s> %s ?r .
+              ?r a owl:Restriction ;
+                 owl:onProperty <%s> ;
+                 %s
+            }
+            """.formatted(classIri, axiomPredicate, propertyIri, restrictionPattern);
+        log.info("[MUTATION] Verifying restriction insertion: {}", verifyQuery);
+        boolean found = datasetService.execAsk(projectId, verifyQuery);
+        if (!found) {
+            log.error("[MUTATION] Restriction verification FAILED for class={} property={} type={} filler={}",
+                    classIri, propertyIri, restrictionType, fillerIri);
+            throw new RuntimeException(
+                    "Restriction was not persisted to the ontology graph (verification failed)");
+        }
+        log.info("[MUTATION] Restriction verification OK for class={}", classIri);
     }
     
     /**
