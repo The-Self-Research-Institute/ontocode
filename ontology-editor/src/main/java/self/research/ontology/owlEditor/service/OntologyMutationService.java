@@ -1168,13 +1168,17 @@ public class OntologyMutationService {
         if (restrictionPattern == null) {
             return;
         }
+        // Use GRAPH <uri> inline so the check targets the exact named graph regardless
+        // of how the connection resolves its default graph — more reliable than FROM injection.
         String verifyQuery = PREFIXES + """
             ASK WHERE {
-              <%s> %s ?r .
-              ?r owl:onProperty <%s> .
-              %s
+              GRAPH <%s> {
+                <%s> %s ?r .
+                ?r owl:onProperty <%s> .
+                %s
+              }
             }
-            """.formatted(classIri, axiomPredicate, propertyIri, restrictionPattern);
+            """.formatted(graphUri, classIri, axiomPredicate, propertyIri, restrictionPattern);
         log.info("[MUTATION] Verifying restriction insertion in graph {}: {}", graphUri, verifyQuery);
         boolean found = datasetService.execAskInGraph(projectId, graphUri, verifyQuery);
         if (!found) {
