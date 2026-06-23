@@ -79,7 +79,6 @@ public class OntologyCrudController {
         }
 
         if (draft) {
-            // Private mode: persist to per-user draft named graph + MongoDB audit trail
             log.info("[MUTATION] Applying {} operations to draft graph for project {}",
                 request.ops().size(), projectId);
 
@@ -91,7 +90,16 @@ public class OntologyCrudController {
             String sessionId = request.sessionId() != null ? request.sessionId() :
                 UUID.randomUUID().toString();
 
-            mutationService.applyDraft(projectId, userId, request.ops());
+            try {
+                mutationService.applyDraft(projectId, userId, request.ops());
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.status(409).body(Map.of(
+                    "success", false,
+                    "draft", true,
+                    "error", e.getMessage(),
+                    "draftCopyNotReady", true
+                ));
+            }
             draftTrackingService.recordDrafts(projectId, userId, username, request.ops(), sessionId);
 
             return ResponseEntity.ok(Map.of(

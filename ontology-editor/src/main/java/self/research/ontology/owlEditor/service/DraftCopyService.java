@@ -99,7 +99,7 @@ public class DraftCopyService {
                 .orElse(DraftCopyStatus.NOT_FOUND);
     }
 
-    /** True only for copy-on-switch sessions that have finished copying — never for legacy overlay sessions. */
+    /** True when the user's copy-on-switch draft graph is ready for edits. */
     public boolean isReady(String projectId, String userId) {
         return sessionRepository.findByProjectIdAndUserId(projectId, userId)
                 .map(s -> s.getCopyStatus() == DraftCopyStatus.READY)

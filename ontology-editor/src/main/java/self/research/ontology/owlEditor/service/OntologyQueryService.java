@@ -88,12 +88,7 @@ public class OntologyQueryService {
     }
 
     private String draftEntityHiddenFilter(String projectId, String entityVar) {
-        String userId = SparqlQueryContext.getUserId();
-        if (userId == null || userId.isBlank()) {
-            return "";
-        }
-        return SparqlGraphUris.excludeDraftDeletedFilter(
-                SparqlGraphUris.userDraftGraph(projectId, userId), entityVar);
+        return "";
     }
 
     /**

@@ -151,56 +151,8 @@ public class OntologyMutationService {
             MutationContext.setOps(ops);
             long sparqlStart = System.currentTimeMillis();
             if (draft) {
-                boolean copyOnSwitch = draftCopyService != null && draftCopyService.isReady(projectId, userId);
-                if (copyOnSwitch) {
-                    // Draft is a full copy — WHERE reads from draft graph, no deletion markers needed.
-                    datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
-                } else {
-                    // Overlay draft: the draft graph is an INSERT-only overlay over the main graph.
-                    // Axiom-level deletes/updates must target the main graph directly because
-                    // DELETE DATA { GRAPH <draftGraph> { ... } } is a no-op when the triple lives
-                    // in the main graph. Split ops into two buckets and execute accordingly.
-                    //
-                    // Additionally, mirror delete/update ops to the draft graph so that axioms
-                    // added during this draft session (stored in the draft graph) are also removed.
-                    // When the triple is not in the draft graph the mirror execute is a safe no-op.
-                    boolean allOpsNeedMain = ops.stream().allMatch(op -> MAIN_GRAPH_MODIFY_OPS.contains(op.type()));
-                    boolean anyOpNeedsMain = ops.stream().anyMatch(op -> MAIN_GRAPH_MODIFY_OPS.contains(op.type()));
-
-                    if (allOpsNeedMain) {
-                        // All ops target main graph — execute directly.
-                        datasetService.execUpdate(projectId, sparql);
-                        if (mainGraphRevisionService != null) {
-                            mainGraphRevisionService.incrementRevision(projectId);
-                        }
-                        // Mirror to draft graph: removes axioms that were added in this draft session.
-                        datasetService.execDraftUpdate(projectId, userId, sparql);
-                    } else if (anyOpNeedsMain) {
-                        // Mixed batch: split into main-graph ops and draft-graph ops, run separately.
-                        List<MutationOp> mainOps = ops.stream()
-                                .filter(op -> MAIN_GRAPH_MODIFY_OPS.contains(op.type())).toList();
-                        List<MutationOp> draftOps = ops.stream()
-                                .filter(op -> !MAIN_GRAPH_MODIFY_OPS.contains(op.type())).toList();
-                        String mainSparql = PREFIXES + "\n" + mainOps.stream()
-                                .map(op -> toUpdate(projectId, op))
-                                .filter(s -> s != null && !s.isBlank())
-                                .collect(Collectors.joining("\n;\n"));
-                        String draftSparql = PREFIXES + "\n" + draftOps.stream()
-                                .map(op -> toUpdate(projectId, op))
-                                .filter(s -> s != null && !s.isBlank())
-                                .collect(Collectors.joining("\n;\n"));
-                        datasetService.execUpdate(projectId, mainSparql);
-                        if (mainGraphRevisionService != null) {
-                            mainGraphRevisionService.incrementRevision(projectId);
-                        }
-                        // Mirror delete/update ops to draft graph, then apply draft-only ops.
-                        datasetService.execDraftUpdate(projectId, userId, mainSparql);
-                        datasetService.execDraftUpdate(projectId, userId, draftSparql);
-                    } else {
-                        datasetService.execDraftUpdate(projectId, userId, sparql);
-                    }
-                    markDraftDeletions(projectId, userId, ops);
-                }
+                requireDraftCopyReady(projectId, userId);
+                datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
             } else {
                 datasetService.execUpdate(projectId, sparql);
                 if (mainGraphRevisionService != null) {
@@ -290,7 +242,8 @@ public class OntologyMutationService {
         }
 
         if (draft) {
-            datasetService.execDraftUpdate(projectId, userId, sparql);
+            requireDraftCopyReady(projectId, userId);
+            datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
         } else {
             datasetService.execUpdate(projectId, sparql);
             if (mainGraphRevisionService != null) {
@@ -339,7 +292,8 @@ public class OntologyMutationService {
         
         String sparql = sparqlBuilder.toString();
         if (draft) {
-            datasetService.execDraftUpdate(projectId, userId, sparql);
+            requireDraftCopyReady(projectId, userId);
+            datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
         } else {
             datasetService.execUpdate(projectId, sparql);
             if (mainGraphRevisionService != null) {
@@ -1831,31 +1785,10 @@ public class OntologyMutationService {
         };
     }
 
-    private static final java.util.Set<String> DRAFT_DELETE_ENTITY_OPS = java.util.Set.of(
-            "deleteClass", "deleteIndividual", "deleteObjectProperty",
-            "deleteDataProperty", "deleteAnnotationProperty"
-    );
-
-    // Axiom-level delete/update ops that modify triples in the main graph.
-    // The overlay draft model can only INSERT into the draft graph; it cannot remove
-    // triples from the main graph. These ops must therefore always target the main
-    // graph directly even when draft=true (the mutation is still recorded via
-    // draftTrackingService.recordDrafts for history/undo purposes).
-    private static final java.util.Set<String> MAIN_GRAPH_MODIFY_OPS = java.util.Set.of(
-            "deleteSubClassOf", "deleteEquivalentClass", "deleteDisjointWith",
-            "updateSubClassOf", "updateEquivalentClass", "updateDisjointWith",
-            "deletePropertyDomain", "deletePropertyRange",
-            "deleteSubPropertyOf", "deleteInverseProperty",
-            "deletePropertyChain", "deleteCharacteristic",
-            "deleteAnnotation", "updateAnnotation",
-            "updateClassLabel"
-    );
-
-    private void markDraftDeletions(String projectId, String userId, List<MutationOp> ops) {
-        for (MutationOp op : ops) {
-            if (DRAFT_DELETE_ENTITY_OPS.contains(op.type())) {
-                datasetService.markDraftEntityDeleted(projectId, userId, op.iri());
-            }
+    private void requireDraftCopyReady(String projectId, String userId) {
+        if (draftCopyService == null || !draftCopyService.isReady(projectId, userId)) {
+            throw new IllegalArgumentException(
+                    "Private draft is not ready yet. Wait for the graph copy to finish before editing.");
         }
     }
 
