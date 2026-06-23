@@ -1331,8 +1331,10 @@ public class SparqlDatasetService {
             if (operationsStr.toUpperCase().contains("USING ")) {
                 // Draft update: USING already present; wrap INSERT template with GRAPH instead of
                 // WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
-                operationsStr = operationsStr.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\})",
-                        "$1 GRAPH <" + graphUri + "> {$2} $3");
+                // Close GRAPH and outer INSERT braces before WHERE (non-greedy .*? alone left USING
+                // attached to a malformed template for blank-node inserts).
+                operationsStr = operationsStr.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\}\\s*)(WHERE)",
+                        "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
                 log.info("[GRAPH-INJECT] Injected GRAPH into INSERT template (USING present)");
             } else if (!operationsStr.trim().toUpperCase().startsWith("WITH")) {
                 operationsStr = "WITH <" + graphUri + "> " + operationsStr;
@@ -1375,8 +1377,8 @@ public class SparqlDatasetService {
                     // instead of WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
                     stmt = stmt.replaceFirst("(?is)(DELETE\\s*\\{)(.*?)(\\})",
                             "$1 GRAPH <" + graphUri + "> {$2} $3");
-                    stmt = stmt.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\})",
-                            "$1 GRAPH <" + graphUri + "> {$2} $3");
+                    stmt = stmt.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\})(\\s*WHERE)",
+                            "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
                     log.info("[GRAPH-INJECT] Injected GRAPH into DELETE/INSERT templates (USING present)");
                 } else {
                     stmt = "WITH <" + graphUri + "> " + stmt;

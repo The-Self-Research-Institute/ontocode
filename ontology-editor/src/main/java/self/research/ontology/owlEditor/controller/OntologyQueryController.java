@@ -640,9 +640,12 @@ public class OntologyQueryController {
         String ctxUserId = SparqlQueryContext.getUserId();
         boolean hasDraft = ctxUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
+        // When userId is on the request, always use live SPARQL so draft-graph writes
+        // and post-mutation reads stay consistent (MongoDB/OWLAPI caches are main-only).
+        boolean userScopedRead = ctxUserId != null && !ctxUserId.isBlank();
 
         // 1. OWLAPI in-memory (desktop / warm cloud) — instant, Protégé-parity
-        if (!hasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+        if (!hasDraft && !userScopedRead && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             Map<String, Object> details = new java.util.LinkedHashMap<>(
                     desktopHierarchyService.classDetails(projectId, classIri));
             if (!details.isEmpty()) {
@@ -650,7 +653,7 @@ public class OntologyQueryController {
             }
         }
         // 2. MongoDB persistent cache — survives restarts, shared across pods
-        if (!hasDraft && classDetailCacheService != null) {
+        if (!hasDraft && !userScopedRead && classDetailCacheService != null) {
             var cached = classDetailCacheService.getDetails(projectId, classIri);
             if (cached.isPresent()) {
                 return ResponseEntity.ok(Map.of("success", true, "data", cached.get()));
@@ -664,7 +667,7 @@ public class OntologyQueryController {
         } catch (Exception ignored) {}
         // 3. SPARQL fallback — store result in MongoDB for next request
         Map<String, Object> details = queryService.classDetails(projectId, classIri);
-        if (classDetailCacheService != null && !details.isEmpty()) {
+        if (!hasDraft && !userScopedRead && classDetailCacheService != null && !details.isEmpty()) {
             classDetailCacheService.putDetails(projectId, classIri, details);
         }
         return ResponseEntity.ok(Map.of("success", true, "data", details));
