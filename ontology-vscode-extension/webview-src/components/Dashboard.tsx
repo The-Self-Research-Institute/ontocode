@@ -1203,6 +1203,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const workspaceRoleParsed = parseWorkspaceRole(user?.workspaceRole, undefined);
   const [userProjectRole, setUserProjectRole] = useState<string | null>(null);
   const isProjectViewerRole = userProjectRole === 'VIEWER';
+  const isProjectDraftEditorRole = userProjectRole === 'DRAFT_EDITOR';
   const isViewOnlyMember =
     !isDesktop() && (
       (subscription.isFree && user?.workspaceRole != null && normalizeRole(user.workspaceRole) !== "OWNER") ||
@@ -3925,7 +3926,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 .then(({ requireDraftForMembers: rdm, isOwner }) => {
                   setRequireDraftForMembers(rdm);
                   setIsProjectOwner(isOwner);
-                  if (rdm && !isOwner && !isProjectViewerRole) {
+                  if ((rdm || isProjectDraftEditorRole) && !isOwner && !isProjectViewerRole) {
                     if (shouldApplyDirectly) {
                       // Member has no saved draft preference (public view) — block direct mutations
                       // so they must explicitly switch to Draft Mode before editing.
