@@ -359,7 +359,26 @@ public class DraftTrackingService {
     public DiscardDraftsResult discardDrafts(String projectId) {
         return discardDrafts(projectId, null);
     }
-    
+
+    /**
+     * Discard unapplied drafts whose operationData.iri is in the given set.
+     * Used by pull-from-public resolution when the user chooses "take_public" for specific entities.
+     */
+    public void discardDraftsByIris(String projectId, String userId, Set<String> iris) {
+        List<DraftChange> candidates = userId != null && !userId.isBlank()
+                ? getUnappliedDraftsForUser(projectId, userId)
+                : getUnappliedDrafts(projectId);
+        List<DraftChange> toDelete = candidates.stream()
+                .filter(d -> {
+                    if (d.getOperationData() == null) return false;
+                    Object iriVal = d.getOperationData().get("iri");
+                    return iriVal != null && iris.contains(iriVal.toString());
+                })
+                .collect(Collectors.toList());
+        toDelete.forEach(d -> draftRepository.deleteById(d.getId()));
+        log.info("[DRAFT] discardDraftsByIris: deleted {} drafts for project {} userId {}", toDelete.size(), projectId, userId);
+    }
+
     /**
      * Clear all applied drafts (cleanup)
      */

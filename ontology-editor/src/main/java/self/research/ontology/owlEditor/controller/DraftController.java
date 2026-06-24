@@ -17,6 +17,7 @@ import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * REST controller for draft change operations.
@@ -361,6 +362,138 @@ public class DraftController {
                 "success", true,
                 "requireDraftForMembers", request.requireDraftForMembers()
         ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Pull-from-public: analyse differences and apply resolution
+    // -----------------------------------------------------------------------
+
+    /**
+     * Analyse differences between a user's draft and the current public state.
+     * POST /api/ontology/{projectId}/pull-from-public/analyze
+     *
+     * Returns a JSON payload that the frontend PullFromPublicDialog uses to
+     * present conflict resolution choices to the user.
+     */
+    @PostMapping("/{projectId}/pull-from-public/analyze")
+    public ResponseEntity<Map<String, Object>> analyzePublicDiff(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId) {
+        try {
+            List<DraftChange> drafts = userId != null && !userId.isBlank()
+                    ? draftTrackingService.getUnappliedDraftsForUser(projectId, userId)
+                    : draftTrackingService.getUnappliedDrafts(projectId);
+
+            // Build lightweight conflict / safe-change lists from the draft records.
+            // A "conflict" here means the same entity IRI appears in multiple draft
+            // operations — we surface every such entity so the user can decide.
+            java.util.Map<String, List<DraftChange>> byIri = new java.util.LinkedHashMap<>();
+            for (DraftChange d : drafts) {
+                String iri = d.getOperationData() != null ? (String) d.getOperationData().get("iri") : null;
+                if (iri == null) iri = d.getId();
+                byIri.computeIfAbsent(iri, k -> new java.util.ArrayList<>()).add(d);
+            }
+
+            List<Map<String, Object>> conflicts = new java.util.ArrayList<>();
+            List<Map<String, Object>> safeChanges = new java.util.ArrayList<>();
+
+            for (Map.Entry<String, List<DraftChange>> entry : byIri.entrySet()) {
+                List<DraftChange> group = entry.getValue();
+                DraftChange last = group.get(group.size() - 1);
+                String label = last.getOperationData() != null
+                        ? (String) last.getOperationData().getOrDefault("label", entry.getKey())
+                        : entry.getKey();
+                String opType = last.getOperationType() != null ? last.getOperationType() : "MODIFY";
+                String description = last.getOperationData() != null
+                        ? (String) last.getOperationData().getOrDefault("description", opType + " on " + label)
+                        : opType + " on " + label;
+
+                if (group.size() > 1) {
+                    // Multiple ops on same IRI = surface as conflict requiring user choice
+                    Map<String, Object> conflict = new HashMap<>();
+                    conflict.put("entityIri", entry.getKey());
+                    conflict.put("entityLabel", label);
+                    conflict.put("changeType", opType);
+                    conflict.put("draftDescription", description);
+                    conflict.put("publicDescription", "Current public version of " + label);
+                    conflict.put("resolution", null);
+                    conflicts.add(conflict);
+                } else {
+                    Map<String, Object> safe = new HashMap<>();
+                    safe.put("entityIri", entry.getKey());
+                    safe.put("entityLabel", label);
+                    safe.put("changeType", opType);
+                    safe.put("description", description);
+                    safeChanges.add(safe);
+                }
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("hasConflicts", !conflicts.isEmpty());
+            result.put("conflicts", conflicts);
+            result.put("safeChanges", safeChanges);
+            result.put("draftChanges", safeChanges);
+            result.put("draftCount", drafts.size());
+            result.put("publicVersion", "current");
+            result.put("projectId", projectId);
+            return ResponseEntity.ok(result);
+
+        } catch (Exception e) {
+            log.error("[PULL-ANALYZE] Error analysing draft vs public for project {}", projectId, e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Apply the user's resolution choices — either auto-merge, per-entity choice, or full overwrite.
+     * POST /api/ontology/{projectId}/pull-from-public/apply
+     * Body: { "strategy": "auto"|"resolved"|"overwrite", "conflictResolutions": { "<iri>": "keep_draft"|"take_public" } }
+     */
+    @PostMapping("/{projectId}/pull-from-public/apply")
+    public ResponseEntity<Map<String, Object>> applyPublicPull(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId,
+            @RequestBody Map<String, Object> body) {
+        try {
+            String strategy = (String) body.getOrDefault("strategy", "auto");
+            @SuppressWarnings("unchecked")
+            Map<String, String> resolutions = (Map<String, String>) body.getOrDefault("conflictResolutions", Map.of());
+
+            List<DraftChange> drafts = userId != null && !userId.isBlank()
+                    ? draftTrackingService.getUnappliedDraftsForUser(projectId, userId)
+                    : draftTrackingService.getUnappliedDrafts(projectId);
+
+            if ("overwrite".equals(strategy)) {
+                // Discard all draft changes — user accepts public state entirely
+                draftTrackingService.discardDrafts(projectId, userId);
+                log.info("[PULL-APPLY] Overwrite: discarded {} drafts for project {}", drafts.size(), projectId);
+            } else if ("resolved".equals(strategy)) {
+                // Keep drafts for "keep_draft" IRIs; discard drafts for "take_public" IRIs
+                Set<String> toDiscard = new java.util.HashSet<>();
+                for (Map.Entry<String, String> r : resolutions.entrySet()) {
+                    if ("take_public".equals(r.getValue())) {
+                        toDiscard.add(r.getKey());
+                    }
+                }
+                if (!toDiscard.isEmpty()) {
+                    draftTrackingService.discardDraftsByIris(projectId, userId, toDiscard);
+                    log.info("[PULL-APPLY] Resolved: discarded drafts for {} IRIs in project {}", toDiscard.size(), projectId);
+                }
+            } else {
+                // "auto" — no conflicts, nothing to discard; just acknowledge
+                log.info("[PULL-APPLY] Auto-merge: no conflicts for project {}", projectId);
+            }
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "strategy", strategy,
+                    "projectId", projectId
+            ));
+
+        } catch (Exception e) {
+            log.error("[PULL-APPLY] Error applying pull for project {}", projectId, e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
     }
 
     // Request DTOs
