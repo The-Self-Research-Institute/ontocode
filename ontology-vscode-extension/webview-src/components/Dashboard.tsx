@@ -1574,7 +1574,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [requireDraftForMembers, setRequireDraftForMembers] = useState(false);
   const [isProjectOwner, setIsProjectOwner] = useState(false);
   const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
-  const canReviewPR = isProjectOwner || userProjectRole === 'ADMIN' || userProjectRole === 'EDITOR';
+  const isWorkspaceAdminRole = normalizeRole(user?.workspaceRole ?? "") === "ADMIN";
+  // Fast-path mirrors showPRButton: workspace owner/admin is immediately known, isProjectOwner is async.
+  // !isProjectDraftEditorRole guards against a DRAFT_EDITOR (null workspaceRole != owner) slipping through.
+  const canReviewPR = isProjectOwner
+    || userProjectRole === 'OWNER'
+    || userProjectRole === 'ADMIN'
+    || userProjectRole === 'EDITOR'
+    || ((isCurrentWorkspaceOwner || isWorkspaceAdminRole) && !isProjectDraftEditorRole);
   // DRAFT_EDITOR always passes (not blocked by plan/isViewOnly); others need draft mode + not view-only
   const canRaisePR = !isDesktop() && (
     isProjectDraftEditorRole ||
@@ -1582,7 +1589,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   );
   // Fast-path for PR button: workspace owners and admins see it before isProjectOwner async resolves.
   // Guard with !isProjectDraftEditorRole to exclude project-only members (also have null workspaceRole).
-  const isWorkspaceAdminRole = normalizeRole(user?.workspaceRole ?? "") === "ADMIN";
   const showPRButton = !isDesktop() && !!projectId && (
     canRaisePR || canReviewPR ||
     ((isCurrentWorkspaceOwner || isWorkspaceAdminRole) && !isProjectDraftEditorRole)
