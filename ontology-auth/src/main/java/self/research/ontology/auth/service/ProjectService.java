@@ -310,8 +310,8 @@ public class ProjectService {
         }
 
         String normalizedRole = role == null ? "" : role.toUpperCase();
-        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(normalizedRole)) {
-            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, or VIEWER");
+        if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
+            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER");
         }
         
         if (project.hasMember(targetUserId)) {
@@ -345,8 +345,8 @@ public class ProjectService {
 
         // Validate role
         String normalizedRole = newRole == null ? "" : newRole.toUpperCase();
-        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(normalizedRole)) {
-            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, or VIEWER");
+        if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
+            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER");
         }
 
         Project.ProjectMember member = project.getMember(targetUserId);
