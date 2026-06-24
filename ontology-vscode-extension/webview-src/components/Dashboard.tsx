@@ -196,6 +196,7 @@ const TopMenuBar = ({
   onToggleSyncMode,
   requireDraftForMembers,
   isProjectOwner,
+  isDraftEditorRole,
   autoDraftStatus,
   onToggleRequireDraftForMembers,
   onSwitchToDraftMode,
@@ -241,6 +242,7 @@ const TopMenuBar = ({
   onToggleSyncMode: () => void;
   requireDraftForMembers?: boolean;
   isProjectOwner?: boolean;
+  isDraftEditorRole?: boolean;
   autoDraftStatus?: 'idle' | 'copying' | 'ready';
   onToggleRequireDraftForMembers?: () => void;
   onSwitchToDraftMode?: () => void;
@@ -812,16 +814,16 @@ const TopMenuBar = ({
           </span>
         )}
         <span className={`hidden sm:inline text-xs font-medium ${
-          requireDraftForMembers && !isProjectOwner && syncMode === 'public'
+          (requireDraftForMembers && !isProjectOwner || isDraftEditorRole) && syncMode === 'public'
             ? "text-amber-600"
             : syncMode === "public" ? "text-green-600" : "text-gray-500"
         }`}>
-          {requireDraftForMembers && !isProjectOwner
+          {(requireDraftForMembers && !isProjectOwner) || isDraftEditorRole
             ? (syncMode === 'public' ? "Public (View Only)" : "Draft Mode")
             : syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
         </span>
-        {requireDraftForMembers && !isProjectOwner && syncMode === 'public' ? (
-          // Non-owner member in view-only mode: offer explicit switch to draft
+        {((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'public' ? (
+          // Draft-only member in view-only mode: offer explicit switch to draft
           <button
             onClick={onSwitchToDraftMode}
             className="ml-1 flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
@@ -829,8 +831,8 @@ const TopMenuBar = ({
           >
             Switch to Draft Mode
           </button>
-        ) : requireDraftForMembers && !isProjectOwner && syncMode === 'private' ? (
-          // Non-owner member in draft mode: allow switching back to view-only public
+        ) : ((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'private' ? (
+          // Draft-only member in draft mode: allow switching back to view-only public
           <button
             onClick={onToggleSyncMode}
             className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 bg-gray-300"
@@ -1571,7 +1573,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [requireDraftForMembers, setRequireDraftForMembers] = useState(false);
   const [isProjectOwner, setIsProjectOwner] = useState(false);
   const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
-  const canReviewPR = isProjectOwner || userProjectRole === 'ADMIN' || userProjectRole === 'EDITOR';
+  const canReviewPR = isProjectOwner || isCurrentWorkspaceOwner || userProjectRole === 'ADMIN' || userProjectRole === 'EDITOR';
   const canRaisePR = !isDesktop() && syncMode === 'private' && !isViewOnlyMember;
   const autoDraftPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1690,6 +1692,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       // non-blocking
     }
   }, [projectId]);
+
+  useEffect(() => {
+    if (projectId && canReviewPR) refreshOpenPRCount();
+  }, [projectId, canReviewPR]);
 
   // Track background import progress (visible after user clicks "Continue Working")
   const [backgroundImportActive, setBackgroundImportActive] = useState(false);
@@ -15809,6 +15815,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           syncMode={syncMode}
           requireDraftForMembers={requireDraftForMembers}
           isProjectOwner={isProjectOwner}
+          isDraftEditorRole={isProjectDraftEditorRole}
           autoDraftStatus={autoDraftStatus}
           onSwitchToDraftMode={handleSwitchToDraftMode}
           onToggleRequireDraftForMembers={() => {
