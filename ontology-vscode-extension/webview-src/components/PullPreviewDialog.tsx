@@ -1,12 +1,17 @@
 import React, { useEffect, useState } from "react";
 import { X, Download, AlertTriangle, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import apiClient from "../services/apiClient";
-
-interface DraftChange {
-  id: string;
-  operationType: string;
-  operationData: Record<string, any>;
-}
+import {
+  DraftChange,
+  CATEGORY_ORDER,
+  getCategory,
+  getEntityName,
+  getEntityIri,
+  extractLocalName,
+  getActionMeta,
+  getOpLabel,
+  groupByCategory,
+} from "../utils/draftChangeHelpers";
 
 interface PullPreviewDialogProps {
   isOpen: boolean;
@@ -16,61 +21,11 @@ interface PullPreviewDialogProps {
   userId: string;
 }
 
-// Map operation type → display category
-const getCategory = (opType: string): string => {
-  if (/^(create|delete|update)Class/i.test(opType)) return "Classes";
-  if (/^(create|delete)ObjectProperty/i.test(opType) ||
-      /^(add|delete)(PropertyDomain|PropertyRange|SubPropertyOf|InverseProperty|DisjointProperty|EquivalentProperty)/i.test(opType))
-    return "Object Properties";
-  if (/^(create|delete)DataProperty/i.test(opType)) return "Data Properties";
-  if (/^(create|delete)AnnotationProperty/i.test(opType)) return "Annotation Properties";
-  if (/^(create|delete)Individual/i.test(opType) ||
-      /^(add|remove)ClassAssertion/i.test(opType))
-    return "Individuals";
-  if (/^(create|delete)Datatype/i.test(opType)) return "Datatypes";
-  if (/^(add|delete|update)(SubClassOf|EquivalentClass|DisjointWith)/i.test(opType))
-    return "Class Axioms";
-  if (/^(add|delete|update)Annotation/i.test(opType)) return "Annotations";
-  return "Other";
-};
-
-const CATEGORY_ORDER = [
-  "Classes", "Object Properties", "Data Properties",
-  "Annotation Properties", "Individuals", "Datatypes",
-  "Class Axioms", "Annotations", "Other",
-];
-
-// Extract a human-readable name from operation data
-const getEntityName = (opType: string, data: Record<string, any>): string => {
-  if (!data) return "";
-  const label = data.label as string;
-  if (label) return label;
-  const iri = (data.iri || data.target || "") as string;
-  if (iri) {
-    const lastHash = iri.lastIndexOf("#");
-    const lastSlash = iri.lastIndexOf("/");
-    const name = iri.substring(Math.max(lastHash, lastSlash) + 1);
-    return name || iri;
-  }
-  return opType;
-};
-
-// + / − / ~ prefix and colour class
-const getActionMeta = (opType: string) => {
-  const lower = opType.toLowerCase();
-  if (lower.startsWith("create") || lower.startsWith("add"))
-    return { symbol: "+", cls: "text-green-500" };
-  if (lower.startsWith("delete") || lower.startsWith("remove"))
-    return { symbol: "−", cls: "text-red-500" };
-  return { symbol: "~", cls: "text-amber-500" };
-};
-
-// Human-readable operation label
-const getOpLabel = (opType: string): string =>
-  opType
-    .replace(/([A-Z])/g, " $1")
-    .replace(/^./, (s) => s.toUpperCase())
-    .trim();
+interface ConflictDetail {
+  entityIRI: string;
+  entityLabel: string;
+  changedBy: string;
+}
 
 const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
   isOpen, onClose, onConfirm, projectId, userId,
@@ -78,16 +33,31 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
   const [changes, setChanges] = useState<DraftChange[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [conflictIris, setConflictIris] = useState<Set<string>>(new Set());
+  const [mainChangedSinceDraft, setMainChangedSinceDraft] = useState(false);
+  const [conflictDetails, setConflictDetails] = useState<ConflictDetail[]>([]);
 
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
     setExpanded(new Set());
-    apiClient
-      .get<any>(`/api/ontology/${projectId}/drafts`, { userId })
-      .then((res: any) => {
-        const data = res?.data || res;
-        setChanges(data.drafts || []);
+    setConflictIris(new Set());
+    setMainChangedSinceDraft(false);
+    setConflictDetails([]);
+    Promise.all([
+      apiClient.get<any>(`/api/ontology/${projectId}/drafts`, { userId }),
+      apiClient.get<any>(`/api/ontology/${projectId}/drafts/publish-preview`, { userId }),
+    ])
+      .then(([draftsRes, previewRes]) => {
+        const draftsData = draftsRes?.data || draftsRes;
+        setChanges(draftsData.drafts || []);
+        const preview = previewRes?.data || previewRes;
+        if (preview) {
+          setMainChangedSinceDraft(!!preview.mainChangedSinceDraft);
+          const cList: ConflictDetail[] = preview.conflicts || [];
+          setConflictDetails(cList);
+          setConflictIris(new Set<string>(cList.map((c) => c.entityIRI)));
+        }
       })
       .catch(() => setChanges([]))
       .finally(() => setLoading(false));
@@ -95,12 +65,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
 
   if (!isOpen) return null;
 
-  // Group by category
-  const grouped: Record<string, DraftChange[]> = {};
-  for (const c of changes) {
-    const cat = getCategory(c.operationType);
-    (grouped[cat] = grouped[cat] || []).push(c);
-  }
+  const grouped = groupByCategory(changes);
   const categories = CATEGORY_ORDER.filter((cat) => grouped[cat]?.length);
 
   const toggleCategory = (cat: string) => {
@@ -170,6 +135,36 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                 </p>
               </div>
 
+              {/* Conflict details */}
+              {conflictDetails.length > 0 && (
+                <div
+                  className="flex flex-col gap-1 rounded-md px-3 py-2 border text-[11px]"
+                  style={{ borderColor: "rgba(234,179,8,0.4)", backgroundColor: "rgba(234,179,8,0.05)" }}
+                >
+                  <div className="flex items-center gap-1.5 font-semibold text-amber-600">
+                    <AlertTriangle size={11} />
+                    {conflictDetails.length} conflict{conflictDetails.length !== 1 ? "s" : ""} with public version
+                  </div>
+                  <ul className="opacity-70 space-y-0.5 pl-1">
+                    {conflictDetails.slice(0, 5).map((c) => (
+                      <li key={c.entityIRI}>
+                        · {c.entityLabel || extractLocalName(c.entityIRI)}
+                        {c.changedBy && <span className="opacity-60"> (changed by {c.changedBy})</span>}
+                      </li>
+                    ))}
+                    {conflictDetails.length > 5 && (
+                      <li className="opacity-50">…and {conflictDetails.length - 5} more</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+              {mainChangedSinceDraft && conflictDetails.length === 0 && (
+                <div className="text-[11px] opacity-60 flex items-center gap-1.5 px-1">
+                  <AlertTriangle size={11} className="text-amber-500" />
+                  Public ontology was updated after you started your draft.
+                </div>
+              )}
+
               {/* Grouped change list */}
               {categories.map((cat) => {
                 const items = grouped[cat];
@@ -183,6 +178,9 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                       <span className="flex items-center gap-1.5">
                         {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                         {cat}
+                        {conflictDetails.length > 0 && items.some((c) => conflictIris.has(getEntityIri(c.operationData))) && (
+                          <AlertTriangle size={10} className="text-amber-500" />
+                        )}
                       </span>
                       <span className="opacity-50">{items.length}</span>
                     </button>
@@ -194,11 +192,29 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                         {items.map((c) => {
                           const { symbol, cls } = getActionMeta(c.operationType);
                           const name = getEntityName(c.operationType, c.operationData);
+                          const iri = getEntityIri(c.operationData);
+                          const isConflict = iri ? conflictIris.has(iri) : false;
+                          const parentIri = c.operationData?.parent as string | undefined;
+                          const parentLabel = parentIri ? extractLocalName(parentIri) : null;
                           return (
-                            <div key={c.id} className="flex items-center gap-2 px-3 py-1.5">
-                              <span className={`font-bold flex-shrink-0 ${cls}`}>{symbol}</span>
-                              <span className="opacity-80 truncate">{name}</span>
-                              <span className="ml-auto opacity-40 flex-shrink-0 text-[10px]">
+                            <div key={c.id} className="flex items-start gap-2 px-3 py-1.5">
+                              <span className={`font-bold flex-shrink-0 mt-0.5 ${cls}`}>{symbol}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="opacity-80 truncate">{name}</span>
+                                  {isConflict && (
+                                    <AlertTriangle
+                                      size={11}
+                                      className="text-amber-500 flex-shrink-0"
+                                      title="Also modified in the public version"
+                                    />
+                                  )}
+                                </div>
+                                {parentLabel && (
+                                  <div className="opacity-40 text-[10px] mt-0.5">⊂ {parentLabel}</div>
+                                )}
+                              </div>
+                              <span className="opacity-40 flex-shrink-0 text-[10px] mt-0.5">
                                 {getOpLabel(c.operationType)}
                               </span>
                             </div>
