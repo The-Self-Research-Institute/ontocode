@@ -165,6 +165,26 @@ public class WorkspaceOwnershipService {
     }
 
     /**
+     * Returns true if the user's project role is DRAFT_EDITOR — can edit their personal
+     * draft copy and raise a pull request, but cannot write directly to the public ontology.
+     */
+    public boolean isDraftEditorInProject(String userId, String projectId) {
+        if (userId == null || projectId == null || projectId.isBlank()) return false;
+        String parentProjectId = projectId.contains("--")
+                ? projectId.substring(0, projectId.indexOf("--"))
+                : projectId;
+        try {
+            Query q = new Query(Criteria.where("projectId").is(parentProjectId)
+                    .and("members").elemMatch(
+                            Criteria.where("userId").is(userId).and("role").regex("^DRAFT_EDITOR$", "i")));
+            return mongoTemplate.exists(q, "projects");
+        } catch (Exception e) {
+            log.debug("isDraftEditorInProject failed userId={} projectId={}: {}", userId, projectId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Extract the first proj-* segment from the request path (used to resolve project role).
      */
     public Optional<String> resolveProjectIdFromRequestPath(String uri) {

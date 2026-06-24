@@ -13,7 +13,7 @@ interface InviteMemberModalProps {
   existingMemberEmails?: string[];
   isWorkspaceOwner?: boolean;
   onUpgradePlan?: () => void;
-  onInvite: (email: string, role: string) => Promise<void>;
+  onInvite: (email: string, role: string, canEditPublicProjects?: boolean) => Promise<void>;
 }
 
 const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
@@ -31,6 +31,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
 }) => {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("MEMBER");
+  const [canEditPublic, setCanEditPublic] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [invitationLinks, setInvitationLinks] = useState<{ webLink: string; vscodeLink: string } | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
@@ -42,6 +43,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
     if (isOpen) {
       setEmail("");
       setRole("MEMBER");
+      setCanEditPublic(false);
       setInviting(false);
       setInvitationLinks(null);
       setErrorMessage("");
@@ -87,7 +89,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
     try {
       setInviting(true);
       setErrorMessage(""); // Clear any previous errors
-      const response = await onInvite(email.trim(), role);
+      const response = await onInvite(email.trim(), role, role === "MEMBER" ? canEditPublic : undefined);
 
       setInvitationLinks({ webLink: "", vscodeLink: "" });
       setSent(true);
@@ -217,10 +219,26 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
                 <option value="MEMBER">Member</option>
                 <option value="ADMIN">Admin</option>
               </select>
+              {role === "MEMBER" && (
+                <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2.5">
+                  <div>
+                    <p className="text-xs font-semibold text-white">Can edit public projects</p>
+                    <p className="text-xs text-slate-400">Allow this member to make changes in workspace-visible projects</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCanEditPublic(v => !v)}
+                    disabled={inviting}
+                    className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none disabled:opacity-50 ${canEditPublic ? "bg-purple-600" : "bg-slate-600"}`}
+                  >
+                    <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${canEditPublic ? "translate-x-4" : "translate-x-0"}`} />
+                  </button>
+                </div>
+              )}
               <div className="mt-3 rounded-lg border border-slate-700 bg-slate-800/60 p-3 space-y-1.5 text-xs text-slate-300">
-                <p><span className="font-semibold text-white">Viewer:</span> read-only workspace access.</p>
-                <p><span className="font-semibold text-white">Member:</span> can create projects and collaborate where added.</p>
-                <p><span className="font-semibold text-white">Admin:</span> can manage workspace members and all projects.</p>
+                <p><span className="font-semibold text-white">Viewer:</span> view public projects only — no edits, no draft.</p>
+                <p><span className="font-semibold text-white">Member:</span> added to all non-private projects. Can edit directly (toggle on) or via draft + PR (toggle off).</p>
+                <p><span className="font-semibold text-white">Admin:</span> full editor access to all non-private projects.</p>
               </div>
             </div>
 

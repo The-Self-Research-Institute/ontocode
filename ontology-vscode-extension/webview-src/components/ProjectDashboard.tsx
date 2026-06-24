@@ -473,7 +473,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
   };
 
-  const handleInviteMember = async (email: string, role: string) => {
+  const handleInviteMember = async (email: string, role: string, canEditPublicProjects?: boolean) => {
     try {
       // Check if member already exists in workspace
       const workspaceResponse = await apiClient.get(`/api/workspaces/${user?.workspaceId}`);
@@ -520,6 +520,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         workspaceId: user?.workspaceId || "default",
         email: email,
         role: role,
+        canEditPublicProjects: canEditPublicProjects ?? false,
       });
 
       console.log("Invitation sent successfully:", response?.message || "Invitation sent");
