@@ -47,6 +47,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"open" | "closed">("open");
+  const [liveDraftCount, setLiveDraftCount] = useState(draftCount);
 
   // Raise PR form
   const [showRaiseForm, setShowRaiseForm] = useState(false);
@@ -77,12 +78,25 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   }, [projectId]);
 
   useEffect(() => {
+    setLiveDraftCount(draftCount);
+  }, [draftCount]);
+
+  useEffect(() => {
     if (isOpen) {
       fetchPRs();
       setShowRaiseForm(false);
       setRaiseError(null);
+      if (canRaisePR) {
+        apiClient.get<any>(`/api/ontology/${projectId}/drafts/stats`, { userId })
+          .then((res: any) => {
+            const data = res?.data || res;
+            const count = data?.unappliedDrafts ?? data?.totalDrafts;
+            if (typeof count === 'number') setLiveDraftCount(count);
+          })
+          .catch(() => {});
+      }
     }
-  }, [isOpen, fetchPRs]);
+  }, [isOpen, fetchPRs, canRaisePR, projectId, userId]);
 
   const handleRaisePR = async () => {
     setRaising(true);
@@ -149,11 +163,18 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
 
   const myOpenPR = prs.find((p) => p.status === "OPEN" && p.authorId === userId);
 
-  const formatDate = (iso: string) => {
+  const formatDate = (raw: string | number | null | undefined) => {
+    if (!raw) return "—";
     try {
-      return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+      const asNum = Number(raw);
+      if (!isNaN(asNum) && asNum > 0) {
+        // epoch seconds (< 1e11) → convert to ms for JS Date
+        const ms = asNum < 1e11 ? asNum * 1000 : asNum;
+        return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+      }
+      return new Date(raw as string).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
     } catch {
-      return iso;
+      return String(raw);
     }
   };
 
@@ -202,19 +223,19 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
             ) : !showRaiseForm ? (
               <button
                 onClick={() => setShowRaiseForm(true)}
-                disabled={draftCount === 0}
+                disabled={liveDraftCount === 0}
                 className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{
                   borderColor: "var(--color-border)",
                   backgroundColor: "var(--color-background-secondary, var(--color-background))",
                 }}
-                title={draftCount === 0 ? "Make draft changes before raising a PR" : `Raise a PR with ${draftCount} draft change${draftCount !== 1 ? "s" : ""}`}
+                title={liveDraftCount === 0 ? "Make draft changes before raising a PR" : `Raise a PR with ${liveDraftCount} draft change${liveDraftCount !== 1 ? "s" : ""}`}
               >
                 <GitPullRequest size={13} />
                 Raise Pull Request
-                {draftCount > 0 && (
+                {liveDraftCount > 0 && (
                   <span className="ml-1 px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold">
-                    {draftCount}
+                    {liveDraftCount}
                   </span>
                 )}
               </button>
@@ -245,7 +266,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                     className="flex items-center gap-1 text-xs px-3 py-1.5 rounded font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
                   >
                     {raising ? <RefreshCw size={12} className="animate-spin" /> : <GitPullRequest size={12} />}
-                    {raising ? "Submitting…" : `Submit PR (${draftCount} change${draftCount !== 1 ? "s" : ""})`}
+                    {raising ? "Submitting…" : `Submit PR (${liveDraftCount} change${liveDraftCount !== 1 ? "s" : ""})`}
                   </button>
                   <button
                     onClick={() => { setShowRaiseForm(false); setRaiseError(null); setPrTitle(""); setPrDescription(""); }}
@@ -333,6 +354,9 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                   )}
                   {pr.reviewNote && (
                     <div className="mt-2 italic opacity-70">Review note: {pr.reviewNote}</div>
+                  )}
+                  {!pr.description && !pr.reviewNote && !canReview && pr.status === "OPEN" && (
+                    <div className="mt-2 text-xs opacity-50 italic">Awaiting review</div>
                   )}
 
                   {/* Review actions — only for open PRs and users who can review */}
