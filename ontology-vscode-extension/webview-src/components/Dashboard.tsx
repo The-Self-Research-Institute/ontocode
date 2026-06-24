@@ -1573,7 +1573,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [requireDraftForMembers, setRequireDraftForMembers] = useState(false);
   const [isProjectOwner, setIsProjectOwner] = useState(false);
   const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
-  const canReviewPR = isProjectOwner || isCurrentWorkspaceOwner || userProjectRole === 'ADMIN' || userProjectRole === 'EDITOR';
+  const canReviewPR = isProjectOwner || userProjectRole === 'ADMIN' || userProjectRole === 'EDITOR';
   const canRaisePR = !isDesktop() && syncMode === 'private' && !isViewOnlyMember;
   const autoDraftPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
