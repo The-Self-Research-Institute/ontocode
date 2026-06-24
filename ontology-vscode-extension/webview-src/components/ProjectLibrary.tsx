@@ -299,8 +299,21 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             },
           }));
         }
-      } catch {
-        // Network hiccup — keep polling
+      } catch (err: any) {
+        const httpStatus = err?.response?.status ?? err?.status;
+        if (httpStatus === 404) {
+          // Status document doesn't exist — file was never imported or was deleted.
+          // Stop polling; don't leave the spinner running forever.
+          clearInterval(importPollingRefs.current[file.id]);
+          delete importPollingRefs.current[file.id];
+          if (isMountedRef.current) {
+            setFileImportStates((prev) => ({
+              ...prev,
+              [file.id]: { status: "FAILED", progress: 0, message: "Import record not found" },
+            }));
+          }
+        }
+        // Any other error (network hiccup, 5xx) — keep polling
       }
     };
 
