@@ -93,7 +93,7 @@ public class ProjectController {
             return "VIEWER";
         }
         String normalizedRole = memberRole.trim().toUpperCase();
-        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(normalizedRole)) {
+        if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
             return "VIEWER";
         }
         return normalizedRole;

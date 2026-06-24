@@ -278,12 +278,19 @@ public class ProjectImportService {
                 queueManager.markCompleted(item.getProjectId(), duration);
             } catch (Exception e) {
                 log.error("[Import] Failed to process queue item for project {}", item.getProjectId(), e);
-                
+
                 // Check if error is retryable (connection issues, timeouts, etc.)
                 boolean shouldRetry = isRetryableError(e);
                 String errorReason = extractErrorReason(e);
-                
+
                 queueManager.markFailed(item.getProjectId(), errorReason, shouldRetry);
+            } catch (Throwable t) {
+                // StackOverflowError, OutOfMemoryError etc. are Errors not Exceptions —
+                // must catch Throwable or the item is stuck in PROCESSING forever.
+                log.error("[Import] Fatal JVM error for project {}", item.getProjectId(), t);
+                queueManager.markFailed(item.getProjectId(),
+                        t.getClass().getSimpleName() + " during OWL parsing — file may be too large or deeply nested",
+                        false);
             } finally {
                 // Try to process next item in queue
                 processNextInQueue();
@@ -858,7 +865,7 @@ public class ProjectImportService {
         } catch (Exception e) {
             log.error("Import failed for {} while {}", projectId, stage, e);
             importLog.error("[FAILED] project={} stage={} error={}", projectId, stage, e.getMessage());
-            
+
             // Only set ERROR status if import wasn't already marked as COMPLETED
             // This prevents overwriting COMPLETED -> ERROR after IMPORT_COMPLETED was sent
             if (!importMarkedCompleted.get()) {
@@ -871,8 +878,21 @@ public class ProjectImportService {
                         "ERROR", "Import failed: " + e.getMessage(), filename, errorMeta);
             } else {
                 // Import was already marked COMPLETED - log but don't change status
-                log.warn("[Import {}] Exception occurred after import was marked COMPLETED (status not changed): {}", 
+                log.warn("[Import {}] Exception occurred after import was marked COMPLETED (status not changed): {}",
                         projectId, e.getMessage());
+            }
+        } catch (Throwable t) {
+            // StackOverflowError, OutOfMemoryError etc. are Errors, not Exceptions — catch (Exception e) above
+            // does not intercept them, leaving metadata stuck as PROCESSING and the frontend spinner running forever.
+            log.error("[Import {}] Fatal JVM error while {}", projectId, stage, t);
+            importLog.error("[FAILED] project={} stage={} error={}", projectId, stage, t.getClass().getSimpleName());
+            if (!importMarkedCompleted.get()) {
+                String reason = t.getClass().getSimpleName() + " during OWL parsing — file may be too large or deeply nested";
+                metadataService.writeStatus(projectId, ProjectStatus.error(filename, reason));
+                Map<String, Object> errorMeta = new HashMap<>();
+                errorMeta.put("error", reason);
+                sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
+                        "ERROR", "Import failed: " + reason, filename, errorMeta);
             }
         } finally {
             releaseImport(projectId);
