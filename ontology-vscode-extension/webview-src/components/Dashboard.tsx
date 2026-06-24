@@ -38,6 +38,7 @@ import {
   Brain,
   Network,
   GitMerge,
+  GitPullRequest,
   Palette,
   Edit2,
   Plus,
@@ -169,6 +170,7 @@ import {
 import { OntoCodeLogo } from "./OntoCodeLogo";
 import ReleaseNotesModal from "./ReleaseNotesModal";
 import DraftCopyModal from "./dialogs/DraftCopyModal";
+import DraftPRPanel from "./DraftPRPanel";
 
 const TopMenuBar = ({
   fileList,
@@ -1569,10 +1571,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [requireDraftForMembers, setRequireDraftForMembers] = useState(false);
   const [isProjectOwner, setIsProjectOwner] = useState(false);
   const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
+  const canReviewPR = isProjectOwner || userProjectRole === 'ADMIN' || userProjectRole === 'EDITOR';
+  const canRaisePR = !isDesktop() && syncMode === 'private' && !isViewOnlyMember;
   const autoDraftPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conflictCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
+  const [openPRCount, setOpenPRCount] = useState(0);
 
   const startDraftCopySession = useCallback((
     targetProjectId: string,
@@ -1662,6 +1668,28 @@ const Dashboard: React.FC<DashboardProps> = ({
       },
     });
   }, [projectId, user, startDraftCopySession]);
+
+  const handlePullFromPublic = useCallback(() => {
+    if (!projectId) return;
+    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+    startDraftCopySession(projectId, effectiveUserId, {
+      showModal: true,
+      onReady: () => {
+        notificationService.info("Draft Synced", "Your draft has been refreshed from the latest public version.");
+      },
+    });
+  }, [projectId, user, startDraftCopySession]);
+
+  const refreshOpenPRCount = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/draft-prs?status=OPEN`);
+      const data = res?.data || res;
+      setOpenPRCount(Number(data.openCount ?? (data.prs?.length ?? 0)));
+    } catch {
+      // non-blocking
+    }
+  }, [projectId]);
 
   // Track background import progress (visible after user clicks "Continue Working")
   const [backgroundImportActive, setBackgroundImportActive] = useState(false);
@@ -3926,6 +3954,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 .then(({ requireDraftForMembers: rdm, isOwner }) => {
                   setRequireDraftForMembers(rdm);
                   setIsProjectOwner(isOwner);
+                  refreshOpenPRCount();
                   if ((rdm || isProjectDraftEditorRole) && !isOwner && !isProjectViewerRole) {
                     if (shouldApplyDirectly) {
                       // Member has no saved draft preference (public view) — block direct mutations
@@ -15956,6 +15985,35 @@ const Dashboard: React.FC<DashboardProps> = ({
                   Public View
                 </span>
               )}
+              {/* Pull from Public — only in draft mode */}
+              {canRaisePR && projectId && (
+                <button
+                  onClick={handlePullFromPublic}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
+                  style={{ borderColor: "var(--color-border)" }}
+                  title="Pull latest public version into your draft (overwrites your local draft with a fresh copy)"
+                >
+                  <Download size={12} />
+                  <span className="hidden sm:inline">Pull</span>
+                </button>
+              )}
+              {/* PR button — for draft users (raise) and reviewers (review) */}
+              {!isDesktop() && projectId && (canRaisePR || canReviewPR) && (
+                <button
+                  onClick={() => { setShowDraftPRPanel(true); refreshOpenPRCount(); }}
+                  className="relative flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
+                  style={{ borderColor: "var(--color-border)" }}
+                  title={canReviewPR ? "View and review pull requests" : "Raise a pull request for your draft changes"}
+                >
+                  <GitPullRequest size={12} />
+                  <span className="hidden sm:inline">PRs</span>
+                  {openPRCount > 0 && (
+                    <span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 text-[9px] font-bold rounded-full bg-blue-600 text-white">
+                      {openPRCount > 9 ? "9+" : openPRCount}
+                    </span>
+                  )}
+                </button>
+              )}
               <button
                 onClick={() => setShowThemeSettings(true)}
                 className="ontocode-icon-hover-accent cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 text-xs p-2 rounded-md"
@@ -16823,6 +16881,24 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         }}
       />
+
+      {/* Draft Pull Requests Panel */}
+      {projectId && (
+        <DraftPRPanel
+          isOpen={showDraftPRPanel}
+          onClose={() => setShowDraftPRPanel(false)}
+          projectId={projectId}
+          userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
+          username={user?.username || user?.email || ""}
+          canReview={canReviewPR}
+          canRaisePR={canRaisePR}
+          draftCount={draftCount}
+          onPRApproved={() => {
+            refreshOpenPRCount();
+            notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
+          }}
+        />
+      )}
 
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-[9999] space-y-2">

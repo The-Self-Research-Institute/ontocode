@@ -6,13 +6,16 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.DraftCopyStatus;
+import self.research.ontology.owlEditor.model.DraftPullRequest;
 import self.research.ontology.owlEditor.model.merge.ConflictResolution;
 import self.research.ontology.owlEditor.model.merge.ResolutionAction;
+import self.research.ontology.owlEditor.repository.DraftPullRequestRepository;
 import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.service.DraftPublishAnalysis;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
+import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
 
 import java.util.HashMap;
 import java.util.List;
@@ -32,13 +35,19 @@ public class DraftController {
     private final DraftTrackingService draftTrackingService;
     private final DraftCopyService draftCopyService;
     private final ProjectMetadataService metadataService;
+    private final DraftPullRequestRepository prRepository;
+    private final WorkspaceOwnershipService ownershipService;
 
     public DraftController(DraftTrackingService draftTrackingService,
                            DraftCopyService draftCopyService,
-                           ProjectMetadataService metadataService) {
+                           ProjectMetadataService metadataService,
+                           DraftPullRequestRepository prRepository,
+                           WorkspaceOwnershipService ownershipService) {
         this.draftTrackingService = draftTrackingService;
         this.draftCopyService = draftCopyService;
         this.metadataService = metadataService;
+        this.prRepository = prRepository;
+        this.ownershipService = ownershipService;
     }
     
     /**
@@ -363,6 +372,201 @@ public class DraftController {
         ));
     }
 
+    // ── Draft Pull Requests ───────────────────────────────────────────────────
+
+    /**
+     * Raise a PR from the caller's current draft changes.
+     * POST /api/ontology/{projectId}/draft-prs
+     * Body: { "userId": "...", "username": "...", "title": "...", "description": "..." }
+     */
+    @PostMapping("/{projectId}/draft-prs")
+    public ResponseEntity<Map<String, Object>> raisePullRequest(
+            @PathVariable String projectId,
+            @RequestBody RaisePRRequest request) {
+        try {
+            String userId = request.userId();
+            if (userId == null || userId.isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId is required"));
+            }
+
+            // Prevent duplicate open PRs from the same author
+            if (prRepository.findByProjectIdAndAuthorIdAndStatus(projectId, userId, DraftPullRequest.Status.OPEN).isPresent()) {
+                return ResponseEntity.status(409).body(Map.of(
+                        "success", false,
+                        "error", "You already have an open pull request for this project. Close or wait for it to be reviewed before raising another."
+                ));
+            }
+
+            int changeCount = draftTrackingService.getUnappliedDraftsForUser(projectId, userId).size();
+            if (changeCount == 0) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "error", "No draft changes found. Make some changes in Draft Mode before raising a pull request."
+                ));
+            }
+
+            DraftPullRequest pr = new DraftPullRequest();
+            pr.setProjectId(projectId);
+            pr.setAuthorId(userId);
+            pr.setAuthorUsername(request.username() != null ? request.username() : userId);
+            pr.setTitle(request.title() != null && !request.title().isBlank() ? request.title() : "Draft changes by " + pr.getAuthorUsername());
+            pr.setDescription(request.description());
+            pr.setChangeCount(changeCount);
+
+            DraftPullRequest saved = prRepository.save(pr);
+            log.info("[DRAFT PR] PR raised prId={} project={} author={} changes={}", saved.getId(), projectId, userId, changeCount);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "prId", saved.getId(),
+                    "changeCount", changeCount,
+                    "message", "Pull request raised successfully"
+            ));
+        } catch (Exception e) {
+            log.error("[DRAFT PR] Error raising PR for project {}", projectId, e);
+            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * List PRs for a project (all statuses). Optionally filter by status.
+     * GET /api/ontology/{projectId}/draft-prs?status=OPEN
+     */
+    @GetMapping("/{projectId}/draft-prs")
+    public ResponseEntity<Map<String, Object>> listPullRequests(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String status) {
+        try {
+            List<DraftPullRequest> prs;
+            if (status != null && !status.isBlank()) {
+                try {
+                    prs = prRepository.findByProjectIdAndStatusOrderByCreatedAtDesc(
+                            projectId, DraftPullRequest.Status.valueOf(status.toUpperCase()));
+                } catch (IllegalArgumentException e) {
+                    return ResponseEntity.badRequest().body(Map.of("success", false, "error", "Invalid status: " + status));
+                }
+            } else {
+                prs = prRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+            }
+            long openCount = prRepository.countByProjectIdAndStatus(projectId, DraftPullRequest.Status.OPEN);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "prs", prs,
+                    "openCount", openCount
+            ));
+        } catch (Exception e) {
+            log.error("[DRAFT PR] Error listing PRs for project {}", projectId, e);
+            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Approve a PR — merges the author's draft into the public ontology.
+     * POST /api/ontology/{projectId}/draft-prs/{prId}/approve
+     * Body: { "reviewerId": "...", "reviewNote": "..." }
+     */
+    @PostMapping("/{projectId}/draft-prs/{prId}/approve")
+    public ResponseEntity<Map<String, Object>> approvePullRequest(
+            @PathVariable String projectId,
+            @PathVariable String prId,
+            @RequestBody ReviewPRRequest request) {
+        try {
+            String reviewerId = request.reviewerId();
+            if (!ownershipService.canPublishToProject(reviewerId, projectId)) {
+                return ResponseEntity.status(403).body(Map.of(
+                        "success", false,
+                        "error", "Only project owners, admins, or editors can approve pull requests"
+                ));
+            }
+
+            DraftPullRequest pr = prRepository.findById(prId)
+                    .orElse(null);
+            if (pr == null || !pr.getProjectId().equals(projectId)) {
+                return ResponseEntity.status(404).body(Map.of("success", false, "error", "Pull request not found"));
+            }
+            if (pr.getStatus() != DraftPullRequest.Status.OPEN) {
+                return ResponseEntity.status(409).body(Map.of("success", false, "error", "Pull request is already " + pr.getStatus().name().toLowerCase()));
+            }
+
+            // Apply the author's draft changes to the main ontology
+            DraftTrackingService.ApplyDraftsResult result =
+                    draftTrackingService.applyDrafts(projectId, pr.getAuthorId(), true, false, null);
+
+            if (!result.isSuccess() && result.isConflictBlocked()) {
+                return ResponseEntity.status(409).body(Map.of(
+                        "success", false,
+                        "error", "Merge conflicts detected. Resolve conflicts before approving.",
+                        "conflictBlocked", true
+                ));
+            }
+
+            pr.setStatus(DraftPullRequest.Status.APPROVED);
+            pr.setReviewedAt(java.time.Instant.now());
+            pr.setReviewerId(reviewerId);
+            pr.setReviewNote(request.reviewNote());
+            prRepository.save(pr);
+
+            log.info("[DRAFT PR] PR approved prId={} project={} author={} reviewer={} applied={}",
+                    prId, projectId, pr.getAuthorId(), reviewerId, result.getAppliedCount());
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "appliedCount", result.getAppliedCount(),
+                    "message", "Pull request approved and " + result.getAppliedCount() + " changes merged"
+            ));
+        } catch (Exception e) {
+            log.error("[DRAFT PR] Error approving PR {} for project {}", prId, projectId, e);
+            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Reject a PR — leaves the author's draft intact (they can revise and re-raise).
+     * POST /api/ontology/{projectId}/draft-prs/{prId}/reject
+     * Body: { "reviewerId": "...", "reviewNote": "..." }
+     */
+    @PostMapping("/{projectId}/draft-prs/{prId}/reject")
+    public ResponseEntity<Map<String, Object>> rejectPullRequest(
+            @PathVariable String projectId,
+            @PathVariable String prId,
+            @RequestBody ReviewPRRequest request) {
+        try {
+            String reviewerId = request.reviewerId();
+            if (!ownershipService.canPublishToProject(reviewerId, projectId)) {
+                return ResponseEntity.status(403).body(Map.of(
+                        "success", false,
+                        "error", "Only project owners, admins, or editors can reject pull requests"
+                ));
+            }
+
+            DraftPullRequest pr = prRepository.findById(prId)
+                    .orElse(null);
+            if (pr == null || !pr.getProjectId().equals(projectId)) {
+                return ResponseEntity.status(404).body(Map.of("success", false, "error", "Pull request not found"));
+            }
+            if (pr.getStatus() != DraftPullRequest.Status.OPEN) {
+                return ResponseEntity.status(409).body(Map.of("success", false, "error", "Pull request is already " + pr.getStatus().name().toLowerCase()));
+            }
+
+            pr.setStatus(DraftPullRequest.Status.REJECTED);
+            pr.setReviewedAt(java.time.Instant.now());
+            pr.setReviewerId(reviewerId);
+            pr.setReviewNote(request.reviewNote());
+            prRepository.save(pr);
+
+            log.info("[DRAFT PR] PR rejected prId={} project={} author={} reviewer={}", prId, projectId, pr.getAuthorId(), reviewerId);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Pull request rejected. The author's draft changes are preserved."
+            ));
+        } catch (Exception e) {
+            log.error("[DRAFT PR] Error rejecting PR {} for project {}", prId, projectId, e);
+            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
     // Request DTOs
 
     public record DraftCopyRequest(String userId) {}
@@ -375,4 +579,8 @@ public class DraftController {
         String username,
         String sessionId
     ) {}
+
+    public record RaisePRRequest(String userId, String username, String title, String description) {}
+
+    public record ReviewPRRequest(String reviewerId, String reviewNote) {}
 }
