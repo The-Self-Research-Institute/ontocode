@@ -1574,7 +1574,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isProjectOwner, setIsProjectOwner] = useState(false);
   const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
   const canReviewPR = isProjectOwner || userProjectRole === 'ADMIN' || userProjectRole === 'EDITOR';
-  const canRaisePR = !isDesktop() && syncMode === 'private' && !isViewOnlyMember;
+  const canRaisePR = !isDesktop() && (syncMode === 'private' || isProjectDraftEditorRole) && !isViewOnlyMember;
   const autoDraftPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1694,8 +1694,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [projectId]);
 
   useEffect(() => {
-    if (projectId && canReviewPR) refreshOpenPRCount();
-  }, [projectId, canReviewPR]);
+    if (projectId && (canReviewPR || canRaisePR)) refreshOpenPRCount();
+  }, [projectId, canReviewPR, canRaisePR]);
 
   // Track background import progress (visible after user clicks "Continue Working")
   const [backgroundImportActive, setBackgroundImportActive] = useState(false);
@@ -9276,6 +9276,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     async (type: "subclass" | "sibling" | "individual") => {
       if (!projectId) return;
 
+      if (isProjectDraftEditorRole && syncMode !== 'private') {
+        setShowProPromptType('draftRequired');
+        return;
+      }
+
       if (type === "individual") {
         setCreateIndividualModalOpen(true);
         return;
@@ -9458,7 +9463,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       setClassParentLabel(parentLabel);
       setAddClassDialogOpen(true);
     },
-    [projectId, mainTab, entitiesTab, selectedItem, selectedClassForIndividuals, showNotification, objectPropertyHierarchy, dataPropertyHierarchy, classHierarchy],
+    [projectId, mainTab, entitiesTab, selectedItem, selectedClassForIndividuals, showNotification, objectPropertyHierarchy, dataPropertyHierarchy, classHierarchy, isProjectDraftEditorRole, syncMode],
   );
 
   const handleCreateClass = useCallback(
@@ -10351,6 +10356,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      if (isProjectDraftEditorRole && syncMode !== 'private') {
+        setShowProPromptType('draftRequired');
+        return;
+      }
+
       const targetNode = findClassNodeById(detail.targetNodeId);
       if (!targetNode) {
         showNotification("Selected class not found in hierarchy. Please refresh the graph and try again.", "warning");
@@ -10377,7 +10387,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     window.addEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
     return () => window.removeEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
-  }, [classHierarchy, findClassNodeById, projectId, showNotification]);
+  }, [classHierarchy, findClassNodeById, projectId, showNotification, isProjectDraftEditorRole, syncMode]);
 
   // Listen for classes created directly by the graph plugin (S6 fix)
   useEffect(() => {
