@@ -91,21 +91,41 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         String plan = jwtClaims[0];
         String userId = jwtClaims[1];
 
-        // Check VIEWER role — blocked regardless of subscription plan
+        // Check project role — VIEWER is fully blocked; DRAFT_EDITOR can only write to draft
         String projectId = request.getParameter("projectId");
         if (projectId == null || projectId.isBlank()) {
             projectId = workspaceOwnershipService.resolveProjectIdFromRequestPath(path).orElse(null);
         }
-        if (projectId != null && workspaceOwnershipService.isViewerInProject(userId, projectId)) {
-            log.debug("VIEWER write block: userId={} projectId={} path={}", userId, projectId, path);
-            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            response.setContentType("application/json");
-            response.getWriter().write(
-                "{\"error\":\"You have view-only access to this project. " +
-                "Contact the project owner to request edit permissions.\"," +
-                "\"viewOnly\":true}"
-            );
-            return false;
+        if (projectId != null) {
+            if (workspaceOwnershipService.isViewerInProject(userId, projectId)) {
+                // Pure VIEWERs: no writes at all
+                log.debug("VIEWER write block: userId={} projectId={} path={}", userId, projectId, path);
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType("application/json");
+                response.getWriter().write(
+                    "{\"error\":\"You have view-only access to this project.\"," +
+                    "\"viewOnly\":true}"
+                );
+                return false;
+            }
+            if (workspaceOwnershipService.isDraftEditorInProject(userId, projectId)) {
+                // DRAFT_EDITOR: allow draft mutations and all /draft* endpoints; block direct writes
+                boolean isDraftMutation = "true".equalsIgnoreCase(request.getParameter("draft"))
+                        || "true".equalsIgnoreCase(request.getParameter("useDraft"));
+                boolean isDraftEndpoint = path.contains("/draft");
+                if (isDraftMutation || isDraftEndpoint) {
+                    return true;
+                }
+                log.debug("DRAFT_EDITOR direct-write block: userId={} projectId={} path={}", userId, projectId, path);
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType("application/json");
+                response.getWriter().write(
+                    "{\"error\":\"You can view this project and edit via draft mode. " +
+                    "Make changes in your draft copy and raise a pull request for review.\"," +
+                    "\"viewOnly\":true,\"draftAllowed\":true}"
+                );
+                return false;
+            }
         }
 
         // PRO/ENTERPRISE users always allowed

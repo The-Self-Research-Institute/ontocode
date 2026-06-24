@@ -39,6 +39,8 @@ public class Invitation {
 
     private String status; // PENDING, ACCEPTED, CANCELLED
 
+    private boolean canEditPublicProjects = false;
+
     private LocalDateTime createdAt;
     private LocalDateTime acceptedAt;
 
@@ -135,6 +137,9 @@ public class Invitation {
     public void setAcceptedAt(LocalDateTime acceptedAt) {
         this.acceptedAt = acceptedAt;
     }
+
+    public boolean isCanEditPublicProjects() { return canEditPublicProjects; }
+    public void setCanEditPublicProjects(boolean canEditPublicProjects) { this.canEditPublicProjects = canEditPublicProjects; }
 
     public boolean isPending() {
         return "PENDING".equals(status);
