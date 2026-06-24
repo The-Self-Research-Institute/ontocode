@@ -26,14 +26,15 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
     // POST paths that are read-only — always allowed regardless of plan
     private static final List<String> READ_ONLY_POST_PATTERNS = List.of(
         "/**/dl-query",
-        "/api/sparql/query/**",   // SELECT/CONSTRUCT queries (read-only)
-        "/api/sparql/*/queries",  // save/list query templates (not ontology mutations)
-        "/api/v1/issues/report",  // support submissions are open to FREE users
+        "/api/sparql/query/**",          // SELECT/CONSTRUCT queries (read-only)
+        "/api/sparql/*/queries",         // save/list query templates (not ontology mutations)
+        "/api/v1/issues/report",         // support submissions are open to FREE users
         "/api/sqwrl/**",
         "/**/reasoner/**",
         "/**/validate",
         "/**/reload/**",
-        "/**/code-view-cache"
+        "/**/code-view-cache",
+        "/**/upload-by-file-ref/**"      // loads OWL file from storage into working graph (needed to view)
     );
 
     // PUT/DELETE paths allowed for FREE plan (non-ontology operations)

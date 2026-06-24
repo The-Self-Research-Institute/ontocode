@@ -2,13 +2,13 @@
  * Workspace vs project role model (aligned with backend).
  *
  * Workspace: OWNER | ADMIN | MEMBER | VIEWER
- * Project:     OWNER | ADMIN  | EDITOR | VIEWER
+ * Project:   OWNER | ADMIN | EDITOR | DRAFT_EDITOR | VIEWER
  */
 
 export const WORKSPACE_ROLES = ["OWNER", "ADMIN", "MEMBER", "VIEWER"] as const;
 export type WorkspaceRole = (typeof WORKSPACE_ROLES)[number];
 
-export const PROJECT_ROLES = ["OWNER", "ADMIN", "EDITOR", "VIEWER"] as const;
+export const PROJECT_ROLES = ["OWNER", "ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER"] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
 /** Normalize a role string from JWT or API (case-insensitive). */
@@ -73,12 +73,12 @@ export function parseProjectRole(role: string | null | undefined): ProjectRole |
   return (PROJECT_ROLES as readonly string[]).includes(u) ? (u as ProjectRole) : null;
 }
 
-/** Edit ontology content: project OWNER/ADMIN/EDITOR, or workspace OWNER/ADMIN (cross-project). */
+/** Edit ontology content: project OWNER/ADMIN/EDITOR/DRAFT_EDITOR, or workspace OWNER/ADMIN (cross-project). */
 export function canEditProjectContent(
   projectRole: ProjectRole | null,
   workspaceRole: WorkspaceRole | null,
 ): boolean {
-  if (projectRole === "OWNER" || projectRole === "ADMIN" || projectRole === "EDITOR") return true;
+  if (projectRole === "OWNER" || projectRole === "ADMIN" || projectRole === "EDITOR" || projectRole === "DRAFT_EDITOR") return true;
   return canAdministerAllProjectsInWorkspace(workspaceRole);
 }
 

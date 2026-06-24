@@ -38,6 +38,7 @@ import {
   Brain,
   Network,
   GitMerge,
+  GitPullRequest,
   Palette,
   Edit2,
   Plus,
@@ -171,6 +172,8 @@ import ReleaseNotesModal from "./ReleaseNotesModal";
 import DraftCopyModal from "./dialogs/DraftCopyModal";
 import PullFromPublicDialog from "./PullFromPublicDialog";
 import PRsModal from "./PRsModal";
+import DraftPRPanel from "./DraftPRPanel";
+import PullPreviewDialog from "./PullPreviewDialog";
 
 const TopMenuBar = ({
   fileList,
@@ -196,6 +199,7 @@ const TopMenuBar = ({
   onToggleSyncMode,
   requireDraftForMembers,
   isProjectOwner,
+  isDraftEditorRole,
   autoDraftStatus,
   onToggleRequireDraftForMembers,
   onSwitchToDraftMode,
@@ -241,6 +245,7 @@ const TopMenuBar = ({
   onToggleSyncMode: () => void;
   requireDraftForMembers?: boolean;
   isProjectOwner?: boolean;
+  isDraftEditorRole?: boolean;
   autoDraftStatus?: 'idle' | 'copying' | 'ready';
   onToggleRequireDraftForMembers?: () => void;
   onSwitchToDraftMode?: () => void;
@@ -812,16 +817,16 @@ const TopMenuBar = ({
           </span>
         )}
         <span className={`hidden sm:inline text-xs font-medium ${
-          requireDraftForMembers && !isProjectOwner && syncMode === 'public'
+          (requireDraftForMembers && !isProjectOwner || isDraftEditorRole) && syncMode === 'public'
             ? "text-amber-600"
             : syncMode === "public" ? "text-green-600" : "text-gray-500"
         }`}>
-          {requireDraftForMembers && !isProjectOwner
+          {(requireDraftForMembers && !isProjectOwner) || isDraftEditorRole
             ? (syncMode === 'public' ? "Public (View Only)" : "Draft Mode")
             : syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
         </span>
-        {requireDraftForMembers && !isProjectOwner && syncMode === 'public' ? (
-          // Non-owner member in view-only mode: offer explicit switch to draft
+        {((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'public' ? (
+          // Draft-only member in view-only mode: offer explicit switch to draft
           <button
             onClick={onSwitchToDraftMode}
             className="ml-1 flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
@@ -829,8 +834,8 @@ const TopMenuBar = ({
           >
             Switch to Draft Mode
           </button>
-        ) : requireDraftForMembers && !isProjectOwner && syncMode === 'private' ? (
-          // Non-owner member in draft mode: allow switching back to view-only public
+        ) : ((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'private' ? (
+          // Draft-only member in draft mode: allow switching back to view-only public
           <button
             onClick={onToggleSyncMode}
             className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 bg-gray-300"
@@ -1205,6 +1210,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const workspaceRoleParsed = parseWorkspaceRole(user?.workspaceRole, undefined);
   const [userProjectRole, setUserProjectRole] = useState<string | null>(null);
   const isProjectViewerRole = userProjectRole === 'VIEWER';
+  const isProjectDraftEditorRole = userProjectRole === 'DRAFT_EDITOR';
   const isViewOnlyMember =
     !isDesktop() && (
       (subscription.isFree && user?.workspaceRole != null && normalizeRole(user.workspaceRole) !== "OWNER") ||
@@ -1573,10 +1579,27 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [showPullFromPublic, setShowPullFromPublic] = useState(false);
   const [showPRsModal, setShowPRsModal] = useState(false);
   const [pendingPRCount, setPendingPRCount] = useState(0);
+  const isWorkspaceAdminRole = normalizeRole(user?.workspaceRole ?? "") === "ADMIN";
+  const canReviewPR = isProjectOwner
+    || userProjectRole === 'OWNER'
+    || userProjectRole === 'ADMIN'
+    || userProjectRole === 'EDITOR'
+    || ((isCurrentWorkspaceOwner || isWorkspaceAdminRole) && !isProjectDraftEditorRole);
+  const canRaisePR = !isDesktop() && (
+    isProjectDraftEditorRole ||
+    (syncMode === 'private' && !isViewOnlyMember)
+  );
+  const showPRButton = !isDesktop() && !!projectId && (
+    canRaisePR || canReviewPR ||
+    ((isCurrentWorkspaceOwner || isWorkspaceAdminRole) && !isProjectDraftEditorRole)
+  );
   const autoDraftPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conflictCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
+  const [showPullPreview, setShowPullPreview] = useState(false);
+  const [openPRCount, setOpenPRCount] = useState(0);
 
   const startDraftCopySession = useCallback((
     targetProjectId: string,
@@ -1666,6 +1689,32 @@ const Dashboard: React.FC<DashboardProps> = ({
       },
     });
   }, [projectId, user, startDraftCopySession]);
+
+  const handlePullFromPublic = useCallback(() => {
+    if (!projectId) return;
+    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+    startDraftCopySession(projectId, effectiveUserId, {
+      showModal: true,
+      onReady: () => {
+        notificationService.info("Draft Synced", "Your draft has been refreshed from the latest public version.");
+      },
+    });
+  }, [projectId, user, startDraftCopySession]);
+
+  const refreshOpenPRCount = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/draft-prs?status=OPEN`);
+      const data = res?.data || res;
+      setOpenPRCount(Number(data.openCount ?? (data.prs?.length ?? 0)));
+    } catch {
+      // non-blocking
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (projectId && (canReviewPR || canRaisePR)) refreshOpenPRCount();
+  }, [projectId, canReviewPR, canRaisePR]);
 
   // Track background import progress (visible after user clicks "Continue Working")
   const [backgroundImportActive, setBackgroundImportActive] = useState(false);
@@ -3930,7 +3979,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                 .then(({ requireDraftForMembers: rdm, isOwner }) => {
                   setRequireDraftForMembers(rdm);
                   setIsProjectOwner(isOwner);
-                  if (rdm && !isOwner && !isProjectViewerRole) {
+                  refreshOpenPRCount();
+                  if ((rdm || isProjectDraftEditorRole) && !isOwner && !isProjectViewerRole) {
                     if (shouldApplyDirectly) {
                       // Member has no saved draft preference (public view) — block direct mutations
                       // so they must explicitly switch to Draft Mode before editing.
@@ -9245,6 +9295,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     async (type: "subclass" | "sibling" | "individual") => {
       if (!projectId) return;
 
+      if (isProjectDraftEditorRole && syncMode !== 'private') {
+        setShowProPromptType('draftRequired');
+        return;
+      }
+
       if (type === "individual") {
         setCreateIndividualModalOpen(true);
         return;
@@ -9427,7 +9482,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       setClassParentLabel(parentLabel);
       setAddClassDialogOpen(true);
     },
-    [projectId, mainTab, entitiesTab, selectedItem, selectedClassForIndividuals, showNotification, objectPropertyHierarchy, dataPropertyHierarchy, classHierarchy],
+    [projectId, mainTab, entitiesTab, selectedItem, selectedClassForIndividuals, showNotification, objectPropertyHierarchy, dataPropertyHierarchy, classHierarchy, isProjectDraftEditorRole, syncMode],
   );
 
   const handleCreateClass = useCallback(
@@ -10320,6 +10375,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      if (isProjectDraftEditorRole && syncMode !== 'private') {
+        setShowProPromptType('draftRequired');
+        return;
+      }
+
       const targetNode = findClassNodeById(detail.targetNodeId);
       if (!targetNode) {
         showNotification("Selected class not found in hierarchy. Please refresh the graph and try again.", "warning");
@@ -10346,7 +10406,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     window.addEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
     return () => window.removeEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
-  }, [classHierarchy, findClassNodeById, projectId, showNotification]);
+  }, [classHierarchy, findClassNodeById, projectId, showNotification, isProjectDraftEditorRole, syncMode]);
 
   // Listen for classes created directly by the graph plugin (S6 fix)
   useEffect(() => {
@@ -15784,6 +15844,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           syncMode={syncMode}
           requireDraftForMembers={requireDraftForMembers}
           isProjectOwner={isProjectOwner}
+          isDraftEditorRole={isProjectDraftEditorRole}
           autoDraftStatus={autoDraftStatus}
           onSwitchToDraftMode={handleSwitchToDraftMode}
           onToggleRequireDraftForMembers={() => {
@@ -15985,6 +16046,35 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </svg>
                   Public View
                 </span>
+              )}
+              {/* Pull from Public — only visible when in draft mode */}
+              {syncMode === 'private' && projectId && (
+                <button
+                  onClick={() => setShowPullPreview(true)}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
+                  style={{ borderColor: "var(--color-border)" }}
+                  title="Preview and pull latest public version into your draft"
+                >
+                  <Download size={12} />
+                  <span className="hidden sm:inline">Pull</span>
+                </button>
+              )}
+              {/* PR button — for draft users (raise) and reviewers (review) */}
+              {showPRButton && (
+                <button
+                  onClick={() => { setShowDraftPRPanel(true); refreshOpenPRCount(); }}
+                  className="relative flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
+                  style={{ borderColor: "var(--color-border)" }}
+                  title={canReviewPR ? "View and review pull requests" : "Raise a pull request for your draft changes"}
+                >
+                  <GitPullRequest size={12} />
+                  <span className="hidden sm:inline">PRs</span>
+                  {openPRCount > 0 && (
+                    <span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 text-[9px] font-bold rounded-full bg-blue-600 text-white">
+                      {openPRCount > 9 ? "9+" : openPRCount}
+                    </span>
+                  )}
+                </button>
               )}
               <button
                 onClick={() => setShowThemeSettings(true)}
@@ -16853,6 +16943,35 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         }}
       />
+
+      {/* Draft Pull Requests Panel */}
+      {projectId && (
+        <DraftPRPanel
+          isOpen={showDraftPRPanel}
+          onClose={() => setShowDraftPRPanel(false)}
+          projectId={projectId}
+          userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
+          username={user?.username || user?.email || ""}
+          canReview={canReviewPR}
+          canRaisePR={canRaisePR}
+          draftCount={draftCount}
+          onPRApproved={() => {
+            refreshOpenPRCount();
+            notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
+          }}
+        />
+      )}
+
+      {/* Pull Preview Dialog */}
+      {projectId && (
+        <PullPreviewDialog
+          isOpen={showPullPreview}
+          onClose={() => setShowPullPreview(false)}
+          onConfirm={handlePullFromPublic}
+          projectId={projectId}
+          userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
+        />
+      )}
 
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-[9999] space-y-2">

@@ -70,7 +70,6 @@ public class Workspace {
         private MemberStatus status;
         private String invitationToken; // Token for pending members
         private LocalDateTime joinedAt;
-        private boolean canEditPublicProjects = false;
 
         public WorkspaceMember() {
             this.joinedAt = LocalDateTime.now();
@@ -117,9 +116,6 @@ public class Workspace {
 
         public LocalDateTime getJoinedAt() { return joinedAt; }
         public void setJoinedAt(LocalDateTime joinedAt) { this.joinedAt = joinedAt; }
-
-        public boolean isCanEditPublicProjects() { return canEditPublicProjects; }
-        public void setCanEditPublicProjects(boolean canEditPublicProjects) { this.canEditPublicProjects = canEditPublicProjects; }
     }
     
     // Member status enum
@@ -196,16 +192,10 @@ public class Workspace {
     
     // Add a pending member (when invitation is sent)
     public void addPendingMember(String email, WorkspaceRole role, String invitationToken) {
-        addPendingMember(email, role, invitationToken, false);
-    }
-
-    public void addPendingMember(String email, WorkspaceRole role, String invitationToken, boolean canEditPublicProjects) {
         members.removeIf(m -> m.getEmail() != null &&
                               m.getEmail().equalsIgnoreCase(email) &&
                               m.getStatus() == MemberStatus.PENDING);
-        WorkspaceMember member = new WorkspaceMember(email, role, invitationToken);
-        member.setCanEditPublicProjects(canEditPublicProjects);
-        members.add(member);
+        members.add(new WorkspaceMember(email, role, invitationToken));
         this.updatedAt = java.time.LocalDateTime.now();
     }
     

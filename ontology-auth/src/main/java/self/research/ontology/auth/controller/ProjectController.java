@@ -93,7 +93,7 @@ public class ProjectController {
             return "VIEWER";
         }
         String normalizedRole = memberRole.trim().toUpperCase();
-        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(normalizedRole)) {
+        if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
             return "VIEWER";
         }
         return normalizedRole;
@@ -1924,10 +1924,10 @@ public class ProjectController {
     public static class UpdateMemberRoleRequest {
         @NotBlank(message = "Role is required")
         @Pattern(
-            regexp = "^(ADMIN|EDITOR|VIEWER)$",
-            message = "Invalid role. Must be ADMIN, EDITOR, or VIEWER"
+            regexp = "^(ADMIN|EDITOR|DRAFT_EDITOR|VIEWER)$",
+            message = "Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER"
         )
-        public String role; // ADMIN, EDITOR, VIEWER
+        public String role; // ADMIN, EDITOR, DRAFT_EDITOR, VIEWER
     }
     
     /**

@@ -185,6 +185,28 @@ public class WorkspaceOwnershipService {
     }
 
     /**
+     * Returns true if the user can publish (write) to the main ontology graph — i.e. they are
+     * OWNER, ADMIN, or EDITOR in the project. Used to gate PR approval.
+     */
+    public boolean canPublishToProject(String userId, String projectId) {
+        if (userId == null || projectId == null || projectId.isBlank()) return false;
+        if (isUserOwnerOfProject(userId, projectId)) return true;
+        String parentProjectId = projectId.contains("--")
+                ? projectId.substring(0, projectId.indexOf("--"))
+                : projectId;
+        try {
+            Query q = new Query(Criteria.where("projectId").is(parentProjectId)
+                    .and("members").elemMatch(
+                            Criteria.where("userId").is(userId)
+                                    .and("role").regex("^(ADMIN|EDITOR)$", "i")));
+            return mongoTemplate.exists(q, "projects");
+        } catch (Exception e) {
+            log.debug("canPublishToProject failed userId={} projectId={}: {}", userId, projectId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Extract the first proj-* segment from the request path (used to resolve project role).
      */
     public Optional<String> resolveProjectIdFromRequestPath(String uri) {
