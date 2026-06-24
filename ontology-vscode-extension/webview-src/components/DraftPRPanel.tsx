@@ -1,6 +1,16 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { X, GitPullRequest, Check, XCircle, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { X, GitPullRequest, Check, XCircle, RefreshCw, ChevronDown, ChevronUp, ChevronRight, AlertTriangle } from "lucide-react";
 import apiClient from "../services/apiClient";
+import {
+  DraftChange,
+  CATEGORY_ORDER,
+  getEntityName,
+  getEntityIri,
+  extractLocalName,
+  getActionMeta,
+  getOpLabel,
+  groupByCategory,
+} from "../utils/draftChangeHelpers";
 
 interface DraftPR {
   id: string;
@@ -62,6 +72,16 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   const [reviewing, setReviewing] = useState(false);
   const [expandedPrId, setExpandedPrId] = useState<string | null>(null);
 
+  // Per-PR draft changes and conflict analysis
+  const [prChangesMap, setPrChangesMap] = useState<Record<string, DraftChange[]>>({});
+  const [prConflictMap, setPrConflictMap] = useState<Record<string, {
+    conflictType: string;
+    mainChangedSinceDraft: boolean;
+    conflicts: Array<{ entityIRI: string; entityLabel: string; changedBy: string }>;
+  }>>({});
+  const [prExpandedCategories, setPrExpandedCategories] = useState<Record<string, Set<string>>>({});
+  const fetchedConflictsRef = useRef<Set<string>>(new Set());
+
   const fetchPRs = useCallback(async () => {
     if (!projectId) return;
     setLoading(true);
@@ -81,11 +101,41 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
     setLiveDraftCount(draftCount);
   }, [draftCount]);
 
+  const loadPRDetails = async (pr: DraftPR) => {
+    if (fetchedConflictsRef.current.has(pr.id)) return;
+    fetchedConflictsRef.current.add(pr.id);
+    try {
+      const [changesRes, previewRes] = await Promise.all([
+        apiClient.get<any>(`/api/ontology/${projectId}/drafts`, { userId: pr.authorId }),
+        apiClient.get<any>(`/api/ontology/${projectId}/drafts/publish-preview`, { userId: pr.authorId }),
+      ]);
+      const changesData = changesRes?.data || changesRes;
+      setPrChangesMap((prev) => ({ ...prev, [pr.id]: changesData.drafts || [] }));
+      const preview = previewRes?.data || previewRes;
+      if (preview) {
+        setPrConflictMap((prev) => ({
+          ...prev,
+          [pr.id]: {
+            conflictType: preview.conflictType || "NONE",
+            mainChangedSinceDraft: !!preview.mainChangedSinceDraft,
+            conflicts: preview.conflicts || [],
+          },
+        }));
+      }
+    } catch {
+      fetchedConflictsRef.current.delete(pr.id);
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       fetchPRs();
       setShowRaiseForm(false);
       setRaiseError(null);
+      fetchedConflictsRef.current = new Set();
+      setPrConflictMap({});
+      setPrChangesMap({});
+      setPrExpandedCategories({});
       if (canRaisePR) {
         apiClient.get<any>(`/api/ontology/${projectId}/drafts/stats`, { userId })
           .then((res: any) => {
@@ -319,7 +369,11 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
               {/* PR header row */}
               <div
                 className="flex items-start gap-2 px-3 py-2.5 cursor-pointer"
-                onClick={() => setExpandedPrId(expandedPrId === pr.id ? null : pr.id)}
+                onClick={() => {
+                  const newId = expandedPrId === pr.id ? null : pr.id;
+                  setExpandedPrId(newId);
+                  if (newId && pr.status === "OPEN" && canReview) loadPRDetails(pr);
+                }}
               >
                 <GitPullRequest
                   size={14}
@@ -335,6 +389,9 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  {pr.status === "OPEN" && prConflictMap[pr.id]?.conflictType === "IRI_OVERLAP" && (
+                    <AlertTriangle size={12} className="text-amber-500" title="Merge conflicts detected" />
+                  )}
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
                     pr.status === "OPEN" ? "bg-blue-100 text-blue-700"
                     : pr.status === "APPROVED" ? "bg-green-100 text-green-700"
@@ -350,14 +407,130 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
               {expandedPrId === pr.id && (
                 <div className="px-3 pb-3 border-t" style={{ borderColor: "var(--color-border)" }}>
                   {pr.description && (
-                    <div className="mt-2 opacity-80 whitespace-pre-wrap">{pr.description}</div>
+                    <div className="mt-2 opacity-80 whitespace-pre-wrap text-xs">{pr.description}</div>
                   )}
                   {pr.reviewNote && (
-                    <div className="mt-2 italic opacity-70">Review note: {pr.reviewNote}</div>
+                    <div className="mt-2 italic opacity-70 text-xs">Review note: {pr.reviewNote}</div>
                   )}
                   {!pr.description && !pr.reviewNote && !canReview && pr.status === "OPEN" && (
                     <div className="mt-2 text-xs opacity-50 italic">Awaiting review</div>
                   )}
+
+                  {/* Full change list for reviewers */}
+                  {canReview && pr.status === "OPEN" && (() => {
+                    const prChanges = prChangesMap[pr.id];
+                    const ci = prConflictMap[pr.id];
+                    const conflictIris = new Set<string>((ci?.conflicts || []).map((c) => c.entityIRI));
+
+                    if (!prChanges && !fetchedConflictsRef.current.has(pr.id)) {
+                      return <div className="mt-2 text-[11px] opacity-40">Loading changes…</div>;
+                    }
+                    if (!prChanges) return null;
+
+                    const grouped = groupByCategory(prChanges);
+                    const categories = CATEGORY_ORDER.filter((cat) => grouped[cat]?.length);
+                    const expandedCats = prExpandedCategories[pr.id] || new Set<string>();
+
+                    const toggleCat = (cat: string) => {
+                      setPrExpandedCategories((prev) => {
+                        const s = new Set(prev[pr.id] || []);
+                        s.has(cat) ? s.delete(cat) : s.add(cat);
+                        return { ...prev, [pr.id]: s };
+                      });
+                    };
+
+                    return (
+                      <div className="mt-2 flex flex-col gap-1.5 text-[11px]">
+                        {/* Conflict banners */}
+                        {ci?.conflictType === "IRI_OVERLAP" && (
+                          <div
+                            className="rounded px-2 py-1.5 border"
+                            style={{ borderColor: "rgba(234,179,8,0.4)", backgroundColor: "rgba(234,179,8,0.06)" }}
+                          >
+                            <div className="flex items-center gap-1 font-semibold text-amber-600">
+                              <AlertTriangle size={11} />
+                              {ci.conflicts.length} merge conflict{ci.conflicts.length !== 1 ? "s" : ""} — same entities changed publicly
+                            </div>
+                            <ul className="mt-1 opacity-70 pl-1 space-y-0.5">
+                              {ci.conflicts.slice(0, 5).map((c) => (
+                                <li key={c.entityIRI}>
+                                  · {c.entityLabel || extractLocalName(c.entityIRI)}
+                                  {c.changedBy && <span className="opacity-60"> (by {c.changedBy})</span>}
+                                </li>
+                              ))}
+                              {ci.conflicts.length > 5 && (
+                                <li className="opacity-50">…and {ci.conflicts.length - 5} more</li>
+                              )}
+                            </ul>
+                          </div>
+                        )}
+                        {ci?.conflictType === "MAIN_CHANGED" && ci.conflicts.length === 0 && (
+                          <div className="flex items-center gap-1 opacity-60">
+                            <AlertTriangle size={11} className="text-amber-500" />
+                            Public ontology updated since this draft was created — no direct conflicts.
+                          </div>
+                        )}
+
+                        {/* Change summary header */}
+                        <div className="font-semibold opacity-70 mt-1">
+                          {prChanges.length} change{prChanges.length !== 1 ? "s" : ""} by {pr.authorUsername}
+                        </div>
+
+                        {/* Grouped categories */}
+                        {categories.map((cat) => {
+                          const items = grouped[cat];
+                          const isExpanded = expandedCats.has(cat);
+                          const hasCatConflict = items.some((c) => conflictIris.has(getEntityIri(c.operationData)));
+                          return (
+                            <div key={cat} className="rounded border" style={{ borderColor: "var(--color-border)" }}>
+                              <button
+                                className="w-full flex items-center justify-between px-2 py-1.5 font-medium hover:opacity-80 transition-opacity"
+                                onClick={() => toggleCat(cat)}
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                                  {cat}
+                                  {hasCatConflict && <AlertTriangle size={10} className="text-amber-500" />}
+                                </span>
+                                <span className="opacity-50">{items.length}</span>
+                              </button>
+                              {isExpanded && (
+                                <div className="border-t divide-y" style={{ borderColor: "var(--color-border)" }}>
+                                  {items.map((c) => {
+                                    const { symbol, cls } = getActionMeta(c.operationType);
+                                    const name = getEntityName(c.operationType, c.operationData);
+                                    const iri = getEntityIri(c.operationData);
+                                    const isConflict = iri ? conflictIris.has(iri) : false;
+                                    const parentIri = c.operationData?.parent as string | undefined;
+                                    const parentLabel = parentIri ? extractLocalName(parentIri) : null;
+                                    return (
+                                      <div key={c.id} className="flex items-start gap-2 px-2 py-1.5">
+                                        <span className={`font-bold flex-shrink-0 mt-0.5 ${cls}`}>{symbol}</span>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-1.5">
+                                            <span className="opacity-80 truncate">{name}</span>
+                                            {isConflict && (
+                                              <AlertTriangle size={10} className="text-amber-500 flex-shrink-0" title="Conflict with public" />
+                                            )}
+                                          </div>
+                                          {parentLabel && (
+                                            <div className="opacity-40 text-[10px] mt-0.5">⊂ {parentLabel}</div>
+                                          )}
+                                        </div>
+                                        <span className="opacity-40 flex-shrink-0 text-[10px] mt-0.5">
+                                          {getOpLabel(c.operationType)}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
 
                   {/* Review actions — only for open PRs and users who can review */}
                   {canReview && pr.status === "OPEN" && (
