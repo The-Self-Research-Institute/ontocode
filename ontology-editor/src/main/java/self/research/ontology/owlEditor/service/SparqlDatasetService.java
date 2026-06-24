@@ -28,6 +28,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DraftCopyStatus;
+import self.research.ontology.owlEditor.model.DraftSession;
 import self.research.ontology.owlEditor.model.ImportOptions;
 
 import jakarta.annotation.PreDestroy;
@@ -121,6 +122,9 @@ public class SparqlDatasetService {
 
     @Autowired(required = false)
     private self.research.ontology.owlEditor.repository.DraftSessionRepository draftSessionRepository;
+
+    @Autowired(required = false)
+    private MainGraphRevisionService mainGraphRevisionService;
 
     // Shared repository connection (legacy / fallback for existing data)
     private Repository repository;
@@ -607,7 +611,34 @@ public class SparqlDatasetService {
 
     private boolean isDraftCopyReadyForRead(String projectId) {
         String userId = SparqlQueryContext.getUserId();
-        return isDraftCopyReady(projectId, userId);
+        return shouldScopeReadsToDraftCopy(projectId, userId);
+    }
+
+    /**
+     * Copy-on-switch reads use the draft graph only while it is still current with main.
+     * After a public ({@code draft=false}) mutation bumps the main revision, fall back to
+     * main-graph reads so direct edits are visible (regression fix for draft-only FROM).
+     */
+    private boolean shouldScopeReadsToDraftCopy(String projectId, String userId) {
+        if (!isDraftCopyReady(projectId, userId)) {
+            return false;
+        }
+        if (mainGraphRevisionService == null || draftSessionRepository == null) {
+            return true;
+        }
+        long revisionAtCopy = draftSessionRepository.findByProjectIdAndUserId(projectId, userId)
+                .map(DraftSession::getBaselineMainRevision)
+                .orElse(-1L);
+        if (revisionAtCopy < 0) {
+            return true;
+        }
+        long currentRevision = mainGraphRevisionService.getRevision(projectId);
+        if (currentRevision > revisionAtCopy) {
+            log.debug("[DRAFT-GRAPH] Main revision {} > draft baseline {} — reading main graph for {}",
+                    currentRevision, revisionAtCopy, projectId);
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -2572,7 +2603,7 @@ public class SparqlDatasetService {
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long exportStart = System.nanoTime();
             List<IRI> contexts = new ArrayList<>();
-            if (userId != null && !userId.isBlank() && isDraftCopyReady(projectId, userId)) {
+            if (userId != null && !userId.isBlank() && shouldScopeReadsToDraftCopy(projectId, userId)) {
                 contexts.add(conn.getValueFactory().createIRI(getDraftGraphUri(projectId, userId)));
             } else {
                 for (String g : getAllGraphUris(conn, projectId)) {
@@ -3173,7 +3204,7 @@ public class SparqlDatasetService {
 
     private String buildFromClause(RepositoryConnection conn, String projectId) {
         String userId = SparqlQueryContext.getUserId();
-        if (isDraftCopyReady(projectId, userId)) {
+        if (shouldScopeReadsToDraftCopy(projectId, userId)) {
             return "FROM <" + getDraftGraphUri(projectId, userId) + ">";
         }
         List<String> graphs = getAllGraphUris(conn, projectId);
