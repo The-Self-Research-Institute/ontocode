@@ -150,16 +150,14 @@ public class InvitationController {
                 request.email,
                 request.role,
                 user.getUsername(),
-                user.getEmail(),
-                request.canEditPublicProjects
+                user.getEmail()
             );
 
             // Add pending member to workspace
             workspace.addPendingMember(
                 request.email,
                 Workspace.WorkspaceRole.valueOf(request.role),
-                invitation.getInvitationToken(),
-                request.canEditPublicProjects
+                invitation.getInvitationToken()
             );
             workspaceRepository.save(workspace);
             log.info("Added pending member {} to workspace {}", request.email, workspace.getWorkspaceId());
@@ -330,22 +328,15 @@ public class InvitationController {
                             || (visibility == null && (project.getMembers() == null || project.getMembers().size() <= 1));
                     if (isPrivate) continue;
 
-                    // Admins and Members get added to all non-private projects; Viewers only to WORKSPACE ones
-                    boolean isNewMember = "MEMBER".equalsIgnoreCase(invitation.getRole());
-                    boolean shouldAdd = isNewAdmin || isNewMember || "WORKSPACE".equals(visibility);
+                    // Only ADMINs are auto-added to all non-private projects.
+                    // MEMBERs and VIEWERs are added manually per-project via Project Settings.
+                    boolean shouldAdd = isNewAdmin;
                     if (shouldAdd) {
-                        String autoRole;
-                        if (isNewAdmin) {
-                            autoRole = "EDITOR";
-                        } else if (isNewMember) {
-                            autoRole = invitation.isCanEditPublicProjects() ? "EDITOR" : "DRAFT_EDITOR";
-                        } else {
-                            autoRole = "VIEWER";
-                        }
+                        String autoRole = "EDITOR";
                         project.addMember(user.getId(), user.getUsername(), user.getEmail(), autoRole);
                         projectRepository.save(project);
-                        log.info("Auto-added {} as {} to project {} (visibility={}, inviteRole={}) in workspace {}",
-                                user.getUsername(), autoRole, project.getName(), visibility, invitation.getRole(), workspace.getWorkspaceId());
+                        log.info("Auto-added {} as {} to project {} (visibility={}) in workspace {}",
+                                user.getUsername(), autoRole, project.getName(), visibility, workspace.getWorkspaceId());
                     }
                 }
             } catch (Exception e) {
@@ -623,7 +614,6 @@ public class InvitationController {
         public String workspaceId;
         public String email;
         public String role;
-        public boolean canEditPublicProjects = false;
     }
     
     public static class ResendInvitationRequest {

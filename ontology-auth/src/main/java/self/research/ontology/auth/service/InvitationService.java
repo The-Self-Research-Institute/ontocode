@@ -33,7 +33,7 @@ public class InvitationService {
      * Create and send invitation to a user
      */
     public Invitation createInvitation(String workspaceId, String inviteeEmail, String role,
-                                      String invitedBy, String invitedByEmail, boolean canEditPublicProjects) {
+                                      String invitedBy, String invitedByEmail) {
         // Verify workspace exists
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
         if (workspaceOpt.isEmpty()) {
@@ -65,7 +65,6 @@ public class InvitationService {
             invitation.setInvitedBy(invitedBy);
             invitation.setInvitedByEmail(invitedByEmail);
             invitation.setRole(role);
-            invitation.setCanEditPublicProjects(canEditPublicProjects);
 
             invitation = invitationRepository.save(invitation);
             log.info("Created new invitation for: {}", inviteeEmail);

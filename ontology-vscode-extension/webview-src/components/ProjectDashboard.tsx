@@ -473,7 +473,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
   };
 
-  const handleInviteMember = async (email: string, role: string, canEditPublicProjects?: boolean) => {
+  const handleInviteMember = async (email: string, role: string) => {
     try {
       // Check if member already exists in workspace
       const workspaceResponse = await apiClient.get(`/api/workspaces/${user?.workspaceId}`);
@@ -520,7 +520,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         workspaceId: user?.workspaceId || "default",
         email: email,
         role: role,
-        canEditPublicProjects: canEditPublicProjects ?? false,
       });
 
       console.log("Invitation sent successfully:", response?.message || "Invitation sent");
@@ -1718,8 +1717,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
                               disabled={addingMember}
                             >
-                              <option value="VIEWER">Viewer — read-only in this project</option>
-                              <option value="EDITOR">Editor — can edit ontology content</option>
+                              <option value="VIEWER">Viewer — public view only, no edits</option>
+                              <option value="EDITOR">Editor — direct edits + draft access</option>
+                              <option value="DRAFT_EDITOR">Draft Editor — view public + draft + raise PR</option>
                             </select>
                           </div>
                           <button
@@ -1792,6 +1792,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                                   {member.role === "OWNER" && <option value="OWNER">Owner</option>}
                                   {member.role === "ADMIN" && <option value="ADMIN">Admin</option>}
                                   <option value="EDITOR">Editor</option>
+                                  <option value="DRAFT_EDITOR">Draft Editor</option>
                                   <option value="VIEWER">Viewer</option>
                                 </select>
                                 {member.role !== "OWNER" && canManageOpenProject && canRemoveThisProjectMember(member) && (
