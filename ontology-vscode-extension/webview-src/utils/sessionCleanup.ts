@@ -46,6 +46,7 @@ export function clearSessionCache(): void {
     Object.keys(localStorage).forEach((key) => {
       if (
         key.startsWith("ontocode_lastWorkspace") ||
+        key.startsWith("ontocode_sync_mode_") ||
         key.startsWith("pendingUpgrade") ||
         key === "ontocode_route_history"
       ) {

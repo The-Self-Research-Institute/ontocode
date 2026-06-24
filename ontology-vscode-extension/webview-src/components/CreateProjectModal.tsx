@@ -20,7 +20,7 @@ interface WorkspaceMember {
 }
 
 const MEMBER_SEARCH_THRESHOLD = 5;
-type ProjectShareRole = "VIEWER" | "EDITOR";
+type ProjectShareRole = "VIEWER" | "DRAFT_EDITOR" | "EDITOR";
 
 const normalizeEmail = (email?: string | null) => (email || "").trim().toLowerCase();
 
@@ -506,6 +506,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                                 className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 disabled:text-gray-400 shrink-0"
                               >
                                 <option value="VIEWER">Viewer</option>
+                                <option value="DRAFT_EDITOR">Draft Editor</option>
                                 <option value="EDITOR">Editor</option>
                               </select>
                             )}

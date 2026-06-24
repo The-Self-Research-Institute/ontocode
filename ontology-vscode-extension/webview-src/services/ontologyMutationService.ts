@@ -97,6 +97,11 @@ export const ontologyMutationService = {
         (e as any).reason = 'requiresUpgrade';
         throw e;
       }
+      if (err?.status === 403 && err?.data?.viewOnly && err?.data?.draftAllowed) {
+        const e = new Error('You can view this project and edit via draft mode. Switch to Draft Mode to make your changes, then raise a pull request.');
+        (e as any).reason = 'draftRequired';
+        throw e;
+      }
       if (err?.status === 403 && err?.data?.viewOnly) {
         const e = new Error('You have view-only access to this project. Contact the project owner to request edit permissions.');
         (e as any).reason = 'viewOnly';
@@ -810,6 +815,11 @@ export const ontologyMutationService = {
       if (err?.status === 403 && err?.data?.requiresUpgrade) {
         const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
         (e as any).reason = 'requiresUpgrade';
+        throw e;
+      }
+      if (err?.status === 403 && err?.data?.viewOnly && err?.data?.draftAllowed) {
+        const e = new Error('You can view this project and edit via draft mode. Switch to Draft Mode to make your changes, then raise a pull request.');
+        (e as any).reason = 'draftRequired';
         throw e;
       }
       if (err?.status === 403 && err?.data?.viewOnly) {
