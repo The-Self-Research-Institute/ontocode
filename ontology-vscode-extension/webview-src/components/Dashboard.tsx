@@ -169,6 +169,8 @@ import {
 import { OntoCodeLogo } from "./OntoCodeLogo";
 import ReleaseNotesModal from "./ReleaseNotesModal";
 import DraftCopyModal from "./dialogs/DraftCopyModal";
+import PullFromPublicDialog from "./PullFromPublicDialog";
+import PRsModal from "./PRsModal";
 
 const TopMenuBar = ({
   fileList,
@@ -1568,6 +1570,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [requireDraftForMembers, setRequireDraftForMembers] = useState(false);
   const [isProjectOwner, setIsProjectOwner] = useState(false);
   const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
+  const [showPullFromPublic, setShowPullFromPublic] = useState(false);
+  const [showPRsModal, setShowPRsModal] = useState(false);
+  const [pendingPRCount, setPendingPRCount] = useState(0);
   const autoDraftPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -15817,8 +15822,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                 },
               });
             } else {
-              // private → public: just switch view mode; draft graph is preserved for all users.
-              // Use the Merge Wizard to publish changes when ready.
+              // private → public: if user has draft changes, offer pull-from-public dialog
+              // so they can reconcile any public updates before switching view.
+              if (draftCount > 0 && projectId) {
+                setShowPullFromPublic(true);
+                return;
+              }
               setSyncMode('public');
               ontologyMutationService.setRealTimeSync(true);
               if (projectId) {
@@ -15869,6 +15878,28 @@ const Dashboard: React.FC<DashboardProps> = ({
               })}
             </div>
             <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0 flex-wrap justify-end min-w-0">
+              {/* Pull Requests badge — visible when project is loaded */}
+              {projectId && (
+                <button
+                  onClick={() => setShowPRsModal(true)}
+                  className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
+                    pendingPRCount > 0
+                      ? "bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                  title="Pull Requests — review pending changes from collaborators"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/>
+                  </svg>
+                  <span>PRs</span>
+                  {pendingPRCount > 0 && (
+                    <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold leading-none">
+                      {pendingPRCount}
+                    </span>
+                  )}
+                </button>
+              )}
               {isCloudDeployment && projectId && (
                 <button
                   onClick={() => {
@@ -16856,6 +16887,38 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* Theme Settings */}
       <ThemeSettings isOpen={showThemeSettings} onClose={() => setShowThemeSettings(false)} />
+
+      {/* Pull Requests modal */}
+      {projectId && (
+        <PRsModal
+          projectId={projectId}
+          currentUserId={user?.userId || user?.email || ""}
+          currentUsername={user?.username || ""}
+          isOwner={isProjectOwner}
+          isOpen={showPRsModal}
+          onClose={() => setShowPRsModal(false)}
+          onCountChange={setPendingPRCount}
+        />
+      )}
+
+      {/* Pull from Public — conflict-aware merge dialog */}
+      {showPullFromPublic && projectId && (
+        <PullFromPublicDialog
+          projectId={projectId}
+          onClose={() => setShowPullFromPublic(false)}
+          onPullComplete={() => {
+            setShowPullFromPublic(false);
+            setSyncMode("public");
+            ontologyMutationService.setRealTimeSync(true);
+            if (projectId) {
+              localStorage.setItem(`ontocode_sync_mode_${projectId}`, "public");
+              userPreferencesService.saveSyncMode(projectId, "public");
+            }
+            notificationService.success("Pull Complete", "Public changes merged into your view.");
+            window.location.reload();
+          }}
+        />
+      )}
 
       {/* History Panel */}
       {projectId && (
