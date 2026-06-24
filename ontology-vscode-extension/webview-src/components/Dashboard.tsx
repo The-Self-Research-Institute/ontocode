@@ -171,6 +171,7 @@ import { OntoCodeLogo } from "./OntoCodeLogo";
 import ReleaseNotesModal from "./ReleaseNotesModal";
 import DraftCopyModal from "./dialogs/DraftCopyModal";
 import DraftPRPanel from "./DraftPRPanel";
+import PullPreviewDialog from "./PullPreviewDialog";
 
 const TopMenuBar = ({
   fileList,
@@ -1574,12 +1575,24 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isProjectOwner, setIsProjectOwner] = useState(false);
   const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
   const canReviewPR = isProjectOwner || userProjectRole === 'ADMIN' || userProjectRole === 'EDITOR';
-  const canRaisePR = !isDesktop() && (syncMode === 'private' || isProjectDraftEditorRole) && !isViewOnlyMember;
+  // DRAFT_EDITOR always passes (not blocked by plan/isViewOnly); others need draft mode + not view-only
+  const canRaisePR = !isDesktop() && (
+    isProjectDraftEditorRole ||
+    (syncMode === 'private' && !isViewOnlyMember)
+  );
+  // Fast-path for PR button: workspace owners and admins see it before isProjectOwner async resolves.
+  // Guard with !isProjectDraftEditorRole to exclude project-only members (also have null workspaceRole).
+  const isWorkspaceAdminRole = normalizeRole(user?.workspaceRole ?? "") === "ADMIN";
+  const showPRButton = !isDesktop() && !!projectId && (
+    canRaisePR || canReviewPR ||
+    ((isCurrentWorkspaceOwner || isWorkspaceAdminRole) && !isProjectDraftEditorRole)
+  );
   const autoDraftPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conflictCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
+  const [showPullPreview, setShowPullPreview] = useState(false);
   const [openPRCount, setOpenPRCount] = useState(0);
 
   const startDraftCopySession = useCallback((
@@ -16002,20 +16015,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                   Public View
                 </span>
               )}
-              {/* Pull from Public — only in draft mode */}
-              {canRaisePR && projectId && (
+              {/* Pull from Public — only visible when in draft mode */}
+              {syncMode === 'private' && projectId && (
                 <button
-                  onClick={handlePullFromPublic}
+                  onClick={() => setShowPullPreview(true)}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
                   style={{ borderColor: "var(--color-border)" }}
-                  title="Pull latest public version into your draft (overwrites your local draft with a fresh copy)"
+                  title="Preview and pull latest public version into your draft"
                 >
                   <Download size={12} />
                   <span className="hidden sm:inline">Pull</span>
                 </button>
               )}
               {/* PR button — for draft users (raise) and reviewers (review) */}
-              {!isDesktop() && projectId && (canRaisePR || canReviewPR) && (
+              {showPRButton && (
                 <button
                   onClick={() => { setShowDraftPRPanel(true); refreshOpenPRCount(); }}
                   className="relative flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
@@ -16914,6 +16927,17 @@ const Dashboard: React.FC<DashboardProps> = ({
             refreshOpenPRCount();
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
           }}
+        />
+      )}
+
+      {/* Pull Preview Dialog */}
+      {projectId && (
+        <PullPreviewDialog
+          isOpen={showPullPreview}
+          onClose={() => setShowPullPreview(false)}
+          onConfirm={handlePullFromPublic}
+          projectId={projectId}
+          userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
         />
       )}
 

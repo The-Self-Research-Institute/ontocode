@@ -91,10 +91,14 @@ public class DraftController {
      * GET /api/ontology/{projectId}/drafts
      */
     @GetMapping("/{projectId}/drafts")
-    public ResponseEntity<Map<String, Object>> getDrafts(@PathVariable String projectId) {
+    public ResponseEntity<Map<String, Object>> getDrafts(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId) {
         try {
-            List<DraftChange> drafts = draftTrackingService.getUnappliedDrafts(projectId);
-            
+            List<DraftChange> drafts = (userId != null && !userId.isBlank())
+                    ? draftTrackingService.getUnappliedDraftsForUser(projectId, userId)
+                    : draftTrackingService.getUnappliedDrafts(projectId);
+
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "projectId", projectId,
