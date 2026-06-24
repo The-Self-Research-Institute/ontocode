@@ -163,6 +163,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.log('[AuthContext] Logging out...');
 
         clearSessionCache();
+        clearLastOpenedProjectState();
         ignoringWorkspaceRef.current = false;
         try { localStorage.removeItem('enterpriseDomainBypass'); } catch {}
 
