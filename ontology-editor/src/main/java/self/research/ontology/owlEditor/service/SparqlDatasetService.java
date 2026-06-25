@@ -1,4 +1,4 @@
-﻿package self.research.ontology.owlEditor.service;
+package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Resource;
