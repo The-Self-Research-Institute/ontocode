@@ -2483,12 +2483,12 @@ public class OntologyQueryService {
                 SELECT DISTINCT ?equiv ?label WHERE {
                   {
                     <%s> owl:equivalentClass ?equiv .
-                    FILTER(isIRI(?equiv) && ?equiv != <%s>)
-                    FILTER NOT EXISTS { ?equiv a owl:Restriction }
+                    FILTER(isIRI(?equiv) && ?equiv != <%s>
+                           && !STRSTARTS(STR(?equiv), "http://ontocode.org/restriction/"))
                   } UNION {
                     ?equiv owl:equivalentClass <%s> .
-                    FILTER(isIRI(?equiv) && ?equiv != <%s>)
-                    FILTER NOT EXISTS { ?equiv a owl:Restriction }
+                    FILTER(isIRI(?equiv) && ?equiv != <%s>
+                           && !STRSTARTS(STR(?equiv), "http://ontocode.org/restriction/"))
                   }
                   OPTIONAL { ?equiv rdfs:label ?label }
                 }
