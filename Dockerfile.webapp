@@ -1,5 +1,5 @@
 # Build the standalone React (webview-src) app
-FROM node:22-alpine AS builder
+FROM --platform=linux/amd64 node:22-alpine AS builder
 
 WORKDIR /app
 

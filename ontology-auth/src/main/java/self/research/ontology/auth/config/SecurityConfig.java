@@ -103,6 +103,7 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll() // Only health endpoints are public
                         .requestMatchers(HttpMethod.GET, "/api/downloads", "/api/downloads/**").permitAll() // Public installer downloads
                         .requestMatchers(HttpMethod.GET, "/api/maintenance/status").permitAll() // Public maintenance status check
+                        .requestMatchers(HttpMethod.POST, "/api/v1/issues/report").permitAll() // Issue reports open to all users — no auth required
                         .anyRequest().authenticated() // All other requests require authentication
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // Stateless sessions
