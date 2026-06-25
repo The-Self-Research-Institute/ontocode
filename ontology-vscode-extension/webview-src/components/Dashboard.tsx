@@ -989,6 +989,34 @@ const OpenFileDialog = ({
       onClose();
       return;
     }
+    if (isDesktop()) {
+      // Desktop without a project — use native save dialog to pick location
+      const baseName = "my-ontology.owl";
+      const ontologyIRI = `http://example.org/ontologies/my-ontology`;
+      const content = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+      const api = (window as any).electronAPI;
+      if (!api?.saveAs) return;
+      const savedPath = await api.saveAs(content, baseName);
+      if (!savedPath) return;
+      const fileName = savedPath.split(/[\\/]/).pop() || baseName;
+      const fileContent = content;
+      window.dispatchEvent(new CustomEvent("electron:file-opened", {
+        detail: { fileName, fileContent, filePath: savedPath, fileSize: fileContent.length }
+      }));
+      onCreateNewFile?.();
+      onClose();
+      return;
+    }
     if (!canOpenLocalFile || !window.vscode) {
       return;
     }

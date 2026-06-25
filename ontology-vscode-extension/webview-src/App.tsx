@@ -1129,6 +1129,14 @@ const AppContent = () => {
       });
     };
     api.onMenuOpenFile(applyMenuFile);
+
+    // Also handle new-file creation from OpenFileDialog (desktop, no project)
+    const onElectronFileOpened = (e: Event) => {
+      const data = (e as CustomEvent).detail;
+      if (data) void applyMenuFile(data);
+    };
+    window.addEventListener('electron:file-opened', onElectronFileOpened);
+    return () => window.removeEventListener('electron:file-opened', onElectronFileOpened);
   }, [navigateTo, tryFocusExistingDesktopFile]);
 
   // Second-instance / Finder: focus existing file without re-importing
