@@ -387,6 +387,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (isTokenExpired(user.token)) {
                 console.log('[AuthContext]  Token expired, logging out');
                 logout(true);
+                return;
+            }
+            // Piggyback maintenance check — catches maintenance turning ON mid-session
+            if (!isDesktop()) {
+                apiClient.get('/api/maintenance/status').then((data: any) => {
+                    if (data?.active) {
+                        setMaintenanceActive(true);
+                        setMaintenanceMessage(data.message || 'System is under maintenance.');
+                    }
+                }).catch(() => { /* ignore — don't disrupt the session on network hiccup */ });
             }
         }, 60000); // Check every 60 seconds
 
