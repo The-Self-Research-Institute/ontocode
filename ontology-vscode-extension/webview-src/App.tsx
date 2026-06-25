@@ -29,6 +29,7 @@ import {
 } from "./utils/desktopActiveFile";
 import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from "./utils/desktop";
 import AdminSettingsModal from "./components/AdminSettingsModal";
+import MaintenancePage from "./components/MaintenancePage";
 const BillingManagement = lazy(() => import("./components/BillingManagement"));
 const DesktopDownloadPage = lazy(() => import("./components/DesktopDownloadPage"));
 const DesktopUpdateBanner = lazy(() => import("./components/DesktopUpdateBanner"));
@@ -85,6 +86,8 @@ const AppContent = () => {
     user,
     loading,
     needsWorkspaceSelection,
+    maintenanceActive,
+    maintenanceMessage,
     selectWorkspace,
     logout,
     updateSubscriptionPlan,
@@ -1839,6 +1842,10 @@ const AppContent = () => {
         </div>
       </div>
     );
+  }
+
+  if (maintenanceActive) {
+    return <MaintenancePage message={maintenanceMessage} />;
   }
 
   if (loading) {

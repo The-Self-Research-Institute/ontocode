@@ -31,6 +31,8 @@ interface AuthContextType {
     user: User | null;
     loading: boolean;
     needsWorkspaceSelection: boolean;
+    maintenanceActive: boolean;
+    maintenanceMessage: string;
     login: (username: string, password: string) => Promise<void>;
     signup: (username: string, email: string, password: string) => Promise<{ requiresVerification: boolean; email?: string; message?: string }>;
     forgotPassword: (email: string) => Promise<string>;
@@ -156,7 +158,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const [needsWorkspaceSelection, setNeedsWorkspaceSelection] = useState(false);
-    const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);    
+    const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);
+    const [maintenanceActive, setMaintenanceActive] = useState(false);
+    const [maintenanceMessage, setMaintenanceMessage] = useState('');
     // Flag to ignore workspace restoration when switching workspaces
     const ignoringWorkspaceRef = useRef(false);
     const logout = useCallback((showExpiredMessage = false) => {
@@ -555,6 +559,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setSessionExpiredMessage(null);
         } catch (error: any) {
             console.error('[AuthContext]  Login failed:', error);
+            // 503 with maintenance:true — redirect to maintenance page instead of showing error
+            if (error?.status === 503 || error?.data?.maintenance === true || error?.maintenance === true) {
+                const msg = error?.data?.message || error?.message || 'System is under maintenance.';
+                setMaintenanceActive(true);
+                setMaintenanceMessage(msg);
+                return;
+            }
             const message = error?.message || error?.data?.message || error?.data?.error || 'Invalid username or password';
             throw new Error(message.includes('Login failed:') ? message : `Login failed: ${message}`);
         }
@@ -690,6 +701,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.error('[AuthContext] Signup failed:', error);
             // Re-throw verification results as-is
             if (error?.requiresVerification) throw error;
+            if (error?.status === 503 || error?.data?.maintenance === true || error?.maintenance === true) {
+                const msg = error?.data?.message || error?.message || 'System is under maintenance.';
+                setMaintenanceActive(true);
+                setMaintenanceMessage(msg);
+                return { requiresVerification: false };
+            }
             const message = error?.message || error?.data?.message || error?.data?.error || 'Could not create account';
             throw new Error(message);
         }
@@ -958,8 +975,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 );
                 setNeedsWorkspaceSelection(requiresWorkspace);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('[AuthContext] ❌ Failed to refresh permissions:', error);
+            if (error?.status === 503 || error?.data?.maintenance === true || error?.maintenance === true) {
+                const msg = error?.data?.message || error?.message || 'System is under maintenance.';
+                setMaintenanceActive(true);
+                setMaintenanceMessage(msg);
+            }
         }
     };
 
@@ -1027,6 +1049,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         user,
         loading,
         needsWorkspaceSelection,
+        maintenanceActive,
+        maintenanceMessage,
         login,
         signup,
         forgotPassword,
