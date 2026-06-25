@@ -275,6 +275,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
           const PluginComponent = plugin.component;
           return (
             <PluginComponent
+              key={projectId}
               projectId={projectId}
               context={{
                 projectId,
