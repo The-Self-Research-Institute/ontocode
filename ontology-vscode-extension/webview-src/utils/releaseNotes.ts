@@ -23,10 +23,19 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.1.0-beta.12",
+    date: "June 25, 2026",
+    highlights: [
+      "TSRI-166: Graph View — Fixed stale cache showing the wrong ontology after switching projects. Also added Obsidian-style local graph view — click Local in the toolbar to see the neighbourhood of the selected node in place of the main canvas.",
+      "Submit Issue — Fixed network error when submitting issue reports or feature requests from the desktop app.",
+    ],
+    videoUrl: "",
+  },
+  {
     version: "1.1.0-beta.11",
     date: "June 20, 2026",
     highlights: [
-      "TSRI-161: Reasoner now shows elapsed time and active-progress feedback while running — large ontologies (100MB+) can take 15–40 minutes with HermiT; the UI now makes this clear instead of appearing stalled.",
+      "TSRI-161: Reasoner — Fixed the reasoner appearing stalled on startup. The UI now shows elapsed time and active progress while running. For large ontologies, ELK is recommended over HermiT — it uses the OWL EL profile and computes only the class hierarchy, making it significantly faster on 100 MB+ files where HermiT can take 15–40 minutes.",
     ],
     videoUrl: "",
   },
