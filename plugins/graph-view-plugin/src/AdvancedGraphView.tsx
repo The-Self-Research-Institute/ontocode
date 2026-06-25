@@ -5497,8 +5497,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }}
           >
             <LocalGraphView
-              nodes={filteredNodes}
-              edges={filteredEdges}
+              nodes={allNodes}
+              edges={allEdges}
               focusNodeId={activeLocalFocusId}
               onSelect={(node) => {
                 setSelectedNodes(new Set([node.id]));
