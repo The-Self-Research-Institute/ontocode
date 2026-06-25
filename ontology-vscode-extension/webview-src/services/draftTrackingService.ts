@@ -43,46 +43,44 @@ export const draftTrackingService = {
   /**
    * Get all unapplied drafts for a project
    */
-  async getDrafts(projectId: string): Promise<DraftChange[]> {
-    const response = await apiClient.get(`/api/ontology/${projectId}/drafts`);
-    return response.data.drafts;
+  async getDrafts(projectId: string, userId?: string): Promise<DraftChange[]> {
+    const params = userId ? { userId, _cb: Date.now() } : { _cb: Date.now() };
+    const response = await apiClient.get(`/api/ontology/${projectId}/drafts`, params);
+    const data = (response as any)?.data ?? response;
+    return (data as any)?.drafts ?? [];
   },
-  
+
   /**
-   * Get draft statistics (optionally scoped to one user's private draft)
+   * Get draft statistics (optionally scoped to one user's private draft).
+   * Cache-busted on every call so the browser never serves stale counts.
    */
   async getDraftStats(projectId: string, userId?: string): Promise<DraftStatistics> {
     try {
-      console.log(`[draftTrackingService] Getting draft stats for project: ${projectId}`, userId);
-      const params = userId ? { userId } : undefined;
+      // Append cache-buster so browsers never serve a cached count after save/discard
+      const params: Record<string, any> = { _cb: Date.now() };
+      if (userId) params.userId = userId;
       const response = await apiClient.get(`/api/ontology/${projectId}/drafts/stats`, params);
-      
-      console.log('[draftTrackingService] getDraftStats response:', response);
-      
-      // Handle both direct response and response.data (VS Code proxy vs direct HTTP)
-      const data = response.data || response;
-      
-      if (!data) {
-        console.error('[draftTrackingService] No response data:', response);
-        throw new Error('No response from server');
-      }
-      
-      // Extract just the statistics, excluding wrapper fields
-      const { success, projectId: pid, ...stats } = data;
-      console.log('[draftTrackingService] Extracted stats:', stats);
+
+      // apiClient returns resp.data in axios mode and the raw proxy response in VS Code mode
+      const data: any = (response as any)?.data ?? response;
+
+      if (!data) throw new Error('No response from server');
+
+      // Remove non-stat wrapper fields before returning
+      const { success: _s, projectId: _pid, ...stats } = data;
       return stats as DraftStatistics;
     } catch (error) {
       console.error('[draftTrackingService] getDraftStats failed:', error);
       throw error;
     }
   },
-  
+
   /**
    * Preview publish conflicts before save.
    */
   async getPublishPreview(projectId: string, userId: string): Promise<Record<string, unknown>> {
-    const response = await apiClient.get(`/api/ontology/${projectId}/drafts/publish-preview`, { userId });
-    return (response.data || response) as Record<string, unknown>;
+    const response = await apiClient.get(`/api/ontology/${projectId}/drafts/publish-preview`, { userId, _cb: Date.now() });
+    return ((response as any)?.data ?? response) as Record<string, unknown>;
   },
 
   /**
@@ -100,7 +98,8 @@ export const draftTrackingService = {
     if (force) url += '&force=true';
     if (merge) url += '&merge=true';
     const response = await apiClient.post(url, merge && resolutions ? resolutions : undefined);
-    return response.data;
+    // In axios mode response IS the data; in VS Code proxy mode response has a .data wrapper
+    return ((response as any)?.data ?? response) as { success: boolean; appliedCount: number; message: string };
   },
 
   /**
@@ -114,7 +113,7 @@ export const draftTrackingService = {
       ? `/api/ontology/${projectId}/drafts?userId=${encodeURIComponent(userId)}`
       : `/api/ontology/${projectId}/drafts`;
     const response = await apiClient.delete(url);
-    return response.data;
+    return ((response as any)?.data ?? response) as { success: boolean; discardedCount: number; message: string };
   },
   
   /**
