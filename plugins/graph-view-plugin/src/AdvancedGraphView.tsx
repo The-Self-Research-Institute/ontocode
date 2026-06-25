@@ -851,7 +851,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [focusIncludeIndividuals, setFocusIncludeIndividuals] = useState<boolean>(false);
 
   // Obsidian-style local graph + InfraNodus-style insights
-  const [showLocalGraph, setShowLocalGraph] = useState(true);
+  const [showLocalGraph, setShowLocalGraph] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [colorByCluster, setColorByCluster] = useState(false);
   const [sizeByInfluence, setSizeByInfluence] = useState(true);
@@ -3451,25 +3451,29 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   // This ensures nodes are always in view after a layout recalculation
   useEffect(() => {
     if (visualizationType !== 'ontograph' || ontographLayoutType === 'spring') return;
-    const timerId = setTimeout(() => {
-      if (svgRef.current && gRef.current && zoomRef.current) {
-        const svg = d3.select(svgRef.current);
-        const bounds = (gRef.current as any).getBBox();
-        if (!bounds.width || !bounds.height) return;
-        const width = svgRef.current.clientWidth;
-        const height = svgRef.current.clientHeight;
-        const scale = Math.min(0.9, 0.9 / Math.max(bounds.width / width, bounds.height / height));
-        const translate = [
-          width / 2 - scale * (bounds.x + bounds.width / 2),
-          height / 2 - scale * (bounds.y + bounds.height / 2)
-        ];
-        svg.transition().duration(600).call(
-          zoomRef.current.transform as any,
-          d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
-        );
-      }
-    }, 350); // Wait for D3 render + layout to settle
-    return () => clearTimeout(timerId);
+
+    const doFit = () => {
+      if (!svgRef.current || !gRef.current || !zoomRef.current) return false;
+      const bounds = (gRef.current as any).getBBox();
+      if (!bounds.width || !bounds.height) return false;
+      const width = svgRef.current.clientWidth;
+      const height = svgRef.current.clientHeight;
+      if (!width || !height) return false;
+      const scale = Math.min(0.9, 0.9 / Math.max(bounds.width / width, bounds.height / height));
+      const translate = [
+        width / 2 - scale * (bounds.x + bounds.width / 2),
+        height / 2 - scale * (bounds.y + bounds.height / 2)
+      ];
+      d3.select(svgRef.current).transition().duration(600).call(
+        zoomRef.current.transform as any,
+        d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
+      );
+      return true;
+    };
+
+    // Try at 350ms, retry at 800ms if SVG hasn't rendered yet (getBBox returns 0)
+    const t1 = setTimeout(() => { if (!doFit()) { setTimeout(doFit, 450); } }, 350);
+    return () => clearTimeout(t1);
   }, [visualizationType, ontographLayoutType, filteredNodes.length]);
 
   // Visual update effect to prevent graph movement on selection/hover
@@ -5339,9 +5343,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         </button>
       </div>
 
-          {/* Graph workspace: main canvas + Obsidian local graph + InfraNodus insights */}
+          {/* Graph workspace: main canvas OR Obsidian local graph (toggled, never both) */}
           <div style={styles.graphWorkspace}>
-          <div style={{ ...styles.graphContentArea, flex: showLocalGraph ? '1 1 auto' : 1 }}>
+          <div style={{ ...styles.graphContentArea, flex: 1, display: showLocalGraph ? 'none' : undefined }}>
             {/* SVG Canvas for Force, WebVOWL, OntoGraph, and projected 3D Spatial mode */}
             <svg
               ref={svgRef}
@@ -5468,10 +5472,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           <div
             data-testid="graph-local-pane"
             style={{
-              height: localGraphHeight,
-              flexShrink: 0,
-              borderTop: '2px solid var(--border)',
-              minHeight: 180
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column'
             }}
           >
             <LocalGraphView
