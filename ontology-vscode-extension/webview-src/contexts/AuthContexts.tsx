@@ -561,7 +561,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.error('[AuthContext]  Login failed:', error);
             // 503 with maintenance:true — redirect to maintenance page instead of showing error
             if (error?.status === 503 || error?.data?.maintenance === true || error?.maintenance === true) {
-                const msg = error?.data?.message || error?.message || 'System is under maintenance.';
+                const msg = error?.data?.message || error?.data?.error || error?.message || 'System is under maintenance.';
                 setMaintenanceActive(true);
                 setMaintenanceMessage(msg);
                 return;
@@ -702,7 +702,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // Re-throw verification results as-is
             if (error?.requiresVerification) throw error;
             if (error?.status === 503 || error?.data?.maintenance === true || error?.maintenance === true) {
-                const msg = error?.data?.message || error?.message || 'System is under maintenance.';
+                const msg = error?.data?.message || error?.data?.error || error?.message || 'System is under maintenance.';
                 setMaintenanceActive(true);
                 setMaintenanceMessage(msg);
                 return { requiresVerification: false };
@@ -978,7 +978,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch (error: any) {
             console.error('[AuthContext] ❌ Failed to refresh permissions:', error);
             if (error?.status === 503 || error?.data?.maintenance === true || error?.maintenance === true) {
-                const msg = error?.data?.message || error?.message || 'System is under maintenance.';
+                const msg = error?.data?.message || error?.data?.error || error?.message || 'System is under maintenance.';
                 setMaintenanceActive(true);
                 setMaintenanceMessage(msg);
             }

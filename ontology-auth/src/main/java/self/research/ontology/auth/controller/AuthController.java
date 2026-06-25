@@ -199,7 +199,8 @@ public class AuthController {
             log.warn("Login blocked — maintenance mode active for: {}", user.getEmail());
             return ResponseEntity.status(503).body(Map.of(
                 "error", "The system is currently under maintenance. Please try again later.",
-                "maintenance", true
+                "maintenance", true,
+                "message", systemSettingsService.get().getMaintenanceMessage()
             ));
         }
 
@@ -312,7 +313,8 @@ public class AuthController {
                 log.warn("Token refresh blocked — maintenance mode active for: {}", user.getEmail());
                 return ResponseEntity.status(503).body(Map.of(
                     "error", "The system is currently under maintenance. Please try again later.",
-                    "maintenance", true
+                    "maintenance", true,
+                    "message", systemSettingsService.get().getMaintenanceMessage()
                 ));
             }
 
@@ -371,9 +373,10 @@ public class AuthController {
         // Maintenance mode check — bypass list is the DB-managed maintenanceAllowedDomains (admin UI).
         if (systemSettingsService.isBlockedByMaintenance(email)) {
             log.warn("Signup blocked — maintenance mode active for: {}", email);
-            return ResponseEntity.status(403).body(Map.of(
+            return ResponseEntity.status(503).body(Map.of(
                 "error", "Registration is currently restricted to authorised users only. Please contact support.",
-                "maintenance", true
+                "maintenance", true,
+                "message", systemSettingsService.get().getMaintenanceMessage()
             ));
         }
 
