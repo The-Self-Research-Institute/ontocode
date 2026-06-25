@@ -11,6 +11,10 @@ interface SystemSettings {
     maintenanceAllDayDate?: string;
     maintenanceStartTime?: string;
     maintenanceEndTime?: string;
+    maintenanceDailyEnabled?: boolean;
+    maintenanceDailyStartTime?: string;
+    maintenanceDailyEndTime?: string;
+    maintenanceDailyTimezone?: string;
     enterpriseDomains: string[];
     enterpriseEmails: string[];
     updatedAt?: string;
@@ -39,7 +43,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
     const [newAllowedEmail, setNewAllowedEmail] = useState('');
     const [newEnterpriseDomain, setNewEnterpriseDomain] = useState('');
     const [newEnterpriseEmail, setNewEnterpriseEmail] = useState('');
-    const [scheduleMode, setScheduleMode] = useState<'allday' | 'range'>('allday');
+    const [scheduleMode, setScheduleMode] = useState<'allday' | 'range' | 'daily'>('allday');
 
     const [connections, setConnections] = useState<{
         totalConnections: number;
@@ -58,7 +62,11 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
         try {
             setLoading(true);
             const data = await apiClient.get('/api/admin/settings');
-            setSettings(data.data || data);
+            const s: SystemSettings = data.data || data;
+            setSettings(s);
+            if (s.maintenanceDailyEnabled) setScheduleMode('daily');
+            else if (s.maintenanceAllDayDate) setScheduleMode('allday');
+            else if (s.maintenanceStartTime || s.maintenanceEndTime) setScheduleMode('range');
         } catch (e: any) {
             showToast('error', e.response?.data?.error || 'Failed to load settings');
         } finally {
@@ -108,6 +116,10 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                 allDayDate: merged.maintenanceAllDayDate ?? null,
                 startTime: merged.maintenanceStartTime ?? null,
                 endTime: merged.maintenanceEndTime ?? null,
+                dailyEnabled: merged.maintenanceDailyEnabled ?? false,
+                dailyStartTime: merged.maintenanceDailyStartTime ?? '09:00',
+                dailyEndTime: merged.maintenanceDailyEndTime ?? '19:00',
+                dailyTimezone: merged.maintenanceDailyTimezone ?? 'Asia/Kolkata',
             });
             setSettings(prev => ({ ...prev, ...patch }));
         } catch (e: any) {
@@ -300,7 +312,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
                                     {settings.maintenanceScheduleEnabled && (
                                         <div className="space-y-3">
-                                            {/* All-day vs range toggle */}
+                                            {/* All-day / Time range / Daily window tabs */}
                                             <div className="flex gap-2">
                                                 <button
                                                     onClick={() => setScheduleMode('allday')}
@@ -314,28 +326,36 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                                         ${scheduleMode === 'range' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'}`}
                                                 >Time range
                                                 </button>
+                                                <button
+                                                    onClick={() => setScheduleMode('daily')}
+                                                    className={`flex-1 py-1.5 text-xs rounded-lg border font-medium transition-colors
+                                                        ${scheduleMode === 'daily' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'}`}
+                                                >Daily window
+                                                </button>
                                             </div>
 
-                                            {scheduleMode === 'allday' ? (
+                                            {scheduleMode === 'allday' && (
                                                 <div>
                                                     <label className="text-xs text-gray-500 block mb-1">Maintenance date</label>
                                                     <input
                                                         type="date"
                                                         value={settings.maintenanceAllDayDate ?? ''}
-                                                        onChange={e => setSettings(prev => ({ ...prev, maintenanceAllDayDate: e.target.value }))}
-                                                        onBlur={() => saveMaintenance({ maintenanceAllDayDate: settings.maintenanceAllDayDate, maintenanceStartTime: undefined, maintenanceEndTime: undefined }).catch(() => showToast('error', 'Save failed'))}
+                                                        onChange={e => setSettings(prev => ({ ...prev, maintenanceAllDayDate: e.target.value, maintenanceDailyEnabled: false }))}
+                                                        onBlur={() => saveMaintenance({ maintenanceAllDayDate: settings.maintenanceAllDayDate, maintenanceStartTime: undefined, maintenanceEndTime: undefined, maintenanceDailyEnabled: false }).catch(() => showToast('error', 'Save failed'))}
                                                         className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-400"
                                                     />
                                                 </div>
-                                            ) : (
+                                            )}
+
+                                            {scheduleMode === 'range' && (
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <div>
                                                         <label className="text-xs text-gray-500 block mb-1">Start</label>
                                                         <input
                                                             type="datetime-local"
                                                             value={settings.maintenanceStartTime ?? ''}
-                                                            onChange={e => setSettings(prev => ({ ...prev, maintenanceStartTime: e.target.value }))}
-                                                            onBlur={() => saveMaintenance({ maintenanceStartTime: settings.maintenanceStartTime, maintenanceAllDayDate: undefined }).catch(() => showToast('error', 'Save failed'))}
+                                                            onChange={e => setSettings(prev => ({ ...prev, maintenanceStartTime: e.target.value, maintenanceDailyEnabled: false }))}
+                                                            onBlur={() => saveMaintenance({ maintenanceStartTime: settings.maintenanceStartTime, maintenanceAllDayDate: undefined, maintenanceDailyEnabled: false }).catch(() => showToast('error', 'Save failed'))}
                                                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-400"
                                                         />
                                                     </div>
@@ -344,11 +364,66 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                                         <input
                                                             type="datetime-local"
                                                             value={settings.maintenanceEndTime ?? ''}
-                                                            onChange={e => setSettings(prev => ({ ...prev, maintenanceEndTime: e.target.value }))}
-                                                            onBlur={() => saveMaintenance({ maintenanceEndTime: settings.maintenanceEndTime, maintenanceAllDayDate: undefined }).catch(() => showToast('error', 'Save failed'))}
+                                                            onChange={e => setSettings(prev => ({ ...prev, maintenanceEndTime: e.target.value, maintenanceDailyEnabled: false }))}
+                                                            onBlur={() => saveMaintenance({ maintenanceEndTime: settings.maintenanceEndTime, maintenanceAllDayDate: undefined, maintenanceDailyEnabled: false }).catch(() => showToast('error', 'Save failed'))}
                                                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-400"
                                                         />
                                                     </div>
+                                                </div>
+                                            )}
+
+                                            {scheduleMode === 'daily' && (
+                                                <div className="space-y-3">
+                                                    <p className="text-xs text-purple-700 bg-purple-50 rounded-lg px-3 py-2">
+                                                        Maintenance will be active every day between the set times in the configured timezone.
+                                                    </p>
+                                                    <div className="grid grid-cols-2 gap-3">
+                                                        <div>
+                                                            <label className="text-xs text-gray-500 block mb-1">Start time (daily)</label>
+                                                            <input
+                                                                type="time"
+                                                                value={settings.maintenanceDailyStartTime ?? '09:00'}
+                                                                onChange={e => setSettings(prev => ({ ...prev, maintenanceDailyStartTime: e.target.value, maintenanceDailyEnabled: true }))}
+                                                                onBlur={() => saveMaintenance({ maintenanceDailyEnabled: true, maintenanceDailyStartTime: settings.maintenanceDailyStartTime, maintenanceDailyEndTime: settings.maintenanceDailyEndTime, maintenanceDailyTimezone: settings.maintenanceDailyTimezone, maintenanceAllDayDate: undefined, maintenanceStartTime: undefined, maintenanceEndTime: undefined }).catch(() => showToast('error', 'Save failed'))}
+                                                                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400"
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs text-gray-500 block mb-1">End time (daily)</label>
+                                                            <input
+                                                                type="time"
+                                                                value={settings.maintenanceDailyEndTime ?? '19:00'}
+                                                                onChange={e => setSettings(prev => ({ ...prev, maintenanceDailyEndTime: e.target.value, maintenanceDailyEnabled: true }))}
+                                                                onBlur={() => saveMaintenance({ maintenanceDailyEnabled: true, maintenanceDailyStartTime: settings.maintenanceDailyStartTime, maintenanceDailyEndTime: settings.maintenanceDailyEndTime, maintenanceDailyTimezone: settings.maintenanceDailyTimezone, maintenanceAllDayDate: undefined, maintenanceStartTime: undefined, maintenanceEndTime: undefined }).catch(() => showToast('error', 'Save failed'))}
+                                                                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-xs text-gray-500 block mb-1">Timezone</label>
+                                                        <select
+                                                            value={settings.maintenanceDailyTimezone ?? 'Asia/Kolkata'}
+                                                            onChange={e => setSettings(prev => ({ ...prev, maintenanceDailyTimezone: e.target.value, maintenanceDailyEnabled: true }))}
+                                                            onBlur={() => saveMaintenance({ maintenanceDailyEnabled: true, maintenanceDailyStartTime: settings.maintenanceDailyStartTime, maintenanceDailyEndTime: settings.maintenanceDailyEndTime, maintenanceDailyTimezone: settings.maintenanceDailyTimezone, maintenanceAllDayDate: undefined, maintenanceStartTime: undefined, maintenanceEndTime: undefined }).catch(() => showToast('error', 'Save failed'))}
+                                                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400"
+                                                        >
+                                                            <option value="Asia/Kolkata">Asia/Kolkata (IST, UTC+5:30)</option>
+                                                            <option value="UTC">UTC</option>
+                                                            <option value="America/New_York">America/New_York (ET)</option>
+                                                            <option value="America/Los_Angeles">America/Los_Angeles (PT)</option>
+                                                            <option value="Europe/London">Europe/London (GMT/BST)</option>
+                                                            <option value="Europe/Berlin">Europe/Berlin (CET)</option>
+                                                            <option value="Asia/Singapore">Asia/Singapore (SGT)</option>
+                                                            <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+                                                        </select>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => saveMaintenance({ maintenanceDailyEnabled: true, maintenanceDailyStartTime: settings.maintenanceDailyStartTime ?? '09:00', maintenanceDailyEndTime: settings.maintenanceDailyEndTime ?? '19:00', maintenanceDailyTimezone: settings.maintenanceDailyTimezone ?? 'Asia/Kolkata', maintenanceAllDayDate: undefined, maintenanceStartTime: undefined, maintenanceEndTime: undefined }).then(() => showToast('success', 'Daily window saved')).catch(() => {})}
+                                                        disabled={saving}
+                                                        className="w-full py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 font-medium"
+                                                    >
+                                                        Save daily window
+                                                    </button>
                                                 </div>
                                             )}
                                         </div>

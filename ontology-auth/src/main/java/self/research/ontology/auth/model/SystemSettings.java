@@ -4,6 +4,9 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -50,6 +53,19 @@ public class SystemSettings {
 
     /** Scheduled maintenance end (ISO datetime). Null = no scheduled end. */
     private LocalDateTime maintenanceEndTime = null;
+
+    // ── Daily recurring maintenance window ───────────────────────────────────
+    /** When true, maintenance recurs every day in the configured time window (overrides one-time schedule). */
+    private boolean maintenanceDailyEnabled = false;
+
+    /** Daily start time as "HH:mm" in maintenanceDailyTimezone (default: "09:00"). */
+    private String maintenanceDailyStartTime = "09:00";
+
+    /** Daily end time as "HH:mm" in maintenanceDailyTimezone (default: "19:00"). */
+    private String maintenanceDailyEndTime = "19:00";
+
+    /** IANA timezone ID for the daily window (default: "Asia/Kolkata" = IST). */
+    private String maintenanceDailyTimezone = "Asia/Kolkata";
 
     // ── Enterprise bypass (beta / partner access) ───────────────────────────────
     /**
@@ -106,6 +122,18 @@ public class SystemSettings {
     public LocalDateTime getMaintenanceEndTime() { return maintenanceEndTime; }
     public void setMaintenanceEndTime(LocalDateTime maintenanceEndTime) { this.maintenanceEndTime = maintenanceEndTime; }
 
+    public boolean isMaintenanceDailyEnabled() { return maintenanceDailyEnabled; }
+    public void setMaintenanceDailyEnabled(boolean maintenanceDailyEnabled) { this.maintenanceDailyEnabled = maintenanceDailyEnabled; }
+
+    public String getMaintenanceDailyStartTime() { return maintenanceDailyStartTime; }
+    public void setMaintenanceDailyStartTime(String maintenanceDailyStartTime) { this.maintenanceDailyStartTime = maintenanceDailyStartTime; }
+
+    public String getMaintenanceDailyEndTime() { return maintenanceDailyEndTime; }
+    public void setMaintenanceDailyEndTime(String maintenanceDailyEndTime) { this.maintenanceDailyEndTime = maintenanceDailyEndTime; }
+
+    public String getMaintenanceDailyTimezone() { return maintenanceDailyTimezone; }
+    public void setMaintenanceDailyTimezone(String maintenanceDailyTimezone) { this.maintenanceDailyTimezone = maintenanceDailyTimezone; }
+
     public List<String> getEnterpriseDomains() { return enterpriseDomains; }
     public void setEnterpriseDomains(List<String> enterpriseDomains) {
         this.enterpriseDomains = enterpriseDomains != null ? enterpriseDomains : new ArrayList<>();
@@ -131,6 +159,20 @@ public class SystemSettings {
         if (!maintenanceModeEnabled) return false;
         if (!maintenanceScheduleEnabled) return true;
 
+        // Daily recurring window (takes precedence over one-time schedule)
+        if (maintenanceDailyEnabled) {
+            try {
+                ZoneId tz = ZoneId.of(maintenanceDailyTimezone != null ? maintenanceDailyTimezone : "Asia/Kolkata");
+                ZonedDateTime now = ZonedDateTime.now(tz);
+                LocalTime current = now.toLocalTime();
+                LocalTime start = LocalTime.parse(maintenanceDailyStartTime != null ? maintenanceDailyStartTime : "09:00");
+                LocalTime end = LocalTime.parse(maintenanceDailyEndTime != null ? maintenanceDailyEndTime : "19:00");
+                return !current.isBefore(start) && !current.isAfter(end);
+            } catch (Exception ignored) {
+                return true;
+            }
+        }
+
         java.time.LocalDateTime now = java.time.LocalDateTime.now();
 
         // All-day on a specific date
@@ -141,7 +183,7 @@ public class SystemSettings {
             } catch (Exception ignored) {}
         }
 
-        // Time-range window
+        // One-time time-range window
         if (maintenanceStartTime != null && maintenanceEndTime != null) {
             return !now.isBefore(maintenanceStartTime) && !now.isAfter(maintenanceEndTime);
         }

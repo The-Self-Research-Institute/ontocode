@@ -86,6 +86,20 @@ public class AdminSettingsController {
             s.setMaintenanceEndTime(v != null && !v.isBlank() ? LocalDateTime.parse(v, fmt) : null);
         }
 
+        // Daily recurring window fields
+        if (body.containsKey("dailyEnabled")) {
+            s.setMaintenanceDailyEnabled(Boolean.TRUE.equals(body.get("dailyEnabled")));
+        }
+        if (body.containsKey("dailyStartTime")) {
+            s.setMaintenanceDailyStartTime((String) body.get("dailyStartTime"));
+        }
+        if (body.containsKey("dailyEndTime")) {
+            s.setMaintenanceDailyEndTime((String) body.get("dailyEndTime"));
+        }
+        if (body.containsKey("dailyTimezone")) {
+            s.setMaintenanceDailyTimezone((String) body.get("dailyTimezone"));
+        }
+
         SystemSettings saved = settingsService.save(s, currentEmail());
         log.info("Maintenance settings updated by {}: enabled={}", currentEmail(), saved.isMaintenanceModeEnabled());
         return ResponseEntity.ok(Map.of(
@@ -94,6 +108,10 @@ public class AdminSettingsController {
             "maintenanceAllowedDomains", saved.getMaintenanceAllowedDomains(),
             "maintenanceAllowedEmails", saved.getMaintenanceAllowedEmails(),
             "maintenanceScheduleEnabled", saved.isMaintenanceScheduleEnabled(),
+            "maintenanceDailyEnabled", saved.isMaintenanceDailyEnabled(),
+            "maintenanceDailyStartTime", saved.getMaintenanceDailyStartTime(),
+            "maintenanceDailyEndTime", saved.getMaintenanceDailyEndTime(),
+            "maintenanceDailyTimezone", saved.getMaintenanceDailyTimezone(),
             "maintenanceCurrentlyActive", saved.isMaintenanceCurrentlyActive()
         ));
     }
