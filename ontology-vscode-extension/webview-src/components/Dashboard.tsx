@@ -7917,8 +7917,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[DEBUG] markAsUnsaved called");
     setHasUnsavedChanges(true);
     codeViewDirtyRef.current = true;
-    // Update draft count after a short delay
-    setTimeout(() => updateDraftCount(), 500);
+    // Wait 1.5 s before polling draft count — gives the backend time to persist the draft record
+    setTimeout(() => updateDraftCount(), 1500);
     // Debounced silent stats refresh (1.5s after last mutation)
     if (metadataRefreshTimerRef.current) clearTimeout(metadataRefreshTimerRef.current);
     metadataRefreshTimerRef.current = setTimeout(() => silentRefreshMetadata(), 1500);

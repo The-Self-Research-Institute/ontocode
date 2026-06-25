@@ -236,7 +236,7 @@ class ApiClient {
       maxBodyLength: Infinity
     });
 
-    // Request interceptor: resolve base URL and add auth token.
+    // Request interceptor: resolve base URL, add auth token, and disable browser caching.
     // BASE_URL is evaluated at module init — before Electron's did-finish-load
     // sets window.__DESKTOP_API_URL__. Re-read it on every request so the first
     // call after page load picks up the correct desktop port (18083).
@@ -251,7 +251,6 @@ class ApiClient {
       // an Authorization header (avoids leaking any stale web token).
       if (!isDesktop()) {
         const token = localStorage.getItem('authToken');
-        console.log('[ApiClient] Interceptor - baseURL:', config.baseURL, '| URL:', config.url, '| Token present:', !!token);
         if (token && config.headers) {
           config.headers.Authorization = `Bearer ${token}`;
         }
@@ -259,6 +258,12 @@ class ApiClient {
       const mutationUserId = resolveMutationUserId();
       if (mutationUserId && config.headers) {
         config.headers['X-Ontocode-User-Id'] = mutationUserId;
+      }
+      // Prevent browser from serving stale GET responses for mutable API resources.
+      // Particularly important for draft stats, entity lists, and metadata endpoints.
+      if (config.method === 'get' && config.headers) {
+        config.headers['Cache-Control'] = 'no-cache, no-store';
+        config.headers['Pragma'] = 'no-cache';
       }
       return config;
     });
