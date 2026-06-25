@@ -1089,7 +1089,7 @@ public class OntologyMutationService {
         if (subjectIri == null || propertyIri == null || restrictionType == null || fillerIri == null) {
             return "";
         }
-        String bn = "_:ontocodeR";
+        String bn = "<http://ontocode.org/restriction/" + java.util.UUID.randomUUID().toString().replace("-", "") + ">";
         StringBuilder triples = new StringBuilder();
         triples.append("<").append(subjectIri).append("> ").append(axiomPredicate).append(" ").append(bn).append(" .\n");
         triples.append(bn).append(" a owl:Restriction .\n");
