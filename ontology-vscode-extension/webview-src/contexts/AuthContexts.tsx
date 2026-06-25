@@ -202,6 +202,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
     }, [logout]);
 
+    useEffect(() => {
+        apiClient.setMaintenanceCallback((msg: string) => {
+            setMaintenanceActive(true);
+            setMaintenanceMessage(msg);
+        });
+    }, []);
+
+    // Check maintenance status once on startup — catches logged-in users who load the app during maintenance
+    useEffect(() => {
+        if (isDesktop()) return; // desktop has no cloud maintenance window
+        apiClient.get('/api/maintenance/status').then((data: any) => {
+            if (data?.active) {
+                setMaintenanceActive(true);
+                setMaintenanceMessage(data.message || 'System is under maintenance.');
+            }
+        }).catch(() => { /* ignore — server unreachable, don't block the app */ });
+    }, []);
+
     const requestTokenFromVSCode = useCallback(() => {
         if (window.vscode) {
             window.vscode.postMessage({ type: 'requestAuthToken' });
