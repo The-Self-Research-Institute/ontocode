@@ -101,6 +101,12 @@ export function getApiBaseUrl(): string {
     return getGatewayUrl();
 }
 
+// ─── Cloud Gateway URL (bypasses desktop localhost — for cloud-only features) ─
+export function getCloudGatewayUrl(): string {
+    const config = getConfig();
+    return config?.CLOUD_GATEWAY_URL || DEFAULTS.CLOUD_GATEWAY_URL;
+}
+
 // ─── Boolean helpers ─────────────────────────────────────────────────────────
 export function isCloudDeployment(type?: DeploymentType): boolean {
     return (type ?? getStoredDeploymentType()) === 'cloud';
