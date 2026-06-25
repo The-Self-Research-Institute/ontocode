@@ -912,11 +912,12 @@ public class SparqlDatasetService {
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long connMs = (System.nanoTime() - totalStart) / 1_000_000;
 
-            // Scope query to this project's graph only — strip user-supplied FROM to prevent cross-project reads.
-            if (sparqlQuery.toUpperCase().contains("FROM")) {
-                sparqlQuery = sparqlQuery.replaceAll("(?i)\\s+FROM\\s*<[^>]+>", " ");
+            // Scope query to this project's graph only — strip user-supplied FROM <> to prevent cross-project reads.
+            // Use regex to avoid false positive on owl:someValuesFrom / owl:allValuesFrom etc.
+            if (sparqlQuery.matches("(?si).*\\bFROM\\s+<.*")) {
+                sparqlQuery = sparqlQuery.replaceAll("(?i)\\bFROM\\s+<[^>]+>", " ");
             }
-            if (!sparqlQuery.toUpperCase().contains("FROM")) {
+            if (!sparqlQuery.matches("(?si).*\\bFROM\\s+<.*")) {
                 sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
                     buildFromClause(conn, projectId) + " WHERE");
             }
