@@ -15,7 +15,7 @@ import {
   FileVideo,
 } from "lucide-react";
 import { useAuth } from "../custom-hook/useAuth";
-import { getGatewayUrl } from "../config/deploymentConfig";
+import { getCloudGatewayUrl } from "../config/deploymentConfig";
 import { isAppOnline, subscribeOnlineStatus } from "../utils/connectivity";
 import { isDesktop } from "../utils/desktop";
 
@@ -28,7 +28,7 @@ interface ReportIssueModalProps {
 
 // Get API base URL based on deployment type
 const getApiBaseUrl = () => {
-  return getGatewayUrl();
+  return getCloudGatewayUrl();
 };
 
 export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
