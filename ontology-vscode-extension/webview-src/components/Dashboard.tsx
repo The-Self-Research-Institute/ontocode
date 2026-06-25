@@ -15939,28 +15939,6 @@ const Dashboard: React.FC<DashboardProps> = ({
               })}
             </div>
             <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0 flex-wrap justify-end min-w-0">
-              {/* Pull Requests badge — visible when project is loaded */}
-              {projectId && (
-                <button
-                  onClick={() => setShowPRsModal(true)}
-                  className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
-                    pendingPRCount > 0
-                      ? "bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200"
-                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                  }`}
-                  title="Pull Requests — review pending changes from collaborators"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/>
-                  </svg>
-                  <span>PRs</span>
-                  {pendingPRCount > 0 && (
-                    <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold leading-none">
-                      {pendingPRCount}
-                    </span>
-                  )}
-                </button>
-              )}
               {isCloudDeployment && projectId && (
                 <button
                   onClick={() => {
@@ -16059,10 +16037,17 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <span className="hidden sm:inline">Pull</span>
                 </button>
               )}
-              {/* PR button — for draft users (raise) and reviewers (review) */}
+              {/* PR button — reviewers open PRsModal; draft users open DraftPRPanel */}
               {showPRButton && (
                 <button
-                  onClick={() => { setShowDraftPRPanel(true); refreshOpenPRCount(); }}
+                  onClick={() => {
+                    if (canReviewPR) {
+                      setShowPRsModal(true);
+                    } else {
+                      setShowDraftPRPanel(true);
+                      refreshOpenPRCount();
+                    }
+                  }}
                   className="relative flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
                   style={{ borderColor: "var(--color-border)" }}
                   title={canReviewPR ? "View and review pull requests" : "Raise a pull request for your draft changes"}
