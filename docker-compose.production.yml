@@ -122,7 +122,7 @@ services:
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
-      JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m -XX:+UseG1GC
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx768m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy

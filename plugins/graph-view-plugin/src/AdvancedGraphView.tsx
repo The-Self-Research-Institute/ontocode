@@ -1416,7 +1416,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         console.warn('[AdvancedGraphView D3] Cache read failed, fetching fresh:', cacheErr);
       }
 
-      const apiBaseUrl = (window as any).API_BASE_URL;
+      const apiBaseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL;
       const authToken = localStorage.getItem('authToken');
 
       if (!graphData) {
@@ -3711,7 +3711,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
 
     const draftMode = context?.draftMode ?? false;
-    const response = await fetch(`${(window as any).API_BASE_URL}/api/ontology/mutations/${projectId}?draft=${draftMode}`, {
+    const response = await fetch(`${(window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL}/api/ontology/mutations/${projectId}?draft=${draftMode}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -3842,7 +3842,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         parent: parentIriForMutation
       });
 
-      const apiBaseUrl = (window as any).API_BASE_URL;
+      const apiBaseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL;
       const authToken = localStorage.getItem('authToken');
       const draftMode = context?.draftMode ?? false;
       
@@ -4322,7 +4322,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
-        const response = await fetch(`${(window as any).API_BASE_URL}/api/ontology/metadata/${projectId}`, {
+        const response = await fetch(`${(window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL}/api/ontology/metadata/${projectId}`, {
           method: 'GET',
           headers
         });
