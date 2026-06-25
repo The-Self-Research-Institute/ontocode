@@ -102,9 +102,10 @@ export function getApiBaseUrl(): string {
 }
 
 // ─── Cloud Gateway URL (bypasses desktop localhost — for cloud-only features) ─
+// preload.js overwrites CLOUD_GATEWAY_URL with the local proxy, so we must
+// ignore __ONTOCODE_CONFIG__ here and always return the hardcoded cloud URL.
 export function getCloudGatewayUrl(): string {
-    const config = getConfig();
-    return config?.CLOUD_GATEWAY_URL || DEFAULTS.CLOUD_GATEWAY_URL;
+    return DEFAULTS.CLOUD_GATEWAY_URL;
 }
 
 // ─── Boolean helpers ─────────────────────────────────────────────────────────

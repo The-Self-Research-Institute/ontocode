@@ -331,7 +331,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         const jiraFailureReason = result.jiraFailureReason || undefined;
         setSubmitResult({
           success: true,
-          message: result.message || "Issue reported successfully!",
+          message: result.message || (issueType === "Task" ? "Feature request submitted successfully!" : "Issue reported successfully!"),
           jiraUrl: result.jiraIssueUrl,
           jiraFailureReason,
         });
