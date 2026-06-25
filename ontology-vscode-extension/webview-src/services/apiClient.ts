@@ -117,6 +117,7 @@ class ApiClient {
     !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
   private listenerAttached = false;
   private onUnauthorized?: () => void; // Callback for 401 errors
+  private onMaintenance?: (message: string) => void; // Callback for 503 maintenance
 
   static getInstance() {
     if (!this._instance) this._instance = new ApiClient();
@@ -128,6 +129,13 @@ class ApiClient {
    */
   setUnauthorizedCallback(callback: () => void) {
     this.onUnauthorized = callback;
+  }
+
+  /**
+   * Register a callback to handle 503 maintenance responses (redirects all users to maintenance page)
+   */
+  setMaintenanceCallback(callback: (message: string) => void) {
+    this.onMaintenance = callback;
   }
 
   /**
@@ -177,6 +185,12 @@ class ApiClient {
         if (error.status === 401 && this.onUnauthorized) {
           console.log('[ApiClient] 401 Unauthorized - Token expired');
           this.onUnauthorized();
+        }
+        // Check for 503 maintenance
+        if (error.status === 503 && (error.data?.maintenance === true || error.maintenance === true) && this.onMaintenance) {
+          const msg = error.data?.message || error.data?.error || error.message || 'System is under maintenance.';
+          console.log('[ApiClient] 503 Maintenance mode - redirecting');
+          this.onMaintenance(msg);
         }
         p.reject(new ApiError(error.message || 'API request failed via proxy', error.status, error.data, error.code));
       } else {
@@ -278,6 +292,13 @@ class ApiClient {
           (data && (data.message || data.error)) ||
           (typeof data === 'string' ? data : undefined) ||
           (status === 401 ? 'Unauthorized' : err.message || 'Unexpected error');
+
+        // Check for 503 maintenance before overwriting the message
+        if (status === 503 && (data?.maintenance === true) && this.onMaintenance) {
+          const maintenanceMsg = data?.message || data?.error || 'System is under maintenance.';
+          console.log('[ApiClient] 503 Maintenance mode - redirecting');
+          this.onMaintenance(maintenanceMsg);
+        }
 
         if (status === 504 || status === 502 || status === 503) {
           msg = 'The server is busy or this request took too long. Please wait a moment and try again.';
