@@ -2841,11 +2841,13 @@ public class OntologyQueryService {
         
         // --- Process EquivalentClass restrictions ---
         TupleQueryResult equivRestrictionRs = equivRestrictionFuture.join();
+        Set<String> seenEquivRestrictions = new LinkedHashSet<>();
         while (equivRestrictionRs.hasNext()) {
             BindingSet sol = equivRestrictionRs.next();
             Map<String, String> axiom = new LinkedHashMap<>();
             String restrictionNode = resourceOrBlank(sol, "restriction");
-            if (restrictionNode == null) continue;
+            if (restrictionNode == null || seenEquivRestrictions.contains(restrictionNode)) continue;
+            seenEquivRestrictions.add(restrictionNode);
             String propIri = resource(sol, "prop");
             String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : formatIriWithPrefix(propIri);
             String restrictionType = sol.hasBinding("restrictionType") ? literal(sol, "restrictionType") : "some";
