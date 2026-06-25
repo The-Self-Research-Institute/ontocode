@@ -2484,9 +2484,11 @@ public class OntologyQueryService {
                   {
                     <%s> owl:equivalentClass ?equiv .
                     FILTER(isIRI(?equiv) && ?equiv != <%s>)
+                    FILTER NOT EXISTS { ?equiv a owl:Restriction }
                   } UNION {
                     ?equiv owl:equivalentClass <%s> .
                     FILTER(isIRI(?equiv) && ?equiv != <%s>)
+                    FILTER NOT EXISTS { ?equiv a owl:Restriction }
                   }
                   OPTIONAL { ?equiv rdfs:label ?label }
                 }
