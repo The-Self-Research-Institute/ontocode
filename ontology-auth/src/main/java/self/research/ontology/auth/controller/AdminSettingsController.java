@@ -10,6 +10,8 @@ import self.research.ontology.auth.model.SystemSettings;
 import self.research.ontology.auth.service.EnterpriseBypassService;
 import self.research.ontology.auth.service.SystemSettingsService;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 
@@ -48,23 +50,51 @@ public class AdminSettingsController {
         return ResponseEntity.ok(saved);
     }
 
-    /** PATCH /api/admin/settings/maintenance — toggle maintenance on/off */
+    /** PATCH /api/admin/settings/maintenance — update maintenance settings */
     @PatchMapping("/maintenance")
     public ResponseEntity<?> setMaintenance(@RequestBody Map<String, Object> body) {
         if (!isAdmin()) return forbidden();
-        boolean enabled = Boolean.TRUE.equals(body.get("enabled"));
         SystemSettings s = settingsService.get();
-        s.setMaintenanceModeEnabled(enabled);
 
+        if (body.containsKey("enabled")) {
+            s.setMaintenanceModeEnabled(Boolean.TRUE.equals(body.get("enabled")));
+        }
+        if (body.containsKey("message")) {
+            s.setMaintenanceMessage((String) body.get("message"));
+        }
         @SuppressWarnings("unchecked")
         List<String> domains = (List<String>) body.get("allowedDomains");
         if (domains != null) s.setMaintenanceAllowedDomains(domains);
 
+        @SuppressWarnings("unchecked")
+        List<String> allowedEmails = (List<String>) body.get("allowedEmails");
+        if (allowedEmails != null) s.setMaintenanceAllowedEmails(allowedEmails);
+
+        if (body.containsKey("scheduleEnabled")) {
+            s.setMaintenanceScheduleEnabled(Boolean.TRUE.equals(body.get("scheduleEnabled")));
+        }
+        if (body.containsKey("allDayDate")) {
+            s.setMaintenanceAllDayDate((String) body.get("allDayDate"));
+        }
+        DateTimeFormatter fmt = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+        if (body.containsKey("startTime")) {
+            String v = (String) body.get("startTime");
+            s.setMaintenanceStartTime(v != null && !v.isBlank() ? LocalDateTime.parse(v, fmt) : null);
+        }
+        if (body.containsKey("endTime")) {
+            String v = (String) body.get("endTime");
+            s.setMaintenanceEndTime(v != null && !v.isBlank() ? LocalDateTime.parse(v, fmt) : null);
+        }
+
         SystemSettings saved = settingsService.save(s, currentEmail());
-        log.info("Maintenance mode {} by {}", enabled ? "ENABLED" : "DISABLED", currentEmail());
+        log.info("Maintenance settings updated by {}: enabled={}", currentEmail(), saved.isMaintenanceModeEnabled());
         return ResponseEntity.ok(Map.of(
             "maintenanceModeEnabled", saved.isMaintenanceModeEnabled(),
-            "maintenanceAllowedDomains", saved.getMaintenanceAllowedDomains()
+            "maintenanceMessage", saved.getMaintenanceMessage(),
+            "maintenanceAllowedDomains", saved.getMaintenanceAllowedDomains(),
+            "maintenanceAllowedEmails", saved.getMaintenanceAllowedEmails(),
+            "maintenanceScheduleEnabled", saved.isMaintenanceScheduleEnabled(),
+            "maintenanceCurrentlyActive", saved.isMaintenanceCurrentlyActive()
         ));
     }
 

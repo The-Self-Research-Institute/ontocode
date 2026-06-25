@@ -39,17 +39,17 @@ public class SystemSettingsService {
         settings.setUpdatedBy(updatedBy);
         SystemSettings saved = repo.save(settings);
         cache.set(saved);
-        log.info("SystemSettings updated by {}: maintenance={} allowedDomains={} enterpriseDomains={} enterpriseEmails={}",
-                updatedBy, saved.isMaintenanceModeEnabled(),
-                saved.getMaintenanceAllowedDomains(), saved.getEnterpriseDomains(),
-                saved.getEnterpriseEmails());
+        log.info("SystemSettings updated by {}: maintenance={} scheduleEnabled={} allowedDomains={} allowedEmails={} enterpriseDomains={} enterpriseEmails={}",
+                updatedBy, saved.isMaintenanceModeEnabled(), saved.isMaintenanceScheduleEnabled(),
+                saved.getMaintenanceAllowedDomains(), saved.getMaintenanceAllowedEmails(),
+                saved.getEnterpriseDomains(), saved.getEnterpriseEmails());
         return saved;
     }
 
-    /** True when maintenance mode is ON and the email's domain is NOT in the allowed list. */
+    /** True when maintenance is currently active and the email is NOT in the allowed list. */
     public boolean isBlockedByMaintenance(String email) {
         SystemSettings s = get();
-        return s.isMaintenanceModeEnabled() && !s.isDomainAllowedDuringMaintenance(email);
+        return s.isMaintenanceCurrentlyActive() && !s.isAllowedDuringMaintenance(email);
     }
 
     /** True when the email's domain is in the enterprise domain bypass list. */

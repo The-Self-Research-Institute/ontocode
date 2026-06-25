@@ -1,10 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { X, Shield, Wrench, Building2, Plus, Loader2, CheckCircle, AlertTriangle, ToggleLeft, ToggleRight, Users, Wifi, WifiOff, RefreshCw, LogOut } from 'lucide-react';
+import { X, Shield, Wrench, Building2, Plus, Loader2, CheckCircle, AlertTriangle, ToggleLeft, ToggleRight, Users, Wifi, WifiOff, RefreshCw, LogOut, Calendar, Clock } from 'lucide-react';
 import apiClient from '../services/apiClient';
 
 interface SystemSettings {
     maintenanceModeEnabled: boolean;
+    maintenanceMessage?: string;
     maintenanceAllowedDomains: string[];
+    maintenanceAllowedEmails?: string[];
+    maintenanceScheduleEnabled?: boolean;
+    maintenanceAllDayDate?: string;
+    maintenanceStartTime?: string;
+    maintenanceEndTime?: string;
     enterpriseDomains: string[];
     enterpriseEmails: string[];
     updatedAt?: string;
@@ -30,8 +36,10 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
     const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
     const [newAllowedDomain, setNewAllowedDomain] = useState('');
+    const [newAllowedEmail, setNewAllowedEmail] = useState('');
     const [newEnterpriseDomain, setNewEnterpriseDomain] = useState('');
     const [newEnterpriseEmail, setNewEnterpriseEmail] = useState('');
+    const [scheduleMode, setScheduleMode] = useState<'allday' | 'range'>('allday');
 
     const [connections, setConnections] = useState<{
         totalConnections: number;
@@ -78,39 +86,46 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
     }, [isOpen, load, loadConnections]);
 
     const toggleMaintenance = async () => {
+        const next = !settings.maintenanceModeEnabled;
+        try {
+            await saveMaintenance({ maintenanceModeEnabled: next });
+            showToast('success', `Maintenance mode ${next ? 'ENABLED' : 'DISABLED'}`);
+        } catch {
+            // error already shown in saveMaintenance
+        }
+    };
+
+    const saveMaintenance = async (patch: Partial<SystemSettings>) => {
         try {
             setSaving(true);
-            const updated: SystemSettings = {
-                ...settings,
-                maintenanceModeEnabled: !settings.maintenanceModeEnabled,
-            };
+            const merged = { ...settings, ...patch };
             await apiClient.patch('/api/admin/settings/maintenance', {
-                enabled: updated.maintenanceModeEnabled,
-                allowedDomains: updated.maintenanceAllowedDomains,
+                enabled: merged.maintenanceModeEnabled,
+                message: merged.maintenanceMessage,
+                allowedDomains: merged.maintenanceAllowedDomains,
+                allowedEmails: merged.maintenanceAllowedEmails ?? [],
+                scheduleEnabled: merged.maintenanceScheduleEnabled ?? false,
+                allDayDate: merged.maintenanceAllDayDate ?? null,
+                startTime: merged.maintenanceStartTime ?? null,
+                endTime: merged.maintenanceEndTime ?? null,
             });
-            setSettings(updated);
-            showToast('success', `Maintenance mode ${updated.maintenanceModeEnabled ? 'ENABLED' : 'DISABLED'}`);
+            setSettings(prev => ({ ...prev, ...patch }));
         } catch (e: any) {
             showToast('error', e.response?.data?.error || 'Save failed');
+            throw e;
         } finally {
             setSaving(false);
         }
     };
 
     const saveAllowedDomains = async (domains: string[]) => {
-        try {
-            setSaving(true);
-            await apiClient.patch('/api/admin/settings/maintenance', {
-                enabled: settings.maintenanceModeEnabled,
-                allowedDomains: domains,
-            });
-            setSettings(prev => ({ ...prev, maintenanceAllowedDomains: domains }));
-            showToast('success', 'Allowed domains updated');
-        } catch (e: any) {
-            showToast('error', e.response?.data?.error || 'Save failed');
-        } finally {
-            setSaving(false);
-        }
+        await saveMaintenance({ maintenanceAllowedDomains: domains });
+        showToast('success', 'Allowed domains updated');
+    };
+
+    const saveAllowedEmails = async (emails: string[]) => {
+        await saveMaintenance({ maintenanceAllowedEmails: emails });
+        showToast('success', 'Allowed emails updated');
     };
 
     const saveEnterpriseDomains = async (domains: string[]) => {
@@ -149,6 +164,19 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
     const removeAllowedDomain = (domain: string) => {
         saveAllowedDomains(settings.maintenanceAllowedDomains.filter(d => d !== domain));
+    };
+
+    const addAllowedEmail = () => {
+        const e = newAllowedEmail.trim().toLowerCase();
+        if (!e || !e.includes('@')) return;
+        const existing = settings.maintenanceAllowedEmails ?? [];
+        if (existing.includes(e)) return;
+        setNewAllowedEmail('');
+        saveAllowedEmails([...existing, e]);
+    };
+
+    const removeAllowedEmail = (email: string) => {
+        saveAllowedEmails((settings.maintenanceAllowedEmails ?? []).filter(e => e !== email));
     };
 
     const addEnterpriseDomain = () => {
@@ -204,7 +232,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                     <h3 className="font-semibold text-gray-900">Maintenance Mode</h3>
                                 </div>
                                 <p className="text-sm text-gray-500 mb-4">
-                                    When ON, only users from the allowed domains below can log in. All others see the maintenance page.
+                                    When ON, only allowed users can log in. Everyone else sees the maintenance page.
                                 </p>
 
                                 {/* Toggle */}
@@ -231,6 +259,138 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                     </div>
                                     {saving && <Loader2 className="w-4 h-4 animate-spin ml-auto" />}
                                 </button>
+
+                                {/* Custom message */}
+                                <div className="mt-4">
+                                    <p className="text-sm font-medium text-gray-700 mb-2">Custom message (shown to blocked users)</p>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={settings.maintenanceMessage ?? ''}
+                                            onChange={e => setSettings(prev => ({ ...prev, maintenanceMessage: e.target.value }))}
+                                            onBlur={() => saveMaintenance({ maintenanceMessage: settings.maintenanceMessage }).catch(() => showToast('error', 'Save failed'))}
+                                            placeholder="We're performing scheduled maintenance. Back shortly."
+                                            className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-400 focus:border-transparent"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Schedule */}
+                                <div className="mt-4 p-4 border border-gray-200 rounded-xl">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <Calendar className="w-4 h-4 text-gray-500" />
+                                            <p className="text-sm font-medium text-gray-700">Schedule maintenance window</p>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                const next = !settings.maintenanceScheduleEnabled;
+                                                saveMaintenance({ maintenanceScheduleEnabled: next })
+                                                    .then(() => showToast('success', next ? 'Schedule enabled' : 'Schedule disabled'))
+                                                    .catch(() => {});
+                                            }}
+                                            className={`text-xs px-3 py-1 rounded-full border font-medium transition-colors
+                                                ${settings.maintenanceScheduleEnabled
+                                                    ? 'bg-yellow-100 border-yellow-400 text-yellow-700'
+                                                    : 'bg-gray-100 border-gray-300 text-gray-500 hover:border-gray-400'}`}
+                                        >
+                                            {settings.maintenanceScheduleEnabled ? 'Schedule ON' : 'Schedule OFF'}
+                                        </button>
+                                    </div>
+
+                                    {settings.maintenanceScheduleEnabled && (
+                                        <div className="space-y-3">
+                                            {/* All-day vs range toggle */}
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => setScheduleMode('allday')}
+                                                    className={`flex-1 py-1.5 text-xs rounded-lg border font-medium transition-colors
+                                                        ${scheduleMode === 'allday' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'}`}
+                                                >All day
+                                                </button>
+                                                <button
+                                                    onClick={() => setScheduleMode('range')}
+                                                    className={`flex-1 py-1.5 text-xs rounded-lg border font-medium transition-colors
+                                                        ${scheduleMode === 'range' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'}`}
+                                                >Time range
+                                                </button>
+                                            </div>
+
+                                            {scheduleMode === 'allday' ? (
+                                                <div>
+                                                    <label className="text-xs text-gray-500 block mb-1">Maintenance date</label>
+                                                    <input
+                                                        type="date"
+                                                        value={settings.maintenanceAllDayDate ?? ''}
+                                                        onChange={e => setSettings(prev => ({ ...prev, maintenanceAllDayDate: e.target.value }))}
+                                                        onBlur={() => saveMaintenance({ maintenanceAllDayDate: settings.maintenanceAllDayDate, maintenanceStartTime: undefined, maintenanceEndTime: undefined }).catch(() => showToast('error', 'Save failed'))}
+                                                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                                    />
+                                                </div>
+                                            ) : (
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div>
+                                                        <label className="text-xs text-gray-500 block mb-1">Start</label>
+                                                        <input
+                                                            type="datetime-local"
+                                                            value={settings.maintenanceStartTime ?? ''}
+                                                            onChange={e => setSettings(prev => ({ ...prev, maintenanceStartTime: e.target.value }))}
+                                                            onBlur={() => saveMaintenance({ maintenanceStartTime: settings.maintenanceStartTime, maintenanceAllDayDate: undefined }).catch(() => showToast('error', 'Save failed'))}
+                                                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-xs text-gray-500 block mb-1">End</label>
+                                                        <input
+                                                            type="datetime-local"
+                                                            value={settings.maintenanceEndTime ?? ''}
+                                                            onChange={e => setSettings(prev => ({ ...prev, maintenanceEndTime: e.target.value }))}
+                                                            onBlur={() => saveMaintenance({ maintenanceEndTime: settings.maintenanceEndTime, maintenanceAllDayDate: undefined }).catch(() => showToast('error', 'Save failed'))}
+                                                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Allowed emails during maintenance */}
+                                <div className="mt-4">
+                                    <p className="text-sm font-medium text-gray-700 mb-2">
+                                        Individual emails allowed during maintenance
+                                    </p>
+                                    <div className="flex flex-wrap gap-2 mb-3 min-h-[2rem]">
+                                        {(settings.maintenanceAllowedEmails ?? []).length === 0 && (
+                                            <span className="text-sm text-gray-400 italic">No emails added yet</span>
+                                        )}
+                                        {(settings.maintenanceAllowedEmails ?? []).map(e => (
+                                            <span key={e} className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">
+                                                {e}
+                                                <button onClick={() => removeAllowedEmail(e)} className="hover:text-green-900 ml-1">
+                                                    <X size={12} />
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="email"
+                                            value={newAllowedEmail}
+                                            onChange={e => setNewAllowedEmail(e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && addAllowedEmail()}
+                                            placeholder="admin@example.com"
+                                            className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                        />
+                                        <button
+                                            onClick={addAllowedEmail}
+                                            disabled={!newAllowedEmail.trim() || saving}
+                                            className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            <Plus size={16} />
+                                        </button>
+                                    </div>
+                                </div>
 
                                 {/* Allowed domains during maintenance */}
                                 <div className="mt-4">
