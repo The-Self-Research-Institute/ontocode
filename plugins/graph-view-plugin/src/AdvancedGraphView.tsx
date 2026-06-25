@@ -3020,17 +3020,34 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .attr('fill', d => {
         if (visualizationType === 'vowl') {
-          // White text for dark blue external classes, black for others
+          const isDark = document.documentElement.classList.contains('dark');
           const isExternal = isExternalNode(d);
-          return isExternal ? '#ffffff' : '#000000';
+          if (d.type === 'class') {
+            const nodeFill = isExternal
+              ? (isDark ? '#60a5fa' : '#4682b4')
+              : (isDark ? '#6b92c4' : '#acd5f2');
+            const hex = nodeFill.replace('#', '');
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+            return brightness > 140 ? '#111111' : '#ffffff';
+          }
+          return '#000000';
         }
         if (visualizationType === 'ontograph') {
           const isDark = document.documentElement.classList.contains('dark');
           return isDark ? '#e2e8f0' : '#1e293b'; // Slate tones for modern look
         }
         if (visualizationType === 'force') {
-          // Black text for good contrast on orange/blue backgrounds
-          return '#000000';
+          // Pick white/black based on node fill luminance
+          const nodeFill = (d as any).color || TYPE_COLORS[(d as any).type as NodeType] || '#667eea';
+          const hex = nodeFill.replace('#', '');
+          const r = parseInt(hex.substring(0, 2), 16);
+          const g = parseInt(hex.substring(2, 4), 16);
+          const b = parseInt(hex.substring(4, 6), 16);
+          const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+          return brightness > 140 ? '#111111' : '#ffffff';
         }
         if (visualizationType === 'spatial3d') {
           return '#ffffff'; // White text — always readable against node fills
@@ -3061,12 +3078,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return ''; // Hide labels when zoomed out on large graphs
         }
         if (visualizationType === 'ontograph') {
-          // Truncate to fit within card (wider cards = more chars)
+          // Card width = size*9, padding 32px, font ~7px/char → max = floor((size*9-32)/7)
+          const s = d.size || settings.nodeSize;
+          const maxChars = Math.max(8, Math.floor((s * 9 - 32) / 7));
           const label = d.label || '';
-          return label.length > 22 ? label.substring(0, 20) + '..' : label;
+          return label.length > maxChars ? label.substring(0, maxChars - 2) + '..' : label;
         }
         if (visualizationType === 'force') {
-          // Truncate long labels to fit within ovals (max 20 characters)
           const label = d.label || '';
           return label.length > 20 ? label.substring(0, 17) + '...' : label;
         }
