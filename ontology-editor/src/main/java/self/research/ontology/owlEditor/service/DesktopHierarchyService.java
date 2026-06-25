@@ -553,32 +553,37 @@ public class DesktopHierarchyService {
             OWLDataSomeValuesFrom r = (OWLDataSomeValuesFrom) ce;
             String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
             String fStr = dataRangeToString(r.getFiller());
+            String fIri = dataRangeToFullIri(r.getFiller());
             m.put("id", pIri + "_data_some_" + fStr); m.put("isRestriction", true);
-            m.put("propertyIri", pIri); m.put("restrictionType", "some"); m.put("fillerIri", fStr);
+            m.put("propertyIri", pIri); m.put("restrictionType", "some"); m.put("fillerIri", fIri);
         } else if (ce instanceof OWLDataAllValuesFrom) {
             OWLDataAllValuesFrom r = (OWLDataAllValuesFrom) ce;
             String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
             String fStr = dataRangeToString(r.getFiller());
+            String fIri = dataRangeToFullIri(r.getFiller());
             m.put("id", pIri + "_data_only_" + fStr); m.put("isRestriction", true);
-            m.put("propertyIri", pIri); m.put("restrictionType", "only"); m.put("fillerIri", fStr);
+            m.put("propertyIri", pIri); m.put("restrictionType", "only"); m.put("fillerIri", fIri);
         } else if (ce instanceof OWLDataMinCardinality) {
             OWLDataMinCardinality r = (OWLDataMinCardinality) ce;
             String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
             String fStr = dataRangeToString(r.getFiller());
+            String fIri = dataRangeToFullIri(r.getFiller());
             m.put("id", pIri + "_data_min" + r.getCardinality() + "_" + fStr); m.put("isRestriction", true);
-            m.put("propertyIri", pIri); m.put("restrictionType", "min"); m.put("fillerIri", fStr); m.put("cardinality", r.getCardinality());
+            m.put("propertyIri", pIri); m.put("restrictionType", "min"); m.put("fillerIri", fIri); m.put("cardinality", r.getCardinality());
         } else if (ce instanceof OWLDataMaxCardinality) {
             OWLDataMaxCardinality r = (OWLDataMaxCardinality) ce;
             String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
             String fStr = dataRangeToString(r.getFiller());
+            String fIri = dataRangeToFullIri(r.getFiller());
             m.put("id", pIri + "_data_max" + r.getCardinality() + "_" + fStr); m.put("isRestriction", true);
-            m.put("propertyIri", pIri); m.put("restrictionType", "max"); m.put("fillerIri", fStr); m.put("cardinality", r.getCardinality());
+            m.put("propertyIri", pIri); m.put("restrictionType", "max"); m.put("fillerIri", fIri); m.put("cardinality", r.getCardinality());
         } else if (ce instanceof OWLDataExactCardinality) {
             OWLDataExactCardinality r = (OWLDataExactCardinality) ce;
             String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
             String fStr = dataRangeToString(r.getFiller());
+            String fIri = dataRangeToFullIri(r.getFiller());
             m.put("id", pIri + "_data_exactly" + r.getCardinality() + "_" + fStr); m.put("isRestriction", true);
-            m.put("propertyIri", pIri); m.put("restrictionType", "exactly"); m.put("fillerIri", fStr); m.put("cardinality", r.getCardinality());
+            m.put("propertyIri", pIri); m.put("restrictionType", "exactly"); m.put("fillerIri", fIri); m.put("cardinality", r.getCardinality());
         } else if (ce instanceof OWLDataHasValue) {
             OWLDataHasValue r = (OWLDataHasValue) ce;
             String pIri = (r.getProperty() instanceof OWLDataProperty) ? ((OWLDataProperty) r.getProperty()).getIRI().toString() : "";
@@ -676,6 +681,13 @@ public class DesktopHierarchyService {
             return dtIri.getShortForm();
         }
         return range.getClass().getSimpleName();
+    }
+
+    private String dataRangeToFullIri(OWLDataRange range) {
+        if (range instanceof OWLDatatype) {
+            return ((OWLDatatype) range).getIRI().toString();
+        }
+        return "";
     }
 
     private Map<String, Map<String, Integer>> buildClassInstanceCounts(OWLOntology ont) {
