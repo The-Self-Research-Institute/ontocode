@@ -1,4 +1,4 @@
-package self.research.ontology.owlEditor.service;
+﻿package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Resource;
@@ -842,7 +842,8 @@ public class SparqlDatasetService {
         }
         try (RepositoryConnection conn = memRepo.getConnection()) {
             String finalQuery = sparqlQuery;
-            if (!finalQuery.toUpperCase().contains("FROM")) {
+            // Match SPARQL FROM clause: "FROM <" — avoids false positive on owl:someValuesFrom etc.
+            if (!finalQuery.matches("(?si).*\\bFROM\\s+<.*")) {
                 finalQuery = finalQuery.replaceFirst("(?i)WHERE",
                         buildFromClause(conn, projectId) + " WHERE");
             }
