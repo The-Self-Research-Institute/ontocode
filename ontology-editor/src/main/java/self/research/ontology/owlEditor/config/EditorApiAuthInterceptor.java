@@ -30,8 +30,7 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
     private static final List<String> PUBLIC_PATTERNS = List.of(
             "/actuator/**",
             "/api/auth/**",
-            "/ws/**",
-            "/api/v1/issues/report"
+            "/ws/**"
     );
 
     @Value("${jwt.secret:}")
