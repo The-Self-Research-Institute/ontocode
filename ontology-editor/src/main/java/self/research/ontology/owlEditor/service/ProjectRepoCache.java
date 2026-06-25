@@ -147,47 +147,40 @@ public class ProjectRepoCache {
             return null;
         }
 
-        // Coalesce concurrent loaders for the same project.
-        Object lock = loadLocks.computeIfAbsent(projectId, k -> new Object());
-        synchronized (lock) {
-            entry = cache.get(projectId);
-            if (entry != null) {
-                entry.touch();
-                hits.incrementAndGet();
-                return entry.repo;
-            }
-            try {
-                long start = System.currentTimeMillis();
-                Entry loaded = load(projectId, loader);
-                if (loaded == null) {
-                    return null;
+        // Kick off CONSTRUCT-ALL in a background thread and return null immediately
+        // so the current request falls through to GraphDB (avoids 504 on cache-miss).
+        // Only one background load per project runs at a time (putIfAbsent guard).
+        Object bgLock = new Object();
+        Object existing = loadLocks.putIfAbsent(projectId, bgLock);
+        if (existing == null) {
+            // We won the race — start one background load.
+            java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    long start = System.currentTimeMillis();
+                    Entry loaded = load(projectId, loader);
+                    if (loaded == null) return;
+                    Long evictedAt = lastEvictedAtMs.get(projectId);
+                    if (evictedAt != null && loaded.loadStartedAt < evictedAt) {
+                        try { loaded.repo.shutDown(); } catch (Exception ignore) {}
+                        log.info("[MEMCACHE] Background load discarded stale snapshot for project={}", projectId);
+                        return;
+                    }
+                    evictIfNeeded();
+                    cache.put(projectId, loaded);
+                    long ms = System.currentTimeMillis() - start;
+                    loadMs.addAndGet(ms);
+                    misses.incrementAndGet();
+                    log.info("[MEMCACHE] Background-loaded project={} triples={} in {}ms (cached={}/{})",
+                            projectId, loaded.triples, ms, cache.size(), maxProjects);
+                } catch (Exception e) {
+                    log.warn("[MEMCACHE] Background load failed for project={}: {}", projectId, e.getMessage());
+                } finally {
+                    loadLocks.remove(projectId, bgLock);
                 }
-                // Discard if a mutation evicted the project while we were loading.
-                // load() records loadStartedAt; if evict() ran after that, the
-                // snapshot is stale — don't cache it.
-                Long evictedAt = lastEvictedAtMs.get(projectId);
-                if (evictedAt != null && loaded.loadStartedAt < evictedAt) {
-                    try { loaded.repo.shutDown(); } catch (Exception ignore) {}
-                    log.info("[MEMCACHE] Discarding stale snapshot for project={} (load started {}ms before eviction)",
-                            projectId, evictedAt - loaded.loadStartedAt);
-                    return null;
-                }
-                evictIfNeeded();
-                cache.put(projectId, loaded);
-                long ms = System.currentTimeMillis() - start;
-                loadMs.addAndGet(ms);
-                misses.incrementAndGet();
-                log.info("[MEMCACHE] Loaded project={} triples={} in {}ms (cached={}/{})",
-                        projectId, loaded.triples, ms, cache.size(), maxProjects);
-                return loaded.repo;
-            } catch (Exception e) {
-                log.warn("[MEMCACHE] Failed to load project={} into memory cache: {} — falling back to GraphDB",
-                        projectId, e.getMessage());
-                return null;
-            } finally {
-                loadLocks.remove(projectId);
-            }
+            });
         }
+        // Always return null for this request — GraphDB serves it; cache warms for the next.
+        return null;
     }
 
     /**
