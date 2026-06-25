@@ -1840,6 +1840,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     cancelLabel: undefined,
   });
 
+  // Prevents concurrent mutations (delete, rename, etc.) that would fire multiple simultaneous
+  // SPARQL UPDATEs against GraphDB Free (2-connection cap) and trigger 504s.
+  const isMutatingRef = useRef(false);
+
   // Dedicated unsaved-changes warning dialog (separate from generic confirmDialog)
   const [unsavedChangesDialog, setUnsavedChangesDialog] = useState<{
     isOpen: boolean;
@@ -9984,6 +9988,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      // Block concurrent deletes — multiple simultaneous DELETEs hit GraphDB Free's
+      // 2-connection cap, queue up, and trigger 504 gateway timeouts.
+      if (isMutatingRef.current) {
+        showNotification("Please wait for the current operation to finish before deleting another item.", "warning");
+        return;
+      }
+
       // Prevent deletion of built-in annotation properties (rdfs:label, rdfs:comment, etc.)
       if (activeTab === "AnnotationProperties" && STANDARD_ANNOTATION_PROPERTIES.some((p) => p.id === item.id)) {
         showNotification(`"${item.label}" is a built-in annotation property and cannot be deleted.`, "error");
@@ -9996,6 +10007,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         title: "Delete Item",
         message: `Are you sure you want to delete "${item.label}"? This action cannot be undone.`,
         onConfirm: async () => {
+          isMutatingRef.current = true;
           try {
             console.log("[DELETE] Deleting item:", { id: item.id, label: item.label, tab: activeTab });
 
@@ -10113,6 +10125,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           } catch (error) {
             console.error("Failed to delete item:", error);
             showNotification("Failed to delete item. See console for details.", "error");
+          } finally {
+            isMutatingRef.current = false;
           }
         },
       });
@@ -16037,20 +16051,16 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <span className="hidden sm:inline">Pull</span>
                 </button>
               )}
-              {/* PR button — reviewers open PRsModal; draft users open DraftPRPanel */}
+              {/* PR button — opens DraftPRPanel for everyone (reviewers and draft editors) */}
               {showPRButton && (
                 <button
                   onClick={() => {
-                    if (canReviewPR) {
-                      setShowPRsModal(true);
-                    } else {
-                      setShowDraftPRPanel(true);
-                      refreshOpenPRCount();
-                    }
+                    setShowDraftPRPanel(true);
+                    refreshOpenPRCount();
                   }}
                   className="relative flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
                   style={{ borderColor: "var(--color-border)" }}
-                  title={canReviewPR ? "View and review pull requests" : "Raise a pull request for your draft changes"}
+                  title={canReviewPR ? "Review pull requests from contributors" : "Raise a pull request for your draft changes"}
                 >
                   <GitPullRequest size={12} />
                   <span className="hidden sm:inline">PRs</span>

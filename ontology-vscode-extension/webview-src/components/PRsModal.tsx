@@ -94,9 +94,17 @@ const statusPill = (status: string) => {
   }
 };
 
-const fmtTime = (ts: string) => {
+const fmtTime = (ts: any) => {
   if (!ts) return "";
+  // LocalDateTime serialized as array [year,month,day,hour,minute,second,nano] before Jackson fix
+  if (Array.isArray(ts)) {
+    const [y, mo, d, h, mi, s] = ts as number[];
+    const date = new Date(y, mo - 1, d, h ?? 0, mi ?? 0, s ?? 0);
+    if (!isNaN(date.getTime())) return date.toLocaleDateString();
+    return "";
+  }
   const d = new Date(ts);
+  if (isNaN(d.getTime())) return "";
   const now = Date.now();
   const diff = now - d.getTime();
   if (diff < 60_000) return "just now";
