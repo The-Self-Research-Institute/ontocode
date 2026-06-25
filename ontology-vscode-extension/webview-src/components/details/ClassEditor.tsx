@@ -443,7 +443,12 @@ const ClassEditor: React.FC<{
       }
     })();
 
-    loadProperties();
+    // Only fetch properties if the parent hasn't already provided them — avoids
+    // a duplicate GET /api/ontology/properties on every class selection when
+    // Dashboard already loads and passes objectProperties/dataProperties as props.
+    if (!propObjectProperties?.length && !propDataProperties?.length) {
+      loadProperties();
+    }
     }; // end runLoad
 
     return () => {
