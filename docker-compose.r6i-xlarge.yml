@@ -23,11 +23,11 @@ services:
 
   auth:
     environment:
-      JAVA_TOOL_OPTIONS: -Xms256m -Xmx640m -XX:+UseG1GC
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx896m -XX:+UseG1GC
     deploy:
       resources:
         limits:
-          memory: 768m
+          memory: 1g
 
   gateway:
     environment:
