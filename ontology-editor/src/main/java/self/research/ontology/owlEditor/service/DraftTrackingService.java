@@ -46,6 +46,9 @@ public class DraftTrackingService {
     private final DraftPublishMergeService draftPublishMergeService;
     private final DraftCopyService draftCopyService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private OntologySpringCacheEvictionService springCacheEviction;
+
     public DraftTrackingService(DraftChangeRepository draftRepository,
                                OntologyMutationService mutationService,
                                SparqlDatasetService datasetService,
@@ -247,6 +250,9 @@ public class DraftTrackingService {
                 draftPublishMergeService.publishWithThreeWayMerge(projectId, userId, analysis, resolutions);
                 mainGraphRevisionService.incrementRevision(projectId);
                 draftPublishService.clearBaseline(projectId, userId);
+                if (springCacheEviction != null) {
+                    springCacheEviction.evictForProject(projectId);
+                }
                 finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
                 return new ApplyDraftsResult(true, unappliedDrafts.size(),
                         "Published draft with merge", false, analysis);
@@ -299,6 +305,9 @@ public class DraftTrackingService {
             datasetService.moveDraftToMain(projectId, userId);
             mainGraphRevisionService.incrementRevision(projectId);
             draftPublishService.clearBaseline(projectId, userId);
+            if (springCacheEviction != null) {
+                springCacheEviction.evictForProject(projectId);
+            }
 
             if (!unappliedDrafts.isEmpty()) {
                 unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
