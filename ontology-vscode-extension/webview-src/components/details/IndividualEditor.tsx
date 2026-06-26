@@ -576,7 +576,7 @@ const IndividualEditor: React.FC<{
                               setDeletingTypeIri(null);
                             }
                           }}
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200 flex-shrink-0"
+                          className="p-0.5 rounded hover:bg-red-200 flex-shrink-0 text-gray-400 hover:text-red-600"
                           title={isViewOnly ? 'View-only: upgrade to edit' : 'Remove type'}
                           disabled={deletingTypeIri === type}
                         >
