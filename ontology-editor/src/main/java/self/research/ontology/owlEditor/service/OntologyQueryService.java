@@ -15,6 +15,7 @@ import self.research.ontology.owlEditor.dto.OntologyDto;
 import self.research.ontology.owlEditor.dto.PropertyDto;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
