@@ -1298,8 +1298,11 @@ const ClassEditor: React.FC<{
   };
 
   const handleDeleteAxiom = async (type: AxiomType, id: string, classIriOverride?: string) => {
+    if (isSavingAxiom) return;
     const ownerIri = classIriOverride || item.id;
     console.log("[ClassEditor] handleDeleteAxiom called:", { type, id, classIri: ownerIri });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       // Find the axiom object to check if it's a restriction
       // Use classDetails if available (most recent data), otherwise fall back to item
@@ -1407,10 +1410,16 @@ const ClassEditor: React.FC<{
       console.error("[ClassEditor] Failed to delete axiom:", error);
       console.error("[ClassEditor] Delete axiom details:", { type, id, classIri: ownerIri });
       notificationService.error("Delete Failed", `Failed to delete axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
   const handleEditAxiom = async (type: AxiomType, oldId: string, newDefinition: string) => {
+    if (isSavingAxiom) return;
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       console.log("[ClassEditor] handleEditAxiom called:", { type, oldId, newDefinition });
 
@@ -1550,15 +1559,21 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("[ClassEditor] Failed to edit axiom:", error);
       notificationService.error("Edit Failed", `Failed to edit axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
   // Handler for Disjoint With - adds owl:disjointWith for each selected class
   const handleDisjointWithConfirm = async (nodes: TreeNode[]) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleDisjointWithConfirm called:", {
       nodes: nodes.map((n) => ({ id: n.id, label: n.label })),
       isEditing: !!editingDisjointWithId,
     });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       const classIris = nodes.map((n) => n.id);
 
@@ -1590,6 +1605,8 @@ const ClassEditor: React.FC<{
       console.error("[ClassEditor] Failed to add disjoint with:", error);
       notificationService.error("Add Failed", `Failed to add disjoint with: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
       setIsDisjointWithOpen(false);
       setEditingDisjointWithId(undefined);
       setEditingDisjointWithTarget(undefined);
@@ -1645,10 +1662,13 @@ const ClassEditor: React.FC<{
   };
 
   const handleDisjointUnionConfirm = async (nodes: TreeNode[]) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleDisjointUnionConfirm called:", {
       nodes: nodes.map((n) => ({ id: n.id, label: n.label })),
       isEditing: !!editingDisjointUnionId,
     });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       // Get the IRIs of the selected classes
       const memberIris = nodes.map((n) => n.id);
@@ -1680,6 +1700,8 @@ const ClassEditor: React.FC<{
       console.error("[ClassEditor] Failed to add disjoint union:", error);
       notificationService.error("Add Failed", `Failed to add disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
       setIsDisjointUnionOpen(false);
       setEditingDisjointUnionId(undefined);
       setEditingDisjointUnionMembers([]);
@@ -1709,7 +1731,10 @@ const ClassEditor: React.FC<{
   };
 
   const handleDeleteDisjointUnion = async (listNodeId: string) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleDeleteDisjointUnion called:", { classIri: item.id, listNodeId });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       await ontologyMutationService.deleteDisjointUnion(projectId, item.id, listNodeId);
       console.log("[ClassEditor] deleteDisjointUnion completed");
@@ -1722,6 +1747,9 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("[ClassEditor] Failed to delete disjoint union:", error);
       notificationService.error("Delete Failed", `Failed to delete disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
@@ -1745,7 +1773,10 @@ const ClassEditor: React.FC<{
   };
 
   const handleDeleteHasKey = async (listNodeId: string) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleDeleteHasKey called:", { classIri: item.id, listNodeId });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       await ontologyMutationService.deleteHasKey(projectId, item.id, listNodeId);
       console.log("[ClassEditor] deleteHasKey completed");
@@ -1758,15 +1789,21 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("[ClassEditor] Failed to delete has key:", error);
       notificationService.error("Delete Failed", `Failed to delete has key: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
   const handleAddHasKey = async (propertyIris: string[]) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleAddHasKey called:", {
       classIri: item.id,
       propertyIris,
       isEditing: !!editingHasKeyId,
     });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       if (propertyIris.length < 1) {
         console.warn("[ClassEditor] HasKey requires at least 1 property");
@@ -1794,6 +1831,8 @@ const ClassEditor: React.FC<{
       console.error("[ClassEditor] Failed to add has key:", error);
       notificationService.error("Add Failed", `Failed to add has key: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
       setIsHasKeyOpen(false);
       setEditingHasKeyId(undefined);
       setEditingHasKeyProperties([]);
@@ -1802,7 +1841,10 @@ const ClassEditor: React.FC<{
 
   // Instance handlers
   const handleAddInstance = async (name: string) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleAddInstance called:", { name, classIri: item.id });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       if (onAddIndividual) {
         await onAddIndividual(name, item.id);
@@ -1823,27 +1865,26 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("[ClassEditor] Failed to add instance:", error);
       notificationService.error("Add Failed", `Failed to add instance: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
   const handleDeleteInstance = async (individualIri: string) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleDeleteInstance called:", { individualIri, classIri: item.id });
+    setIsSavingAxiom(true);
     try {
-      // Remove the class assertion (type) from the individual
       await ontologyMutationService.removeClassAssertion(projectId, individualIri, item.id);
-
-      // Small delay to allow GraphDB to process the mutation
       await new Promise((resolve) => setTimeout(resolve, 300));
-      console.log("[ClassEditor] Reloading instances after removing class assertion");
       await loadInstances();
-
-      // Refresh individuals in parent if callback provided
-      if (onRefreshIndividuals) {
-        onRefreshIndividuals();
-      }
+      if (onRefreshIndividuals) onRefreshIndividuals();
     } catch (error) {
       console.error("[ClassEditor] Failed to remove instance:", error);
       notificationService.error("Remove Failed", `Failed to remove instance: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
     }
   };
 
@@ -1867,7 +1908,10 @@ const ClassEditor: React.FC<{
   };
 
   const handleDeleteGCA = async (axiomId: string) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] Deleting GCA:", axiomId);
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       // GCAs are stored as SubClassOf axioms with blank node subjects
       // Delete the axiom by its blank node ID
@@ -1877,11 +1921,17 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("[ClassEditor] Failed to delete GCA:", error);
       notificationService.error("Delete Failed", `Failed to delete general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
   const handleGCAConfirm = async (subExpr: string, superExpr: string) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] GCA confirm:", { subExpr, superExpr, editing: editingGCAId });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       if (editingGCAId) {
         await ontologyMutationService.deleteAxiom(projectId, editingGCAId);
@@ -1907,51 +1957,42 @@ const ClassEditor: React.FC<{
       console.error("[ClassEditor] Failed to save GCA:", error);
       notificationService.error("Save Failed", `Failed to save general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
       setIsGCAEditorOpen(false);
       setEditingGCAId(undefined);
     }
   };
 
   const handleInstancesConfirm = async (selectedIndividuals: Individual[]) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleInstancesConfirm called:", {
       selectedCount: selectedIndividuals.length,
       classIri: item.id,
       isEditing: !!editingInstanceId,
     });
-    // This handles adding existing individuals as instances of this class
+    setIsSavingAxiom(true);
     try {
-      // If editing, remove the old instance first
       if (editingInstanceId) {
-        console.log("[ClassEditor] Editing instance - removing old:", editingInstanceId);
         await ontologyMutationService.removeClassAssertion(projectId, editingInstanceId, item.id);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      // Add class assertions for selected individuals
       for (const individual of selectedIndividuals) {
-        // Check if this individual is already an instance of this class
         if (!classInstances.some((i) => i.id === individual.id)) {
-          // Add class assertion for this existing individual (not creating a new one)
-          console.log("[ClassEditor] Adding class assertion:", { individualIri: individual.id, classIri: item.id });
           await ontologyMutationService.addClassAssertion(projectId, individual.id, item.id);
-          console.log("[ClassEditor] Class assertion added successfully");
         }
       }
 
-      // Small delay to allow GraphDB to process the mutations
-      console.log("[ClassEditor] Waiting for GraphDB to process...");
       await new Promise((resolve) => setTimeout(resolve, 500));
-      console.log("[ClassEditor] Reloading instances...");
       await loadInstances();
-      console.log("[ClassEditor] Instances reloaded");
 
-      if (onRefreshIndividuals) {
-        onRefreshIndividuals();
-      }
+      if (onRefreshIndividuals) onRefreshIndividuals();
     } catch (error) {
       console.error("[ClassEditor] Failed to add instances:", error);
       notificationService.error("Add Failed", `Failed to add instances: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setIsSavingAxiom(false);
       setIsInstancesOpen(false);
       setEditingInstanceId(undefined);
     }
@@ -2126,7 +2167,7 @@ const ClassEditor: React.FC<{
             {isSavingAxiom && (
               <div className="flex items-center gap-2 px-4 py-2 text-sm text-purple-700 bg-purple-50 border border-purple-200 rounded">
                 <div className="animate-spin h-3.5 w-3.5 border-2 border-purple-600 border-t-transparent rounded-full flex-shrink-0" />
-                Saving axiom…
+                Saving…
               </div>
             )}
 
@@ -2200,7 +2241,7 @@ const ClassEditor: React.FC<{
                 title="SubClass Of (Anonymous Ancestor)"
                 axioms={classDetails?.anonymousAncestorAxioms || []}
                 onAdd={() => {}}
-                onDelete={() => {}}
+                onDelete={(id) => handleDeleteGCA(id)}
                 onEditClick={(axiom) => {
                   const target = axiom.id || '';
                   if (target.startsWith('http://') || target.startsWith('https://') || target.startsWith('urn:')) {
@@ -2236,35 +2277,42 @@ const ClassEditor: React.FC<{
               />
 
               {/* Instances Section */}
-              <AxiomSubsection
-                title="Instances"
-                viewMode={viewMode}
-                axioms={classInstances
-                  .filter((instance) => !(instance as { isInferred?: boolean }).isInferred)
-                  .map((instance) => ({
-                    id: instance.id,
-                    type: "Instance",
-                    definition: instance.label,
-                  }))}
-                inferredAxioms={classInstances
-                  .filter((instance) => (instance as { isInferred?: boolean }).isInferred)
-                  .map((instance) => ({
-                    id: instance.id,
-                    type: "Instance",
-                    definition: instance.label,
-                  }))}
-                onAdd={() => {}}
-                onEdit={(id, newDef) => handleEditInstance(id)}
-                onDelete={(id) => handleDeleteInstance(id)}
-                onAddClick={() => { setEditingInstanceId(undefined); setIsInstancesOpen(true); }}
-                onEditClick={(axiom) => handleEditInstance(axiom.id)}
-                emptyMessage=""
-                themeColor="yellow"
-                isViewOnly={isViewOnly}
-                onViewOnlyAction={onViewOnlyAction}
-                projectId={projectId}
-                parentEntityIri={item.id}
-              />
+              <div className="relative">
+                {(loadingInstances || isSavingAxiom) && (
+                  <div className="absolute inset-0 bg-white/60 flex items-center justify-center z-10 rounded pointer-events-none">
+                    <div className="animate-spin h-4 w-4 border-2 border-yellow-500 border-t-transparent rounded-full" />
+                  </div>
+                )}
+                <AxiomSubsection
+                  title="Instances"
+                  viewMode={viewMode}
+                  axioms={classInstances
+                    .filter((instance) => !(instance as { isInferred?: boolean }).isInferred)
+                    .map((instance) => ({
+                      id: instance.id,
+                      type: "Instance",
+                      definition: instance.label,
+                    }))}
+                  inferredAxioms={classInstances
+                    .filter((instance) => (instance as { isInferred?: boolean }).isInferred)
+                    .map((instance) => ({
+                      id: instance.id,
+                      type: "Instance",
+                      definition: instance.label,
+                    }))}
+                  onAdd={() => {}}
+                  onEdit={(id, newDef) => { if (!isSavingAxiom) handleEditInstance(id); }}
+                  onDelete={(id) => { if (!isSavingAxiom) handleDeleteInstance(id); }}
+                  onAddClick={() => { if (!isSavingAxiom) { setEditingInstanceId(undefined); setIsInstancesOpen(true); } }}
+                  onEditClick={(axiom) => { if (!isSavingAxiom) handleEditInstance(axiom.id); }}
+                  emptyMessage=""
+                  themeColor="yellow"
+                  isViewOnly={isViewOnly}
+                  onViewOnlyAction={onViewOnlyAction}
+                  projectId={projectId}
+                  parentEntityIri={item.id}
+                />
+              </div>
 
               {/* Target for Key Section */}
               <AxiomSubsection

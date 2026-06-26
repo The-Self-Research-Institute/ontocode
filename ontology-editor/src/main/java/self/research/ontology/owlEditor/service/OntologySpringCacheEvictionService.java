@@ -19,6 +19,7 @@ public class OntologySpringCacheEvictionService {
 
     private static final Logger log = LoggerFactory.getLogger(OntologySpringCacheEvictionService.class);
 
+    // All caches use keys of the form: projectId_..._userId
     private static final List<String> PREFIX_KEY_CACHES = List.of(
             "topLevelClasses", "classChildren", "allClasses", "ontologyProperties",
             "ontologyIndividuals", "classInstances"
@@ -61,17 +62,10 @@ public class OntologySpringCacheEvictionService {
     }
 
     /**
-     * Evict only the Caffeine L1 cache entries belonging to a single draft user.
+     * Evict only the Caffeine L1 cache entries belonging to a single user.
      *
-     * Called for draft mutations so that public users' cache entries are NOT
-     * invalidated when one user edits their private draft graph. The MongoDB L2
-     * cache (TopLevelClassCacheService) is project-scoped and is not touched here —
-     * it still reflects the public graph, which hasn't changed.
-     *
-     * Cache key structure for user-scoped caches:
-     *   {@code <projectId>_..._<userId>}   (draft)
-     *   {@code <projectId>_..._public}      (no user set)
-     * We match keys that start with {@code projectId+"_"} AND end with {@code "_"+userId}.
+     * All caches now include userId in their key (projectId_..._userId), so a
+     * single prefix+suffix scan covers everything — no special-casing needed.
      */
     public void evictForProjectAndUser(String projectId, String userId) {
         if (cacheManager == null || projectId == null || projectId.isBlank()
@@ -98,7 +92,7 @@ public class OntologySpringCacheEvictionService {
         if (graphCache != null) {
             graphCache.clear();
         }
-        log.debug("[CACHE] Evicted {} Spring cache entries for project {} user {}", evicted, projectId, userId);
+        log.info("[CACHE] evictForProjectAndUser project={} user={} total-evicted={}", projectId, userId, evicted);
     }
 
     private int evictKeysWithPrefix(String cacheName, String prefix) {

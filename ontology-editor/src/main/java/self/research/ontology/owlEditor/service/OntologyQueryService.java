@@ -921,7 +921,7 @@ public class OntologyQueryService {
      * Get individuals for a project.
      * OPTIMIZED: Cached for repeated access.
      */
-    @Cacheable(value = "ontologyIndividuals", key = "#projectId + '_' + #limit + '_' + #offset")
+    @Cacheable(value = "ontologyIndividuals", key = "#projectId + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId()")
     public List<IndividualDto> individuals(String projectId, int limit, int offset) {
         long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
@@ -3641,7 +3641,7 @@ public class OntologyQueryService {
      * Returns both asserted and inferred instances.
      * OPTIMIZED: Cached + combined into single SPARQL query with BIND for isInferred flag.
      */
-    @Cacheable(value = "classInstances", key = "#projectId + '_' + #classIri")
+    @Cacheable(value = "classInstances", key = "#projectId + '_' + #classIri + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId()")
     public List<Map<String, Object>> getClassInstances(String projectId, String classIri) {
         safeIri(classIri);
         long startTime = System.currentTimeMillis();

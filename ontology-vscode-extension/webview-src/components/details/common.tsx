@@ -292,8 +292,8 @@ const ColorizedAxiomDefinition: React.FC<{
 
 export const AxiomRow: React.FC<{
   axiom: Axiom;
-  onDelete: (id: string) => void;
-  onEdit?: (id: string, newDefinition: string) => void;
+  onDelete?: (id: string) => Promise<void> | void;
+  onEdit?: (id: string, newDefinition: string) => Promise<void> | void;
   onEditClick?: (axiom: Axiom, initialTab?: 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression', restrictionData?: any) => void;
   isInferred?: boolean;
   isInActiveOntology?: boolean;
@@ -311,6 +311,7 @@ export const AxiomRow: React.FC<{
   // Handle isInferred from prop or axiom object (can be boolean or string 'true')
   const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
   const [isEditing, setIsEditing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [showAxiomAnnotations, setShowAxiomAnnotations] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [axiomAnnotations, setAxiomAnnotations] = useState<Array<{ property: string; value: string; language?: string }>>([]);
@@ -346,9 +347,9 @@ export const AxiomRow: React.FC<{
     }
   }, [showAxiomAnnotations, loadAxiomAnnotations]);
 
-  const handleEdit = (newDefinition: string) => {
+  const handleEdit = async (newDefinition: string) => {
     if (onEdit) {
-      onEdit(axiom.id, newDefinition);
+      await onEdit(axiom.id, newDefinition);
     }
     setIsEditing(false);
   };
@@ -522,19 +523,21 @@ export const AxiomRow: React.FC<{
               </button>
             )}
 
-            {/* Delete button - only for asserted axioms */}
-            {!isInferred && (
+            {/* Delete button - only for asserted axioms that have a delete handler */}
+            {!isInferred && onDelete && (
               <button
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
                   if (isViewOnly) { onViewOnlyAction?.(); return; }
-                  onDelete(axiom.id);
+                  setIsDeleting(true);
+                  try { await onDelete(axiom.id); } finally { setIsDeleting(false); }
                 }}
-                className={`p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                disabled={isDeleting}
+                className={`p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                 title="Delete axiom (or press Delete)"
                 aria-label="Delete"
               >
-                <Trash2 size={14} />
+                {isDeleting ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
               </button>
             )}
           </div>
@@ -656,9 +659,9 @@ export const AxiomSubsection: React.FC<{
   /** Protégé-style: inferred rows only when hierarchy/view is in inferred mode */
   viewMode?: 'asserted' | 'inferred';
   onAdd: (definition: string) => void;
-  onEdit?: (id: string, newDefinition: string) => void;
+  onEdit?: (id: string, newDefinition: string) => Promise<void> | void;
   onEditClick?: (axiom: Axiom, initialTab?: 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression', restrictionData?: any) => void;
-  onDelete: (id: string) => void;
+  onDelete?: (id: string) => Promise<void> | void;
   emptyMessage?: string;
   onAddClick?: () => void;
   activeOntologyIri?: string;

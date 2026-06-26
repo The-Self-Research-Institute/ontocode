@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -37,6 +39,8 @@ import java.util.function.Supplier;
 @RequestMapping("/api/ontology")
 @CrossOrigin
 public class OntologyQueryController {
+
+    private static final Logger log = LoggerFactory.getLogger(OntologyQueryController.class);
 
     private final OntologyQueryService queryService;
     private final ProjectMetadataService projectMetadataService;
@@ -763,15 +767,16 @@ public class OntologyQueryController {
     @GetMapping("/classes/instances/{projectId}")
     public ResponseEntity<?> classInstances(@PathVariable String projectId,
                                            @RequestParam String classIri) {
+        // Always use SPARQL path — OWL API in-memory model is stale after SPARQL mutations.
+        // reasonerClassInstanceMerger adds inferred instances on the SPARQL path too.
         String instUserId = SparqlQueryContext.getUserId();
         boolean instHasDraft = instUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, instUserId);
-        if (!instHasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
-            return ResponseEntity.ok(desktopHierarchyService.classInstances(projectId, classIri));
-        }
         List<Map<String, Object>> instances = queryService.getClassInstances(projectId, classIri);
+        log.info("[INSTANCES] path=sparql project={} class={} count={} hasDraft={}", projectId, classIri.substring(Math.max(0, classIri.lastIndexOf('#') + 1)), instances.size(), instHasDraft);
         if (reasonerClassInstanceMerger != null) {
             instances = reasonerClassInstanceMerger.mergeInferred(projectId, classIri, instances);
+            log.info("[INSTANCES] path=sparql after-merge count={}", instances.size());
         }
         return ResponseEntity.ok(instances);
     }

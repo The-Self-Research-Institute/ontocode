@@ -193,6 +193,11 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
             if (pathToClass.length > 0) {
               setLocalExpandedNodes(pathToClass);
             }
+          } else {
+            // Class not in the currently loaded tree (lazy-loaded hierarchy).
+            // Pre-fill the search so the user sees it immediately after typing.
+            const localName = classIriToSelect.split(/[#/]/).pop() || classIriToSelect;
+            setClassSearchQuery(localName);
           }
         }
       } else if (initialValue) {
