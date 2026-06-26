@@ -343,7 +343,7 @@ public class HierarchySnapshotBuilder {
                     OWLClass eq = ce.asOWLClass();
                     Map<String, String> m = new LinkedHashMap<>();
                     m.put("iri", eq.getIRI().toString());
-                    m.put("label", getLabel(ont, eq));
+                    m.put("label", getLabel(ont, eq, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED));
                     return m;
                 })
                 .collect(Collectors.toList());
