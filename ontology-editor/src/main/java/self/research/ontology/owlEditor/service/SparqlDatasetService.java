@@ -3258,11 +3258,22 @@ public class SparqlDatasetService {
      */
     private void invalidateDerivedCachesAfterUpdate(String projectId) {
         tripleCountCache.remove(projectId);
-        if (topLevelCacheService != null) {
-            topLevelCacheService.evict(projectId);
-        }
-        if (springCacheEviction != null) {
-            springCacheEviction.evictForProject(projectId);
+        String userId = SparqlQueryContext.getUserId();
+        boolean isDraftMutation = userId != null && !userId.isBlank();
+        if (isDraftMutation) {
+            // Draft: evict only this user's Caffeine L1 entries — public users' cache is unaffected.
+            // MongoDB L2 (topLevelCacheService) is skipped: it reflects the public graph, unchanged.
+            if (springCacheEviction != null) {
+                springCacheEviction.evictForProjectAndUser(projectId, userId);
+            }
+        } else {
+            // Public mutation: evict all project-scoped cache entries (all users see updated data).
+            if (topLevelCacheService != null) {
+                topLevelCacheService.evict(projectId);
+            }
+            if (springCacheEviction != null) {
+                springCacheEviction.evictForProject(projectId);
+            }
         }
         markProjectDirty(projectId);
     }
