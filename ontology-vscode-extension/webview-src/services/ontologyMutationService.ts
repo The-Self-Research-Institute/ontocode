@@ -1170,7 +1170,7 @@ export const ontologyMutationService = {
   async deleteObjectRestriction(
     projectId: string,
     classIri: string,
-    axiomType: 'EquivalentTo' | 'SubClassOf',
+    axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value',
     fillerClassIri: string
@@ -1191,7 +1191,7 @@ export const ontologyMutationService = {
   async deleteDataRestriction(
     projectId: string,
     classIri: string,
-    axiomType: 'EquivalentTo' | 'SubClassOf',
+    axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly',
     datatypeIri: string

@@ -255,7 +255,7 @@ public class OwlApiMutationPatcher {
             case "deleteIndividual" -> {
                 if (op.iri() == null) yield false;
                 OWLNamedIndividual ind = df.getOWLNamedIndividual(IRI.create(op.iri()));
-                toRemove.addAll(ontology.getAxioms(ind));
+                toRemove.addAll(ontology.getReferencingAxioms(ind));
                 yield true;
             }
             case "addClassAssertion" -> {
