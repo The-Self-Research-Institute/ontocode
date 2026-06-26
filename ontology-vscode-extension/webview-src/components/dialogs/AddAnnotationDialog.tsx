@@ -419,7 +419,8 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
         <div className="bg-[#F0F0F0] p-4 flex justify-end gap-2 border-t border-gray-300">
           <button
             onClick={handleAdd}
-            className="px-6 py-1.5 bg-white border border-gray-400 rounded text-sm hover:bg-gray-50 text-black min-w-[80px]"
+            disabled={!selectedProperty || !value.trim()}
+            className="px-6 py-1.5 bg-white border border-gray-400 rounded text-sm hover:bg-gray-50 text-black min-w-[80px] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             OK
           </button>

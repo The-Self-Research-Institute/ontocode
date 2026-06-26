@@ -8547,6 +8547,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       try {
         if (isEntityAnnotation && selectedItem) {
+          // Mark unsaved optimistically so the indicator appears immediately on confirm
+          markAsUnsaved();
+
           // Entity annotation
           await ontologyMutationService.addAnnotation(
             projectId,
@@ -8567,7 +8570,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             updatedItem.label = value;
           }
           updateItemInState(updatedItem);
-          markAsUnsaved();
         } else {
           // Ontology annotation
           updateActiveOntologyAnnotations((current) => [
