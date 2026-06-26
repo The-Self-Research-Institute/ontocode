@@ -1931,6 +1931,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     Individuals: "asserted",
     Datatypes: "asserted",
   });
+  const [hierarchyDisplayMode, setHierarchyDisplayMode] = useState<"label" | "id" | "annotation" | "custom">("label");
+  const [hierarchyAnnotationPropIri, setHierarchyAnnotationPropIri] = useState<string>("");
+  const [hierarchyCustomTemplate, setHierarchyCustomTemplate] = useState<string>("{label} ({id})");
+  const [hierarchyAnnotationProperties, setHierarchyAnnotationProperties] = useState<Array<{ id: string; label: string }>>([]);
+  const [hierarchyAnnotationValues, setHierarchyAnnotationValues] = useState<Map<string, string>>(new Map());
+  const [hierarchyImportsScope, setHierarchyImportsScope] = useState<"active" | "closure">("active");
+  const fetchedAnnotationIrisRef = useRef<Set<string>>(new Set());
   const [isClassIndividualAnnotationDialogOpen, setClassIndividualAnnotationDialogOpen] = useState(false);
   const [isClassIndividualTypeDialogOpen, setClassIndividualTypeDialogOpen] = useState(false);
   const [isClassIndividualPropertyDialogOpen, setClassIndividualPropertyDialogOpen] = useState(false);
@@ -6630,8 +6637,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         // OPTIMIZED: Use limit parameter for faster initial load (backend has caching)
         const isOwlThing = nodeId === "http://www.w3.org/2002/07/owl#Thing";
         const endpoint = isOwlThing
-          ? `/api/ontology/classes/top-level/${projectId}?limit=5000`
-          : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`;
+          ? `/api/ontology/classes/top-level/${projectId}?limit=5000&scope=${hierarchyImportsScope}`
+          : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}&scope=${hierarchyImportsScope}`;
 
         const response = await apiClient.get<any>(endpoint);
 
@@ -6670,7 +6677,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.error(`Failed to load children for ${nodeId}`, error);
       }
     },
-    [projectId, classInstanceCounts, applyInstanceCountsToTree],
+    [projectId, classInstanceCounts, applyInstanceCountsToTree, hierarchyImportsScope],
   );
 
   const fetchInferredChildren = useCallback(
@@ -6828,7 +6835,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     classHierarchyRefreshInFlight.current = true;
     lastClassHierarchyRefreshAt.current = now;
     try {
-      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}`);
+      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}?scope=${hierarchyImportsScope}`);
 
       let classes: any[] = [];
       if (Array.isArray(topLevelRes?.classes)) {
@@ -6891,6 +6898,59 @@ const Dashboard: React.FC<DashboardProps> = ({
       classHierarchyRefreshInFlight.current = false;
     }
   }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree, shouldDeferHierarchyDuringFileOpen]);
+
+  // Keep hierarchyAnnotationProperties in sync with the existing annotation property list
+  useEffect(() => {
+    setHierarchyAnnotationProperties(
+      annotationProperties.map((p) => ({ id: p.id, label: p.label }))
+    );
+  }, [annotationProperties]);
+
+  // Batch-fetch annotation values for all current hierarchy nodes when annotation rendering is active
+  const loadHierarchyAnnotationValues = useCallback(async (iris: string[], propertyIri: string) => {
+    if (!projectId || !propertyIri || iris.length === 0) return;
+    try {
+      const res = await apiClient.post<any>(
+        `/api/ontology/annotations/batch/${encodeProjectId(projectId)}`,
+        { iris, propertyIri }
+      );
+      const data: Record<string, string> = res?.data ?? res ?? {};
+      setHierarchyAnnotationValues((prev) => {
+        const next = new Map(prev);
+        Object.entries(data).forEach(([iri, val]) => next.set(iri, val));
+        return next;
+      });
+    } catch {
+      // fail silently — hierarchy will fall back to labels
+    }
+  }, [projectId]);
+
+  // Reset annotation cache when property or mode changes
+  useEffect(() => {
+    fetchedAnnotationIrisRef.current = new Set();
+    if (hierarchyDisplayMode !== "annotation") setHierarchyAnnotationValues(new Map());
+  }, [hierarchyAnnotationPropIri, hierarchyDisplayMode]);
+
+  // Incrementally fetch annotation values for nodes not yet fetched (avoids full re-fetch on every expansion)
+  useEffect(() => {
+    if (hierarchyDisplayMode !== "annotation" || !hierarchyAnnotationPropIri) return;
+    const collectIris = (nodes: TreeNode[]): string[] =>
+      nodes.flatMap((n) => [n.id, ...collectIris((n.children as TreeNode[]) ?? [])]);
+    const newIris = collectIris(classHierarchy)
+      .filter(Boolean)
+      .filter(iri => !fetchedAnnotationIrisRef.current.has(iri));
+    if (newIris.length === 0) return;
+    newIris.forEach(iri => fetchedAnnotationIrisRef.current.add(iri));
+    loadHierarchyAnnotationValues(newIris, hierarchyAnnotationPropIri);
+  }, [hierarchyDisplayMode, hierarchyAnnotationPropIri, classHierarchy, loadHierarchyAnnotationValues]);
+
+  // Reload hierarchy when imports scope changes — bypass throttle since this is an explicit user action
+  useEffect(() => {
+    if (!projectId || mainTab !== "Entities" || entitiesTab !== "Classes") return;
+    lastClassHierarchyRefreshAt.current = 0;
+    refreshClassHierarchy();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hierarchyImportsScope]);
 
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "Classes") return;
@@ -14135,6 +14195,16 @@ const Dashboard: React.FC<DashboardProps> = ({
                   onViewModeChange={(mode) =>
                     setHierarchyViewModes((prev) => ({ ...prev, Classes: mode }))
                   }
+                  displayMode={hierarchyDisplayMode}
+                  onDisplayModeChange={setHierarchyDisplayMode}
+                  displayAnnotationPropIri={hierarchyAnnotationPropIri}
+                  onDisplayAnnotationPropChange={setHierarchyAnnotationPropIri}
+                  customTemplate={hierarchyCustomTemplate}
+                  onCustomTemplateChange={setHierarchyCustomTemplate}
+                  annotationProperties={hierarchyAnnotationProperties}
+                  annotationValues={hierarchyAnnotationValues}
+                  importsScope={hierarchyImportsScope}
+                  onImportsScopeChange={setHierarchyImportsScope}
                   isReasonerRunning={isReasonerRunning}
                   loadingNodes={loadingNodes}
                   isViewOnly={isViewOnlyMember}
@@ -16218,6 +16288,16 @@ const Dashboard: React.FC<DashboardProps> = ({
                   }}
                   viewMode={currentHierarchyViewMode}
                   onViewModeChange={setCurrentHierarchyViewMode}
+                  displayMode={hierarchyDisplayMode}
+                  onDisplayModeChange={setHierarchyDisplayMode}
+                  displayAnnotationPropIri={hierarchyAnnotationPropIri}
+                  onDisplayAnnotationPropChange={setHierarchyAnnotationPropIri}
+                  customTemplate={hierarchyCustomTemplate}
+                  onCustomTemplateChange={setHierarchyCustomTemplate}
+                  annotationProperties={hierarchyAnnotationProperties}
+                  annotationValues={hierarchyAnnotationValues}
+                  importsScope={hierarchyImportsScope}
+                  onImportsScopeChange={setHierarchyImportsScope}
                   isReasonerRunning={isReasonerRunning}
                   loadingNodes={loadingNodes}
                   isViewOnly={isViewOnlyMember}

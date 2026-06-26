@@ -21,6 +21,8 @@ public class OntologyDto {
         private Map<String, String> annotations;
         /** Each entry: {iri, label} — populated for asserted hierarchy nodes that have owl:equivalentClass */
         private List<Map<String, String>> equivalentClasses;
+        /** IRI of the ontology that declares this class (null = active ontology). Populated when scope=closure. */
+        private String sourceOntology;
 
         // Getters & Setters
         public String getId() { return id; }
@@ -41,6 +43,8 @@ public class OntologyDto {
         public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
         public List<Map<String, String>> getEquivalentClasses() { return equivalentClasses; }
         public void setEquivalentClasses(List<Map<String, String>> equivalentClasses) { this.equivalentClasses = equivalentClasses; }
+        public String getSourceOntology() { return sourceOntology; }
+        public void setSourceOntology(String sourceOntology) { this.sourceOntology = sourceOntology; }
     }
 
     // For PropertyEditor.tsx
