@@ -318,6 +318,8 @@ export const AxiomRow: React.FC<{
   const [newAnnotValue, setNewAnnotValue] = useState('');
   const [showAddAxiomAnnotForm, setShowAddAxiomAnnotForm] = useState(false);
   const [annotationsLoading, setAnnotationsLoading] = useState(false);
+  const [deletingAnnotIdx, setDeletingAnnotIdx] = useState<number | null>(null);
+  const [isSavingAnnot, setIsSavingAnnot] = useState(false);
 
   const relatedIri = axiom.id?.includes('|||') ? axiom.id.split('|||')[0] : axiom.id;
   const hasAxiomAnnotations = hasAxiomAnnotationsProp || axiomAnnotations.length > 0;
@@ -549,7 +551,7 @@ export const AxiomRow: React.FC<{
           ) : (
             <>
               {axiomAnnotations.map((ann, idx) => (
-                <div key={idx} className="flex items-start justify-between bg-white border border-amber-100 rounded px-2 py-1 mb-1">
+                <div key={idx} className={`flex items-start justify-between bg-white border border-amber-100 rounded px-2 py-1 mb-1 transition-opacity duration-300 ${deletingAnnotIdx === idx ? 'opacity-40' : ''}`}>
                   <div>
                     <div className="text-[10px] font-medium text-amber-700">{ann.property.split('#').pop() || ann.property.split('/').pop()}</div>
                     <div className="text-[10px] text-gray-700">{ann.value}</div>
@@ -558,19 +560,25 @@ export const AxiomRow: React.FC<{
                     <button
                       onClick={async (e) => {
                         e.stopPropagation();
-                        await axiomAnnotationService.deleteAnnotation(projectId, {
-                          entityIri: parentEntityIri,
-                          relatedIri,
-                          sectionName,
-                          annotationProperty: ann.property,
-                          value: ann.value,
-                        });
-                        await loadAxiomAnnotations();
+                        setDeletingAnnotIdx(idx);
+                        try {
+                          await axiomAnnotationService.deleteAnnotation(projectId, {
+                            entityIri: parentEntityIri,
+                            relatedIri,
+                            sectionName,
+                            annotationProperty: ann.property,
+                            value: ann.value,
+                          });
+                          await loadAxiomAnnotations();
+                        } finally {
+                          setDeletingAnnotIdx(null);
+                        }
                       }}
-                      className="ml-1 p-0.5 text-gray-400 hover:text-red-500"
+                      disabled={deletingAnnotIdx === idx}
+                      className="ml-1 p-0.5 text-gray-400 hover:text-red-500 disabled:opacity-50"
                       title="Remove annotation"
                     >
-                      <Trash2 size={10} />
+                      {deletingAnnotIdx === idx ? <Loader size={10} className="animate-spin" /> : <Trash2 size={10} />}
                     </button>
                   )}
                 </div>
@@ -599,21 +607,26 @@ export const AxiomRow: React.FC<{
                     <div className="flex justify-end gap-1">
                       <button className="px-2 py-0.5 text-[10px] bg-gray-100 rounded" onClick={() => { setShowAddAxiomAnnotForm(false); setNewAnnotValue(''); }}>Cancel</button>
                       <button
-                        disabled={!newAnnotValue.trim()}
-                        className="px-2 py-0.5 text-[10px] bg-amber-500 text-white rounded disabled:opacity-40"
+                        disabled={!newAnnotValue.trim() || isSavingAnnot}
+                        className="px-2 py-0.5 text-[10px] bg-amber-500 text-white rounded disabled:opacity-40 flex items-center gap-1"
                         onClick={async () => {
-                          await axiomAnnotationService.addAnnotation(projectId, {
-                            entityIri: parentEntityIri,
-                            relatedIri,
-                            sectionName,
-                            annotationProperty: newAnnotProp,
-                            value: newAnnotValue.trim(),
-                          });
-                          setNewAnnotValue('');
-                          setShowAddAxiomAnnotForm(false);
-                          await loadAxiomAnnotations();
+                          setIsSavingAnnot(true);
+                          try {
+                            await axiomAnnotationService.addAnnotation(projectId, {
+                              entityIri: parentEntityIri,
+                              relatedIri,
+                              sectionName,
+                              annotationProperty: newAnnotProp,
+                              value: newAnnotValue.trim(),
+                            });
+                            setNewAnnotValue('');
+                            setShowAddAxiomAnnotForm(false);
+                            await loadAxiomAnnotations();
+                          } finally {
+                            setIsSavingAnnot(false);
+                          }
                         }}
-                      >Save</button>
+                      >{isSavingAnnot ? <><Loader size={10} className="animate-spin" /> Saving…</> : 'Save'}</button>
                     </div>
                   </div>
                 ) : (
@@ -1235,7 +1248,7 @@ export const MultiSelectItem: React.FC<{
     
     return (
         <div
-            className="group border-b last:border-0 transition-colors"
+            className={`group border-b last:border-0 transition-colors transition-opacity duration-300 ${isDeleting ? 'opacity-40' : ''}`}
             style={{
                 borderColor: 'var(--border, #f3f4f6)',
                 backgroundColor: isHovered
