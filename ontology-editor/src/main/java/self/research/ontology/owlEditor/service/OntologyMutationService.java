@@ -807,8 +807,10 @@ public class OntologyMutationService {
                 + "}";
         } else if (type.equals("removeClassAssertion")) {
             // Remove rdf:type assertion from an individual
+            if (op.classIri() == null) return "";
+            String classExpr = buildClassExpressionSparql(projectId, op.classIri());
             return "DELETE DATA {\n"
-                + "<" + op.iri() + "> a <" + op.classIri() + "> .\n"
+                + "<" + op.iri() + "> a " + classExpr + " .\n"
                 + "}";
         } else if (type.equals("deleteAxiom")) {
             return buildDeleteBlankNodeAxiomSparql(op.iri());

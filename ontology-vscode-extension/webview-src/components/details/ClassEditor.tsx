@@ -1875,16 +1875,18 @@ const ClassEditor: React.FC<{
     if (isSavingAxiom) return;
     console.log("[ClassEditor] handleDeleteInstance called:", { individualIri, classIri: item.id });
     setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
-      await ontologyMutationService.removeClassAssertion(projectId, individualIri, item.id);
+      await ontologyMutationService.deleteIndividual(projectId, individualIri, user?.email || user?.userId, user?.username);
       await new Promise((resolve) => setTimeout(resolve, 300));
       await loadInstances();
       if (onRefreshIndividuals) onRefreshIndividuals();
     } catch (error) {
-      console.error("[ClassEditor] Failed to remove instance:", error);
-      notificationService.error("Remove Failed", `Failed to remove instance: ${error instanceof Error ? error.message : "Unknown error"}`);
+      console.error("[ClassEditor] Failed to delete instance:", error);
+      notificationService.error("Delete Failed", `Failed to delete instance: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
