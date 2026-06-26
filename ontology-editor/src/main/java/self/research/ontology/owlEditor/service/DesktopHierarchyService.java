@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import org.semanticweb.owlapi.model.*;
+import org.semanticweb.owlapi.model.parameters.Imports;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,22 +61,35 @@ public class DesktopHierarchyService {
     }
 
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit, int offset) {
+        return topLevelClasses(projectId, limit, offset, Imports.EXCLUDED);
+    }
+
+    public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit, int offset, Imports importsScope) {
         return ontologyCache.get(projectId)
             .map(c -> c.assertedHierarchyOnly()
-                    ? snapshotBuilder.buildTopLevelAsserted(c.ontology(), limit, offset)
-                    : snapshotBuilder.buildTopLevel(c.ontology(), c.reasoner(), limit, offset))
+                    ? snapshotBuilder.buildTopLevelAsserted(c.ontology(), limit, offset, importsScope)
+                    : snapshotBuilder.buildTopLevel(c.ontology(), c.reasoner(), limit, offset, importsScope))
             .orElse(Collections.emptyList());
     }
 
     public int topLevelClassTotal(String projectId) {
+        return topLevelClassTotal(projectId, Imports.EXCLUDED);
+    }
+
+    public int topLevelClassTotal(String projectId, Imports importsScope) {
         return ontologyCache.get(projectId)
             .map(c -> c.assertedHierarchyOnly()
-                    ? snapshotBuilder.countTopLevelAsserted(c.ontology())
-                    : snapshotBuilder.countTopLevelCandidates(c.ontology(), c.reasoner()))
+                    ? snapshotBuilder.countTopLevelAsserted(c.ontology(), importsScope)
+                    : snapshotBuilder.countTopLevelCandidates(c.ontology(), c.reasoner(), importsScope))
             .orElse(0);
     }
 
     public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset) {
+        return children(projectId, parentIri, limit, offset, Imports.EXCLUDED);
+    }
+
+    public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset,
+                                               Imports importsScope) {
         return ontologyCache.get(projectId)
             .map(c -> {
                 OWLReasoner r = c.reasoner();
@@ -83,9 +97,26 @@ public class DesktopHierarchyService {
                     r = new org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory()
                             .createNonBufferingReasoner(c.ontology());
                 }
-                return snapshotBuilder.buildChildren(c.ontology(), r, parentIri, limit, offset);
+                return snapshotBuilder.buildChildren(c.ontology(), r, parentIri, limit, offset, importsScope);
             })
             .orElse(Collections.emptyList());
+    }
+
+    /**
+     * Batch annotation lookup: returns a map of classIri → annotation value for the given property.
+     * Used by the "Render by annotation property" feature.
+     */
+    public Map<String, String> batchAnnotations(String projectId, List<String> iris, String propertyIri) {
+        return ontologyCache.get(projectId)
+            .map(c -> {
+                Map<String, String> result = new LinkedHashMap<>();
+                for (String iri : iris) {
+                    String val = snapshotBuilder.getAnnotationValue(c.ontology(), iri, propertyIri);
+                    if (val != null) result.put(iri, val);
+                }
+                return result;
+            })
+            .orElse(Collections.emptyMap());
     }
 
     public Map<String, Object> classDetails(String projectId, String classIri) {

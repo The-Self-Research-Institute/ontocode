@@ -2393,6 +2393,43 @@ public class OntologyQueryService {
         return result;
     }
 
+    /**
+     * Batch annotation lookup: given a list of entity IRIs and a single annotation property IRI,
+     * returns a map of entityIri → first literal value. Uses a SPARQL VALUES clause for efficiency.
+     * Used by the "Render by annotation property" feature in the class hierarchy.
+     */
+    public Map<String, String> batchAnnotations(String projectId, List<String> iris, String propertyIri) {
+        if (iris == null || iris.isEmpty()) return Collections.emptyMap();
+        iris.forEach(this::safeIri);
+        safeIri(propertyIri);
+
+        StringBuilder values = new StringBuilder();
+        for (String iri : iris) values.append("<").append(iri).append("> ");
+
+        String query = PREFIXES + """
+            SELECT ?entity ?value WHERE {
+              VALUES ?entity { %s }
+              ?entity <%s> ?value .
+              FILTER(isLiteral(?value))
+            }
+            """.formatted(values, propertyIri);
+
+        Map<String, String> result = new LinkedHashMap<>();
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, query);
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                String entityIri = resource(sol, "entity");
+                if (entityIri != null && sol.hasBinding("value") && !result.containsKey(entityIri)) {
+                    result.put(entityIri, sol.getValue("value").stringValue());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[batchAnnotations] SPARQL error for project {}: {}", projectId, e.getMessage());
+        }
+        return result;
+    }
+
     public Map<String, Object> classDetails(String projectId, String classIri) {
         safeIri(classIri);
         long startTime = System.currentTimeMillis();

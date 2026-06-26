@@ -258,13 +258,18 @@ public class OntologyQueryController {
     @GetMapping("/classes/top-level/{projectId:.+}")
     public ResponseEntity<?> topLevel(@PathVariable String projectId,
                                       @RequestParam(defaultValue = "5000") int limit,
-                                      @RequestParam(defaultValue = "0") int offset) {
+                                      @RequestParam(defaultValue = "0") int offset,
+                                      @RequestParam(defaultValue = "active") String scope) {
+        org.semanticweb.owlapi.model.parameters.Imports importsScope =
+                "closure".equalsIgnoreCase(scope)
+                        ? org.semanticweb.owlapi.model.parameters.Imports.INCLUDED
+                        : org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
         try {
             // Desktop fast path: OWLAPI in-memory — skip when user has active draft overlay
             if (preferOwlApiPath(projectId)
                     && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
-                var classes = desktopHierarchyService.topLevelClasses(projectId, limit, offset);
-                int topLevelTotal = desktopHierarchyService.topLevelClassTotal(projectId);
+                var classes = desktopHierarchyService.topLevelClasses(projectId, limit, offset, importsScope);
+                int topLevelTotal = desktopHierarchyService.topLevelClassTotal(projectId, importsScope);
                 boolean truncated = (offset + classes.size()) < topLevelTotal;
                 if (offset == 0 && truncated) {
                     org.slf4j.LoggerFactory.getLogger(getClass()).warn(
@@ -389,11 +394,16 @@ public class OntologyQueryController {
     public ResponseEntity<?> children(@PathVariable String projectId,
                                       @RequestParam String parentIri,
                                       @RequestParam(defaultValue = "1000") int limit,
-                                      @RequestParam(defaultValue = "0") int offset) {
+                                      @RequestParam(defaultValue = "0") int offset,
+                                      @RequestParam(defaultValue = "active") String scope) {
+        org.semanticweb.owlapi.model.parameters.Imports importsScope =
+                "closure".equalsIgnoreCase(scope)
+                        ? org.semanticweb.owlapi.model.parameters.Imports.INCLUDED
+                        : org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
         // Desktop fast path — skip when draft overlay is active (reads must merge Fuseki drafts)
         if (preferOwlApiPath(projectId)
                 && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
-            return ResponseEntity.ok(desktopHierarchyService.children(projectId, parentIri, limit, offset));
+            return ResponseEntity.ok(desktopHierarchyService.children(projectId, parentIri, limit, offset, importsScope));
         }
         Optional<List<self.research.ontology.owlEditor.dto.OntologyDto.TreeNode>> snapChildren =
                 hierarchyIndexService.children(projectId, parentIri, limit, offset);
@@ -703,6 +713,49 @@ public class OntologyQueryController {
             classDetailCacheService.putAnnotationsIfAbsent(projectId, classIri, annotations);
         }
         return ResponseEntity.ok(Map.of("success", true, "data", annotations));
+    }
+
+    /**
+     * Batch annotation lookup for the "Render by annotation property" hierarchy display mode.
+     * Body: { "iris": ["iri1", ...], "propertyIri": "http://..." }
+     * Response: { "iri1": "value1", ... }  (only IRIs that have a value are included)
+     */
+    @PostMapping("/annotations/batch/{projectId:.+}")
+    public ResponseEntity<?> batchAnnotations(@PathVariable String projectId,
+                                              @org.springframework.web.bind.annotation.RequestBody
+                                              Map<String, Object> body) {
+        try {
+            @SuppressWarnings("unchecked")
+            List<String> iris = (List<String>) body.get("iris");
+            String propertyIri = (String) body.get("propertyIri");
+            if (propertyIri == null || propertyIri.isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "propertyIri is required"));
+            }
+            if (iris == null || iris.isEmpty()) {
+                return ResponseEntity.ok(Map.of());
+            }
+            // Guard against unbounded payloads; log if truncated
+            if (iris.size() > 5000) {
+                org.slf4j.LoggerFactory.getLogger(getClass()).warn("[batchAnnotations] IRI list truncated from {} to 5000 for project {}", iris.size(), projectId);
+                iris = iris.subList(0, 5000);
+            }
+            // Filter out blank or syntactically invalid IRIs before passing to backends
+            iris = iris.stream()
+                .filter(iri -> iri != null && !iri.isBlank() && (iri.startsWith("http") || iri.startsWith("urn")))
+                .collect(java.util.stream.Collectors.toList());
+            if (iris.isEmpty()) {
+                return ResponseEntity.ok(Map.of());
+            }
+            Map<String, String> result;
+            if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+                result = desktopHierarchyService.batchAnnotations(projectId, iris, propertyIri);
+            } else {
+                result = queryService.batchAnnotations(projectId, iris, propertyIri);
+            }
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
     }
 
     @GetMapping("/classes/instances/{projectId}")
