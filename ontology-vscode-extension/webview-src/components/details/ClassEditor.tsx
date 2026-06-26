@@ -23,13 +23,14 @@ interface UsageItem {
   context?: string;
 }
 
-const UsageTab: React.FC<{ 
-  classIri: string; 
+const UsageTab: React.FC<{
+  classIri: string;
   projectId: string;
   label: string;
 }> = ({ classIri, projectId, label }) => {
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
   const [usages, setUsages] = useState<UsageItem[]>([]);
   const [filter, setFilter] = useState('');
   const [showTypes, setShowTypes] = useState({
@@ -47,30 +48,44 @@ const UsageTab: React.FC<{
     annotation_on_class: true
   });
 
-  // Reset loaded state when class changes so the user must explicitly
-  // load usage for each class (this query is very expensive on large graphs).
+  // Reset state when class changes so the user must explicitly load usage
+  // for each class (this SPARQL query is expensive on large graphs).
   useEffect(() => {
     setLoaded(false);
+    setTimedOut(false);
     setUsages([]);
     setFilter('');
   }, [classIri, projectId]);
 
   const loadUsages = async () => {
     setLoading(true);
+    setTimedOut(false);
+    const controller = new AbortController();
+    const watchdog = setTimeout(() => {
+      controller.abort();
+      setLoading(false);
+      setTimedOut(true);
+    }, 30_000);
     try {
-      // Query for all usages of this class
-      const response = await apiClient.get<any>(`/api/ontology/classes/usage/${projectId}?classIri=${encodeURIComponent(classIri)}`);
-      // Backend returns {success: true, data: [...]}
-      // apiClient might wrap it in {data: {...}}
+      const response = await apiClient.get<any>(
+        `/api/ontology/classes/usage/${projectId}?classIri=${encodeURIComponent(classIri)}`,
+        undefined,
+        { signal: controller.signal },
+      );
       const usageData = response?.data?.data || response?.data || response || [];
       console.log('[UsageTab] Loaded usages:', usageData);
       setUsages(Array.isArray(usageData) ? usageData : []);
       setLoaded(true);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'AbortError' || controller.signal.aborted) {
+        // watchdog already set timedOut=true
+        return;
+      }
       console.error('Failed to load usage data:', error);
       setUsages([]);
       setLoaded(true);
     } finally {
+      clearTimeout(watchdog);
       setLoading(false);
     }
   };
@@ -98,16 +113,34 @@ const UsageTab: React.FC<{
   if (!loaded && !loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[200px] py-12 p-6 text-center">
-        <div className="text-sm text-gray-600 mb-3">
-          Usage lookup for <span className="font-semibold">{label}</span> can be slow on large ontologies.
-        </div>
-        <button
-          onClick={loadUsages}
-          data-testid="load-usage-btn"
-          className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700"
-        >
-          Load usage
-        </button>
+        {timedOut ? (
+          <>
+            <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 max-w-sm">
+              Usage query timed out — the server is under load. Wait a moment, then try again.
+            </div>
+            <button
+              onClick={loadUsages}
+              data-testid="load-usage-btn"
+              className="px-4 py-2 text-sm rounded bg-amber-600 text-white hover:bg-amber-700"
+            >
+              Retry
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="text-sm text-gray-600 mb-3">
+              Usage lookup for <span className="font-semibold">{label}</span> runs a full-graph
+              SPARQL scan — this can take 30–60 s on large ontologies.
+            </div>
+            <button
+              onClick={loadUsages}
+              data-testid="load-usage-btn"
+              className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700"
+            >
+              Load usage
+            </button>
+          </>
+        )}
       </div>
     );
   }
@@ -253,6 +286,7 @@ const ClassEditor: React.FC<{
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [loadingDetailsElapsed, setLoadingDetailsElapsed] = useState(0);
   const [axiomsLoaded, setAxiomsLoaded] = useState(false);
+  const [descriptionTimedOut, setDescriptionTimedOut] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
 
   // Manchester Syntax Editor State
@@ -271,6 +305,7 @@ const ClassEditor: React.FC<{
   const [editorSubjectClassIri, setEditorSubjectClassIri] = useState<string | undefined>();
   // Flat label→IRI lookup for resolving Manchester expressions (all classes, not just loaded tree)
   const [allClassesLookup, setAllClassesLookup] = useState<Map<string, string>>(new Map());
+  const allClassesLookupProjectRef = useRef<string | null>(null);
 
   // Properties for restriction creators - use props if available, otherwise local state
   const [properties, setProperties] = useState<any[]>(propObjectProperties || []);
@@ -392,9 +427,15 @@ const ClassEditor: React.FC<{
     setClassDetails(null);
     setClassInstances([]);
     setAxiomsLoaded(false);
+    setDescriptionTimedOut(false);
     setLoadingAnnotations(true);
     setLoadingDetails(false);
     setLoadingInstances(false);
+    // Clear the class lookup when the project changes so the editor dialog
+    // doesn't offer classes from the previous project.
+    if (allClassesLookupProjectRef.current !== projectId) {
+      setAllClassesLookup(new Map());
+    }
 
     // Watchdog: if backend hangs, clear all loading spinners after 30s.
     const watchdog = setTimeout(() => {
@@ -593,7 +634,8 @@ const ClassEditor: React.FC<{
   };
 
   const loadAllClassesLookup = async () => {
-    if (allClassesLookup.size > 0) return;
+    // Reuse the lookup only if it was loaded for this same project.
+    if (allClassesLookup.size > 0 && allClassesLookupProjectRef.current === projectId) return;
     try {
       const resp = await apiClient.get<any>(`/api/ontology/classes/all/${projectId}?limit=5000`);
       const classes: any[] = resp?.data?.classes ?? resp?.data ?? resp?.classes ?? (Array.isArray(resp) ? resp : []);
@@ -605,6 +647,7 @@ const ClassEditor: React.FC<{
         if (fragment && fragment !== c.id) lookup.set(fragment, c.id);
         lookup.set(c.id, c.id);
       }
+      allClassesLookupProjectRef.current = projectId;
       setAllClassesLookup(lookup);
     } catch (e) {
       console.warn("[ClassEditor] Failed to load all-classes lookup:", e);
@@ -773,14 +816,12 @@ const ClassEditor: React.FC<{
     descriptionAbortRef.current?.abort();
     const controller = new AbortController();
     descriptionAbortRef.current = controller;
+    setDescriptionTimedOut(false);
     const watchdog = setTimeout(() => {
       controller.abort();
       setLoadingDetails(false);
       setLoadingInstances(false);
-      notificationService.warning(
-        "Description load timed out",
-        "The server took too long. Try Asserted mode or a smaller ontology.",
-      );
+      setDescriptionTimedOut(true);
     }, isDesktop() ? 45_000 : 90_000);
     try {
       await Promise.all([loadClassDetails(controller.signal), loadInstances(controller.signal)]);
@@ -1275,7 +1316,7 @@ const ClassEditor: React.FC<{
 
       if (isRestriction && axiom?.propertyIri && axiom?.restrictionType && axiom?.fillerIri) {
         // Delete restriction - map type to axiomType parameter
-        const axiomType = type === "EquivalentTo" ? "EquivalentTo" : "SubClassOf";
+        const axiomType = type === "EquivalentTo" ? "EquivalentTo" : type === "DisjointWith" ? "DisjointWith" : "SubClassOf";
 
         // Check if it's a data property restriction
         const isDataProperty =
@@ -1985,7 +2026,11 @@ const ClassEditor: React.FC<{
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
-        {activeTab === "usage" && <UsageTab classIri={item.id} projectId={projectId} label={item.label} />}
+        {/* UsageTab is always mounted so its loaded/usages state survives tab switches.
+            Conditional rendering would unmount it on every switch, causing the button to reappear. */}
+        <div className={activeTab !== "usage" ? "hidden" : ""}>
+          <UsageTab classIri={item.id} projectId={projectId} label={item.label} />
+        </div>
 
         {activeTab === "annotations" && (
           <div className="space-y-0">
@@ -2021,21 +2066,40 @@ const ClassEditor: React.FC<{
 
             {!axiomsLoaded && !loadingDetails && (
               <div className="flex flex-col items-center justify-center min-h-[220px] py-10 px-6 text-center bg-white border border-t-0 border-gray-200 rounded-b-sm">
-                <p className="text-sm text-gray-600 mb-1">
-                  Full class description (SubClassOf, EquivalentTo, restrictions, instances)
-                  matches Protégé once loaded.
-                </p>
-                <p className="text-xs text-gray-500 mb-4">
-                  On large ontologies this can take up to a minute — annotations are already available in the other tab.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void loadDescription()}
-                  data-testid="load-description-btn"
-                  className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700 shadow-sm"
-                >
-                  Load description
-                </button>
+                {descriptionTimedOut ? (
+                  <>
+                    <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 max-w-sm">
+                      Description load timed out — the server is under load or the ontology is very large.
+                      Switch to <strong>Asserted</strong> mode for faster results, or try again.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void loadDescription()}
+                      data-testid="load-description-btn"
+                      className="px-4 py-2 text-sm rounded bg-amber-600 text-white hover:bg-amber-700 shadow-sm"
+                    >
+                      Retry
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-600 mb-1">
+                      Full class description (SubClassOf, EquivalentTo, restrictions, instances)
+                      matches Protégé once loaded.
+                    </p>
+                    <p className="text-xs text-gray-500 mb-4">
+                      On large ontologies this can take up to a minute — annotations are already available in the other tab.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void loadDescription()}
+                      data-testid="load-description-btn"
+                      className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700 shadow-sm"
+                    >
+                      Load description
+                    </button>
+                  </>
+                )}
               </div>
             )}
 
@@ -2280,7 +2344,7 @@ const ClassEditor: React.FC<{
           setEditorAllowedTabs(undefined);
         }}
         onConfirm={handleEditorConfirm}
-        axiomType={editorType === 'EquivalentTo' ? 'EquivalentTo' : 'SubClassOf'}
+        axiomType={editorType === 'EquivalentTo' ? 'EquivalentTo' : editorType === 'DisjointWith' ? 'DisjointWith' : 'SubClassOf'}
         title={editorTitle}
         initialValue={editorExistingValue}
         initialClassIri={editorInitialClassIri}
