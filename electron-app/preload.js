@@ -219,6 +219,60 @@ function schedulePoller(projectId) {
 // encrypted token storage which are superior to the browser fallbacks.
 window.__ONTOCODE_BROWSER_BRIDGE__ = true;
 
+// ── Zotero paging state ───────────────────────────────────────────────────────
+// Mirrors extension.ts _zoteroPaging — tracks pagination across requestZoteroLibrary
+// and requestZoteroLibraryMore calls.
+let _zoteroPaging = null;
+let _zoteroLibrarySessionSeq = 0;
+
+async function _fetchZoteroPage(start, pageSize, searchQuery) {
+    const apiKey = localStorage.getItem('zoteroApiKey');
+    const userId = localStorage.getItem('zoteroUserId');
+    if (!apiKey || !userId) throw new Error('Zotero not configured. Please add your API key in Settings.');
+
+    const libraryType = localStorage.getItem('zoteroLibraryType') || 'user';
+    const groupId = localStorage.getItem('zoteroGroupId');
+    const libraryPath = libraryType === 'group' && groupId
+        ? `groups/${encodeURIComponent(groupId)}`
+        : `users/${encodeURIComponent(userId)}`;
+
+    const u = new URL(`https://api.zotero.org/${libraryPath}/items`);
+    u.searchParams.set('limit', String(pageSize));
+    u.searchParams.set('start', String(start));
+    u.searchParams.set('format', 'json');
+    u.searchParams.set('include', 'data');
+    u.searchParams.set('itemType', '-attachment');
+    if (searchQuery) u.searchParams.set('q', searchQuery);
+
+    const resp = await fetch(u.toString(), {
+        headers: { 'Zotero-API-Key': apiKey, 'Zotero-API-Version': '3' },
+    });
+    if (!resp.ok) {
+        if (resp.status === 403) throw new Error('Invalid Zotero API key');
+        if (resp.status === 404) throw new Error('Zotero user/group not found');
+        throw new Error(`Zotero API error: ${resp.status}`);
+    }
+    const totalResults = parseInt(resp.headers.get('Total-Results') || '0', 10);
+    const rawItems = await resp.json();
+    const items = rawItems.map(item => ({
+        key: item.key,
+        title: item.data?.title || '',
+        creators: item.data?.creators || [],
+        date: item.data?.date || '',
+        doi: item.data?.DOI,
+        url: item.data?.url,
+        itemType: item.data?.itemType || '',
+        abstractNote: item.data?.abstractNote,
+        publicationTitle: item.data?.publicationTitle,
+        volume: item.data?.volume,
+        issue: item.data?.issue,
+        pages: item.data?.pages,
+        publisher: item.data?.publisher,
+        tags: item.data?.tags,
+    }));
+    return { items, totalResults };
+}
+
 // ── window.vscode bridge ─────────────────────────────────────────────────────
 contextBridge.exposeInMainWorld('vscode', {
     postMessage: async (message) => {
@@ -331,10 +385,32 @@ contextBridge.exposeInMainWorld('vscode', {
             }
 
             case 'downloadOntology':
-            case 'downloadCurrentOntology':
-                // Handled by React app via apiClient (IS_WEB_EXTENSION is true)
-                console.log('[Preload] Download message – handled by React browser-mode:', message.type);
+            case 'downloadCurrentOntology': {
+                (async () => {
+                    try {
+                        const t = await getAuthToken();
+                        const headers = {};
+                        if (t) headers['Authorization'] = `Bearer ${t}`;
+                        const res = await fetch(message.url, { headers });
+                        if (!res.ok) throw new Error(`Export failed: HTTP ${res.status}`);
+                        const blob = await res.blob();
+                        const blobUrl = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = blobUrl;
+                        a.download = message.filename || 'ontology.owl';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(blobUrl);
+                    } catch (err) {
+                        console.error('[Preload] downloadOntology failed:', err);
+                        window.dispatchEvent(new MessageEvent('message', {
+                            data: { type: 'notification', level: 'error', message: 'Export failed: ' + (err.message || 'Unknown error') }
+                        }));
+                    }
+                })();
                 break;
+            }
 
             case 'uploadOntology':
             case 'uploadFileToProject':
@@ -349,12 +425,86 @@ contextBridge.exposeInMainWorld('vscode', {
                 // Collaboration cursor — no-op in standalone desktop
                 break;
 
-            case 'requestZoteroLibrary':
+            case 'requestZoteroLibrary': {
+                const searchQuery = (message.searchQuery || '').trim() || undefined;
+                const sid = ++_zoteroLibrarySessionSeq;
+                const PAGE_SIZE = 100;
+                _zoteroPaging = { start: 0, totalResults: Infinity, pageSize: PAGE_SIZE, loading: true, done: false, sessionId: sid, searchQuery };
+                (async () => {
+                    try {
+                        const { items, totalResults } = await _fetchZoteroPage(0, PAGE_SIZE, searchQuery);
+                        _zoteroPaging.totalResults = totalResults;
+                        _zoteroPaging.start = items.length;
+                        _zoteroPaging.loading = false;
+                        _zoteroPaging.done = items.length === 0 || _zoteroPaging.start >= totalResults;
+                        const knownTotal = Number.isFinite(totalResults) && totalResults >= 0 ? Math.floor(totalResults) : undefined;
+                        window.dispatchEvent(new MessageEvent('message', { data: {
+                            type: 'zoteroLibraryData',
+                            items,
+                            hasMore: !_zoteroPaging.done,
+                            librarySessionId: sid,
+                            ...(knownTotal !== undefined ? { totalResults: knownTotal, loadedSoFar: _zoteroPaging.start } : {}),
+                        }}));
+                        if (_zoteroPaging.done) {
+                            window.dispatchEvent(new MessageEvent('message', { data: { type: 'zoteroLibraryDataComplete', librarySessionId: sid } }));
+                        }
+                    } catch (err) {
+                        console.error('[Preload] requestZoteroLibrary failed:', err);
+                        window.dispatchEvent(new MessageEvent('message', { data: {
+                            type: 'zoteroLibraryError',
+                            error: err.message || 'Failed to load Zotero library',
+                            librarySessionId: sid,
+                        }}));
+                    }
+                })();
+                break;
+            }
+
+            case 'requestZoteroLibraryMore': {
+                if (!_zoteroPaging) break;
+                if (_zoteroPaging.done || _zoteroPaging.loading) break;
+                _zoteroPaging.loading = true;
+                const { start: moreStart, pageSize: morePageSize, searchQuery: moreSQ, sessionId: moreSid } = _zoteroPaging;
+                (async () => {
+                    try {
+                        const { items, totalResults } = await _fetchZoteroPage(moreStart, morePageSize, moreSQ);
+                        if (Number.isFinite(totalResults) && totalResults > 0) _zoteroPaging.totalResults = totalResults;
+                        const got = items.length;
+                        _zoteroPaging.start = moreStart + got;
+                        _zoteroPaging.loading = false;
+                        const done = got === 0 || _zoteroPaging.start >= _zoteroPaging.totalResults || got < morePageSize;
+                        _zoteroPaging.done = done;
+                        if (got > 0) {
+                            const knownTotal = Number.isFinite(_zoteroPaging.totalResults) && _zoteroPaging.totalResults < Number.MAX_SAFE_INTEGER ? Math.floor(_zoteroPaging.totalResults) : undefined;
+                            window.dispatchEvent(new MessageEvent('message', { data: {
+                                type: 'zoteroLibraryDataAppend',
+                                items,
+                                hasMore: !done,
+                                librarySessionId: moreSid,
+                                ...(knownTotal !== undefined ? { totalResults: knownTotal, loadedSoFar: _zoteroPaging.start } : {}),
+                            }}));
+                        }
+                        if (done) {
+                            window.dispatchEvent(new MessageEvent('message', { data: { type: 'zoteroLibraryDataComplete', librarySessionId: moreSid } }));
+                        }
+                    } catch (err) {
+                        if (_zoteroPaging) _zoteroPaging.loading = false;
+                        console.error('[Preload] requestZoteroLibraryMore failed:', err);
+                        window.dispatchEvent(new MessageEvent('message', { data: {
+                            type: 'zoteroLibraryError',
+                            error: err.message || 'Failed to load more Zotero items',
+                            librarySessionId: moreSid,
+                        }}));
+                    }
+                })();
+                break;
+            }
+
             case 'insertCitation':
             case 'insertManualCitation':
             case 'insertCitationToGraphDB':
             case 'removeCitationFromGraphDB':
-                // Citation operations — handled by React app via apiClient
+                // Handled by React app via apiClient
                 console.log('[Preload] Citation message – handled by React browser-mode:', message.type);
                 break;
 

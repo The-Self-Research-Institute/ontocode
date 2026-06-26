@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Search } from 'lucide-react';
+import { Plus, Trash2, Loader2, Search } from 'lucide-react';
 import { Panel, AnnotationsDisplay, CollaboratorPresenceBar } from './common';
 import { DatatypeDefinitionDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
@@ -121,6 +121,7 @@ const DescriptionTab: React.FC<{
   const [definitions, setDefinitions] = useState<DatatypeDefinition[]>([]);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isLoadingDefinitions, setIsLoadingDefinitions] = useState(false);
+  const [deletingDefId, setDeletingDefId] = useState<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -191,11 +192,14 @@ const DescriptionTab: React.FC<{
   };
 
   const handleDeleteDefinition = async (id: string) => {
+    setDeletingDefId(id);
     try {
       await datatypeDefinitionService.deleteDefinition(projectId, id);
       setDefinitions(prev => prev.filter(d => d.id !== id));
     } catch (error) {
       console.error('Failed to delete datatype definition:', error);
+    } finally {
+      setDeletingDefId(null);
     }
   };
 
@@ -227,7 +231,7 @@ const DescriptionTab: React.FC<{
             </div>
           ) : (
             definitions.map(def => (
-              <div key={def.id} className="flex items-center justify-between p-2 bg-white border border-gray-200 rounded text-xs hover:bg-gray-50">
+              <div key={def.id} className={`flex items-center justify-between p-2 bg-white border border-gray-200 rounded text-xs hover:bg-gray-50 transition-opacity duration-300 ${deletingDefId === def.id ? 'opacity-40' : ''}`}>
                 <div className="flex-1">
                   <div className="font-mono text-gray-800">{def.expression}</div>
                   <div className="text-[10px] text-gray-500 mt-1">{def.definitionType}</div>
@@ -236,8 +240,9 @@ const DescriptionTab: React.FC<{
                   onClick={() => handleDeleteDefinition(def.id)}
                   className="p-1 rounded hover:bg-red-100 text-red-600 transition-colors ml-2"
                   title="Delete definition"
+                  disabled={deletingDefId === def.id}
                 >
-                  <Trash2 size={12} />
+                  {deletingDefId === def.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                 </button>
               </div>
             ))

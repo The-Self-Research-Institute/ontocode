@@ -157,6 +157,8 @@ const IndividualEditor: React.FC<{
   const [sameDiffDialog, setSameDiffDialog] = useState<null | { mode: 'same' | 'different'; editingIri?: string }>(null);
   const [allIndividuals, setAllIndividuals] = useState<Individual[]>([]);
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<Set<string>>(new Set());
+  const [deletingTypeIri, setDeletingTypeIri] = useState<string | null>(null);
   const [inferredTypes, setInferredTypes] = useState<Array<{ iri: string; label: string }>>([]);
 
   const loadIndividualDetails = async () => {
@@ -416,6 +418,7 @@ const IndividualEditor: React.FC<{
   };
 
   const handleDeleteAssertion = async (assertion: PropertyAssertion) => {
+    setDeletingId(prev => new Set(prev).add(assertion.id));
     try {
       // Call mutation service to persist deletion
       if (assertion.isNegative) {
@@ -447,6 +450,8 @@ const IndividualEditor: React.FC<{
     } catch (error) {
       console.error('Failed to delete property assertion:', error);
       notificationService.error("Delete Failed", "Failed to delete property assertion. See console for details.");
+    } finally {
+      setDeletingId(prev => { const next = new Set(prev); next.delete(assertion.id); return next; });
     }
   };
 
@@ -553,25 +558,29 @@ const IndividualEditor: React.FC<{
               </div>
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm p-1.5 space-y-1">
                 {item.types?.map(type => (
-                    <div key={type} className="group text-xs p-1 bg-gray-50 rounded border border-gray-100 flex items-center justify-between gap-2">
+                    <div key={type} className={`group text-xs p-1 bg-gray-50 rounded border border-gray-100 flex items-center justify-between gap-2 transition-opacity duration-300 ${deletingTypeIri === type ? 'opacity-40' : ''}`}>
                         <div className="flex items-center gap-2 min-w-0">
                           <div className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
                           <span className="truncate">{type.split('#').pop()?.split('/').pop()}</span>
                         </div>
                         <button
                           onClick={isViewOnly ? () => onViewOnlyAction?.() : async () => {
+                            setDeletingTypeIri(type);
                             try {
                               await ontologyMutationService.removeClassAssertion(projectId, item.id, type);
                               await loadIndividualDetails();
                             } catch (error) {
                               console.error('[IndividualEditor] Failed to remove type:', error);
                               notificationService.error('Remove Failed', 'Failed to remove type assertion.');
+                            } finally {
+                              setDeletingTypeIri(null);
                             }
                           }}
                           className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200 flex-shrink-0"
                           title={isViewOnly ? 'View-only: upgrade to edit' : 'Remove type'}
+                          disabled={deletingTypeIri === type}
                         >
-                          <Trash2 size={12} className="text-red-600" />
+                          {deletingTypeIri === type ? <Loader2 size={12} className="text-red-600 animate-spin" /> : <Trash2 size={12} className="text-red-600" />}
                         </button>
                     </div>
                 ))}
@@ -613,14 +622,14 @@ const IndividualEditor: React.FC<{
                     ) : (
                       <>
                         {positiveObjectPropertyAssertions.map(assertion => (
-                          <div key={assertion.id} className="group flex items-center justify-between text-xs bg-blue-50 p-1.5 rounded-sm border border-blue-100">
+                          <div key={assertion.id} className={`group flex items-center justify-between text-xs bg-blue-50 p-1.5 rounded-sm border border-blue-100 transition-opacity duration-300 ${deletingId.has(assertion.id) ? 'opacity-40' : ''}`}>
                               <div>
                                   <span className="font-semibold text-blue-700">{assertion.propertyLabel}</span>
                                   <span className="mx-1.5 text-gray-400">→</span>
                                   <span className="text-blue-600">{assertion.targetLabel || assertion.targetIri?.split('#').pop()}</span>
                               </div>
-                              <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
-                                  <Trash2 size={12} className="text-red-600"/>
+                              <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200" disabled={deletingId.has(assertion.id)}>
+                                  {deletingId.has(assertion.id) ? <Loader2 size={12} className="text-red-600 animate-spin" /> : <Trash2 size={12} className="text-red-600"/>}
                               </button>
                           </div>
                         ))}
@@ -661,14 +670,14 @@ const IndividualEditor: React.FC<{
                     ) : (
                       <>
                         {positiveDataPropertyAssertions.map(assertion => (
-                          <div key={assertion.id} className="group flex items-center justify-between text-xs bg-green-50 p-1.5 rounded-sm border border-green-100">
+                          <div key={assertion.id} className={`group flex items-center justify-between text-xs bg-green-50 p-1.5 rounded-sm border border-green-100 transition-opacity duration-300 ${deletingId.has(assertion.id) ? 'opacity-40' : ''}`}>
                               <div>
                                   <span className="font-semibold text-green-700">{assertion.propertyLabel}</span>
                                   <span className="mx-1.5 text-gray-400">=</span>
                                   <span className="text-green-600">{assertion.targetLiteral}</span>
                               </div>
-                              <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
-                                  <Trash2 size={12} className="text-red-600"/>
+                              <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200" disabled={deletingId.has(assertion.id)}>
+                                  {deletingId.has(assertion.id) ? <Loader2 size={12} className="text-red-600 animate-spin" /> : <Trash2 size={12} className="text-red-600"/>}
                               </button>
                           </div>
                         ))}
@@ -702,7 +711,7 @@ const IndividualEditor: React.FC<{
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
                 <div className="p-1.5 space-y-1">
                   {negativeObjectPropertyAssertions.map(assertion => (
-                    <div key={assertion.id} className="group flex items-center justify-between text-xs bg-red-50 p-1.5 rounded-sm border border-red-100">
+                    <div key={assertion.id} className={`group flex items-center justify-between text-xs bg-red-50 p-1.5 rounded-sm border border-red-100 transition-opacity duration-300 ${deletingId.has(assertion.id) ? 'opacity-40' : ''}`}>
                       <div>
                         <span className="font-semibold text-red-700">NOT</span>
                         <span className="mx-2 text-gray-400" />
@@ -710,8 +719,8 @@ const IndividualEditor: React.FC<{
                         <span className="mx-1.5 text-gray-400">→</span>
                         <span className="text-red-600">{assertion.targetLabel || assertion.targetIri?.split('#').pop()}</span>
                       </div>
-                      <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
-                        <Trash2 size={12} className="text-red-600" />
+                      <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200" disabled={deletingId.has(assertion.id)}>
+                        {deletingId.has(assertion.id) ? <Loader2 size={12} className="text-red-600 animate-spin" /> : <Trash2 size={12} className="text-red-600" />}
                       </button>
                     </div>
                   ))}
@@ -733,7 +742,7 @@ const IndividualEditor: React.FC<{
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
                 <div className="p-1.5 space-y-1">
                   {negativeDataPropertyAssertions.map(assertion => (
-                    <div key={assertion.id} className="group flex items-center justify-between text-xs bg-red-50 p-1.5 rounded-sm border border-red-100">
+                    <div key={assertion.id} className={`group flex items-center justify-between text-xs bg-red-50 p-1.5 rounded-sm border border-red-100 transition-opacity duration-300 ${deletingId.has(assertion.id) ? 'opacity-40' : ''}`}>
                       <div>
                         <span className="font-semibold text-red-700">NOT</span>
                         <span className="mx-2 text-gray-400" />
@@ -741,8 +750,8 @@ const IndividualEditor: React.FC<{
                         <span className="mx-1.5 text-gray-400">=</span>
                         <span className="text-red-600">{assertion.targetLiteral}</span>
                       </div>
-                      <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
-                        <Trash2 size={12} className="text-red-600" />
+                      <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200" disabled={deletingId.has(assertion.id)}>
+                        {deletingId.has(assertion.id) ? <Loader2 size={12} className="text-red-600 animate-spin" /> : <Trash2 size={12} className="text-red-600" />}
                       </button>
                     </div>
                   ))}
