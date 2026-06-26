@@ -8885,8 +8885,27 @@ const Dashboard: React.FC<DashboardProps> = ({
             } else {
               delete remainingAnnotations[key];
             }
-            const updatedItem = { ...selectedItem, annotations: remainingAnnotations };
+            // If the deleted annotation was rdfs:label, sync the display label too
+            let updatedLabel = selectedItem.label;
+            if (key === "http://www.w3.org/2000/01/rdf-schema#label") {
+              const remaining = remainingAnnotations[key];
+              updatedLabel = Array.isArray(remaining) && remaining.length > 0
+                ? remaining[0]
+                : typeof remaining === "string"
+                  ? remaining
+                  : selectedItem.id.split(/[#/]/).pop() ?? selectedItem.id;
+            }
+            const updatedItem = { ...selectedItem, label: updatedLabel, annotations: remainingAnnotations };
             updateItemInState(updatedItem);
+            // Sync annotation-mode display cache for the renamed node
+            if (key === hierarchyAnnotationPropIri) {
+              setHierarchyAnnotationValues((prev) => {
+                const next = new Map(prev);
+                next.delete(selectedItem.id);
+                return next;
+              });
+              fetchedAnnotationIrisRef.current.delete(selectedItem.id);
+            }
             markAsUnsaved();
             showNotification("Annotation deleted successfully!", "info");
           } catch (error) {
@@ -8896,7 +8915,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         },
       });
     },
-    [selectedItem, updateItemInState, projectId],
+    [selectedItem, updateItemInState, projectId, hierarchyAnnotationPropIri],
   );
 
   // Function to refresh only properties (not classes) to avoid closing dialogs
@@ -10049,19 +10068,18 @@ const Dashboard: React.FC<DashboardProps> = ({
           );
 
           showNotification(`Successfully made ${classIds.length} classes pairwise disjoint.`, "info");
+          console.log(`[MUTATION:disjoint] ✓ ${classIds.length} classes — refreshing hierarchy`);
 
-          // Optionally refresh the selected item to show updated axioms
-          if (activeSelectedItem) {
-            const updated = { ...activeSelectedItem, disjointClassesAxioms: [] };
-            updateItemInState(updated);
-          }
+          // Re-fetch the class hierarchy so all sibling nodes reflect the new disjoint axioms
+          lastClassHierarchyRefreshAt.current = 0;
+          refreshClassHierarchy();
         } catch (error) {
           console.error("Failed to make siblings disjoint:", error);
           showNotification("Failed to make siblings disjoint. See console for details.", "error");
         }
       },
     });
-  }, [projectId, mainTab, selectedItem, selectedClassForIndividuals, entitiesTab, classHierarchy, updateItemInState, showNotification, user]);
+  }, [projectId, mainTab, selectedItem, selectedClassForIndividuals, entitiesTab, classHierarchy, updateItemInState, showNotification, user, refreshClassHierarchy]);
 
   const handleDeleteItem = useCallback(
     async (itemOverride?: SelectableItem, tabOverride?: typeof entitiesTab) => {
@@ -10161,6 +10179,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                       node.children ? { ...node, children: removeNodeRecursively(node.children, id) } : node,
                     );
                 setClassHierarchy((prev) => removeNodeRecursively(prev, item.id));
+                // Remove individuals whose only type was the deleted class
+                setIndividuals((prev) => prev.filter((ind) => !(ind as any).types?.includes(item.id)));
+                // Evict deleted class from annotation cache
+                setHierarchyAnnotationValues((prev) => { const m = new Map(prev); m.delete(item.id); return m; });
+                fetchedAnnotationIrisRef.current.delete(item.id);
                 break;
               }
               case "Individuals":
@@ -10209,6 +10232,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 prev ? { ...prev, [countField]: Math.max(0, ((prev as any)[countField] || 0) - 1) } : prev,
               );
             }
+            console.log(`[MUTATION:delete] ✓ ${activeTab}:${item.id}`);
             showNotification(`"${item.label}" deleted successfully!`, "info");
           } catch (error) {
             console.error("Failed to delete item:", error);
@@ -10270,8 +10294,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           );
         } catch (classError) {
           // If class update fails, try annotation-based update (for other entity types)
-          // Note: We need to get the current label - we'll use selectedItem if it matches
-          const currentLabel = selectedItem?.id === itemId ? selectedItem.label : "Unknown";
+          const currentLabel = selectedItem?.id === itemId
+            ? selectedItem.label
+            : itemId.split(/[#/]/).pop() ?? itemId;
           await ontologyMutationService.deleteAnnotation(
             projectId,
             itemId,
@@ -10296,14 +10321,22 @@ const Dashboard: React.FC<DashboardProps> = ({
           label: newLabel,
         } as SelectableItem;
         updateItemInState(updatedItem);
-
+        // Sync annotation-mode display cache if showing rdfs:label
+        if (hierarchyAnnotationPropIri === "http://www.w3.org/2000/01/rdf-schema#label") {
+          setHierarchyAnnotationValues((prev) => {
+            const next = new Map(prev);
+            next.set(itemId, newLabel);
+            return next;
+          });
+        }
+        console.log(`[MUTATION:rename] ✓ ${itemId} → "${newLabel}", annotProp cache updated:`, hierarchyAnnotationPropIri === "http://www.w3.org/2000/01/rdf-schema#label");
         showNotification(`Renamed to "${newLabel}"`, "info");
       } catch (error) {
         console.error("Failed to rename item:", error);
         showNotification("Failed to rename item. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, updateItemInState],
+    [projectId, selectedItem, updateItemInState, hierarchyAnnotationPropIri],
   );
 
   const handleMoveClass = useCallback(
@@ -10911,13 +10944,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         if (response.success) {
-          console.log("[Dashboard] Code view content saved successfully, synced:", synced);
+          console.log(`[MUTATION:code-save] ✓ synced=${synced} — ${synced ? "refreshing hierarchy+properties" : "cache-only, no refresh"}`);
           notificationService.success(
             "Saved",
             synced ? "Code content saved and synced across all formats" : "Code content saved",
           );
           setHasLocalCodeViewChanges(false);
           setCodeViewSyntaxError(null);
+          // The ontology file was rewritten — reload all entity views to reflect the new state
+          if (synced) {
+            lastClassHierarchyRefreshAt.current = 0;
+            refreshClassHierarchy();
+            refreshProperties();
+          }
         } else {
           const errMsg = response.error || "Failed to save content";
           console.error("[Dashboard] Save failed:", errMsg);
@@ -10932,7 +10971,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         notificationService.error("Save Failed", errMsg);
       }
     },
-    [projectId, codeViewFormat, isViewOnlyMember, setShowProPromptType],
+    [projectId, codeViewFormat, isViewOnlyMember, setShowProPromptType, refreshClassHierarchy, refreshProperties],
   );
 
   // Handle insertion at selected location in code view
