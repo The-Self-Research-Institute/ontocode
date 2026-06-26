@@ -2401,7 +2401,7 @@ public class OntologyQueryService {
      */
     public Map<String, String> batchAnnotations(String projectId, List<String> iris, String propertyIri) {
         if (iris == null || iris.isEmpty()) return Collections.emptyMap();
-        iris.forEach(this::safeIri);
+        iris.forEach(OntologyQueryService::safeIri);
         safeIri(propertyIri);
 
         StringBuilder values = new StringBuilder();
