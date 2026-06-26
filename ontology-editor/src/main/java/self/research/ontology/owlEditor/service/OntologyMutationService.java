@@ -1256,7 +1256,6 @@ public class OntologyMutationService {
               ?restriction owl:onProperty <%s> .
               ?restriction %s <%s> .
               ?restriction ?p ?o .
-              FILTER(isBlank(?restriction))
             }
             """.formatted(classIri, axiomPredicate, classIri, axiomPredicate, propertyIri, fillerPredicate, fillerIri);
         
