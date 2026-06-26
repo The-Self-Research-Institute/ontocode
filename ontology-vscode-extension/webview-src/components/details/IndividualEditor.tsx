@@ -341,7 +341,7 @@ const IndividualEditor: React.FC<{
           id: `assertion-${Date.now()}`,
           propertyIri: propertyIri,
           propertyLabel: newAssertion.propertyLabel,
-          [newAssertion.isObjectProperty ? 'targetIri' : 'targetLiteral']: newAssertion.isObjectProperty ? targetIri : `"${newAssertion.targetLabel}"`,
+          [newAssertion.isObjectProperty ? 'targetIri' : 'targetLiteral']: newAssertion.isObjectProperty ? targetIri : newAssertion.targetLabel,
           [newAssertion.isObjectProperty ? 'targetLabel' : '']: newAssertion.targetLabel,
           isObjectProperty: newAssertion.isObjectProperty,
           isNegative: isNegativeAssertion,
@@ -423,7 +423,7 @@ const IndividualEditor: React.FC<{
           await ontologyMutationService.deleteNegativeObjectPropertyAssertion(
             projectId, item.id, assertion.propertyIri, assertion.targetIri, userId, username
           );
-        } else if (assertion.targetLiteral) {
+        } else if (assertion.targetLiteral != null) {
           const literalValue = assertion.targetLiteral.replace(/^"|"$/g, '');
           await ontologyMutationService.deleteNegativeDataPropertyAssertion(
             projectId, item.id, assertion.propertyIri, literalValue, userId, username
@@ -434,8 +434,7 @@ const IndividualEditor: React.FC<{
           await ontologyMutationService.deleteObjectPropertyAssertion(
             projectId, item.id, assertion.propertyIri, assertion.targetIri, userId, username
           );
-        } else if (assertion.targetLiteral) {
-          // Remove quotes from literal value if present
+        } else if (assertion.targetLiteral != null) {
           const literalValue = assertion.targetLiteral.replace(/^"|"$/g, '');
           await ontologyMutationService.deleteDataPropertyAssertion(
             projectId, item.id, assertion.propertyIri, literalValue, userId, username
