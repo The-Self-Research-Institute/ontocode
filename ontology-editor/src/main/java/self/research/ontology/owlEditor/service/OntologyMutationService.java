@@ -166,8 +166,11 @@ public class OntologyMutationService {
             log.info("[MUTATION] SPARQL update completed in {}ms for project={}", sparqlDuration, projectId);
 
             // OWLAPI patch/evict + Spring cache eviction handled in execUpdate → mutationCoordinator
-
-            topLevelCacheService.evict(projectId);
+            // MongoDB L2 cache (topLevelCacheService) only evicted for public mutations;
+            // draft mutations leave the public graph unchanged so L2 stays valid.
+            if (!draft) {
+                topLevelCacheService.evict(projectId);
+            }
             if (hierarchyIndexService != null) {
                 hierarchyIndexService.markStale(projectId);
             }
