@@ -460,11 +460,11 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
             if (res.status === 401 || res.status === 403) throw new Error('Your session has expired. Please sign in again.');
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data?.error ?? 'Failed to switch billing interval.');
-            if (data.immediate === false && data.effectiveDate) {
-                const renewalDate = formatBillingDate(data.effectiveDate);
-                setIntervalSwitchSuccess(`Switched to monthly. Takes effect on ${renewalDate} — your current annual period runs until then.`);
+            const nextDate = data.effectiveDate ? formatBillingDate(data.effectiveDate) : '';
+            if (interval === 'monthly') {
+                setIntervalSwitchSuccess(`Switched to monthly billing. Next charge on ${nextDate}.`);
             } else {
-                setIntervalSwitchSuccess('Switched to annual billing. Your account has been charged for the difference.');
+                setIntervalSwitchSuccess(`Switched to annual billing. Next renewal on ${nextDate}.`);
             }
             await loadBillingSummary();
         } catch (err: any) {
@@ -711,8 +711,8 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                         </p>
                                         <p className="text-sm text-slate-400 mt-1 text-balance">
                                             {interval === 'annual'
-                                                ? `Takes effect at renewal on ${renewalDateLabel}. No charge now.`
-                                                : 'Billed annually. You\'ll be charged the difference for the remaining period.'}
+                                                ? 'Switch to monthly with no charge now. Next bill is one month from today.'
+                                                : 'Switch to annual and save 20%. You\'ll be charged the annual price difference today.'}
                                         </p>
                                         {intervalSwitchSuccess && (
                                             <p className="text-xs text-green-400 mt-2">{intervalSwitchSuccess}</p>
