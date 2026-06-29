@@ -39,6 +39,10 @@ public class RateLimitingFilter extends OncePerRequestFilter {
     private static final int AUTH_CAPACITY = 10;
     private static final Duration AUTH_REFILL_DURATION = Duration.ofMinutes(1);
 
+    // Billing mutation endpoints — financial operations, per-user stricter limit
+    private static final int BILLING_CAPACITY = 15;
+    private static final Duration BILLING_REFILL_DURATION = Duration.ofMinutes(1);
+
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         return request.getRequestURI().startsWith("/actuator/");
@@ -61,6 +65,8 @@ public class RateLimitingFilter extends OncePerRequestFilter {
         Bucket bucket;
         if (isAuthEndpoint(requestUri)) {
             bucket = buckets.computeIfAbsent(clientIp + ":auth", k -> createAuthBucket());
+        } else if (isBillingMutationEndpoint(request)) {
+            bucket = buckets.computeIfAbsent(clientIp + ":billing", k -> createBillingBucket());
         } else {
             bucket = buckets.computeIfAbsent(clientIp, k -> createBucket());
         }
@@ -103,20 +109,68 @@ public class RateLimitingFilter extends OncePerRequestFilter {
      * Check if the endpoint is an authentication endpoint
      */
     private boolean isAuthEndpoint(String uri) {
-        return uri.contains("/auth/login") || 
-               uri.contains("/auth/register") || 
+        return uri.contains("/auth/login") ||
+               uri.contains("/auth/register") ||
                uri.contains("/auth/forgot-password") ||
                uri.contains("/auth/reset-password");
     }
 
     /**
-     * Get client IP address, considering proxy headers
+     * Billing mutation endpoints — financial operations warrant a tighter per-IP limit
+     * than the general API bucket (15/min vs 100/min).
+     */
+    private boolean isBillingMutationEndpoint(HttpServletRequest request) {
+        if (!"POST".equalsIgnoreCase(request.getMethod())) return false;
+        String uri = request.getRequestURI();
+        return uri.startsWith("/api/billing/") && !uri.equals("/api/billing/webhook");
+    }
+
+    /**
+     * Create bucket for billing mutation endpoints
+     */
+    private Bucket createBillingBucket() {
+        Bandwidth limit = Bandwidth.classic(BILLING_CAPACITY, Refill.intervally(BILLING_CAPACITY, BILLING_REFILL_DURATION));
+        return Bucket.builder()
+                .addLimit(limit)
+                .build();
+    }
+
+    /**
+     * Get client IP address from the request.
+     * Uses X-Forwarded-For only when the direct connection comes from a known private/loopback
+     * address (i.e. a trusted reverse proxy). Taking the raw first XFF value is spoofable —
+     * an attacker can set "X-Forwarded-For: 1.2.3.4" to bypass per-IP rate limiting.
      */
     private String getClientIP(HttpServletRequest request) {
+        String remoteAddr = request.getRemoteAddr();
         String xfHeader = request.getHeader("X-Forwarded-For");
-        if (xfHeader == null) {
-            return request.getRemoteAddr();
+        if (xfHeader == null || xfHeader.isBlank()) {
+            return remoteAddr;
         }
-        return xfHeader.split(",")[0].trim();
+        // Only trust the XFF header when the TCP connection is from a private/loopback address
+        // (meaning a legitimate reverse proxy is in front, not the public internet).
+        if (isTrustedProxy(remoteAddr)) {
+            // Take the last entry added by our trusted proxy — not the user-controlled first entry.
+            String[] parts = xfHeader.split(",");
+            return parts[parts.length - 1].trim();
+        }
+        return remoteAddr;
+    }
+
+    private boolean isTrustedProxy(String addr) {
+        return addr != null && (
+                addr.startsWith("10.")         ||
+                addr.startsWith("172.16.")     || addr.startsWith("172.17.") ||
+                addr.startsWith("172.18.")     || addr.startsWith("172.19.") ||
+                addr.startsWith("172.20.")     || addr.startsWith("172.21.") ||
+                addr.startsWith("172.22.")     || addr.startsWith("172.23.") ||
+                addr.startsWith("172.24.")     || addr.startsWith("172.25.") ||
+                addr.startsWith("172.26.")     || addr.startsWith("172.27.") ||
+                addr.startsWith("172.28.")     || addr.startsWith("172.29.") ||
+                addr.startsWith("172.30.")     || addr.startsWith("172.31.") ||
+                addr.startsWith("192.168.")    ||
+                addr.equals("127.0.0.1")       ||
+                addr.equals("0:0:0:0:0:0:0:1") || addr.equals("::1")
+        );
     }
 }

@@ -403,12 +403,18 @@ public class SubscriptionController {
         if (paymentMethodId == null || paymentMethodId.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "paymentMethodId is required"));
         }
+        if (!paymentMethodId.startsWith("pm_") || paymentMethodId.length() > 64) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid paymentMethodId format"));
+        }
         try {
             User user = resolveUser(principal);
             stripeService.setDefaultPaymentMethod(user, paymentMethodId);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (IllegalArgumentException | IllegalStateException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (com.stripe.exception.StripeException e) {
+            log.error("Stripe error on use-payment-method for {}: {} (code={})", principal.getUsername(), e.getMessage(), e.getCode());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getUserMessage() != null ? e.getUserMessage() : e.getMessage()));
         } catch (Exception e) {
             log.error("Use payment method failed for {}: {}", principal.getUsername(), e.getMessage(), e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to update payment method"));
@@ -434,6 +440,9 @@ public class SubscriptionController {
             return ResponseEntity.ok(result);
         } catch (IllegalArgumentException | IllegalStateException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (com.stripe.exception.StripeException e) {
+            log.error("Stripe error changing interval for {}: {} (code={})", principal.getUsername(), e.getMessage(), e.getCode());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getUserMessage() != null ? e.getUserMessage() : e.getMessage()));
         } catch (Exception e) {
             log.error("Change interval failed for {}: {}", principal.getUsername(), e.getMessage(), e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to switch billing interval"));
