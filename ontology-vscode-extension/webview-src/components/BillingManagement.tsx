@@ -594,25 +594,27 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                             )}
 
                             {/* Desktop License — hidden from billing page, preserved for future use */}
-                            {false && !isDesktop() && (
-                                <button onClick={downloadLicense} disabled={downloadingLicense}
-                                    className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-emerald-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed">
-                                    <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
-                                        {downloadingLicense ? <Loader2 size={24} className="animate-spin" /> : <Monitor size={24} />}
-                                    </div>
-                                    <div className="text-left">
-                                        <p className="font-bold text-lg flex items-center gap-1.5">
-                                            <Download size={16} /> Desktop License
-                                        </p>
-                                        <p className="text-sm text-slate-400 mt-1 text-balance">
-                                            Download a license file to activate OntoCode Desktop on your computer.
-                                        </p>
-                                        {licenseError && (
-                                            <p className="text-xs text-red-400 mt-2">{licenseError}</p>
-                                        )}
-                                    </div>
-                                </button>
-                            )}
+                            <div className="hidden">
+                                {!isDesktop() && (
+                                    <button onClick={downloadLicense} disabled={downloadingLicense}
+                                        className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-emerald-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed">
+                                        <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                                            {downloadingLicense ? <Loader2 size={24} className="animate-spin" /> : <Monitor size={24} />}
+                                        </div>
+                                        <div className="text-left">
+                                            <p className="font-bold text-lg flex items-center gap-1.5">
+                                                <Download size={16} /> Desktop License
+                                            </p>
+                                            <p className="text-sm text-slate-400 mt-1 text-balance">
+                                                Download a license file to activate OntoCode Desktop on your computer.
+                                            </p>
+                                            {licenseError && (
+                                                <p className="text-xs text-red-400 mt-2">{licenseError}</p>
+                                            )}
+                                        </div>
+                                    </button>
+                                )}
+                            </div>
 
                             {/* Bug #50: billing is account-level (Model B).
                                 Members of someone else's workspace shouldn't
