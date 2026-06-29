@@ -225,6 +225,11 @@ const TopMenuBar = ({
   onHierarchyDisplayModeChange,
   hierarchyImportsScope,
   onHierarchyImportsScopeChange,
+  hierarchyAnnotationProperties,
+  hierarchyAnnotationPropIri,
+  onHierarchyAnnotationPropChange,
+  hierarchyCustomTemplate,
+  onHierarchyCustomTemplateChange,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -275,9 +280,17 @@ const TopMenuBar = ({
   onHierarchyDisplayModeChange?: (mode: "label" | "id" | "annotation" | "custom") => void;
   hierarchyImportsScope?: "active" | "closure";
   onHierarchyImportsScopeChange?: (scope: "active" | "closure") => void;
+  hierarchyAnnotationProperties?: Array<{ id: string; label: string }>;
+  hierarchyAnnotationPropIri?: string;
+  onHierarchyAnnotationPropChange?: (iri: string) => void;
+  hierarchyCustomTemplate?: string;
+  onHierarchyCustomTemplateChange?: (tpl: string) => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [annotationSubmenuOpen, setAnnotationSubmenuOpen] = useState(false);
+  const [customTemplateEditing, setCustomTemplateEditing] = useState(false);
+  const [customTemplateDraft, setCustomTemplateDraft] = useState(hierarchyCustomTemplate ?? "{label} ({id})");
   const [searchFile, setSearchFile] = useState("");
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -350,12 +363,14 @@ const TopMenuBar = ({
           <div key={item} className="relative flex-shrink-0">
             <button
               onClick={() => {
-                setOpenMenu(openMenu === item ? null : item);
+                const next = openMenu === item ? null : item;
+                setOpenMenu(next);
+                if (!next || next !== "View") { setAnnotationSubmenuOpen(false); setCustomTemplateEditing(false); }
               }}
               className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-2 sm:px-3 py-1 rounded-sm transition-colors relative whitespace-nowrap ${openMenu === item ? "is-open" : ""}`}
             >
               {item}
-              {item === "View" && hasPluginUpdates && (
+              {item === "Tools" && hasPluginUpdates && (
                 <span
                   className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"
                   title="Plugin updates available"
@@ -373,7 +388,7 @@ const TopMenuBar = ({
                 className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === "File" ? "w-[min(360px,calc(100vw-1rem))]" : "w-48 max-w-[calc(100vw-1rem)]"} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`}
                 style={{ borderColor: "var(--color-border)" }}
               >
-                {item === "View" ? (
+                {item === "Tools" ? (
                   <div className="py-1">
                     <button
                       onClick={() => {
@@ -391,39 +406,108 @@ const TopMenuBar = ({
                         />
                       )}
                     </button>
-                    <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                  </div>
+                ) : item === "View" ? (
+                  <div className="py-1">
                     <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide opacity-50">Rendering</div>
-                    {(["label", "id"] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        onClick={() => {
-                          onHierarchyDisplayModeChange?.(mode);
-                          setOpenMenu(null);
-                        }}
-                        className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
-                      >
-                        <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === mode ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
-                        {mode === "label" ? "Render by label" : "Render by name"}
-                        <span className="ml-1 opacity-40 text-[10px]">{mode === "label" ? "(rdfs:label)" : "(rdf:id)"}</span>
-                      </button>
-                    ))}
+                    <button
+                      onClick={() => { onHierarchyDisplayModeChange?.("label"); setOpenMenu(null); }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "label" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Render by label
+                      <span className="ml-1 opacity-40 text-[10px]">(rdfs:label)</span>
+                    </button>
+                    <button
+                      onClick={() => { onHierarchyDisplayModeChange?.("id"); setOpenMenu(null); }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "id" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Render by name
+                      <span className="ml-1 opacity-40 text-[10px]">(rdf:id)</span>
+                    </button>
+                    <button
+                      onClick={() => setAnnotationSubmenuOpen(v => !v)}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "annotation" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Render by annotation property
+                      <span className="ml-auto opacity-50 text-[10px]">{annotationSubmenuOpen ? "▾" : "▸"}</span>
+                    </button>
+                    {annotationSubmenuOpen && (
+                      <div className="mx-2 mb-1 border rounded overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
+                        {(hierarchyAnnotationProperties ?? []).length === 0 ? (
+                          <div className="px-3 py-2 text-[10px] opacity-50 italic">No annotation properties found</div>
+                        ) : (
+                          (hierarchyAnnotationProperties ?? []).map(ap => (
+                            <button
+                              key={ap.id}
+                              onClick={() => {
+                                onHierarchyDisplayModeChange?.("annotation");
+                                onHierarchyAnnotationPropChange?.(ap.id);
+                                setAnnotationSubmenuOpen(false);
+                                setOpenMenu(null);
+                              }}
+                              className={`ontocode-top-menu-item cursor-pointer w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 ${hierarchyDisplayMode === "annotation" && hierarchyAnnotationPropIri === ap.id ? "font-semibold" : ""}`}
+                            >
+                              <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "annotation" && hierarchyAnnotationPropIri === ap.id ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                              <span className="truncate">{ap.label || ap.id.split(/[#/]/).pop()}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => { onHierarchyDisplayModeChange?.("custom"); setCustomTemplateEditing(true); setCustomTemplateDraft(hierarchyCustomTemplate ?? "{label} ({id})"); }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "custom" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Custom rendering...
+                    </button>
+                    {customTemplateEditing && (
+                      <div className="mx-2 mb-2 p-2 border rounded" style={{ borderColor: "var(--color-border)" }}>
+                        <div className="text-[10px] opacity-60 mb-1">Template — use <code>{"{label}"}</code> <code>{"{id}"}</code> <code>{"{iri}"}</code></div>
+                        <div className="flex gap-1">
+                          <input
+                            autoFocus
+                            value={customTemplateDraft}
+                            onChange={e => setCustomTemplateDraft(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter" && customTemplateDraft.trim()) {
+                                onHierarchyCustomTemplateChange?.(customTemplateDraft);
+                                setCustomTemplateEditing(false);
+                                setOpenMenu(null);
+                              }
+                              if (e.key === "Escape") setCustomTemplateEditing(false);
+                            }}
+                            className="flex-1 text-[10px] border rounded px-1.5 py-1 bg-theme-surface"
+                            style={{ borderColor: "var(--color-border)" }}
+                            placeholder="{label} ({id})"
+                          />
+                          <button
+                            onClick={() => {
+                              if (customTemplateDraft.trim()) {
+                                onHierarchyCustomTemplateChange?.(customTemplateDraft);
+                                setCustomTemplateEditing(false);
+                                setOpenMenu(null);
+                              }
+                            }}
+                            className="px-2 py-1 text-[10px] bg-purple-600 text-white rounded"
+                          >Apply</button>
+                        </div>
+                      </div>
+                    )}
                     <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
                     <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide opacity-50">Ontology Scope</div>
                     <button
-                      onClick={() => {
-                        onHierarchyImportsScopeChange?.("closure");
-                        setOpenMenu(null);
-                      }}
+                      onClick={() => { onHierarchyImportsScopeChange?.("closure"); setOpenMenu(null); }}
                       className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
                     >
                       <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyImportsScope === "closure" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
                       Show imports closure
                     </button>
                     <button
-                      onClick={() => {
-                        onHierarchyImportsScopeChange?.("active");
-                        setOpenMenu(null);
-                      }}
+                      onClick={() => { onHierarchyImportsScopeChange?.("active"); setOpenMenu(null); }}
                       className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
                     >
                       <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyImportsScope === "active" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
@@ -16042,6 +16126,15 @@ const Dashboard: React.FC<DashboardProps> = ({
           onReportIssue={() => setIsReportIssueModalOpen(true)}
           onOpenUserGuide={() => setIsUserGuideOpen(true)}
           onOpenReleaseNotes={() => setIsReleaseNotesOpen(true)}
+          hierarchyDisplayMode={hierarchyDisplayMode}
+          onHierarchyDisplayModeChange={setHierarchyDisplayMode}
+          hierarchyImportsScope={hierarchyImportsScope}
+          onHierarchyImportsScopeChange={setHierarchyImportsScope}
+          hierarchyAnnotationProperties={hierarchyAnnotationProperties}
+          hierarchyAnnotationPropIri={hierarchyAnnotationPropIri}
+          onHierarchyAnnotationPropChange={setHierarchyAnnotationPropIri}
+          hierarchyCustomTemplate={hierarchyCustomTemplate}
+          onHierarchyCustomTemplateChange={setHierarchyCustomTemplate}
           onOpenMergeWizard={async () => {
             setMergeWizardOpen(true);
             // Fetch files from the current project to show in merge wizard
