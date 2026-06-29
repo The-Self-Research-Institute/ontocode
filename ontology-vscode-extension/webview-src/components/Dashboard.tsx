@@ -221,6 +221,10 @@ const TopMenuBar = ({
   subscription,
   onExportProAction,
   isViewOnly,
+  hierarchyDisplayMode,
+  onHierarchyDisplayModeChange,
+  hierarchyImportsScope,
+  onHierarchyImportsScopeChange,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -267,6 +271,10 @@ const TopMenuBar = ({
   subscription?: any;
   onExportProAction?: () => void;
   isViewOnly?: boolean;
+  hierarchyDisplayMode?: "label" | "id" | "annotation" | "custom";
+  onHierarchyDisplayModeChange?: (mode: "label" | "id" | "annotation" | "custom") => void;
+  hierarchyImportsScope?: "active" | "closure";
+  onHierarchyImportsScopeChange?: (scope: "active" | "closure") => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -382,6 +390,44 @@ const TopMenuBar = ({
                           title="Updates available"
                         />
                       )}
+                    </button>
+                    <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                    <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide opacity-50">Rendering</div>
+                    {(["label", "id"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => {
+                          onHierarchyDisplayModeChange?.(mode);
+                          setOpenMenu(null);
+                        }}
+                        className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                      >
+                        <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === mode ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                        {mode === "label" ? "Render by label" : "Render by name"}
+                        <span className="ml-1 opacity-40 text-[10px]">{mode === "label" ? "(rdfs:label)" : "(rdf:id)"}</span>
+                      </button>
+                    ))}
+                    <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                    <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide opacity-50">Ontology Scope</div>
+                    <button
+                      onClick={() => {
+                        onHierarchyImportsScopeChange?.("closure");
+                        setOpenMenu(null);
+                      }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyImportsScope === "closure" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Show imports closure
+                    </button>
+                    <button
+                      onClick={() => {
+                        onHierarchyImportsScopeChange?.("active");
+                        setOpenMenu(null);
+                      }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyImportsScope === "active" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Show only active ontology
                     </button>
                   </div>
                 ) : item === "Window" ? (
@@ -2022,7 +2068,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   >({});
 
   const [codeViewFormat, setCodeViewFormat] = useState<
-    "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional"
+    "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld"
   >("rdfxml");
   const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
@@ -3429,28 +3475,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] Web mode — Fuseki/Mongo hierarchy (no auto OWLAPI warm)");
         }
 
-        // Large graphs: instance-counts is a full-graph SPARQL scan — skip when OWLAPI serves the tree.
-        const instanceCountsPromise = desktopOwlapiReady
-          ? Promise.resolve(null)
-          : apiClient
-              .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
-              .catch((e: any) => {
-                console.warn("[Dashboard] Instance counts fetch failed (non-blocking):", e?.message);
-                return null;
-              });
-
         // Phase 1: classes first — unblock the editor immediately
+        // Instance-counts is a full-graph SPARQL GROUP BY scan. Firing it before top-level
+        // classes saturates Fuseki and can delay the class tree response enough to trigger
+        // the 2-minute retry loop. Defer it until after the class tree resolves.
         let instanceCountsData: any = {};
         setClassInstanceCounts({});
-        instanceCountsPromise.then((instanceCountsRes: any) => {
-          if (isStaleLoad()) return;
-          if (!instanceCountsRes) return;
-          const payload = instanceCountsRes?.data || instanceCountsRes;
-          const data = payload?.data || payload || {};
-          if (!data || typeof data !== "object") return;
-          setClassInstanceCounts(data);
-          setClassHierarchy((prev) => (prev.length > 0 ? applyInstanceCountsToTree(prev, data) : prev));
-        });
 
         // On desktop: skip SPARQL hierarchy fetch when OWLAPI is still loading.
         // We already have the hierarchy skeleton visible (isHierarchyLoading=true).
@@ -3606,6 +3636,24 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         }
         applyDeclarationCounts(topLevelClassesRes);
+
+        // Fire instance-counts AFTER the class tree resolves — avoids Fuseki contention
+        // that could delay the top-level response and trigger the retry loop.
+        if (!desktopOwlapiReady && !isStaleLoad()) {
+          apiClient
+            .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
+            .then((instanceCountsRes: any) => {
+              if (isStaleLoad()) return;
+              const payload = instanceCountsRes?.data || instanceCountsRes;
+              const data = payload?.data || payload || {};
+              if (!data || typeof data !== "object") return;
+              setClassInstanceCounts(data);
+              setClassHierarchy((prev) => (prev.length > 0 ? applyInstanceCountsToTree(prev, data) : prev));
+            })
+            .catch((e: any) => {
+              console.warn("[Dashboard] Instance counts fetch failed (non-blocking):", e?.message);
+            });
+        }
 
         // Only retry when the server response was non-null (we got a real response, not a timeout)
         // AND the server did not explicitly confirm 0 top-level classes (tlTotal === 0 means
@@ -10732,7 +10780,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   // #region Render Methods
   const fetchCodeViewContent = useCallback(
     async (
-      format: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional",
+      format: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld",
       forceRefresh: boolean = false,
       forceReload: boolean = false,
     ) => {
@@ -10933,7 +10981,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             format: codeViewFormat,
           });
           // Also clear other format caches so they re-export fresh when switched to
-          const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional"] as const;
+          const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional", "jsonld"] as const;
           for (const fmt of allFormats) {
             if (fmt !== codeViewFormat) {
               try {
@@ -13075,6 +13123,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                     }`}
                   >
                     Functional
+                  </button>
+                  <button
+                    onClick={() => {
+                      fetchCodeViewContent("jsonld", false, citationJustInserted);
+                      setCitationJustInserted(false);
+                    }}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === "jsonld"
+                        ? "bg-purple-600 text-white hover:bg-purple-700"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
+                  >
+                    JSON-LD
                   </button>
                   <button
                     onClick={() => {
