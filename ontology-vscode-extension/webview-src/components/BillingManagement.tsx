@@ -69,6 +69,7 @@ interface BillingSummary {
     canceledAt?: string;
     paymentHistory?: PaymentHistoryItem[];
     defaultPaymentMethod?: {
+        pmId?: string;
         last4?: string;
         brand?: string;
         expMonth?: number;
@@ -76,6 +77,7 @@ interface BillingSummary {
         type?: string;
     };
     backupPaymentMethods?: Array<{
+        pmId?: string;
         last4?: string;
         brand?: string;
         expMonth?: number;
@@ -245,6 +247,8 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     const [switchingInterval, setSwitchingInterval] = useState(false);
     const [intervalSwitchError, setIntervalSwitchError] = useState<string | null>(null);
     const [intervalSwitchSuccess, setIntervalSwitchSuccess] = useState<string | null>(null);
+    const [usingBackupPmId, setUsingBackupPmId] = useState<string | null>(null);
+    const [backupPmError, setBackupPmError] = useState<string | null>(null);
     const [downloadingLicense, setDownloadingLicense] = useState(false);
     const [licenseError, setLicenseError] = useState<string | null>(null);
     const { getDisplayPrice } = usePlanPricing();
@@ -470,6 +474,35 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         }
     };
 
+    const useBackupPaymentMethod = async (pmId: string) => {
+        setBackupPmError(null);
+        setUsingBackupPmId(pmId);
+        try {
+            let res: Response;
+            const body = JSON.stringify({ paymentMethodId: pmId });
+            try {
+                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/use-payment-method`, {
+                    method: 'POST', headers: authHeaders, body,
+                });
+                if (!res.ok && res.status === 404) {
+                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/use-payment-method`, {
+                        method: 'POST', headers: authHeaders, body,
+                    });
+                }
+            } catch (err: any) {
+                throw new Error(err.message || 'Network error. Please check your connection and try again.');
+            }
+            if (res.status === 401 || res.status === 403) throw new Error('Your session has expired. Please sign in again.');
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error ?? 'Failed to update payment method.');
+            await loadBillingSummary();
+        } catch (err: any) {
+            setBackupPmError(err.message);
+        } finally {
+            setUsingBackupPmId(null);
+        }
+    };
+
     const plan = (billingSummary?.planName || workspace.subscriptionPlan || '').toUpperCase();
     const isTopPlan = plan === 'ENTERPRISE';
     const interval = billingSummary?.billingInterval || workspace.billingInterval || 'monthly';
@@ -578,14 +611,35 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                         Payment Method on File
                                     </div>
                                     {billingSummary?.defaultPaymentMethod ? (
-                                        <div className="space-y-1.5">
-                                            <PaymentMethodRow pm={billingSummary.defaultPaymentMethod} />
+                                        <div className="space-y-2">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] text-slate-500 uppercase tracking-wide font-bold">Default</span>
+                                                <PaymentMethodRow pm={billingSummary.defaultPaymentMethod} />
+                                            </div>
                                             {billingSummary.backupPaymentMethods?.map((pm, i) => (
-                                                <div key={i} className="flex items-center gap-2">
-                                                    <span className="text-[10px] text-slate-500 uppercase tracking-wide">Backup</span>
-                                                    <PaymentMethodRow pm={pm} />
+                                                <div key={i} className="flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] text-slate-500 uppercase tracking-wide">Backup</span>
+                                                        <PaymentMethodRow pm={pm} />
+                                                    </div>
+                                                    {isOwner && pm.pmId && (
+                                                        <button
+                                                            onClick={() => useBackupPaymentMethod(pm.pmId!)}
+                                                            disabled={usingBackupPmId === pm.pmId}
+                                                            className="text-[11px] px-2.5 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 hover:bg-purple-500/20 transition-all disabled:opacity-50 flex items-center gap-1 flex-shrink-0"
+                                                        >
+                                                            {usingBackupPmId === pm.pmId
+                                                                ? <><Loader2 size={10} className="animate-spin" /> Applying…</>
+                                                                : summaryStatus?.toLowerCase() === 'past_due'
+                                                                    ? 'Use this card'
+                                                                    : 'Make default'}
+                                                        </button>
+                                                    )}
                                                 </div>
                                             ))}
+                                            {backupPmError && (
+                                                <p className="text-xs text-red-400 mt-1">{backupPmError}</p>
+                                            )}
                                         </div>
                                     ) : (
                                         <p className="text-sm text-slate-400 leading-relaxed">
