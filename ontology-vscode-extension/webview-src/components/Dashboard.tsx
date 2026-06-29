@@ -423,8 +423,8 @@ const TopMenuBar = ({
                       className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
                     >
                       <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "id" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
-                      Render by name
-                      <span className="ml-1 opacity-40 text-[10px]">(rdf:id)</span>
+                      Render by ID
+                      <span className="ml-1 opacity-40 text-[10px]">(local name from IRI)</span>
                     </button>
                     <button
                       onClick={() => setAnnotationSubmenuOpen(v => !v)}
@@ -2061,13 +2061,24 @@ const Dashboard: React.FC<DashboardProps> = ({
     Individuals: "asserted",
     Datatypes: "asserted",
   });
-  const [hierarchyDisplayMode, setHierarchyDisplayMode] = useState<"label" | "id" | "annotation" | "custom">("label");
-  const [hierarchyAnnotationPropIri, setHierarchyAnnotationPropIri] = useState<string>("");
-  const [hierarchyCustomTemplate, setHierarchyCustomTemplate] = useState<string>("{label} ({id})");
+  const [hierarchyDisplayMode, setHierarchyDisplayMode] = useState<"label" | "id" | "annotation" | "custom">(
+    () => userPreferencesService.getDisplayMode()
+  );
+  const [hierarchyAnnotationPropIri, setHierarchyAnnotationPropIri] = useState<string>(
+    () => userPreferencesService.getAnnotationPropIri()
+  );
+  const [hierarchyCustomTemplate, setHierarchyCustomTemplate] = useState<string>(
+    () => userPreferencesService.getCustomTemplate()
+  );
   const [hierarchyAnnotationProperties, setHierarchyAnnotationProperties] = useState<Array<{ id: string; label: string }>>([]);
   const [hierarchyAnnotationValues, setHierarchyAnnotationValues] = useState<Map<string, string>>(new Map());
   const [hierarchyImportsScope, setHierarchyImportsScope] = useState<"active" | "closure">("active");
   const fetchedAnnotationIrisRef = useRef<Set<string>>(new Set());
+
+  // Persist display mode preferences across sessions
+  useEffect(() => {
+    userPreferencesService.saveDisplayPreferences(hierarchyDisplayMode, hierarchyAnnotationPropIri, hierarchyCustomTemplate);
+  }, [hierarchyDisplayMode, hierarchyAnnotationPropIri, hierarchyCustomTemplate]);
   const [isClassIndividualAnnotationDialogOpen, setClassIndividualAnnotationDialogOpen] = useState(false);
   const [isClassIndividualTypeDialogOpen, setClassIndividualTypeDialogOpen] = useState(false);
   const [isClassIndividualPropertyDialogOpen, setClassIndividualPropertyDialogOpen] = useState(false);

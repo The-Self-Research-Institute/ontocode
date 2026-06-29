@@ -15,6 +15,12 @@ export const OPEN_SOURCE_LIBRARIES: OpenSourceLibrary[] = [
   { name: "Axios", license: "MIT", url: "https://axios-http.com/", usedIn: "Web / Desktop API client" },
   { name: "@stomp/stompjs", license: "Apache-2.0", url: "https://stomp-js.github.io/", usedIn: "Real-time collaboration" },
   { name: "SockJS Client", license: "MIT", url: "https://github.com/sockjs/sockjs-client", usedIn: "WebSocket transport" },
+  { name: "ws", license: "MIT", url: "https://github.com/websockets/ws", usedIn: "VSCode extension WebSocket" },
+  { name: "form-data", license: "MIT", url: "https://github.com/form-data/form-data", usedIn: "Multipart HTTP requests" },
+  { name: "dotenv", license: "BSD-2-Clause", url: "https://github.com/motdotla/dotenv", usedIn: "VSCode extension config" },
+  { name: "fs-extra", license: "MIT", url: "https://github.com/jprichardson/node-fs-extra", usedIn: "VSCode extension file I/O" },
+  { name: "crypto-browserify", license: "MIT", url: "https://github.com/browserify/crypto-browserify", usedIn: "VSCode extension web bundle" },
+  { name: "path-browserify", license: "MIT", url: "https://github.com/browserify/path-browserify", usedIn: "VSCode extension web bundle" },
 
   // ── Frontend – UI Components ─────────────────────────────────────────────
   { name: "Lucide React", license: "ISC", url: "https://lucide.dev/", usedIn: "Web / Desktop UI icons" },
