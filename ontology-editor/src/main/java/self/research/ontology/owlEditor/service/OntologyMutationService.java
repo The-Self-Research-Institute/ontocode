@@ -22,6 +22,7 @@ import java.security.MessageDigest;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -1350,17 +1351,18 @@ public class OntologyMutationService {
         log.info("[MUTATION]   classIri: {}", classIri);
         log.info("[MUTATION]   propertyIris: {}", String.join(", ", propertyIris));
         
-        // Build an RDF list using blank nodes
+        // Build an RDF list with a named IRI as the list head so it can be precisely deleted later
+        String listHeadIri = "http://ontocode.org/haskey/" + UUID.randomUUID().toString().replace("-", "");
         StringBuilder insertBuilder = new StringBuilder();
         insertBuilder.append("INSERT DATA {\n");
-        insertBuilder.append("  <").append(classIri).append("> owl:hasKey _:keyList0 .\n");
-        
+        insertBuilder.append("  <").append(classIri).append("> owl:hasKey <").append(listHeadIri).append("> .\n");
+
         for (int i = 0; i < propertyIris.length; i++) {
-            String currentList = "_:keyList" + i;
-            String nextList = (i == propertyIris.length - 1) ? "rdf:nil" : "_:keyList" + (i + 1);
-            insertBuilder.append("  ").append(currentList)
-                .append(" rdf:first <").append(propertyIris[i].trim()).append("> ;\n");
-            insertBuilder.append("             rdf:rest ").append(nextList).append(" .\n");
+            String currentNode = (i == 0) ? "<" + listHeadIri + ">" : "_:keyNode" + i;
+            String nextNode = (i == propertyIris.length - 1) ? "rdf:nil" : "_:keyNode" + (i + 1);
+            insertBuilder.append("  ").append(currentNode)
+                .append(" rdf:first <").append(propertyIris[i].trim()).append("> ;\n")
+                .append("               rdf:rest ").append(nextNode).append(" .\n");
         }
         
         insertBuilder.append("}\n");
@@ -1378,21 +1380,43 @@ public class OntologyMutationService {
         log.info("[MUTATION]   classIri: {}", classIri);
         log.info("[MUTATION]   listNodeId: {}", listNodeId);
         
-        // Delete the has key axiom and all list nodes
-        String sparql = """
-            DELETE {
-              <%s> owl:hasKey ?list .
-              ?node rdf:first ?first .
-              ?node rdf:rest ?rest .
-            }
-            WHERE {
-              <%s> owl:hasKey ?list .
-              ?list rdf:rest* ?node .
-              ?node rdf:first ?first .
-              ?node rdf:rest ?rest .
-            }
-            """.formatted(classIri, classIri);
-        
+        String sparql;
+        if (listNodeId != null && (listNodeId.startsWith("http://") || listNodeId.startsWith("https://"))) {
+            // Named IRI list head (new data format) — delete precisely by IRI
+            sparql = """
+                DELETE {
+                  <%s> owl:hasKey <%s> .
+                  ?node rdf:first ?first .
+                  ?node rdf:rest ?rest .
+                }
+                WHERE {
+                  <%s> owl:hasKey <%s> .
+                  <%s> rdf:rest* ?node .
+                  ?node rdf:first ?first .
+                  ?node rdf:rest ?rest .
+                }
+                """.formatted(classIri, listNodeId, classIri, listNodeId, listNodeId);
+        } else {
+            // Blank node list head (legacy data) — filter by internal ID via STR()
+            // STR(?bnode) behaviour is implementation-specific; in GraphDB it returns the blank node identifier.
+            // Worst case this is a no-op (safer than deleting all has-key axioms).
+            String escapedId = listNodeId != null ? listNodeId.replace("\"", "\\\"") : "";
+            sparql = """
+                DELETE {
+                  <%s> owl:hasKey ?list .
+                  ?node rdf:first ?first .
+                  ?node rdf:rest ?rest .
+                }
+                WHERE {
+                  <%s> owl:hasKey ?list .
+                  FILTER(STR(?list) = "%s")
+                  ?list rdf:rest* ?node .
+                  ?node rdf:first ?first .
+                  ?node rdf:rest ?rest .
+                }
+                """.formatted(classIri, classIri, escapedId);
+        }
+
         log.info("[MUTATION]   Generated delete has key SPARQL: {}", sparql);
         return sparql;
     }

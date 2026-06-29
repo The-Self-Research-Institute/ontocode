@@ -424,7 +424,7 @@ export const AxiomRow: React.FC<{
       e.preventDefault();
       if (isViewOnly) { onViewOnlyAction?.(); return; }
       handleDoubleClick();
-    } else if (e.key === 'Delete' && !isInferred) {
+    } else if (e.key === 'Delete' && !isInferred && !isDeleting) {
       e.preventDefault();
       if (isViewOnly) { onViewOnlyAction?.(); return; }
       onDelete(axiom.id);
