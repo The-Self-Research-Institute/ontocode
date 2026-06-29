@@ -909,17 +909,40 @@ public class StripeService {
         User user = userOpt.get();
         Long paidAmount = resolvePaidAmount(invoice);
 
+        // Resolve the correct next-period-end: prefer the subscription's live
+        // currentPeriodEnd over invoice.getPeriodEnd(). For proration invoices
+        // generated when a trial is ended immediately (setTrialEnd = now), the
+        // invoice covers the trial period and its periodEnd == today, which is
+        // wrong for "next billing date". The subscription's currentPeriodEnd is
+        // always the actual renewal date.
+        Long resolvedPeriodEnd = null;
+        if (invoice.getSubscription() != null) {
+            try {
+                Subscription liveSub = Subscription.retrieve(invoice.getSubscription());
+                Long subPeriodEnd = liveSub.getCurrentPeriodEnd();
+                if (subPeriodEnd != null && subPeriodEnd > Instant.now().getEpochSecond()) {
+                    resolvedPeriodEnd = subPeriodEnd;
+                }
+            } catch (StripeException ex) {
+                log.warn("[InvoicePaymentSucceeded] Could not retrieve subscription {} to resolve periodEnd: {}",
+                        invoice.getSubscription(), ex.getMessage());
+            }
+        }
+        if (resolvedPeriodEnd == null && invoice.getPeriodEnd() != null) {
+            resolvedPeriodEnd = invoice.getPeriodEnd();
+        }
+
         // invoice.payment_succeeded is a reliable fallback if
         // customer.subscription.updated is delayed/missed.
         if (paidAmount > 0) {
             user.setSubscriptionStatus("active");
-            if (invoice.getPeriodEnd() != null) {
+            if (resolvedPeriodEnd != null) {
                 user.setSubscriptionCurrentPeriodEnd(
-                        LocalDateTime.ofInstant(Instant.ofEpochSecond(invoice.getPeriodEnd()), ZoneOffset.UTC));
+                        LocalDateTime.ofInstant(Instant.ofEpochSecond(resolvedPeriodEnd), ZoneOffset.UTC));
             }
             userRepository.save(user);
-            log.info("[InvoicePaymentSucceeded] User {} email={} — status set to active",
-                    user.getUsername(), user.getEmail());
+            log.info("[InvoicePaymentSucceeded] User {} email={} — status set to active, nextPeriodEnd={}",
+                    user.getUsername(), user.getEmail(), resolvedPeriodEnd);
         }
 
         // Skip $0 invoices (e.g. trial-start invoice with no charge)
@@ -935,8 +958,8 @@ public class StripeService {
         String amount = String.format("$%.2f %s",
                 paidAmount / 100.0,
                 invoice.getCurrency() != null ? invoice.getCurrency().toUpperCase() : "USD");
-        String nextBillingDate = invoice.getPeriodEnd() != null
-                ? LocalDateTime.ofInstant(Instant.ofEpochSecond(invoice.getPeriodEnd()), ZoneOffset.UTC)
+        String nextBillingDate = resolvedPeriodEnd != null
+                ? LocalDateTime.ofInstant(Instant.ofEpochSecond(resolvedPeriodEnd), ZoneOffset.UTC)
                         .format(DATE_FMT)
                 : "N/A";
         String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
@@ -1549,9 +1572,11 @@ public class StripeService {
 
             // Also check if the stored period end is stale (can happen when trial ends immediately
             // and Stripe returns trial-end timestamp as currentPeriodEnd before invoice processing).
+            // Use UTC and !isAfter (<=) so a date of "today" is also treated as stale.
+            LocalDateTime nowUtc = LocalDateTime.now(ZoneOffset.UTC);
             boolean periodEndStale = sub.getCurrentPeriodEnd() != null
                     && (user.getSubscriptionCurrentPeriodEnd() == null
-                        || user.getSubscriptionCurrentPeriodEnd().isBefore(LocalDateTime.now()));
+                        || !user.getSubscriptionCurrentPeriodEnd().isAfter(nowUtc));
 
             if (!liveStatus.equals(cached) || periodEndStale) {
                 if (!liveStatus.equals(cached)) {
