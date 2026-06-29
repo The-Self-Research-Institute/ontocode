@@ -37,7 +37,7 @@ public class DatatypeDefinitionController {
     private void broadcastDatatypeChange(String projectId, String datatypeIri, String mutationType,
                                          String userId, String username) {
         collaborativeEditService.broadcastMutation(projectId,
-            new MutationOp(mutationType, datatypeIri, null, null, null, null, null, null, null, null, null, null, null, null),
+            new MutationOp(mutationType, datatypeIri, null, null, null, null, null, null, null, null, null, null, null, null, null),
             userId != null ? userId : "anonymous",
             username != null ? username : "Anonymous");
     }

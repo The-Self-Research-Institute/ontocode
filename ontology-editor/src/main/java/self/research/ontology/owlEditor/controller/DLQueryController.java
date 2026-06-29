@@ -219,7 +219,7 @@ public class DLQueryController {
                     mutationService.applyRawUpdate(projectId, sparql, true, userId);
                     OntologyMutationService.MutationOp dlOp = new OntologyMutationService.MutationOp(
                             "addDlQueryClass", classIri, request.getClassName().trim(), null, null, null, null,
-                            request.getExpression().trim(), null, null, null, null, null, null);
+                            request.getExpression().trim(), null, null, null, null, null, null, null);
                     draftTrackingService.recordDrafts(projectId, userId, username,
                             List.of(dlOp), "dl-add-" + UUID.randomUUID());
                 } else {

@@ -594,7 +594,8 @@ public class DraftTrackingService {
             (String) data.get("axiomType"),
             (String) data.get("oldValue"),
             (String) data.get("language"),
-            (String) data.get("datatype")
+            (String) data.get("datatype"),
+            (String) data.get("ancestorIri")
         );
     }
     

@@ -15,6 +15,7 @@ export interface MutationOp {
   cardinality?: number;
   axiomType?: string;
   oldValue?: string;
+  ancestorIri?: string;
 }
 
 // Global flag to control real-time sync behavior
@@ -1105,10 +1106,11 @@ export const ontologyMutationService = {
    * Delete an axiom by its ID (blank node ID for anonymous axioms)
    * Used for deleting General Class Axioms, restrictions, etc.
    */
-  async deleteAxiom(projectId: string, axiomId: string): Promise<void> {
+  async deleteAxiom(projectId: string, axiomId: string, ancestorIri?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteAxiom',
-      iri: axiomId
+      iri: axiomId,
+      ...(ancestorIri ? { ancestorIri } : {})
     }], undefined);
   },
 

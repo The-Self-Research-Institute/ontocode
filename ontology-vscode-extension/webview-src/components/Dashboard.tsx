@@ -302,7 +302,15 @@ const TopMenuBar = ({
 
   useEffect(() => {
     import("../utils/appVersion").then(({ getAppVersion }) => {
-      getAppVersion().then(setAppVersion).catch(() => setAppVersion(""));
+      getAppVersion().then((v) => {
+        setAppVersion(v || "");
+        if (!v) return;
+        const seenKey = "ontocode_release_notes_seen";
+        const lastSeen = localStorage.getItem(seenKey) || "";
+        if (lastSeen !== v) {
+          setIsReleaseNotesOpen(true);
+        }
+      }).catch(() => setAppVersion(""));
     });
   }, []);
 
@@ -17220,7 +17228,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       <ReleaseNotesModal
         isOpen={isReleaseNotesOpen}
-        onClose={() => setIsReleaseNotesOpen(false)}
+        onClose={() => {
+          setIsReleaseNotesOpen(false);
+          if (appVersion) {
+            localStorage.setItem("ontocode_release_notes_seen", appVersion);
+          }
+        }}
       />
 
       {/* User Guide Modal - only in cloud mode */}

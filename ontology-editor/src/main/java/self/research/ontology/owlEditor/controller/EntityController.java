@@ -51,7 +51,7 @@ public class EntityController {
             collaborativeEditService.broadcastMutation(projectId,
                     new OntologyMutationService.MutationOp(
                             "renameEntity", request.oldIri, null, null, null, request.newIri,
-                            null, null, null, null, null, null, null, null),
+                            null, null, null, null, null, null, null, null, null),
                     effectiveUserId,
                     effectiveUsername);
             return ResponseEntity.ok(Map.of(

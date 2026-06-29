@@ -814,7 +814,7 @@ public class OntologyMutationService {
                 + "<" + op.iri() + "> a " + classExpr + " .\n"
                 + "}";
         } else if (type.equals("deleteAxiom")) {
-            return buildDeleteBlankNodeAxiomSparql(op.iri());
+            return buildDeleteBlankNodeAxiomSparql(op.iri(), op.ancestorIri());
         } else {
             throw new IllegalArgumentException("Unsupported op " + op.type());
         }
@@ -1798,29 +1798,41 @@ public class OntologyMutationService {
             """.formatted(propertyIri, predicate, propertyIri, predicate);
     }
 
-    private String buildDeleteBlankNodeAxiomSparql(String blankNodeId) {
+    private String buildDeleteBlankNodeAxiomSparql(String blankNodeId, String ancestorIri) {
         if (blankNodeId == null || blankNodeId.isBlank()) {
             log.warn("[MUTATION] deleteAxiom requires a blank node ID");
             return "";
         }
-        String escapedId = blankNodeId.replace("\\", "\\\\").replace("\"", "\\\"");
+        // RDF4J BNode.stringValue() returns the bare internal ID (e.g. "b0"), so
+        // SPARQL STR(?bnode) also returns "b0" — not "_:b0". Strip the "_:" prefix.
+        String rawId = blankNodeId.startsWith("_:") ? blankNodeId.substring(2) : blankNodeId;
+        String escapedRawId = rawId.replace("\\", "\\\\").replace("\"", "\\\"");
+
+        // If we know the subject class, anchor the query on that triple and delete it too.
+        String subClassOfDelete = ancestorIri != null && !ancestorIri.isBlank()
+                ? "  <" + ancestorIri + "> rdfs:subClassOf ?axiom .\n"
+                : "";
+        String subClassOfWhere = ancestorIri != null && !ancestorIri.isBlank()
+                ? "  <" + ancestorIri + "> rdfs:subClassOf ?axiom .\n"
+                : "";
+
         String sparql = """
             DELETE {
-              ?axiom ?p ?o .
+            %s  ?axiom ?p ?o .
               ?listNode rdf:first ?first .
               ?listNode rdf:rest ?rest .
             }
             WHERE {
               FILTER(isBlank(?axiom) && STR(?axiom) = "%s")
-              ?axiom ?p ?o .
+            %s  ?axiom ?p ?o .
               OPTIONAL {
                 ?axiom (owl:intersectionOf|owl:unionOf|owl:oneOf|rdf:first|rdf:rest)* ?listNode .
                 ?listNode rdf:first ?first .
                 ?listNode rdf:rest ?rest .
               }
             }
-            """.formatted(escapedId);
-        log.info("[MUTATION] deleteAxiom SPARQL for blank node {}: {}", blankNodeId, sparql);
+            """.formatted(subClassOfDelete, escapedRawId, subClassOfWhere);
+        log.info("[MUTATION] deleteAxiom SPARQL for blank node {} (ancestorIri={}): {}", blankNodeId, ancestorIri, sparql);
         return sparql;
     }
 
@@ -1959,6 +1971,7 @@ public class OntologyMutationService {
         String axiomType,       // EquivalentTo, SubClassOf
         String oldValue,        // For tracking the old value in updates
         String language,        // Language tag for annotation literals (e.g. "en", "fr")
-        String datatype         // Datatype IRI for annotation literals (e.g. xsd:boolean)
+        String datatype,        // Datatype IRI for annotation literals (e.g. xsd:boolean)
+        String ancestorIri      // Subject class for anonymous ancestor deletes (rdfs:subClassOf subject)
     ) {}
 }

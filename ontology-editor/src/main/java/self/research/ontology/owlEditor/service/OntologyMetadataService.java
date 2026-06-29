@@ -596,13 +596,13 @@ public class OntologyMetadataService {
             String members = String.join(",", resolveClassIris(projectId, parts));
             op = new OntologyMutationService.MutationOp(
                     "addGCAIntersection", superIri, null, null, null, members,
-                    null, null, null, null, null, null, null, null);
+                    null, null, null, null, null, null, null, null, null);
         } else if (OR_SPLIT.split(sub).length >= 2) {
             String[] parts = OR_SPLIT.split(sub);
             String members = String.join(",", resolveClassIris(projectId, parts));
             op = new OntologyMutationService.MutationOp(
                     "addGCAUnion", superIri, null, null, null, members,
-                    null, null, null, null, null, null, null, null);
+                    null, null, null, null, null, null, null, null, null);
         } else {
             throw new IllegalArgumentException(
                     "GCA could not be parsed. Use Manchester syntax (e.g. 'A and (p some B) SubClassOf C')");
@@ -649,7 +649,7 @@ public class OntologyMetadataService {
             mutationService.apply(projectId, List.of(
                     new OntologyMutationService.MutationOp(
                             "deleteAxiom", blankNodeId, null, null, null, null,
-                            null, null, null, null, null, null, null, null)));
+                            null, null, null, null, null, null, null, null, null)));
         }
     }
 
