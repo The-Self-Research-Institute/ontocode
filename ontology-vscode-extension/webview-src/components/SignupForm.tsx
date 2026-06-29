@@ -5,6 +5,8 @@ import { Loader2, Eye, EyeOff, ArrowLeft, Bug } from 'lucide-react';
 import ReportIssueModal from './ReportIssueModal';
 import { AppVersionBadge } from './AppVersionBadge';
 import { OntoCodeLogo } from './OntoCodeLogo';
+import { TermsAndConditionsModal } from './TermsAndConditionsModal';
+import { PrivacyPolicyModal } from './PrivacyPolicyModal';
 
 interface SignupFormProps {
     onToggleForm: () => void;
@@ -24,6 +26,9 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
     const [successMessage, setSuccessMessage] = useState('');
+    const [agreedToTerms, setAgreedToTerms] = useState(false);
+    const [isTnCOpen, setIsTnCOpen] = useState(false);
+    const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
     const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
     const { signup } = useAuth();
 
@@ -51,6 +56,11 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
         
         if (password !== confirmPassword) {
             setError("Passwords don't match.");
+            return;
+        }
+
+        if (!agreedToTerms) {
+            setError('Please accept the Terms and Conditions and Privacy Policy to continue.');
             return;
         }
         
@@ -174,12 +184,41 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
                 {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
               </button>
             </div>
+            {/* Terms agreement */}
+            <label className="flex items-start gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={agreedToTerms}
+                onChange={(e) => setAgreedToTerms(e.target.checked)}
+                disabled={isLoading}
+                className="mt-0.5 h-4 w-4 rounded border-white/30 bg-white/10 text-purple-500 focus:ring-purple-500 cursor-pointer shrink-0"
+              />
+              <span className="text-xs text-gray-300 leading-relaxed">
+                I have read and agree to the{" "}
+                <button
+                  type="button"
+                  onClick={() => setIsTnCOpen(true)}
+                  className="text-purple-400 hover:text-purple-300 underline underline-offset-2 font-medium"
+                >
+                  Terms and Conditions
+                </button>
+                {" "}and{" "}
+                <button
+                  type="button"
+                  onClick={() => setIsPrivacyOpen(true)}
+                  className="text-purple-400 hover:text-purple-300 underline underline-offset-2 font-medium"
+                >
+                  Privacy Policy
+                </button>
+              </span>
+            </label>
+
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || !agreedToTerms}
               className={`w-full flex items-center justify-center py-3 px-4 rounded-lg text-sm font-medium text-white transition-all duration-300 ${
-                isLoading
-                  ? "bg-purple-400 cursor-not-allowed"
+                isLoading || !agreedToTerms
+                  ? "bg-purple-400 cursor-not-allowed opacity-60"
                   : "bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 focus:outline-none focus:ring-2 focus:ring-purple-500"
               }`}
             >
@@ -228,6 +267,9 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
         {isReportIssueModalOpen && (
           <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
         )}
+
+        <TermsAndConditionsModal isOpen={isTnCOpen} onClose={() => setIsTnCOpen(false)} />
+        <PrivacyPolicyModal isOpen={isPrivacyOpen} onClose={() => setIsPrivacyOpen(false)} />
       </div>
     );
 };
