@@ -548,6 +548,99 @@ public class StripeService {
     }
 
     /**
+     * Switches a paid subscription between monthly and annual billing.
+     *
+     * Annual → Monthly: no immediate charge. The new monthly price takes effect at the
+     * end of the current billing period (billing_cycle_anchor stays unchanged, no proration).
+     * The user keeps full value of their already-paid annual period.
+     *
+     * Monthly → Annual: charged immediately. Proration credit for unused monthly days is
+     * applied and an invoice is raised for the annual price difference.
+     *
+     * Returns the effective change date (ISO string) — "now" for immediate changes,
+     * currentPeriodEnd for at-renewal changes.
+     */
+    public Map<String, Object> changeSubscriptionInterval(User user, String newInterval) throws StripeException {
+        requireActiveSubscription(user);
+
+        String currentStatus = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus() : "";
+        boolean activeLike = "active".equalsIgnoreCase(currentStatus) || "trialing".equalsIgnoreCase(currentStatus);
+        if (!activeLike) {
+            throw new IllegalStateException("Can only switch billing interval on an active subscription.");
+        }
+        String currentPlan = user.getSubscriptionPlanName();
+        if (currentPlan == null || "FREE".equalsIgnoreCase(currentPlan)) {
+            throw new IllegalStateException("No paid plan to switch interval for.");
+        }
+
+        String normalizedNew = normalizeBillingInterval(newInterval);
+        String normalizedCurrent = normalizeBillingInterval(user.getBillingInterval());
+        if (normalizedNew.equals(normalizedCurrent)) {
+            String existingDate = user.getSubscriptionCurrentPeriodEnd() != null
+                    ? user.getSubscriptionCurrentPeriodEnd().toString() : "";
+            return Map.of("alreadySet", true, "interval", normalizedNew, "effectiveDate", existingDate);
+        }
+        if (!"monthly".equals(normalizedNew) && !"annual".equals(normalizedNew)) {
+            throw new IllegalArgumentException("interval must be monthly or annual");
+        }
+
+        String stripeInterval = "annual".equals(normalizedNew) ? "yearly" : "monthly";
+        String newPriceId = resolvePriceId(currentPlan.toUpperCase(), stripeInterval);
+
+        Subscription subscription = Subscription.retrieve(user.getStripeSubscriptionId());
+        if (subscription.getItems() == null || subscription.getItems().getData() == null
+                || subscription.getItems().getData().isEmpty()) {
+            throw new IllegalStateException("Subscription has no items to update.");
+        }
+
+        String itemId = subscription.getItems().getData().get(0).getId();
+        String idempotencyKey = "interval-switch-" + user.getId() + "-" + subscription.getId() + "-" + newPriceId;
+
+        boolean annualToMonthly = "annual".equals(normalizedCurrent) && "monthly".equals(normalizedNew);
+
+        SubscriptionUpdateParams.Builder paramsBuilder = SubscriptionUpdateParams.builder()
+                .addItem(
+                        SubscriptionUpdateParams.Item.builder()
+                                .setId(itemId)
+                                .setPrice(newPriceId)
+                                .build()
+                )
+                .putMetadata("billingInterval", normalizedNew);
+
+        if (annualToMonthly) {
+            // No immediate charge — keep the current annual period end intact.
+            // Monthly billing starts when the annual period naturally expires.
+            paramsBuilder
+                    .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.NONE)
+                    .setBillingCycleAnchor(SubscriptionUpdateParams.BillingCycleAnchor.UNCHANGED);
+        } else {
+            // Monthly → Annual: charge the annual price difference immediately.
+            paramsBuilder
+                    .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.ALWAYS_INVOICE)
+                    .setPaymentBehavior(SubscriptionUpdateParams.PaymentBehavior.ERROR_IF_INCOMPLETE);
+        }
+
+        Subscription updated = subscription.update(paramsBuilder.build(),
+                com.stripe.net.RequestOptions.builder().setIdempotencyKey(idempotencyKey).build());
+
+        applySubscriptionSnapshotToUser(user, updated, currentPlan.toUpperCase(), stripeInterval);
+        userRepository.save(user);
+        workspaceService.syncWorkspacesToOwnerPlan(user);
+
+        String effectiveDate = user.getSubscriptionCurrentPeriodEnd() != null
+                ? user.getSubscriptionCurrentPeriodEnd().toString() : "";
+        log.info("Switched billing interval for user {} subscription {} to {} (effective: {})",
+                user.getUsername(), subscription.getId(), normalizedNew,
+                annualToMonthly ? "at renewal " + effectiveDate : "immediately");
+
+        return Map.of(
+                "interval", normalizedNew,
+                "immediate", !annualToMonthly,
+                "effectiveDate", effectiveDate
+        );
+    }
+
+    /**
      * Immediately cancels the subscription (prorated refund not issued).
      * Idempotent: if the subscription is already cancelled (e.g. double-click), local state
      * is still reconciled and no Stripe API error is surfaced.
@@ -1449,7 +1542,8 @@ public class StripeService {
         boolean activeLike = "active".equalsIgnoreCase(currentStatus) || "trialing".equalsIgnoreCase(currentStatus);
         String currentInterval = normalizeBillingInterval(user.getBillingInterval());
         String targetInterval = normalizeBillingInterval(requestedInterval);
-        if (activeLike && "annual".equals(currentInterval) && "monthly".equals(targetInterval)) {
+        if (activeLike && "annual".equals(currentInterval) && "monthly".equals(targetInterval)
+                && requestedRank <= currentRank) {
             throw new IllegalStateException(
                     "Switching from annual to monthly is not available during the current annual period.");
         }

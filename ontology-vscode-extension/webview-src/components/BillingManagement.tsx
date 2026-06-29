@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
-import { X, Loader2, CreditCard, XCircle, CheckCircle, Shield, AlertTriangle, Crown, ChevronLeft, Calendar, RefreshCw, History, Download, Monitor } from 'lucide-react';
+import { X, Loader2, CreditCard, XCircle, CheckCircle, Shield, AlertTriangle, Crown, ChevronLeft, Calendar, RefreshCw, History, Download, Monitor, ArrowLeftRight } from 'lucide-react';
 import { getGatewayUrl } from '../config/deploymentConfig';
 import { usePlanPricing } from '../hooks/usePlanPricing';
 import { isDesktop } from '../utils/desktop';
@@ -242,6 +242,9 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     const [setupPublishableKey, setSetupPublishableKey] = useState<string>('');
     const [cardUpdated, setCardUpdated] = useState(false);
     const [enablingAutoRenew, setEnablingAutoRenew] = useState(false);
+    const [switchingInterval, setSwitchingInterval] = useState(false);
+    const [intervalSwitchError, setIntervalSwitchError] = useState<string | null>(null);
+    const [intervalSwitchSuccess, setIntervalSwitchSuccess] = useState<string | null>(null);
     const [downloadingLicense, setDownloadingLicense] = useState(false);
     const [licenseError, setLicenseError] = useState<string | null>(null);
     const { getDisplayPrice } = usePlanPricing();
@@ -432,6 +435,41 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     };
 
 
+    const switchBillingInterval = async (newInterval: 'monthly' | 'annual') => {
+        setIntervalSwitchError(null);
+        setIntervalSwitchSuccess(null);
+        setSwitchingInterval(true);
+        try {
+            let res: Response;
+            try {
+                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/change-interval`, {
+                    method: 'POST', headers: authHeaders, body: JSON.stringify({ interval: newInterval }),
+                });
+                if (!res.ok && res.status === 404) {
+                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/change-interval`, {
+                        method: 'POST', headers: authHeaders, body: JSON.stringify({ interval: newInterval }),
+                    });
+                }
+            } catch (err: any) {
+                throw new Error(err.message || 'Network error. Please check your connection and try again.');
+            }
+            if (res.status === 401 || res.status === 403) throw new Error('Your session has expired. Please sign in again.');
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error ?? 'Failed to switch billing interval.');
+            if (data.immediate === false && data.effectiveDate) {
+                const renewalDate = formatBillingDate(data.effectiveDate);
+                setIntervalSwitchSuccess(`Switched to monthly. Takes effect on ${renewalDate} — your current annual period runs until then.`);
+            } else {
+                setIntervalSwitchSuccess('Switched to annual billing. Your account has been charged for the difference.');
+            }
+            await loadBillingSummary();
+        } catch (err: any) {
+            setIntervalSwitchError(err.message);
+        } finally {
+            setSwitchingInterval(false);
+        }
+    };
+
     const plan = (billingSummary?.planName || workspace.subscriptionPlan || '').toUpperCase();
     const isTopPlan = plan === 'ENTERPRISE';
     const interval = billingSummary?.billingInterval || workspace.billingInterval || 'monthly';
@@ -599,6 +637,35 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                     <div className="text-left">
                                         <p className="font-bold text-lg">{isTopPlan ? 'View Plans' : 'Upgrade Plan'}</p>
                                         <p className="text-sm text-slate-400 mt-1 text-balance">Explore more advanced features and options.</p>
+                                    </div>
+                                </button>
+                            )}
+
+                            {/* Switch billing interval — owner only, paid active/trialing plans */}
+                            {isOwner && plan !== 'FREE' && (summaryStatus?.toLowerCase() === 'active' || summaryStatus?.toLowerCase() === 'trialing') && (
+                                <button
+                                    onClick={() => switchBillingInterval(interval === 'annual' ? 'monthly' : 'annual')}
+                                    disabled={switchingInterval}
+                                    className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-blue-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
+                                >
+                                    <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+                                        {switchingInterval ? <Loader2 size={24} className="animate-spin" /> : <ArrowLeftRight size={24} />}
+                                    </div>
+                                    <div className="text-left">
+                                        <p className="font-bold text-lg">
+                                            {interval === 'annual' ? 'Switch to Monthly' : 'Switch to Annual'}
+                                        </p>
+                                        <p className="text-sm text-slate-400 mt-1 text-balance">
+                                            {interval === 'annual'
+                                                ? `Takes effect at renewal on ${renewalDateLabel}. No charge now.`
+                                                : 'Billed annually. You\'ll be charged the difference for the remaining period.'}
+                                        </p>
+                                        {intervalSwitchSuccess && (
+                                            <p className="text-xs text-green-400 mt-2">{intervalSwitchSuccess}</p>
+                                        )}
+                                        {intervalSwitchError && (
+                                            <p className="text-xs text-red-400 mt-2">{intervalSwitchError}</p>
+                                        )}
                                     </div>
                                 </button>
                             )}
