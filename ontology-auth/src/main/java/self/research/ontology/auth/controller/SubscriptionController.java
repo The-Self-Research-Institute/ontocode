@@ -390,6 +390,32 @@ public class SubscriptionController {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // POST /api/billing/use-payment-method — set a backup card as default
+    // and retry any outstanding invoice with it (user-initiated, never automatic)
+    // Body: { "paymentMethodId": "pm_xxx" }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @PostMapping("/use-payment-method")
+    public ResponseEntity<?> usePaymentMethod(
+            @AuthenticationPrincipal UserDetails principal,
+            @RequestBody Map<String, String> body) {
+        String paymentMethodId = body.get("paymentMethodId");
+        if (paymentMethodId == null || paymentMethodId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "paymentMethodId is required"));
+        }
+        try {
+            User user = resolveUser(principal);
+            stripeService.setDefaultPaymentMethod(user, paymentMethodId);
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Use payment method failed for {}: {}", principal.getUsername(), e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to update payment method"));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // POST /api/billing/change-interval — switch between monthly and annual
     // Body: { "interval": "monthly" | "annual" }
     // ─────────────────────────────────────────────────────────────────────────

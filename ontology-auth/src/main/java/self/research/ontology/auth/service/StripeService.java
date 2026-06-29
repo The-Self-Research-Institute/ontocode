@@ -1587,17 +1587,32 @@ public class StripeService {
                     if (!pmData.isEmpty()) result.put("defaultPaymentMethod", pmData);
                 }
             }
-            // List all non-default payment methods as backup options
+
+            // Collect unique backup payment methods across both card and link types.
+            // Deduplicate cards by fingerprint, link by type (only one needed).
             List<Map<String, Object>> backups = new ArrayList<>();
-            PaymentMethodListParams listParams = PaymentMethodListParams.builder()
-                    .setCustomer(stripeCustomerId)
-                    .setType(PaymentMethodListParams.Type.CARD)
-                    .build();
-            PaymentMethodCollection pmList = PaymentMethod.list(listParams);
-            for (PaymentMethod pm : pmList.getData()) {
-                if (pm.getId().equals(defaultPmId)) continue;
-                Map<String, Object> pmData = buildPaymentMethodMap(pm);
-                if (!pmData.isEmpty()) backups.add(pmData);
+            java.util.Set<String> seenKeys = new java.util.HashSet<>();
+
+            for (PaymentMethodListParams.Type type : List.of(
+                    PaymentMethodListParams.Type.CARD, PaymentMethodListParams.Type.LINK)) {
+                PaymentMethodListParams listParams = PaymentMethodListParams.builder()
+                        .setCustomer(stripeCustomerId)
+                        .setType(type)
+                        .build();
+                for (PaymentMethod pm : PaymentMethod.list(listParams).getData()) {
+                    if (pm.getId().equals(defaultPmId)) continue;
+                    String dedupeKey;
+                    if ("link".equals(pm.getType())) {
+                        dedupeKey = "link";
+                    } else if (pm.getCard() != null && pm.getCard().getFingerprint() != null) {
+                        dedupeKey = pm.getCard().getFingerprint();
+                    } else {
+                        dedupeKey = pm.getId();
+                    }
+                    if (!seenKeys.add(dedupeKey)) continue;
+                    Map<String, Object> pmData = buildPaymentMethodMap(pm);
+                    if (!pmData.isEmpty()) backups.add(pmData);
+                }
             }
             if (!backups.isEmpty()) result.put("backupPaymentMethods", backups);
         } catch (StripeException e) {
@@ -1610,10 +1625,11 @@ public class StripeService {
         Map<String, Object> data = new HashMap<>();
         String type = pm.getType();
         if ("link".equals(type)) {
-            // Stripe Link — no real card number; display as digital wallet
+            data.put("pmId", pm.getId());
             data.put("brand", "link");
             data.put("type", "link");
         } else if (pm.getCard() != null) {
+            data.put("pmId", pm.getId());
             data.put("last4", pm.getCard().getLast4());
             data.put("brand", pm.getCard().getBrand());
             data.put("expMonth", pm.getCard().getExpMonth());
@@ -1621,6 +1637,62 @@ public class StripeService {
             data.put("type", "card");
         }
         return data;
+    }
+
+    /**
+     * Sets a payment method as the customer's default and retries the latest open/uncollectible invoice.
+     * Used when the user explicitly chooses a backup card after a payment failure.
+     */
+    public void setDefaultPaymentMethod(User user, String paymentMethodId) throws StripeException {
+        if (user.getStripeCustomerId() == null) {
+            throw new IllegalStateException("No billing account found.");
+        }
+        if (paymentMethodId == null || paymentMethodId.isBlank()) {
+            throw new IllegalArgumentException("paymentMethodId is required.");
+        }
+
+        // Verify the PM belongs to this customer before setting it
+        PaymentMethod pm = PaymentMethod.retrieve(paymentMethodId);
+        if (!user.getStripeCustomerId().equals(pm.getCustomer())) {
+            throw new IllegalArgumentException("Payment method does not belong to your account.");
+        }
+
+        // Set as customer default
+        Customer.retrieve(user.getStripeCustomerId()).update(
+                CustomerUpdateParams.builder()
+                        .setInvoiceSettings(CustomerUpdateParams.InvoiceSettings.builder()
+                                .setDefaultPaymentMethod(paymentMethodId)
+                                .build())
+                        .build()
+        );
+
+        // Also set on the active subscription so future renewals use it
+        if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
+            Subscription.retrieve(user.getStripeSubscriptionId()).update(
+                    SubscriptionUpdateParams.builder()
+                            .setDefaultPaymentMethod(paymentMethodId)
+                            .build()
+            );
+        }
+
+        // Retry the latest open or uncollectible invoice immediately
+        InvoiceListParams invoiceParams = InvoiceListParams.builder()
+                .setCustomer(user.getStripeCustomerId())
+                .setLimit(5L)
+                .build();
+        for (Invoice invoice : Invoice.list(invoiceParams).getData()) {
+            String status = invoice.getStatus();
+            if ("open".equalsIgnoreCase(status) || "uncollectible".equalsIgnoreCase(status)) {
+                invoice.pay(InvoicePayParams.builder()
+                        .setPaymentMethod(paymentMethodId)
+                        .build());
+                log.info("Retried invoice {} for user {} using payment method {}",
+                        invoice.getId(), user.getUsername(), paymentMethodId);
+                break;
+            }
+        }
+
+        log.info("Default payment method updated to {} for user {}", paymentMethodId, user.getUsername());
     }
 
     private List<Map<String, Object>> listPaymentHistory(String stripeCustomerId) throws StripeException {
