@@ -1603,6 +1603,10 @@ class OntoCodePanel {
         const isPublicEndpoint =
             url.includes('/api/auth/login') ||
             url.includes('/api/auth/signup') ||
+            url.includes('/api/auth/verify') ||
+            url.includes('/api/auth/resend-verification') ||
+            url.includes('/api/auth/forgot-password') ||
+            url.includes('/api/auth/reset-password') ||
             url.includes('/api/invitations/details/') ||
             url.includes('/api/invitations/request-resend/');
 
