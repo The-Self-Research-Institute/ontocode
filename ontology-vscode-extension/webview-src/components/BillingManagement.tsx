@@ -208,7 +208,6 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     const [licenseError, setLicenseError] = useState<string | null>(null);
     const { getDisplayPrice } = usePlanPricing();
 
-    // Download a signed desktop-license file for the user's current plan.
     const downloadLicense = async () => {
         setLicenseError(null);
         setDownloadingLicense(true);
@@ -594,9 +593,8 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 </button>
                             )}
 
-                            {/* Download License File — for activating OntoCode Desktop.
-                                Hidden when already running inside the desktop app. */}
-                            {!isDesktop() && (
+                            {/* Desktop License — hidden from billing page, preserved for future use */}
+                            {false && !isDesktop() && (
                                 <button onClick={downloadLicense} disabled={downloadingLicense}
                                     className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-emerald-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed">
                                     <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
