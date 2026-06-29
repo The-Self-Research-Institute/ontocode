@@ -366,7 +366,6 @@ const ClassEditor: React.FC<{
   // Instances State
   const [isInstancesOpen, setIsInstancesOpen] = useState(false);
   const [classInstances, setClassInstances] = useState<Individual[]>([]);
-  const [loadingInstances, setLoadingInstances] = useState(false);
   const descriptionAbortRef = useRef<AbortController | null>(null);
   const detailsLoadGenRef = useRef(0);
   const isSavingAxiomRef = useRef(false);
@@ -430,7 +429,6 @@ const ClassEditor: React.FC<{
     setDescriptionTimedOut(false);
     setLoadingAnnotations(true);
     setLoadingDetails(false);
-    setLoadingInstances(false);
     // Clear the class lookup when the project changes so the editor dialog
     // doesn't offer classes from the previous project.
     if (allClassesLookupProjectRef.current !== projectId) {
@@ -442,7 +440,6 @@ const ClassEditor: React.FC<{
       if (alive) {
         setLoadingAnnotations(false);
         setLoadingDetails(false);
-        setLoadingInstances(false);
       }
     }, 30000);
 
@@ -820,7 +817,6 @@ const ClassEditor: React.FC<{
     const watchdog = setTimeout(() => {
       controller.abort();
       setLoadingDetails(false);
-      setLoadingInstances(false);
       setDescriptionTimedOut(true);
     }, isDesktop() ? 45_000 : 90_000);
     try {
@@ -831,7 +827,6 @@ const ClassEditor: React.FC<{
   };
 
   const loadInstances = async (signal?: AbortSignal) => {
-    setLoadingInstances(true);
     try {
       const response = await apiClient.get<any>(
         `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(item.id)}`,
@@ -845,8 +840,6 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("Failed to load class instances:", error);
       setClassInstances([]);
-    } finally {
-      setLoadingInstances(false);
     }
   };
 
@@ -2174,7 +2167,7 @@ const ClassEditor: React.FC<{
             )}
 
             {axiomsLoaded && (
-            <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-4">
+            <div className={`bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-4 transition-opacity duration-150 ${isSavingAxiom ? "opacity-50 pointer-events-none" : ""}`}>
               {/* Equivalent To Section */}
               <AxiomSubsection
                 title="Equivalent To"
@@ -2280,11 +2273,6 @@ const ClassEditor: React.FC<{
 
               {/* Instances Section */}
               <div className="relative">
-                {(loadingInstances || isSavingAxiom) && (
-                  <div className="absolute inset-0 bg-white/60 flex items-center justify-center z-10 rounded pointer-events-none">
-                    <div className="animate-spin h-4 w-4 border-2 border-yellow-500 border-t-transparent rounded-full" />
-                  </div>
-                )}
                 <AxiomSubsection
                   title="Instances"
                   viewMode={viewMode}

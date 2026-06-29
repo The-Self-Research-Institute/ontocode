@@ -22,7 +22,7 @@ public class OntologySpringCacheEvictionService {
     // All caches use keys of the form: projectId_..._userId
     private static final List<String> PREFIX_KEY_CACHES = List.of(
             "topLevelClasses", "classChildren", "allClasses", "ontologyProperties",
-            "ontologyIndividuals", "classInstances"
+            "ontologyAnnotationProperties", "ontologyIndividuals", "classInstances"
     );
 
     private static final List<String> EXACT_KEY_CACHES = List.of(

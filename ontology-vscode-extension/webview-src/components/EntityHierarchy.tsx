@@ -145,12 +145,6 @@ const EntityHierarchy = ({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: SelectableItem } | null>(null);
   const [draggedItem, setDraggedItem] = useState<SelectableItem | null>(null);
   const [renamingItemId, setRenamingItemId] = useState<string | null>(null);
-  const [viewMenuOpen, setViewMenuOpen] = useState(false);
-  const [annotationSubmenuOpen, setAnnotationSubmenuOpen] = useState(false);
-  const [editingTemplate, setEditingTemplate] = useState(false);
-  const [templateDraft, setTemplateDraft] = useState(customTemplate);
-  useEffect(() => { setTemplateDraft(customTemplate); }, [customTemplate]);
-  const viewMenuRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const { state: collaborationState, publishCursor } = useCollaboration();
 
@@ -179,21 +173,6 @@ const EntityHierarchy = ({
   const activeUsers = allUsers.filter(user => 
     !collaborationState.currentProjectId || user.projectId === collaborationState.currentProjectId
   );
-
-  // Close View menu when clicking outside
-  useEffect(() => {
-    if (!viewMenuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (viewMenuRef.current && !viewMenuRef.current.contains(e.target as Node)) {
-        if (editingTemplate && templateDraft.trim()) onCustomTemplateChange?.(templateDraft);
-        setEditingTemplate(false);
-        setViewMenuOpen(false);
-        setAnnotationSubmenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [viewMenuOpen]);
 
   // Close context menu when clicking outside
   useEffect(() => {
@@ -679,163 +658,6 @@ const EntityHierarchy = ({
             </div>
           )}
 
-          {/* View menu — Protégé-style rendering & scope options */}
-          {onDisplayModeChange && (
-            <div className="relative" ref={viewMenuRef}>
-              <button
-                onClick={() => { setViewMenuOpen(v => !v); setAnnotationSubmenuOpen(false); }}
-                className={`flex items-center gap-1 px-2 py-0.5 text-[10px] rounded transition-colors whitespace-nowrap border ${
-                  viewMenuOpen ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200'
-                }`}
-                title="View options — rendering mode and ontology scope"
-              >
-                <Eye size={10} />
-                View
-                <ChevronDown size={9} />
-              </button>
-
-              {viewMenuOpen && (
-                <div className="absolute left-0 top-full mt-0.5 z-50 bg-white border border-gray-200 rounded shadow-lg min-w-[220px] py-1 text-xs"
-                     style={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
-
-                  {/* ── Rendering section ── */}
-                  <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-secondary)' }}>
-                    Rendering
-                  </div>
-
-                  {/* Render by label */}
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-blue-50 text-left"
-                    onClick={() => { onDisplayModeChange('label'); setAnnotationSubmenuOpen(false); setViewMenuOpen(false); }}
-                  >
-                    <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${displayMode === 'label' ? 'bg-blue-600 border-blue-600' : 'border-gray-400'}`} />
-                    Render by label
-                    <span className="ml-auto text-[9px] text-gray-400">(rdfs:label)</span>
-                  </button>
-
-                  {/* Render by name (ID) */}
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-blue-50 text-left"
-                    onClick={() => { onDisplayModeChange('id'); setAnnotationSubmenuOpen(false); setViewMenuOpen(false); }}
-                  >
-                    <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${displayMode === 'id' ? 'bg-blue-600 border-blue-600' : 'border-gray-400'}`} />
-                    Render by name
-                    <span className="ml-auto text-[9px] text-gray-400">(rdf:id)</span>
-                  </button>
-
-                  {/* Render by annotation property — with submenu */}
-                  <div className="relative">
-                    <button
-                      className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-blue-50 text-left"
-                      onClick={() => setAnnotationSubmenuOpen(v => !v)}
-                    >
-                      <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${displayMode === 'annotation' ? 'bg-blue-600 border-blue-600' : 'border-gray-400'}`} />
-                      Render by annotation property
-                      <ChevronRight size={10} className="ml-auto" />
-                    </button>
-
-                    {annotationSubmenuOpen && (
-                      <div className="absolute left-full top-0 ml-0.5 bg-white border border-gray-200 rounded shadow-lg min-w-[240px] py-1 max-h-60 overflow-y-auto z-50"
-                           style={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
-                        {annotationProperties.length === 0 ? (
-                          <div className="px-3 py-2 text-[10px] text-gray-400 italic">No annotation properties found</div>
-                        ) : (
-                          annotationProperties.map(ap => (
-                            <button
-                              key={ap.id}
-                              className={`w-full flex items-center gap-2 px-3 py-1.5 hover:bg-blue-50 text-left ${
-                                displayMode === 'annotation' && displayAnnotationPropIri === ap.id ? 'bg-blue-50 font-semibold' : ''
-                              }`}
-                              onClick={() => {
-                                onDisplayModeChange('annotation');
-                                onDisplayAnnotationPropChange?.(ap.id);
-                                setAnnotationSubmenuOpen(false);
-                                setViewMenuOpen(false);
-                              }}
-                            >
-                              <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${
-                                displayMode === 'annotation' && displayAnnotationPropIri === ap.id ? 'bg-blue-600 border-blue-600' : 'border-gray-400'
-                              }`} />
-                              <span className="truncate">{ap.label || getLocalName(ap.id)}</span>
-                              <span className="ml-auto text-[9px] text-gray-400 shrink-0">{getLocalName(ap.id)}</span>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Custom rendering */}
-                  <div className="px-3 py-1.5">
-                    <button
-                      className="w-full flex items-center gap-2 hover:bg-blue-50 text-left rounded"
-                      onClick={() => { onDisplayModeChange('custom'); setEditingTemplate(true); }}
-                    >
-                      <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${displayMode === 'custom' ? 'bg-blue-600 border-blue-600' : 'border-gray-400'}`} />
-                      Custom rendering...
-                    </button>
-                    {displayMode === 'custom' && (
-                      <div className="mt-1.5 pl-5">
-                        {editingTemplate ? (
-                          <div className="flex gap-1">
-                            <input
-                              autoFocus
-                              value={templateDraft}
-                              onChange={e => setTemplateDraft(e.target.value)}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') { if (templateDraft.trim()) { onCustomTemplateChange?.(templateDraft); setEditingTemplate(false); setViewMenuOpen(false); } }
-                                if (e.key === 'Escape') { setTemplateDraft(customTemplate); setEditingTemplate(false); }
-                              }}
-                              className="flex-1 text-[10px] border rounded px-1 py-0.5"
-                              placeholder="{label} ({id})"
-                              style={{ borderColor: 'var(--color-border)' }}
-                            />
-                            <button
-                              onClick={() => { if (templateDraft.trim()) { onCustomTemplateChange?.(templateDraft); setEditingTemplate(false); setViewMenuOpen(false); } }}
-                              className="text-[9px] px-1.5 py-0.5 bg-blue-600 text-white rounded"
-                            ><Check size={9} /></button>
-                          </div>
-                        ) : (
-                          <button
-                            className="text-[10px] text-blue-600 hover:underline font-mono"
-                            onClick={() => setEditingTemplate(true)}
-                          >{customTemplate}</button>
-                        )}
-                        <div className="text-[9px] text-gray-400 mt-0.5">
-                          Variables: <code>{'{'+'label}'}</code> <code>{'{'+'id}'}</code> <code>{'{'+'iri}'}</code>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="border-t my-1" style={{ borderColor: 'var(--color-border)' }} />
-
-                  {/* ── Ontology scope section ── */}
-                  <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-secondary)' }}>
-                    Ontology scope
-                  </div>
-
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-blue-50 text-left"
-                    onClick={() => { onImportsScopeChange?.('closure'); setViewMenuOpen(false); }}
-                  >
-                    <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${importsScope === 'closure' ? 'bg-blue-600 border-blue-600' : 'border-gray-400'}`} />
-                    Show imports closure
-                    <span className="ml-auto text-[9px] text-gray-400">incl. imported</span>
-                  </button>
-
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-blue-50 text-left"
-                    onClick={() => { onImportsScopeChange?.('active'); setViewMenuOpen(false); }}
-                  >
-                    <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${importsScope === 'active' ? 'bg-blue-600 border-blue-600' : 'border-gray-400'}`} />
-                    Show only active ontology
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-          
           {!hideToolbarActions && (
           <div className="flex items-center gap-0.5">
               {/*

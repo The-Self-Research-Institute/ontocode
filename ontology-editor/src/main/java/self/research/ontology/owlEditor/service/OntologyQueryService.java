@@ -987,6 +987,7 @@ public class OntologyQueryService {
         return count;
     }
 
+    @Cacheable(value = "ontologyAnnotationProperties", key = "#projectId + '_' + #limit + '_' + #offset + '_' + (T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId() ?: 'public')")
     public List<AnnotationPropertyDto> annotationProperties(String projectId, int limit, int offset) {
         long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
