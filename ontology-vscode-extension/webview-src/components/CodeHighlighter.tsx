@@ -49,7 +49,7 @@ declare global {
 
 interface CodeHighlighterProps {
   content: string;
-  format: "turtle" | "rdfxml" | "ntriples" | "owlxml" | "manchester" | "functional";
+  format: "turtle" | "rdfxml" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld";
   citationInsertionMode?: boolean;
   citationRemovalMode?: boolean;
   pendingCitation?: any;
@@ -199,6 +199,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
       owlxml: "owl",
       manchester: "omn",
       functional: "ofn",
+      jsonld: "jsonld",
     };
 
     const extension = extensionMap[format] || "txt";
