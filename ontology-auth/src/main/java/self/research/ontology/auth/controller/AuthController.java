@@ -416,9 +416,11 @@ public class AuthController {
     }
 
     /**
-     * Email verification endpoint
+     * Email verification endpoint.
+     * Mapped to both /verify and /verify-email so the gateway public allowlist
+     * and older deployments stay compatible.
      */
-    @GetMapping("/verify")
+    @GetMapping({"/verify", "/verify-email"})
     public ResponseEntity<?> verify(@RequestParam("token") String token) {
         Optional<User> userOpt = userRepository.findByVerificationToken(token);
 
