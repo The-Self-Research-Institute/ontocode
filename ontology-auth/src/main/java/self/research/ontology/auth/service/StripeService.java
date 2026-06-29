@@ -596,6 +596,9 @@ public class StripeService {
         String itemId = subscription.getItems().getData().get(0).getId();
         String idempotencyKey = "interval-switch-" + user.getId() + "-" + subscription.getId() + "-" + newPriceId;
 
+        // Annual → Monthly: no immediate charge, no proration — billing anchor resets to
+        // now (Stripe default when interval changes), so monthly billing starts today.
+        // Monthly → Annual: charge the difference immediately via ALWAYS_INVOICE.
         boolean annualToMonthly = "annual".equals(normalizedCurrent) && "monthly".equals(normalizedNew);
 
         SubscriptionUpdateParams.Builder paramsBuilder = SubscriptionUpdateParams.builder()
@@ -608,13 +611,8 @@ public class StripeService {
                 .putMetadata("billingInterval", normalizedNew);
 
         if (annualToMonthly) {
-            // No immediate charge — keep the current annual period end intact.
-            // Monthly billing starts when the annual period naturally expires.
-            paramsBuilder
-                    .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.NONE)
-                    .setBillingCycleAnchor(SubscriptionUpdateParams.BillingCycleAnchor.UNCHANGED);
+            paramsBuilder.setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.NONE);
         } else {
-            // Monthly → Annual: charge the annual price difference immediately.
             paramsBuilder
                     .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.ALWAYS_INVOICE)
                     .setPaymentBehavior(SubscriptionUpdateParams.PaymentBehavior.ERROR_IF_INCOMPLETE);
@@ -629,13 +627,12 @@ public class StripeService {
 
         String effectiveDate = user.getSubscriptionCurrentPeriodEnd() != null
                 ? user.getSubscriptionCurrentPeriodEnd().toString() : "";
-        log.info("Switched billing interval for user {} subscription {} to {} (effective: {})",
-                user.getUsername(), subscription.getId(), normalizedNew,
-                annualToMonthly ? "at renewal " + effectiveDate : "immediately");
+        log.info("Switched billing interval for user {} subscription {} to {} (next charge: {})",
+                user.getUsername(), subscription.getId(), normalizedNew, effectiveDate);
 
         return Map.of(
                 "interval", normalizedNew,
-                "immediate", !annualToMonthly,
+                "immediate", true,
                 "effectiveDate", effectiveDate
         );
     }
