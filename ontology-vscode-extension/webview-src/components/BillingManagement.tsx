@@ -68,6 +68,12 @@ interface BillingSummary {
     currentPeriodEnd?: string;
     canceledAt?: string;
     paymentHistory?: PaymentHistoryItem[];
+    defaultPaymentMethod?: {
+        last4?: string;
+        brand?: string;
+        expMonth?: number;
+        expYear?: number;
+    };
 }
 
 function statusLabel(status?: string) {
@@ -276,56 +282,45 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         Authorization: `Bearer ${safeGetStorage('authToken') ?? ''}`,
     };
 
-    useEffect(() => {
-        let cancelled = false;
-
-        const loadBillingSummary = async () => {
-            setLoadingSummary(true);
-            setDetailsError(null);
+    const loadBillingSummary = async () => {
+        setLoadingSummary(true);
+        setDetailsError(null);
+        try {
+            let res: Response;
             try {
-                let res: Response;
-                try {
-                    res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/subscription/details`, {
+                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/subscription/details`, {
+                    method: 'GET',
+                    headers: authHeaders,
+                });
+                if (!res.ok && res.status === 404) {
+                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/subscription/details`, {
                         method: 'GET',
                         headers: authHeaders,
                     });
-                    if (!res.ok && res.status === 404) {
-                        res = await fetchWithTimeout(`${window.location.origin}/api/billing/subscription/details`, {
-                            method: 'GET',
-                            headers: authHeaders,
-                        });
-                    }
-                } catch (err: any) {
-                    throw new Error(err.message || 'Failed to load billing details.');
-                }
-
-                if (res.status === 401 || res.status === 403) {
-                    throw new Error('Your session has expired. Please sign in again.');
-                }
-
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    throw new Error(data?.error ?? 'Failed to load billing details.');
-                }
-
-                if (!cancelled) {
-                    setBillingSummary(data);
                 }
             } catch (err: any) {
-                if (!cancelled) {
-                    setDetailsError(err.message || 'Failed to load billing details.');
-                }
-            } finally {
-                if (!cancelled) {
-                    setLoadingSummary(false);
-                }
+                throw new Error(err.message || 'Failed to load billing details.');
             }
-        };
 
+            if (res.status === 401 || res.status === 403) {
+                throw new Error('Your session has expired. Please sign in again.');
+            }
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data?.error ?? 'Failed to load billing details.');
+            }
+
+            setBillingSummary(data);
+        } catch (err: any) {
+            setDetailsError(err.message || 'Failed to load billing details.');
+        } finally {
+            setLoadingSummary(false);
+        }
+    };
+
+    useEffect(() => {
         loadBillingSummary();
-        return () => {
-            cancelled = true;
-        };
     }, [workspace.workspaceId]);
 
     const startCardUpdate = async () => {
@@ -509,12 +504,23 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 </div>
                                 <div className="space-y-2">
                                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-300">
-                                        <Shield size={16} className="text-purple-400" />
-                                        Billing Information
+                                        <CreditCard size={16} className="text-purple-400" />
+                                        Payment Method on File
                                     </div>
-                                    <p className="text-sm text-slate-400 leading-relaxed">
-                                        Manage your payment methods and view your transaction history below. All transactions are handled securely via Stripe.
-                                    </p>
+                                    {billingSummary?.defaultPaymentMethod?.last4 ? (
+                                        <div className="flex items-center gap-3">
+                                            <div className="text-sm font-semibold text-white capitalize">
+                                                {billingSummary.defaultPaymentMethod.brand || 'Card'} ●●●● {billingSummary.defaultPaymentMethod.last4}
+                                            </div>
+                                            <span className="text-xs text-slate-500">
+                                                Expires {billingSummary.defaultPaymentMethod.expMonth}/{billingSummary.defaultPaymentMethod.expYear}
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-slate-400 leading-relaxed">
+                                            {loadingSummary ? 'Loading...' : 'No payment method on file.'}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -594,27 +600,25 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                             )}
 
                             {/* Desktop License — hidden from billing page, preserved for future use */}
-                            <div className="hidden">
-                                {!isDesktop() && (
-                                    <button onClick={downloadLicense} disabled={downloadingLicense}
-                                        className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-emerald-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed">
-                                        <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
-                                            {downloadingLicense ? <Loader2 size={24} className="animate-spin" /> : <Monitor size={24} />}
-                                        </div>
-                                        <div className="text-left">
-                                            <p className="font-bold text-lg flex items-center gap-1.5">
-                                                <Download size={16} /> Desktop License
-                                            </p>
-                                            <p className="text-sm text-slate-400 mt-1 text-balance">
-                                                Download a license file to activate OntoCode Desktop on your computer.
-                                            </p>
-                                            {licenseError && (
-                                                <p className="text-xs text-red-400 mt-2">{licenseError}</p>
-                                            )}
-                                        </div>
-                                    </button>
-                                )}
-                            </div>
+                            {!isDesktop() && (
+                                <button onClick={downloadLicense} disabled={downloadingLicense}
+                                    className="hidden h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-emerald-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed">
+                                    <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                                        {downloadingLicense ? <Loader2 size={24} className="animate-spin" /> : <Monitor size={24} />}
+                                    </div>
+                                    <div className="text-left">
+                                        <p className="font-bold text-lg flex items-center gap-1.5">
+                                            <Download size={16} /> Desktop License
+                                        </p>
+                                        <p className="text-sm text-slate-400 mt-1 text-balance">
+                                            Download a license file to activate OntoCode Desktop on your computer.
+                                        </p>
+                                        {licenseError && (
+                                            <p className="text-xs text-red-400 mt-2">{licenseError}</p>
+                                        )}
+                                    </div>
+                                </button>
+                            )}
 
                             {/* Bug #50: billing is account-level (Model B).
                                 Members of someone else's workspace shouldn't
@@ -702,7 +706,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                             <Elements stripe={stripePromise} options={elementsOptions}>
                                 <UpdateCardForm
                                     workspaceId={workspace.workspaceId}
-                                    onSuccess={() => { setView('info'); setCardUpdated(true); setSetupClientSecret(null); }}
+                                    onSuccess={() => { setView('info'); setCardUpdated(true); setSetupClientSecret(null); loadBillingSummary(); }}
                                     onCancel={() => { setView('info'); setSetupClientSecret(null); }}
                                 />
                             </Elements>

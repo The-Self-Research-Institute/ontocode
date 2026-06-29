@@ -618,6 +618,7 @@ public class StripeService {
 
         if (user.getStripeCustomerId() != null && !user.getStripeCustomerId().isBlank()) {
             response.put("paymentHistory", listPaymentHistory(user.getStripeCustomerId()));
+            response.putAll(resolveDefaultPaymentMethod(user.getStripeCustomerId()));
         }
 
         return response;
@@ -1470,6 +1471,30 @@ public class StripeService {
         if (priceId.equals(priceEnterpriseMonthly) || priceId.equals(priceEnterpriseYearly)) return "ENTERPRISE";
         log.warn("Unknown Stripe price ID '{}' — cannot map to plan name; existing plan name preserved", priceId);
         return null;
+    }
+
+    private Map<String, Object> resolveDefaultPaymentMethod(String stripeCustomerId) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            CustomerRetrieveParams params = CustomerRetrieveParams.builder()
+                    .addExpand("invoice_settings.default_payment_method")
+                    .build();
+            Customer customer = Customer.retrieve(stripeCustomerId, params, null);
+            if (customer.getInvoiceSettings() != null) {
+                PaymentMethod pm = customer.getInvoiceSettings().getDefaultPaymentMethodObject();
+                if (pm != null && pm.getCard() != null) {
+                    Map<String, Object> card = new HashMap<>();
+                    card.put("last4", pm.getCard().getLast4());
+                    card.put("brand", pm.getCard().getBrand());
+                    card.put("expMonth", pm.getCard().getExpMonth());
+                    card.put("expYear", pm.getCard().getExpYear());
+                    result.put("defaultPaymentMethod", card);
+                }
+            }
+        } catch (StripeException e) {
+            logger.warn("Could not retrieve default payment method for customer {}: {}", stripeCustomerId, e.getMessage());
+        }
+        return result;
     }
 
     private List<Map<String, Object>> listPaymentHistory(String stripeCustomerId) throws StripeException {
