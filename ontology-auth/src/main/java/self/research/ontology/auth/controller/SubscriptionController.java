@@ -390,6 +390,31 @@ public class SubscriptionController {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // POST /api/billing/change-interval — switch between monthly and annual
+    // Body: { "interval": "monthly" | "annual" }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @PostMapping("/change-interval")
+    public ResponseEntity<?> changeInterval(
+            @AuthenticationPrincipal UserDetails principal,
+            @RequestBody Map<String, String> body) {
+        String interval = body.get("interval");
+        if (interval == null || !interval.matches("^(monthly|annual|yearly)$")) {
+            return ResponseEntity.badRequest().body(Map.of("error", "interval must be monthly or annual"));
+        }
+        try {
+            User user = resolveUser(principal);
+            Map<String, Object> result = stripeService.changeSubscriptionInterval(user, interval);
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Change interval failed for {}: {}", principal.getUsername(), e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to switch billing interval"));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // POST /api/billing/cancel — immediately cancel subscription
     // ─────────────────────────────────────────────────────────────────────────
 

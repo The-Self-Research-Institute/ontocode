@@ -194,7 +194,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     const isTrialingEnterpriseUpgrade = isEnterpriseUpgrade && normalizedCurrentStatus === 'TRIALING';
     const normalizedCurrentBillingInterval = currentBillingInterval === 'annual' ? 'annual' : 'monthly';
     const currentPlanIsActiveLike = normalizedCurrentStatus === 'ACTIVE' || normalizedCurrentStatus === 'TRIALING';
-    const disableMonthlyInterval = currentRank > 1 && currentPlanIsActiveLike && normalizedCurrentBillingInterval === 'annual';
+    const disableMonthlyInterval = currentRank > 1 && currentPlanIsActiveLike && normalizedCurrentBillingInterval === 'annual' && !isUpgrade;
 
     useEffect(() => {
         if (disableMonthlyInterval && billingInterval === 'monthly') {
