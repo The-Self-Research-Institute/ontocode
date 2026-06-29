@@ -43,7 +43,17 @@ export const OpenSourceLicensesModal: React.FC<OpenSourceLicensesModalProps> = (
             <X size={20} />
           </button>
         </div>
-        <div className="overflow-y-auto flex-1 px-6 py-4">
+        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+          {/* OntoCode own license notice */}
+          <div className="bg-purple-50 border border-purple-200 rounded-lg px-4 py-3 text-sm text-purple-900">
+            <span className="font-semibold">OntoCode VSCode Extension</span> is itself open-source software,
+            released under the{" "}
+            <span className="font-medium">GNU General Public License v3 (GPL-3.0-or-later)</span>.
+            The source code will be published at{" "}
+            <span className="font-medium">github.com/The-Self-Research-Institute/ontocode</span>{" "}
+            when beta registration opens.
+          </div>
+
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide text-gray-500 border-b">
@@ -75,17 +85,10 @@ export const OpenSourceLicensesModal: React.FC<OpenSourceLicensesModalProps> = (
               ))}
             </tbody>
           </table>
-          <p className="text-xs text-gray-400 mt-4">
-            See also{" "}
-            <a
-              href="https://github.com/ontocode/ontocode/blob/main/OPEN_SOURCE_LIBRARIES.md"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-indigo-600 hover:underline"
-            >
-              OPEN_SOURCE_LIBRARIES.md
-            </a>{" "}
-            in the repository for the full list.
+          <p className="text-xs text-gray-400">
+            Full dependency details will be available in{" "}
+            <span className="font-medium text-gray-500">OPEN_SOURCE_LIBRARIES.md</span>{" "}
+            in the repository when it is published.
           </p>
         </div>
       </div>
