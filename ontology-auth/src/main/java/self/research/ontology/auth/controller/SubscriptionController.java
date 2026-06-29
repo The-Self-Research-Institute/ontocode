@@ -403,6 +403,9 @@ public class SubscriptionController {
         if (paymentMethodId == null || paymentMethodId.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "paymentMethodId is required"));
         }
+        if (!paymentMethodId.startsWith("pm_") || paymentMethodId.length() > 64) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid paymentMethodId format"));
+        }
         try {
             User user = resolveUser(principal);
             stripeService.setDefaultPaymentMethod(user, paymentMethodId);
