@@ -1173,7 +1173,8 @@ export const ontologyMutationService = {
     axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value',
-    fillerClassIri: string
+    fillerClassIri: string,
+    cardinality?: number,
   ): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteObjectRestriction',
@@ -1181,6 +1182,7 @@ export const ontologyMutationService = {
       property: propertyIri,
       restrictionType,
       target: fillerClassIri,
+      cardinality,
       axiomType
     }], undefined);
   },
@@ -1194,7 +1196,8 @@ export const ontologyMutationService = {
     axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly',
-    datatypeIri: string
+    datatypeIri: string,
+    cardinality?: number,
   ): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteDataRestriction',
@@ -1202,6 +1205,7 @@ export const ontologyMutationService = {
       property: propertyIri,
       restrictionType,
       target: datatypeIri,
+      cardinality,
       axiomType
     }], undefined);
   },

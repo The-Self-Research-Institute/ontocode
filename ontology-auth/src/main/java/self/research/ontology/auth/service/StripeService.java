@@ -1496,7 +1496,7 @@ public class StripeService {
                 }
             }
         } catch (StripeException e) {
-            logger.warn("Could not retrieve default payment method for customer {}: {}", stripeCustomerId, e.getMessage());
+            log.warn("Could not retrieve default payment method for customer {}: {}", stripeCustomerId, e.getMessage());
         }
         return result;
     }

@@ -1228,29 +1228,33 @@ public class OntologyMutationService {
             case "DisjointWith" -> "owl:disjointWith";
             default -> "rdfs:subClassOf";
         };
-        
-        // Determine the filler predicate based on restriction type.
-        // For cardinality restrictions (min/max/exactly) the cardinality predicate holds a
-        // number literal, not the filler IRI.  The filler class is stored in owl:onClass
-        // (object) or owl:onDataRange (data).  Using the cardinality predicate with a class
-        // IRI never matches → silent no-op → axiom appears to survive deletion.
-        boolean isCardinalityRestriction = restrictionType.equals("min")
-                || restrictionType.equals("max") || restrictionType.equals("exactly");
 
-        String fillerPredicate = switch (restrictionType) {
-            case "some"    -> "owl:someValuesFrom";
-            case "only"    -> "owl:allValuesFrom";
-            case "value"   -> "owl:hasValue";
-            // Cardinality: match the filler via onClass / onDataRange, not the cardinality literal
-            case "min", "max", "exactly" -> isDataRestriction ? "owl:onDataRange" : "owl:onClass";
-            default -> "";
+        String onFillerPred = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
+        String restrictionPattern = switch (restrictionType) {
+            case "some" -> "?restriction owl:someValuesFrom <" + fillerIri + "> .";
+            case "only" -> "?restriction owl:allValuesFrom <" + fillerIri + "> .";
+            case "value" -> "?restriction owl:hasValue <" + fillerIri + "> .";
+            case "min", "max", "exactly" -> {
+                int card = cardinality != null ? cardinality : 1;
+                String cardPred = switch (restrictionType) {
+                    case "min" -> "owl:minQualifiedCardinality";
+                    case "max" -> "owl:maxQualifiedCardinality";
+                    default -> "owl:qualifiedCardinality";
+                };
+                yield "?restriction " + cardPred + " \"" + card + "\"^^xsd:nonNegativeInteger .\n"
+                        + "              ?restriction " + onFillerPred + " <" + fillerIri + "> .";
+            }
+            default -> {
+                log.warn("[MUTATION] Unknown restriction type: {}", restrictionType);
+                yield "";
+            }
         };
 
-        if (fillerPredicate.isEmpty()) {
-            log.warn("[MUTATION] Unknown restriction type: {}", restrictionType);
+        if (restrictionPattern.isEmpty()) {
             throw new IllegalArgumentException("Unknown restriction type: " + restrictionType);
         }
 
+        // Match ONLY the restriction linked via the correct axiom predicate (SubClassOf vs EquivalentTo).
         String sparql = """
             DELETE {
               <%s> %s ?restriction .
@@ -1260,10 +1264,10 @@ public class OntologyMutationService {
               <%s> %s ?restriction .
               ?restriction a owl:Restriction .
               ?restriction owl:onProperty <%s> .
-              ?restriction %s <%s> .
+              %s
               ?restriction ?p ?o .
             }
-            """.formatted(classIri, axiomPredicate, classIri, axiomPredicate, propertyIri, fillerPredicate, fillerIri);
+            """.formatted(classIri, axiomPredicate, classIri, axiomPredicate, propertyIri, restrictionPattern);
         
         log.info("[MUTATION] Generated delete restriction SPARQL:");
         log.info("[MUTATION] {}", sparql);

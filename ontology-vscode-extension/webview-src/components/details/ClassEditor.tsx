@@ -1328,6 +1328,13 @@ const ClassEditor: React.FC<{
           isDataProperty,
         });
 
+        const restrictionCardinality =
+          axiom.cardinality != null
+            ? typeof axiom.cardinality === "string"
+              ? parseInt(axiom.cardinality, 10)
+              : axiom.cardinality
+            : undefined;
+
         if (isDataProperty) {
           await ontologyMutationService.deleteDataRestriction(
             projectId,
@@ -1336,6 +1343,7 @@ const ClassEditor: React.FC<{
             axiom.propertyIri,
             axiom.restrictionType as "some" | "only" | "min" | "max" | "exactly",
             axiom.fillerIri,
+            restrictionCardinality,
           );
         } else {
           await ontologyMutationService.deleteObjectRestriction(
@@ -1345,6 +1353,7 @@ const ClassEditor: React.FC<{
             axiom.propertyIri,
             axiom.restrictionType as "some" | "only" | "min" | "max" | "exactly" | "value",
             axiom.fillerIri,
+            restrictionCardinality,
           );
         }
         // Wait for GraphDB to process the deletion
