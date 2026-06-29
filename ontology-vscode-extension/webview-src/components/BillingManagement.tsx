@@ -73,7 +73,15 @@ interface BillingSummary {
         brand?: string;
         expMonth?: number;
         expYear?: number;
+        type?: string;
     };
+    backupPaymentMethods?: Array<{
+        last4?: string;
+        brand?: string;
+        expMonth?: number;
+        expYear?: number;
+        type?: string;
+    }>;
 }
 
 function statusLabel(status?: string) {
@@ -96,6 +104,30 @@ function formatBillingDate(iso?: string, fallback = 'Not available') {
         day: 'numeric',
     });
 }
+
+// ─── Payment method display row ─────────────────────────────────────────────
+
+const PaymentMethodRow: React.FC<{ pm: { last4?: string; brand?: string; expMonth?: number; expYear?: number; type?: string } }> = ({ pm }) => {
+    const isLink = pm.type === 'link' || pm.brand?.toLowerCase() === 'link';
+    if (isLink) {
+        return (
+            <div className="flex items-center gap-2">
+                <div className="text-sm font-semibold text-white">Stripe Link</div>
+                <span className="text-xs text-slate-500">Digital wallet</span>
+            </div>
+        );
+    }
+    return (
+        <div className="flex items-center gap-3">
+            <div className="text-sm font-semibold text-white capitalize">
+                {pm.brand || 'Card'} ●●●● {pm.last4}
+            </div>
+            {pm.expMonth && pm.expYear && (
+                <span className="text-xs text-slate-500">Expires {pm.expMonth}/{pm.expYear}</span>
+            )}
+        </div>
+    );
+};
 
 // ─── Card update inner form ──────────────────────────────────────────────────
 
@@ -507,14 +539,15 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                         <CreditCard size={16} className="text-purple-400" />
                                         Payment Method on File
                                     </div>
-                                    {billingSummary?.defaultPaymentMethod?.last4 ? (
-                                        <div className="flex items-center gap-3">
-                                            <div className="text-sm font-semibold text-white capitalize">
-                                                {billingSummary.defaultPaymentMethod.brand || 'Card'} ●●●● {billingSummary.defaultPaymentMethod.last4}
-                                            </div>
-                                            <span className="text-xs text-slate-500">
-                                                Expires {billingSummary.defaultPaymentMethod.expMonth}/{billingSummary.defaultPaymentMethod.expYear}
-                                            </span>
+                                    {billingSummary?.defaultPaymentMethod ? (
+                                        <div className="space-y-1.5">
+                                            <PaymentMethodRow pm={billingSummary.defaultPaymentMethod} />
+                                            {billingSummary.backupPaymentMethods?.map((pm, i) => (
+                                                <div key={i} className="flex items-center gap-2">
+                                                    <span className="text-[10px] text-slate-500 uppercase tracking-wide">Backup</span>
+                                                    <PaymentMethodRow pm={pm} />
+                                                </div>
+                                            ))}
                                         </div>
                                     ) : (
                                         <p className="text-sm text-slate-400 leading-relaxed">

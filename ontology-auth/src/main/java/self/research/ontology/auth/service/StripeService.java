@@ -1484,21 +1484,49 @@ public class StripeService {
                     .addExpand("invoice_settings.default_payment_method")
                     .build();
             Customer customer = Customer.retrieve(stripeCustomerId, params, null);
+            String defaultPmId = null;
             if (customer.getInvoiceSettings() != null) {
                 PaymentMethod pm = customer.getInvoiceSettings().getDefaultPaymentMethodObject();
-                if (pm != null && pm.getCard() != null) {
-                    Map<String, Object> card = new HashMap<>();
-                    card.put("last4", pm.getCard().getLast4());
-                    card.put("brand", pm.getCard().getBrand());
-                    card.put("expMonth", pm.getCard().getExpMonth());
-                    card.put("expYear", pm.getCard().getExpYear());
-                    result.put("defaultPaymentMethod", card);
+                if (pm != null) {
+                    defaultPmId = pm.getId();
+                    Map<String, Object> pmData = buildPaymentMethodMap(pm);
+                    if (!pmData.isEmpty()) result.put("defaultPaymentMethod", pmData);
                 }
             }
+            // List all non-default payment methods as backup options
+            List<Map<String, Object>> backups = new ArrayList<>();
+            PaymentMethodListParams listParams = PaymentMethodListParams.builder()
+                    .setCustomer(stripeCustomerId)
+                    .setType(PaymentMethodListParams.Type.CARD)
+                    .build();
+            PaymentMethodCollection pmList = PaymentMethod.list(listParams);
+            for (PaymentMethod pm : pmList.getData()) {
+                if (pm.getId().equals(defaultPmId)) continue;
+                Map<String, Object> pmData = buildPaymentMethodMap(pm);
+                if (!pmData.isEmpty()) backups.add(pmData);
+            }
+            if (!backups.isEmpty()) result.put("backupPaymentMethods", backups);
         } catch (StripeException e) {
-            log.warn("Could not retrieve default payment method for customer {}: {}", stripeCustomerId, e.getMessage());
+            log.warn("Could not retrieve payment methods for customer {}: {}", stripeCustomerId, e.getMessage());
         }
         return result;
+    }
+
+    private Map<String, Object> buildPaymentMethodMap(PaymentMethod pm) {
+        Map<String, Object> data = new HashMap<>();
+        String type = pm.getType();
+        if ("link".equals(type)) {
+            // Stripe Link — no real card number; display as digital wallet
+            data.put("brand", "link");
+            data.put("type", "link");
+        } else if (pm.getCard() != null) {
+            data.put("last4", pm.getCard().getLast4());
+            data.put("brand", pm.getCard().getBrand());
+            data.put("expMonth", pm.getCard().getExpMonth());
+            data.put("expYear", pm.getCard().getExpYear());
+            data.put("type", "card");
+        }
+        return data;
     }
 
     private List<Map<String, Object>> listPaymentHistory(String stripeCustomerId) throws StripeException {

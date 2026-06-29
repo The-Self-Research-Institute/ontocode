@@ -380,6 +380,7 @@ const AppContent = () => {
   }, []);
 
   const clearLastOpenedSelection = useCallback(() => {
+    autoRestoreCancelledRef.current = true; // Cancel any in-flight auto-restore navigation
     clearLastOpenedProjectState();
     apiClient.put("/api/auth/last-opened", { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
     if (window.vscode) {
@@ -401,6 +402,9 @@ const AppContent = () => {
 
   // Auto-restore last project + file when workspace becomes available (e.g. after login with auto-select)
   const autoRestoredRef = useRef(false);
+  // Set to true by clearLastOpenedSelection when the user explicitly navigates away,
+  // so any in-flight auto-restore async chain doesn't override their navigation.
+  const autoRestoreCancelledRef = useRef(false);
   useEffect(() => {
     // Desktop: always land on My projects first; session restore is web/cloud UX.
     if (isDesktop()) {
@@ -409,6 +413,7 @@ const AppContent = () => {
     }
     if (!user?.workspaceId || autoRestoredRef.current || selectedProjectId || selectedFileId) return;
     autoRestoredRef.current = true;
+    autoRestoreCancelledRef.current = false; // Fresh restore attempt — clear any prior cancellation
 
     const goToDashboard = () => navigateTo({ view: "projectDashboard", projectId: null, projectName: "", fileId: null, fileName: "" });
 
@@ -436,8 +441,15 @@ const AppContent = () => {
         await apiClient.get(`/api/projects/${encodeURIComponent(projectId)}`);
       } catch {
         console.warn("[App] Stored project no longer exists, going to project dashboard");
-        clearLastOpenedSelection();
-        goToDashboard();
+        if (!autoRestoreCancelledRef.current) {
+          clearLastOpenedSelection();
+          goToDashboard();
+        }
+        return;
+      }
+      // User may have explicitly navigated away while the async validation was in flight
+      if (autoRestoreCancelledRef.current) {
+        console.log("[App] Auto-restore cancelled — user navigated away, skipping restore navigation");
         return;
       }
       if (fileId && fileName && wasRecentlyEditing && isFreshTab) {
@@ -454,6 +466,7 @@ const AppContent = () => {
     // Try backend first (cross-device), fall back to localStorage
     apiClient.get<{ projectId?: string; projectName?: string; fileId?: string; fileName?: string }>('/api/auth/last-opened')
       .then((data) => {
+        if (autoRestoreCancelledRef.current) return; // User navigated away before GET returned
         const projectId = data?.projectId || localStorage.getItem("ontocode_lastWorkspaceProjectId");
         const projectName = data?.projectName || localStorage.getItem("ontocode_lastWorkspaceProjectName");
         const fileId = data?.fileId || localStorage.getItem("ontocode_lastWorkspaceFileId");
@@ -463,6 +476,7 @@ const AppContent = () => {
         }
       })
       .catch(() => {
+        if (autoRestoreCancelledRef.current) return; // User navigated away
         // Fall back to localStorage only
         try {
           const projectId = localStorage.getItem("ontocode_lastWorkspaceProjectId");
@@ -1628,6 +1642,7 @@ const AppContent = () => {
     setForceShowWorkspace(false); // Reset workspace view state
     setSkipWorkspaceRequested(false);
     autoRestoredRef.current = false; // Allow auto-restore on next login
+    autoRestoreCancelledRef.current = false; // Allow auto-restore on next login
     pendingDesktopFilePathRef.current = null;
     clearDesktopActiveFile();
     (window as any).electronAPI?.clearActiveFilePath?.();
