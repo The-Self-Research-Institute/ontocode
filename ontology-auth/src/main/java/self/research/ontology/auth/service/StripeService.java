@@ -915,17 +915,31 @@ public class StripeService {
         // invoice covers the trial period and its periodEnd == today, which is
         // wrong for "next billing date". The subscription's currentPeriodEnd is
         // always the actual renewal date.
+        long nowEpoch = Instant.now().getEpochSecond();
         Long resolvedPeriodEnd = null;
         if (invoice.getSubscription() != null) {
             try {
                 Subscription liveSub = Subscription.retrieve(invoice.getSubscription());
                 Long subPeriodEnd = liveSub.getCurrentPeriodEnd();
-                if (subPeriodEnd != null && subPeriodEnd > Instant.now().getEpochSecond()) {
+                if (subPeriodEnd != null && subPeriodEnd > nowEpoch) {
                     resolvedPeriodEnd = subPeriodEnd;
                 }
             } catch (StripeException ex) {
                 log.warn("[InvoicePaymentSucceeded] Could not retrieve subscription {} to resolve periodEnd: {}",
                         invoice.getSubscription(), ex.getMessage());
+            }
+        }
+        // Fallback: scan line items for the latest future period end.
+        // Needed when the subscription.currentPeriodEnd hasn't been committed yet
+        // (race condition on proration/trial-end invoices where periodEnd == today).
+        if (resolvedPeriodEnd == null && invoice.getLines() != null && invoice.getLines().getData() != null) {
+            for (InvoiceLineItem line : invoice.getLines().getData()) {
+                if (line.getPeriod() != null && line.getPeriod().getEnd() != null) {
+                    long lineEnd = line.getPeriod().getEnd();
+                    if (lineEnd > nowEpoch && (resolvedPeriodEnd == null || lineEnd > resolvedPeriodEnd)) {
+                        resolvedPeriodEnd = lineEnd;
+                    }
+                }
             }
         }
         if (resolvedPeriodEnd == null && invoice.getPeriodEnd() != null) {
