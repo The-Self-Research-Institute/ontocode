@@ -38,7 +38,7 @@ interface AuthContextType {
     forgotPassword: (email: string) => Promise<string>;
     resetPassword: (token: string, password: string) => Promise<string>;
     resendVerification: (email: string) => Promise<string>;
-    verifyEmailAndLogin: (token: string) => Promise<void>;
+    verifyEmailAndLogin: (token: string) => Promise<string>;
     selectWorkspace: (workspaceData: any) => void;
     switchWorkspace: () => void;
     updateSubscriptionPlan: (planId: string) => Promise<void>;
@@ -773,9 +773,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const verifyEmailAndLogin = async (token: string): Promise<void> => {
+    const verifyEmailAndLogin = async (token: string): Promise<string> => {
         console.log('[AuthContext] Verifying email and auto-logging in...');
-        const response = await apiClient.get('/api/auth/verify', { token });
+        const response = await apiClient.get('/api/auth/verify-email', { token });
         const data = response?.data || response;
 
         const jwt = data?.jwt;
@@ -784,6 +784,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             throw new Error('Verification failed - no token received');
         }
 
+        const verifiedEmail = data?.email || decodeToken(jwt).email || '';
+
         // Save token
         localStorage.setItem('authToken', jwt);
         if (window.vscode) {
@@ -791,14 +793,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         const userInfo = decodeToken(jwt);
-        const deploymentType = getStoredDeploymentType();
         const isAdmin = data?.isAdmin || false;
 
         setUser({
             token: jwt,
             userId: userInfo.userId,
             username: data?.username || userInfo.username,
-            email: data?.email || userInfo.email,
+            email: verifiedEmail || userInfo.email,
             roles: data?.roles || userInfo.roles || [],
             isAdmin,
             workspaceId: userInfo.workspaceId,
@@ -809,6 +810,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setNeedsWorkspaceSelection(!userInfo.workspaceId);
         setSessionExpiredMessage(null);
         console.log('[AuthContext] ✅ Email verified and auto-logged in as', data?.username);
+        return verifiedEmail;
     };
 
     const applyWorkspaceSession = (workspaceData: any) => {
