@@ -1291,7 +1291,7 @@ const ClassEditor: React.FC<{
   };
 
   const handleDeleteAxiom = async (type: AxiomType, id: string, classIriOverride?: string) => {
-    if (isSavingAxiom) return;
+    if (isSavingAxiomRef.current) return;
     const ownerIri = classIriOverride || item.id;
     console.log("[ClassEditor] handleDeleteAxiom called:", { type, id, classIri: ownerIri });
     setIsSavingAxiom(true);
@@ -1775,7 +1775,7 @@ const ClassEditor: React.FC<{
   };
 
   const handleDeleteHasKey = async (listNodeId: string) => {
-    if (isSavingAxiom) return;
+    if (isSavingAxiomRef.current) return;
     console.log("[ClassEditor] handleDeleteHasKey called:", { classIri: item.id, listNodeId });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
