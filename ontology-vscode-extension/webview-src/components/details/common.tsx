@@ -877,16 +877,24 @@ export const AnnotationValue = ({ value }: { value: string }) => {
   return <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{cleanedValue}</p>;
 };
 
-/**
- * Extract readable property name from full URI
- */
+const WELL_KNOWN_PREFIXES: [string, string][] = [
+  ['http://www.w3.org/2000/01/rdf-schema#', 'rdfs:'],
+  ['http://www.w3.org/2002/07/owl#', 'owl:'],
+  ['http://www.w3.org/1999/02/22-rdf-syntax-ns#', 'rdf:'],
+  ['http://www.w3.org/2001/XMLSchema#', 'xsd:'],
+  ['http://www.w3.org/2004/02/skos/core#', 'skos:'],
+  ['http://purl.org/dc/terms/', 'dcterms:'],
+  ['http://purl.org/dc/elements/1.1/', 'dc:'],
+];
+
 const getPropertyLabel = (uri: string): string => {
-  if (uri.includes('#')) {
-    return uri.split('#').pop() || uri;
+  for (const [ns, prefix] of WELL_KNOWN_PREFIXES) {
+    if (uri.startsWith(ns)) {
+      return prefix + uri.slice(ns.length);
+    }
   }
-  if (uri.includes('/')) {
-    return uri.split('/').pop() || uri;
-  }
+  if (uri.includes('#')) return uri.split('#').pop() || uri;
+  if (uri.includes('/')) return uri.split('/').pop() || uri;
   return uri;
 };
 
@@ -959,11 +967,8 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly =
               style={{ backgroundColor: 'var(--surface-2)', borderColor: 'var(--border)' }}
             >
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                <span className="text-xs font-medium text-secondary">
+                <span className="text-xs font-medium text-secondary font-mono" title={row.property}>
                   {propertyLabel}
-                </span>
-                <span className="text-[10px] text-tertiary font-mono truncate" title={row.property}>
-                  ({row.property})
                 </span>
               </div>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -7068,13 +7068,20 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (hierarchyDisplayMode !== "annotation" || !hierarchyAnnotationPropIri) return;
     const collectIris = (nodes: TreeNode[]): string[] =>
       nodes.flatMap((n) => [n.id, ...collectIris((n.children as TreeNode[]) ?? [])]);
-    const newIris = collectIris(classHierarchy)
+    const newIris = [
+      ...collectIris(classHierarchy),
+      ...collectIris(objectPropertyHierarchy as TreeNode[]),
+      ...collectIris(dataPropertyHierarchy as TreeNode[]),
+      ...collectIris(annotationPropertyHierarchy),
+      ...individuals.map(i => i.id),
+      ...datatypes.map(d => d.id),
+    ]
       .filter(Boolean)
       .filter(iri => !fetchedAnnotationIrisRef.current.has(iri));
     if (newIris.length === 0) return;
     newIris.forEach(iri => fetchedAnnotationIrisRef.current.add(iri));
     loadHierarchyAnnotationValues(newIris, hierarchyAnnotationPropIri);
-  }, [hierarchyDisplayMode, hierarchyAnnotationPropIri, classHierarchy, loadHierarchyAnnotationValues]);
+  }, [hierarchyDisplayMode, hierarchyAnnotationPropIri, classHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, annotationPropertyHierarchy, individuals, datatypes, loadHierarchyAnnotationValues]);
 
   // Reload hierarchy when imports scope changes — bypass throttle since this is an explicit user action
   useEffect(() => {
