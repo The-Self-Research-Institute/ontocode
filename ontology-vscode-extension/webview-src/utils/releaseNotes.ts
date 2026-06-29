@@ -25,7 +25,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
   {
     version: "1.1.0-beta.13",
     date: "June 29, 2026",
-    title: "Label/ID Toggle · JSON-LD Code View · Billing Interval Fix · Release Notes Auto-Open",
+    title: "Label/ID Toggle · JSON-LD Code View",
     highlights: [
       "TSRI-141: Class Hierarchy — Added View → Rendering options to control how entities are displayed across the entire hierarchy. Render by label shows the rdfs:label value (e.g. \"Continuant\", \"Agent\"). Render by name shows the retained ontology ID from the IRI (e.g. BFO_0000001, CCO_0000012) — useful when cross-referencing entities by their coded identifier. Render by annotation property shows the value of any annotation property in the ontology (e.g. skos:prefLabel, dcterms:title), chosen from a submenu. Custom rendering lets you define a template combining label, ID, and annotation values in any format (e.g. {label} ({id})). All modes apply across Classes, Properties, and Individuals tabs simultaneously.",
       "TSRI-173: Code View — JSON-LD is now a first-class tab in OWL/RDF Code View, matching the formats available on export. The VSCode extension also now registers .jsonld as a recognised language.",
