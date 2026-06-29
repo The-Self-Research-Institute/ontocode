@@ -2,6 +2,7 @@ import path from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import istanbul from 'vite-plugin-istanbul';
 
 function readExtensionPackage(): { version: string } {
   const candidates = [
@@ -39,7 +40,16 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    plugins: [react()],
+    plugins: [
+      react(),
+      ...(process.env.COVERAGE === 'true' ? [istanbul({
+        include: ['**/*.ts', '**/*.tsx'],
+        exclude: ['node_modules/**', 'dist/**', 'plugins/**', '**/*.d.ts'],
+        extension: ['.ts', '.tsx'],
+        requireEnv: false,
+        forceBuildInstrument: false,
+      })] : []),
+    ],
     define: {
       __APP_VERSION__: JSON.stringify(extensionPackage.version),
       'global': 'globalThis',
