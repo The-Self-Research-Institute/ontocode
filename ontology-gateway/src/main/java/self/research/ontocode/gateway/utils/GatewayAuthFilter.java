@@ -32,6 +32,7 @@ public class GatewayAuthFilter implements GlobalFilter, Ordered {
             "/api/auth/signup",
             "/api/auth/register",
             "/api/auth/refresh",
+            "/api/auth/verify",
             "/api/auth/verify-email",
             "/api/auth/resend-verification",
             "/api/auth/forgot-password",

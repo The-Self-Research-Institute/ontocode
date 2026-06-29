@@ -94,6 +94,7 @@ const AppContent = () => {
     updateUserRole,
     refreshPermissions,
     resendVerification,
+    verifyEmailAndLogin,
   } = useAuth();
   console.log(
     "[App] 🔄 AppContent render - user:",
@@ -890,10 +891,8 @@ const AppContent = () => {
     if (_verifyFetchStarted.current) return;
     _verifyFetchStarted.current = true;
 
-    apiClient.get("/api/auth/verify", { token: emailVerifyToken })
-      .then((response: any) => {
-        const data = response?.data || response || {};
-        const email = data?.email || "";
+    verifyEmailAndLogin(emailVerifyToken)
+      .then((email) => {
         setVerifiedEmail(email);
         setEmailVerifyStatus("success");
         window.history.replaceState({}, "", "/");
