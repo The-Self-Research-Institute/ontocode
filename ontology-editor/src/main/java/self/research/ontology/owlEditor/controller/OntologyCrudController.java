@@ -192,7 +192,8 @@ public class OntologyCrudController {
                     null, // axiomType
                     null, // oldValue
                     null, // language
-                    null  // datatype
+                    null, // datatype
+                    null  // ancestorIri
                 );
                 collaborativeEditService.broadcastMutation(projectId, disjointOp, userId, username);
             }

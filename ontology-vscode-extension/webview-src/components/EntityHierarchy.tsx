@@ -19,6 +19,7 @@ import {
   Edit3,
   Check,
   Loader2,
+  Hash,
 } from "lucide-react";
 import type { SelectableItem, TreeNode } from '../types';
 import { useCollaboration } from '../contexts/CollaborationContext';
@@ -807,6 +808,14 @@ const EntityHierarchy = ({
                 className="p-0.5 rounded text-gray-600 hover:text-red-600 disabled:text-gray-400 disabled:opacity-80"
              >
                 <Trash2 size={14} />
+             </button>
+             <button
+                title={displayMode === 'id' ? "Showing IDs — click to show labels" : "Showing labels — click to show IDs"}
+                aria-label="Toggle label / ID display"
+                onClick={() => onDisplayModeChange?.(displayMode === 'id' ? 'label' : 'id')}
+                className={`p-0.5 rounded ${displayMode === 'id' ? 'text-purple-600 bg-purple-100 hover:bg-purple-200' : 'text-gray-600 hover:text-gray-700 hover:bg-gray-200'}`}
+             >
+                <Hash size={14} />
              </button>
              <button
                 title="Entity creation preferences"

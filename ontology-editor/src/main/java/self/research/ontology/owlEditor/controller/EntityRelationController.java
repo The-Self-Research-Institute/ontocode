@@ -112,7 +112,7 @@ public class EntityRelationController {
         };
         // Convention in OntologyMutationService: value = old IRI, target = new IRI
         return new MutationOp(type, req.entityIri(), null, null, null,
-                req.oldTargetIri(), req.targetIri(), null, null, null, null, null, null, null);
+                req.oldTargetIri(), req.targetIri(), null, null, null, null, null, null, null, null);
     }
 
     /** Build a single add or delete op for any relation type. */
@@ -131,10 +131,10 @@ public class EntityRelationController {
                             rd.propertyIri(), null, rd.fillerIri(), null,
                             rd.restrictionType(), rd.cardinality(),
                             rd.isDataRestriction() ? "DataRestriction" : "ObjectRestriction",
-                            null, null, null);
+                            null, null, null, null);
                 }
                 yield new MutationOp(isDeleteOp ? "deletePropertyDomain" : "addPropertyDomain",
-                        iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                        iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
             }
             case "range" -> {
                 if (!isDeleteOp && rd != null) {
@@ -142,23 +142,23 @@ public class EntityRelationController {
                             rd.propertyIri(), null, rd.fillerIri(), null,
                             rd.restrictionType(), rd.cardinality(),
                             rd.isDataRestriction() ? "DataRestriction" : "ObjectRestriction",
-                            null, null, null);
+                            null, null, null, null);
                 }
                 yield new MutationOp(isDeleteOp ? "deletePropertyRange" : "addPropertyRange",
-                        iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                        iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
             }
             case "subProperty" -> new MutationOp(
                     isDeleteOp ? "deleteSubPropertyOf" : "addSubPropertyOf",
-                    iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                    iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
             case "inverse" -> new MutationOp(
                     isDeleteOp ? "deleteInverseProperty" : "addInverseProperty",
-                    iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                    iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
             case "disjoint" -> new MutationOp(
                     isDeleteOp ? "deleteDisjointProperty" : "addDisjointProperty",
-                    iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                    iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
             case "equivalent" -> new MutationOp(
                     isDeleteOp ? "deleteEquivalentProperty" : "addEquivalentProperty",
-                    iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                    iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
 
             // ── Class axiom relations ────────────────────────────────────────────
             case "subClassOf" -> {
@@ -167,16 +167,16 @@ public class EntityRelationController {
                             ? (rd.isDataRestriction() ? "deleteDataRestriction" : "deleteObjectRestriction")
                             : (rd.isDataRestriction() ? "addDataRestriction"    : "addObjectRestriction");
                     yield new MutationOp(opType, iri, null, null, rd.propertyIri(), null, rd.fillerIri(), null,
-                            rd.restrictionType(), rd.cardinality(), "SubClassOf", null, null, null);
+                            rd.restrictionType(), rd.cardinality(), "SubClassOf", null, null, null, null);
                 }
                 if (!isDeleteOp && req.memberIris() != null && !req.memberIris().isEmpty()) {
                     String members  = String.join(",", req.memberIris());
                     String addType  = "union".equals(req.expressionType()) ? "addUnion" : "addIntersection";
                     yield new MutationOp(addType, iri, null, null, null, members, null, null, null, null,
-                            "SubClassOf", null, null, null);
+                            "SubClassOf", null, null, null, null);
                 }
                 yield new MutationOp(isDeleteOp ? "deleteSubClassOf" : "addSubClassOf",
-                        iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                        iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
             }
             case "equivalentClass" -> {
                 if (rd != null) {
@@ -184,16 +184,16 @@ public class EntityRelationController {
                             ? (rd.isDataRestriction() ? "deleteDataRestriction" : "deleteObjectRestriction")
                             : (rd.isDataRestriction() ? "addDataRestriction"    : "addObjectRestriction");
                     yield new MutationOp(opType, iri, null, null, rd.propertyIri(), null, rd.fillerIri(), null,
-                            rd.restrictionType(), rd.cardinality(), "EquivalentTo", null, null, null);
+                            rd.restrictionType(), rd.cardinality(), "EquivalentTo", null, null, null, null);
                 }
                 if (!isDeleteOp && req.memberIris() != null && !req.memberIris().isEmpty()) {
                     String members = String.join(",", req.memberIris());
                     String addType = "union".equals(req.expressionType()) ? "addUnion" : "addIntersection";
                     yield new MutationOp(addType, iri, null, null, null, members, null, null, null, null,
-                            "EquivalentTo", null, null, null);
+                            "EquivalentTo", null, null, null, null);
                 }
                 yield new MutationOp(isDeleteOp ? "deleteEquivalentClass" : "addEquivalentClass",
-                        iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                        iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
             }
             case "disjointWith" -> {
                 if (rd != null) {
@@ -201,19 +201,19 @@ public class EntityRelationController {
                             ? (rd.isDataRestriction() ? "deleteDataRestriction" : "deleteObjectRestriction")
                             : (rd.isDataRestriction() ? "addDataRestriction"    : "addObjectRestriction");
                     yield new MutationOp(opType, iri, null, null, rd.propertyIri(), null, rd.fillerIri(), null,
-                            rd.restrictionType(), rd.cardinality(), "DisjointWith", null, null, null);
+                            rd.restrictionType(), rd.cardinality(), "DisjointWith", null, null, null, null);
                 }
                 yield new MutationOp(isDeleteOp ? "deleteDisjointWith" : "addDisjointWith",
-                        iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                        iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
             }
 
             // ── Individual relations ──────────────────────────────────────────────
             case "sameAs" -> new MutationOp(
                     isDeleteOp ? "deleteSameIndividual" : "addSameIndividual",
-                    iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                    iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
             case "differentFrom" -> new MutationOp(
                     isDeleteOp ? "deleteDifferentIndividual" : "addDifferentIndividual",
-                    iri, null, null, null, null, target, null, null, null, null, null, null, null);
+                    iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
 
             default -> throw new IllegalArgumentException("Unsupported relationshipType: " + rel);
         };

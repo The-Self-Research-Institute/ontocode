@@ -594,7 +594,10 @@ public class StripeService {
         }
 
         String itemId = subscription.getItems().getData().get(0).getId();
-        String idempotencyKey = "interval-switch-" + user.getId() + "-" + subscription.getId() + "-" + newPriceId;
+        // Each switch attempt gets a unique suffix: Stripe rejects the same key if the
+        // subscription state has changed since the first use (e.g. after a previous switch).
+        String idempotencyKey = "interval-switch-" + user.getId() + "-" + subscription.getId()
+                + "-" + newPriceId + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 
         // Annual → Monthly: no immediate charge, no proration — billing anchor resets to
         // now (Stripe default when interval changes), so monthly billing starts today.

@@ -29,7 +29,7 @@ public class DatatypeDefinitionService {
         mutationService.apply(projectId, List.of(
                 new OntologyMutationService.MutationOp(
                         "addDatatypeDefinition", datatypeIri, null, null, null, expression,
-                        null, null, null, null, null, null, null, null)));
+                        null, null, null, null, null, null, null, null, null)));
 
         DatatypeDefinitionEntity entity = new DatatypeDefinitionEntity();
         entity.setProjectId(projectId);
@@ -47,12 +47,12 @@ public class DatatypeDefinitionService {
             mutationService.apply(projectId, List.of(
                     new OntologyMutationService.MutationOp(
                             "deleteDatatypeDefinition", def.getDatatypeIri(), null, null, null, null,
-                            null, null, null, null, null, null, null, null)));
+                            null, null, null, null, null, null, null, null, null)));
             String newExpression = (expression != null && !expression.isBlank()) ? expression : def.getExpression();
             mutationService.apply(projectId, List.of(
                     new OntologyMutationService.MutationOp(
                             "addDatatypeDefinition", def.getDatatypeIri(), null, null, null, newExpression,
-                            null, null, null, null, null, null, null, null)));
+                            null, null, null, null, null, null, null, null, null)));
 
             if (expression != null && !expression.isBlank()) {
                 def.setExpression(expression);
@@ -78,8 +78,9 @@ public class DatatypeDefinitionService {
         mutationService.apply(projectId, List.of(
                 new OntologyMutationService.MutationOp(
                         "deleteDatatypeDefinition", existing.get().getDatatypeIri(), null, null, null, null,
-                        null, null, null, null, null, null, null, null)));
+                        null, null, null, null, null, null, null, null, null)));
         repository.delete(existing.get());
         return true;
     }
 }
+

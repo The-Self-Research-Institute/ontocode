@@ -1911,15 +1911,15 @@ const ClassEditor: React.FC<{
     setIsGCAEditorOpen(true);
   };
 
-  const handleDeleteGCA = async (axiomId: string) => {
+  const handleDeleteGCA = async (axiomId: string, ancestorIri?: string) => {
     if (isSavingAxiom) return;
-    console.log("[ClassEditor] Deleting GCA:", axiomId);
+    console.log("[ClassEditor] Deleting GCA:", axiomId, ancestorIri ? `(ancestor: ${ancestorIri})` : '');
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
       // GCAs are stored as SubClassOf axioms with blank node subjects
       // Delete the axiom by its blank node ID
-      await ontologyMutationService.deleteAxiom(projectId, axiomId);
+      await ontologyMutationService.deleteAxiom(projectId, axiomId, ancestorIri);
       await new Promise((resolve) => setTimeout(resolve, 500));
       await loadClassDetails();
     } catch (error) {
@@ -2245,7 +2245,10 @@ const ClassEditor: React.FC<{
                 title="SubClass Of (Anonymous Ancestor)"
                 axioms={classDetails?.anonymousAncestorAxioms || []}
                 onAdd={() => {}}
-                onDelete={(id) => handleDeleteGCA(id)}
+                onDelete={(id) => {
+                  const anc = (classDetails?.anonymousAncestorAxioms || []).find((a: any) => a.id === id);
+                  handleDeleteGCA(id, (anc as any)?.ancestorIri);
+                }}
                 onEditClick={(axiom) => {
                   const target = axiom.id || '';
                   if (target.startsWith('http://') || target.startsWith('https://') || target.startsWith('urn:')) {

@@ -90,7 +90,7 @@ public class ExpressionParseController {
                     new OntologyMutationService.MutationOp(
                             "Domain".equalsIgnoreCase(relation) ? "addPropertyDomain" : "addPropertyRange",
                             request.propertyIri, null, null, null, request.expression,
-                            null, null, null, null, null, null, null, null),
+                            null, null, null, null, null, null, null, null, null),
                     userId != null ? userId : "anonymous",
                     username != null ? username : "Anonymous");
             return ResponseEntity.ok(Map.of("success", true));
@@ -134,7 +134,7 @@ public class ExpressionParseController {
                     new OntologyMutationService.MutationOp(
                             "Domain".equalsIgnoreCase(relation) ? "deletePropertyDomain" : "deletePropertyRange",
                             request.propertyIri, null, null, null, request.expression,
-                            null, null, null, null, null, null, null, null),
+                            null, null, null, null, null, null, null, null, null),
                     userId != null ? userId : "anonymous",
                     username != null ? username : "Anonymous");
             return ResponseEntity.ok(Map.of("success", true));
@@ -166,7 +166,7 @@ public class ExpressionParseController {
                     new OntologyMutationService.MutationOp(
                             "addGCA", null, null, null, null,
                             request.subClassExpression.trim() + " SubClassOf " + request.superClassExpression.trim(),
-                            request.superClassExpression.trim(), null, null, null, null, null, null, null),
+                            request.superClassExpression.trim(), null, null, null, null, null, null, null, null),
                     userId != null ? userId : "anonymous",
                     username != null ? username : "Anonymous");
             return ResponseEntity.ok(Map.of("success", true));
@@ -198,7 +198,7 @@ public class ExpressionParseController {
             collaborativeEditService.broadcastMutation(projectId,
                     new OntologyMutationService.MutationOp(
                             "addClassExpression", request.classIri, null, null, null, request.expression,
-                            null, request.classIri, null, null, request.axiomType, null, null, null),
+                            null, request.classIri, null, null, request.axiomType, null, null, null, null),
                     userId != null ? userId : "anonymous",
                     username != null ? username : "Anonymous");
             return ResponseEntity.ok(Map.of("success", true));
