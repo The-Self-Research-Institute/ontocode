@@ -1229,27 +1229,28 @@ public class OntologyMutationService {
             default -> "rdfs:subClassOf";
         };
         
-        // Determine the filler predicate based on restriction type
+        // Determine the filler predicate based on restriction type.
+        // For cardinality restrictions (min/max/exactly) the cardinality predicate holds a
+        // number literal, not the filler IRI.  The filler class is stored in owl:onClass
+        // (object) or owl:onDataRange (data).  Using the cardinality predicate with a class
+        // IRI never matches → silent no-op → axiom appears to survive deletion.
+        boolean isCardinalityRestriction = restrictionType.equals("min")
+                || restrictionType.equals("max") || restrictionType.equals("exactly");
+
         String fillerPredicate = switch (restrictionType) {
-            case "some" -> "owl:someValuesFrom";
-            case "only" -> "owl:allValuesFrom";
-            case "value" -> "owl:hasValue";
-            case "min" -> "owl:minQualifiedCardinality";
-            case "max" -> "owl:maxQualifiedCardinality";
-            case "exactly" -> "owl:qualifiedCardinality";
+            case "some"    -> "owl:someValuesFrom";
+            case "only"    -> "owl:allValuesFrom";
+            case "value"   -> "owl:hasValue";
+            // Cardinality: match the filler via onClass / onDataRange, not the cardinality literal
+            case "min", "max", "exactly" -> isDataRestriction ? "owl:onDataRange" : "owl:onClass";
             default -> "";
         };
-        
+
         if (fillerPredicate.isEmpty()) {
             log.warn("[MUTATION] Unknown restriction type: {}", restrictionType);
             throw new IllegalArgumentException("Unknown restriction type: " + restrictionType);
         }
-        
-        // IMPORTANT: We need to be very specific about which restriction to delete
-        // The WHERE clause must match ONLY the restriction connected via the correct axiom predicate
-        // This prevents accidentally deleting a similar restriction from a different axiom type
-        // (e.g., deleting from SubClassOf should not affect EquivalentTo)
-        // Also require rdf:type owl:Restriction to match the query pattern
+
         String sparql = """
             DELETE {
               <%s> %s ?restriction .

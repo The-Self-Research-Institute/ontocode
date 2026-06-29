@@ -275,14 +275,17 @@ public class StripeService {
             boolean firstEverSubscription = !user.isHasUsedFreeTrial()
                     && user.getFirstSubscriptionAt() == null
                     && !hadPriorSubscription;
-            if (firstEverSubscription && trialPeriodDays != null && trialPeriodDays > 0L) {
+            boolean trialEligible = firstEverSubscription
+                    && trialPeriodDays != null && trialPeriodDays > 0L
+                    && !"ENTERPRISE".equalsIgnoreCase(planName);
+            if (trialEligible) {
                 createParams.setTrialPeriodDays(trialPeriodDays);
                 log.info("Granting {}-day trial to user {} (first ever subscription)",
                         trialPeriodDays, user.getUsername());
             } else {
-                log.info("Skipping trial for user {} (hasUsedFreeTrial={}, firstSubscriptionAt={}, hadPriorSub={}). " +
+                log.info("Skipping trial for user {} (hasUsedFreeTrial={}, firstSubscriptionAt={}, hadPriorSub={}, plan={}). " +
                         "Card will be charged immediately.",
-                        user.getUsername(), user.isHasUsedFreeTrial(), user.getFirstSubscriptionAt(), hadPriorSubscription);
+                        user.getUsername(), user.isHasUsedFreeTrial(), user.getFirstSubscriptionAt(), hadPriorSubscription, planName);
             }
 
             subscription = com.stripe.model.Subscription.create(createParams.build());
@@ -422,7 +425,8 @@ public class StripeService {
         boolean firstEverSubscription = !user.isHasUsedFreeTrial()
                 && user.getFirstSubscriptionAt() == null
                 && !hadPriorSubscription;
-        if (firstEverSubscription && trialPeriodDays != null && trialPeriodDays > 0L) {
+        if (firstEverSubscription && trialPeriodDays != null && trialPeriodDays > 0L
+                && !"ENTERPRISE".equalsIgnoreCase(planName)) {
             subData.setTrialPeriodDays(trialPeriodDays);
         }
 

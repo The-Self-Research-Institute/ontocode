@@ -2477,6 +2477,7 @@ public class OntologyQueryService {
                   FILTER(?super != owl:Nothing)
                   FILTER(!STRSTARTS(STR(?super), "http://www.w3.org/2002/07/owl#"))
                   FILTER(!STRSTARTS(STR(?super), "http://www.w3.org/2000/01/rdf-schema#"))
+                  FILTER(!STRSTARTS(STR(?super), "http://ontocode.org/restriction/"))
                   OPTIONAL { ?super rdfs:label ?label }
                 }
                 ORDER BY ?label
