@@ -243,41 +243,58 @@ export function useDashboardInit(state: DashboardState) {
     }
   }, []);
 
-  // Check status once (no polling - rely on WebSocket notifications)
   const waitForProcessingComplete = useCallback(
     async (currentProjectId: string): Promise<{ ready: boolean; error?: string; status?: string }> => {
-      try {
-        const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(currentProjectId)}`);
-        const status = statusRes?.data?.status || statusRes?.status;
+      const POLL_INTERVAL_MS = 3000;
+      const deadline = Date.now() + 15 * 60 * 1000; // 15-minute hard timeout
 
-        console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
+      while (true) {
+        try {
+          const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(currentProjectId)}`);
+          const status = statusRes?.data?.status || statusRes?.status;
 
-        if (status === "COMPLETED") {
+          console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
+
+          if (status === "COMPLETED") {
+            setLoadingStatusMessage("");
+            return { ready: true, status };
+          }
+
+          if (status === "ERROR") {
+            console.error("[Dashboard] Project processing failed");
+            const errorMessage = statusRes?.data?.errorMessage || statusRes?.data?.error || "Import failed";
+            return { ready: false, error: errorMessage, status };
+          }
+
+          if (status === "PROCESSING") {
+            const stage = statusRes?.data?.stage;
+            const progress = statusRes?.data?.progress;
+            const label = importStageLabel(stage, statusRes?.data?.statusMessage);
+            const progressText = progress != null ? ` (${progress}%)` : "";
+            setLoadingStatusMessage(`${label}${progressText}`);
+            setIsInitialLoading(true);
+
+            if (Date.now() >= deadline) {
+              return {
+                ready: false,
+                error: "Processing is taking longer than expected. The file is large — please check back in a few minutes.",
+                status,
+              };
+            }
+            await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+            continue;
+          }
+
+          // Unknown status — allow loading attempt
+          console.warn("[Dashboard] Unknown status, allowing load attempt:", status);
           return { ready: true, status };
+        } catch (error) {
+          console.error("[Dashboard] Error checking project status:", error);
+          return { ready: true };
         }
-
-        if (status === "ERROR") {
-          console.error("[Dashboard] Project processing failed");
-          const errorMessage = statusRes?.data?.errorMessage || statusRes?.data?.error || "Import failed";
-          return { ready: false, error: errorMessage, status };
-        }
-
-        // If PROCESSING, WebSocket will notify when complete
-        if (status === "PROCESSING") {
-          console.log("[Dashboard] File is processing, waiting for WebSocket notification...");
-          return { ready: false, error: "File is still processing. Please wait a moment and try again.", status };
-        }
-
-        // Unknown status - allow loading attempt
-        console.warn("[Dashboard] Unknown status, allowing load attempt:", status);
-        return { ready: true, status };
-      } catch (error) {
-        console.error("[Dashboard] Error checking project status:", error);
-        // Don't block on error - let the load attempt happen
-        return { ready: true };
       }
     },
-    [],
+    [encodeProjectId, setLoadingStatusMessage, setIsInitialLoading],
   );
 
   const resolveUserEmail = useCallback(() => {

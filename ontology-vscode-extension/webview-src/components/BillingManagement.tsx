@@ -362,6 +362,11 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         loadBillingSummary();
     }, [workspace.workspaceId]);
 
+    useEffect(() => {
+        setIntervalSwitchSuccess(null);
+        setIntervalSwitchError(null);
+    }, [billingSummary?.billingInterval]);
+
     const startCardUpdate = async () => {
         setError(null);
         try {
@@ -461,7 +466,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data?.error ?? 'Failed to switch billing interval.');
             const nextDate = data.effectiveDate ? formatBillingDate(data.effectiveDate) : '';
-            if (interval === 'monthly') {
+            if (newInterval === 'monthly') {
                 setIntervalSwitchSuccess(`Switched to monthly billing. Next charge on ${nextDate}.`);
             } else {
                 setIntervalSwitchSuccess(`Switched to annual billing. Next renewal on ${nextDate}.`);
