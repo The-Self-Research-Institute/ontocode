@@ -503,6 +503,8 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                                     const isConflict = iri ? conflictIris.has(iri) : false;
                                     const parentIri = c.operationData?.parent as string | undefined;
                                     const parentLabel = parentIri ? extractLocalName(parentIri) : null;
+                                    const targetIri = c.operationData?.target as string | undefined;
+                                    const targetLabel = targetIri ? extractLocalName(targetIri) : null;
                                     return (
                                       <div key={c.id} className="flex items-start gap-2 px-2 py-1.5">
                                         <span className={`font-bold flex-shrink-0 mt-0.5 ${cls}`}>{symbol}</span>
@@ -515,6 +517,9 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                                           </div>
                                           {parentLabel && (
                                             <div className="opacity-40 text-[10px] mt-0.5">⊂ {parentLabel}</div>
+                                          )}
+                                          {targetLabel && (
+                                            <div className="opacity-40 text-[10px] mt-0.5 truncate" title={targetIri}>→ {targetLabel}</div>
                                           )}
                                         </div>
                                         <span className="opacity-40 flex-shrink-0 text-[10px] mt-0.5">
