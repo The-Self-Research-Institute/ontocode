@@ -48,7 +48,7 @@ export function getStoredDeploymentType(): DeploymentType {
             return 'cloud';
         }
     }
-    
+
     try {
         const val = localStorage.getItem('deploymentType');
         if (val === 'self-hosted' || val === 'cloud') return val;
@@ -64,6 +64,15 @@ export function getGatewayUrl(type?: DeploymentType): string {
     // window.location.hostname is "" under file:// so isLocalhost is false.
     if (typeof window !== 'undefined' && (window as any).__DESKTOP_API_URL__) {
         return (window as any).__DESKTOP_API_URL__;
+    }
+    // Official cloud domain: always use the hardcoded API subdomain, never the env override.
+    // This ensures a self-hosted build (with VITE_CLOUD_GATEWAY_URL set to an EC2 IP)
+    // does not break the cloud deployment if the same image is reused there.
+    if (typeof window !== 'undefined') {
+        const hostname = window.location.hostname;
+        if (hostname === 'ontocode.selfresearch.org' || hostname === 'ontocodeapi.selfresearch.org') {
+            return DEFAULTS.CLOUD_GATEWAY_URL;
+        }
     }
     const deploymentType = type ?? getStoredDeploymentType();
     const config = getConfig();
