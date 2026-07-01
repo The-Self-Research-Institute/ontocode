@@ -182,10 +182,13 @@ public class OWLFormatConverter {
             log.info("Preserved {} namespace prefixes", prefixFormat.getPrefixName2PrefixMap().size());
         }
         
-        // Save as RDF/XML
+        // Save as RDF/XML — run in a dedicated thread with a large stack.
+        // OWLAPI's AbstractTranslator recurses into OWLEquivalentClassesAxiom visitors,
+        // which causes StackOverflowError on ontologies with complex equivalence chains.
+        // A 32 MB per-thread stack is isolated; the rest of the JVM is unaffected.
         long saveStart = System.nanoTime();
         try (FileOutputStream fos = new FileOutputStream(outputPath.toFile())) {
-            manager.saveOntology(ontology, rdfXmlFormat, fos);
+            saveOntologyLargeStack(manager, ontology, rdfXmlFormat, fos);
         }
         long saveDuration = (System.nanoTime() - saveStart) / 1_000_000;
         
@@ -203,6 +206,37 @@ public class OWLFormatConverter {
         }
 
         return outputPath;
+    }
+
+    /**
+     * Serializes an ontology in a dedicated thread with a 32 MB stack.
+     * OWLAPI's AbstractTranslator can recurse unboundedly on ontologies that contain
+     * complex OWLEquivalentClassesAxiom chains — the JVM default stack (512 KB – 1 MB)
+     * overflows before the recursion bottoms out. Running the save in a larger-stack
+     * thread is the minimal targeted fix; no OWLAPI internals are changed.
+     */
+    private static void saveOntologyLargeStack(OWLOntologyManager manager,
+                                               OWLOntology ontology,
+                                               OWLDocumentFormat format,
+                                               java.io.OutputStream out) throws IOException, OWLOntologyStorageException {
+        Throwable[] error = {null};
+        Thread t = new Thread(null, () -> {
+            try {
+                manager.saveOntology(ontology, format, out);
+            } catch (Throwable e) {
+                error[0] = e;
+            }
+        }, "owlapi-serializer", 32 * 1024 * 1024); // 32 MB stack
+        t.start();
+        try {
+            t.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("OWL serialization interrupted", e);
+        }
+        if (error[0] instanceof OWLOntologyStorageException ose) throw ose;
+        if (error[0] instanceof IOException ioe) throw ioe;
+        if (error[0] != null) throw new IOException("OWL serialization failed: " + error[0].getMessage(), error[0]);
     }
 
     /**
@@ -831,7 +865,7 @@ public class OWLFormatConverter {
             // Writing to a temp file and atomically moving it only on success prevents this data loss.
             Path tempOut = filePath.resolveSibling("reserialized-" + filePath.getFileName());
             try (OutputStream out = Files.newOutputStream(tempOut)) {
-                manager.saveOntology(ontology, rdfXmlFormat, out);
+                saveOntologyLargeStack(manager, ontology, rdfXmlFormat, out);
             }
             Files.move(tempOut, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
