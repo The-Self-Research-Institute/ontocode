@@ -189,6 +189,7 @@ services:
       ONTOLOGY_HTTP_TIMEOUT_SECONDS: ${ONTOLOGY_HTTP_TIMEOUT_SECONDS:-7200s}
       JAVA_OPTS: >-
         -Xms512m -Xmx2g
+        -Xss4m
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
         -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
         -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m
