@@ -67,6 +67,8 @@ interface BillingSummary {
     cancelAtPeriodEnd?: boolean;
     currentPeriodEnd?: string;
     canceledAt?: string;
+    pendingBillingInterval?: string;
+    pendingBillingIntervalDate?: string;
     paymentHistory?: PaymentHistoryItem[];
     defaultPaymentMethod?: {
         pmId?: string;
@@ -466,7 +468,11 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data?.error ?? 'Failed to switch billing interval.');
             const nextDate = data.effectiveDate ? formatBillingDate(data.effectiveDate) : '';
-            if (newInterval === 'monthly') {
+            if (data.cancelledPending) {
+                setIntervalSwitchSuccess(`Downgrade cancelled. Your plan will continue as annual.`);
+            } else if (data.pending) {
+                setIntervalSwitchSuccess(`Your plan will switch to monthly on ${nextDate}. No charge until then.`);
+            } else if (newInterval === 'monthly') {
                 setIntervalSwitchSuccess(`Switched to monthly billing. Next charge on ${nextDate}.`);
             } else {
                 setIntervalSwitchSuccess(`Switched to annual billing. Next renewal on ${nextDate}.`);
@@ -701,33 +707,70 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                             )}
 
                             {/* Switch billing interval — owner only, paid active/trialing plans */}
-                            {isOwner && plan !== 'FREE' && (summaryStatus?.toLowerCase() === 'active' || summaryStatus?.toLowerCase() === 'trialing') && (
-                                <button
-                                    onClick={() => switchBillingInterval(interval === 'annual' ? 'monthly' : 'annual')}
-                                    disabled={switchingInterval}
-                                    className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-blue-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
-                                >
-                                    <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
-                                        {switchingInterval ? <Loader2 size={24} className="animate-spin" /> : <ArrowLeftRight size={24} />}
-                                    </div>
-                                    <div className="text-left">
-                                        <p className="font-bold text-lg">
-                                            {interval === 'annual' ? 'Switch to Monthly' : 'Switch to Annual'}
-                                        </p>
-                                        <p className="text-sm text-slate-400 mt-1 text-balance">
-                                            {interval === 'annual'
-                                                ? 'Switch to monthly with no charge now. Next bill is one month from today.'
-                                                : 'Switch to annual and save 20%. You\'ll be charged the annual price difference today.'}
-                                        </p>
-                                        {intervalSwitchSuccess && (
-                                            <p className="text-xs text-green-400 mt-2">{intervalSwitchSuccess}</p>
-                                        )}
-                                        {intervalSwitchError && (
-                                            <p className="text-xs text-red-400 mt-2">{intervalSwitchError}</p>
-                                        )}
-                                    </div>
-                                </button>
-                            )}
+                            {isOwner && plan !== 'FREE' && (summaryStatus?.toLowerCase() === 'active' || summaryStatus?.toLowerCase() === 'trialing') && (() => {
+                                const pendingMonthly = billingSummary?.pendingBillingInterval === 'monthly';
+                                const pendingDate = billingSummary?.pendingBillingIntervalDate
+                                    ? formatBillingDate(billingSummary.pendingBillingIntervalDate) : '';
+
+                                if (pendingMonthly) {
+                                    // State: annual with pending monthly downgrade
+                                    return (
+                                        <div className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-amber-500/30 text-white">
+                                            <div className="w-12 h-12 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-400">
+                                                <ArrowLeftRight size={24} />
+                                            </div>
+                                            <div className="text-left flex-1">
+                                                <p className="font-bold text-lg">Billing Change Scheduled</p>
+                                                <p className="text-sm text-amber-300 mt-1">
+                                                    Renewing as <strong>monthly</strong> on {pendingDate}. No charge until then.
+                                                </p>
+                                                <button
+                                                    onClick={() => switchBillingInterval('annual')}
+                                                    disabled={switchingInterval}
+                                                    className="mt-3 text-xs text-slate-400 underline hover:text-white transition-colors disabled:opacity-50"
+                                                >
+                                                    {switchingInterval ? 'Cancelling…' : 'Cancel — keep annual'}
+                                                </button>
+                                            </div>
+                                            {intervalSwitchSuccess && (
+                                                <p className="text-xs text-green-400">{intervalSwitchSuccess}</p>
+                                            )}
+                                            {intervalSwitchError && (
+                                                <p className="text-xs text-red-400">{intervalSwitchError}</p>
+                                            )}
+                                        </div>
+                                    );
+                                }
+
+                                // State: monthly (upgrade to annual) or annual without pending (schedule downgrade)
+                                return (
+                                    <button
+                                        onClick={() => switchBillingInterval(interval === 'annual' ? 'monthly' : 'annual')}
+                                        disabled={switchingInterval}
+                                        className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-blue-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
+                                    >
+                                        <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+                                            {switchingInterval ? <Loader2 size={24} className="animate-spin" /> : <ArrowLeftRight size={24} />}
+                                        </div>
+                                        <div className="text-left">
+                                            <p className="font-bold text-lg">
+                                                {interval === 'annual' ? 'Switch to Monthly' : 'Switch to Annual'}
+                                            </p>
+                                            <p className="text-sm text-slate-400 mt-1 text-balance">
+                                                {interval === 'annual'
+                                                    ? 'No charge now. Your annual plan continues until renewal, then switches to monthly.'
+                                                    : "Switch to annual and save 20%. You'll be charged the annual price difference today."}
+                                            </p>
+                                            {intervalSwitchSuccess && (
+                                                <p className="text-xs text-green-400 mt-2">{intervalSwitchSuccess}</p>
+                                            )}
+                                            {intervalSwitchError && (
+                                                <p className="text-xs text-red-400 mt-2">{intervalSwitchError}</p>
+                                            )}
+                                        </div>
+                                    </button>
+                                );
+                            })()}
 
                             {/* Cancel/restore auto-renewal — owner only; backend re-checks. Bug #42. */}
                             {isOwner && (

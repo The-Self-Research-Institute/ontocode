@@ -575,6 +575,19 @@ public class StripeService {
 
         String normalizedNew = normalizeBillingInterval(newInterval);
         String normalizedCurrent = normalizeBillingInterval(user.getBillingInterval());
+
+        // Cancel a pending annual→monthly downgrade: user is on annual, has pending monthly, requests annual
+        if ("annual".equals(normalizedCurrent) && "annual".equals(normalizedNew)
+                && "monthly".equals(user.getPendingBillingInterval())) {
+            user.setPendingBillingInterval(null);
+            user.setPendingBillingIntervalDate(null);
+            userRepository.save(user);
+            String effectiveDate = user.getSubscriptionCurrentPeriodEnd() != null
+                    ? user.getSubscriptionCurrentPeriodEnd().toString() : "";
+            log.info("Cancelled pending monthly downgrade for user {} — will stay annual until {}", user.getUsername(), effectiveDate);
+            return Map.of("cancelledPending", true, "interval", "annual", "effectiveDate", effectiveDate);
+        }
+
         if (normalizedNew.equals(normalizedCurrent)) {
             String existingDate = user.getSubscriptionCurrentPeriodEnd() != null
                     ? user.getSubscriptionCurrentPeriodEnd().toString() : "";
@@ -599,29 +612,41 @@ public class StripeService {
         String idempotencyKey = "interval-switch-" + user.getId() + "-" + subscription.getId()
                 + "-" + newPriceId + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 
-        // Annual → Monthly: no immediate charge, no proration — billing anchor resets to
-        // now (Stripe default when interval changes), so monthly billing starts today.
-        // Monthly → Annual: charge the difference immediately via ALWAYS_INVOICE.
         boolean annualToMonthly = "annual".equals(normalizedCurrent) && "monthly".equals(normalizedNew);
 
-        SubscriptionUpdateParams.Builder paramsBuilder = SubscriptionUpdateParams.builder()
+        if (annualToMonthly) {
+            // Annual → Monthly: keep the annual plan running until period end, then switch.
+            // Do NOT update the Stripe subscription now — no charge, no billing cycle reset.
+            LocalDateTime periodEnd = LocalDateTime.ofInstant(
+                    Instant.ofEpochSecond(subscription.getCurrentPeriodEnd()), ZoneOffset.UTC);
+            user.setPendingBillingInterval("monthly");
+            user.setPendingBillingIntervalDate(periodEnd);
+            userRepository.save(user);
+            log.info("Queued monthly downgrade for user {} subscription {} — effective at {}",
+                    user.getUsername(), subscription.getId(), periodEnd);
+            return Map.of(
+                    "interval", "annual",
+                    "pendingInterval", "monthly",
+                    "pending", true,
+                    "immediate", false,
+                    "effectiveDate", periodEnd.toString()
+            );
+        }
+
+        // Monthly → Annual: charge the difference immediately via ALWAYS_INVOICE.
+        SubscriptionUpdateParams params = SubscriptionUpdateParams.builder()
                 .addItem(
                         SubscriptionUpdateParams.Item.builder()
                                 .setId(itemId)
                                 .setPrice(newPriceId)
                                 .build()
                 )
-                .putMetadata("billingInterval", normalizedNew);
+                .putMetadata("billingInterval", normalizedNew)
+                .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.ALWAYS_INVOICE)
+                .setPaymentBehavior(SubscriptionUpdateParams.PaymentBehavior.ERROR_IF_INCOMPLETE)
+                .build();
 
-        if (annualToMonthly) {
-            paramsBuilder.setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.NONE);
-        } else {
-            paramsBuilder
-                    .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.ALWAYS_INVOICE)
-                    .setPaymentBehavior(SubscriptionUpdateParams.PaymentBehavior.ERROR_IF_INCOMPLETE);
-        }
-
-        Subscription updated = subscription.update(paramsBuilder.build(),
+        Subscription updated = subscription.update(params,
                 com.stripe.net.RequestOptions.builder().setIdempotencyKey(idempotencyKey).build());
 
         applySubscriptionSnapshotToUser(user, updated, currentPlan.toUpperCase(), stripeInterval);
@@ -688,6 +713,8 @@ public class StripeService {
         response.put("autoRenewEnabled", user.isAutoRenewEnabled());
         response.put("currentPeriodEnd", user.getSubscriptionCurrentPeriodEnd() != null ? user.getSubscriptionCurrentPeriodEnd().toString() : "");
         response.put("canceledAt", user.getSubscriptionCanceledAt() != null ? user.getSubscriptionCanceledAt().toString() : "");
+        response.put("pendingBillingInterval", user.getPendingBillingInterval() != null ? user.getPendingBillingInterval() : "");
+        response.put("pendingBillingIntervalDate", user.getPendingBillingIntervalDate() != null ? user.getPendingBillingIntervalDate().toString() : "");
         response.put("paymentHistory", List.of());
 
         if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
@@ -1055,6 +1082,34 @@ public class StripeService {
             userRepository.save(user);
             log.info("[InvoicePaymentSucceeded] User {} email={} — status set to active, nextPeriodEnd={}",
                     user.getUsername(), user.getEmail(), resolvedPeriodEnd);
+        }
+
+        // Apply pending annual→monthly downgrade on subscription_cycle renewal
+        if ("monthly".equals(user.getPendingBillingInterval())
+                && "subscription_cycle".equals(invoice.getBillingReason())
+                && invoice.getSubscription() != null) {
+            try {
+                String currentPlan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
+                String newPriceId = resolvePriceId(currentPlan.toUpperCase(), "monthly");
+                Subscription liveSub = Subscription.retrieve(invoice.getSubscription());
+                String itemId = liveSub.getItems().getData().get(0).getId();
+                String idempotencyKey = "pending-downgrade-" + user.getId() + "-" + liveSub.getId();
+                SubscriptionUpdateParams params = SubscriptionUpdateParams.builder()
+                        .addItem(SubscriptionUpdateParams.Item.builder().setId(itemId).setPrice(newPriceId).build())
+                        .putMetadata("billingInterval", "monthly")
+                        .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.NONE)
+                        .build();
+                liveSub.update(params, com.stripe.net.RequestOptions.builder().setIdempotencyKey(idempotencyKey).build());
+                user.setBillingInterval("monthly");
+                user.setPendingBillingInterval(null);
+                user.setPendingBillingIntervalDate(null);
+                userRepository.save(user);
+                workspaceService.syncWorkspacesToOwnerPlan(user);
+                log.info("[PendingDowngrade] Applied monthly downgrade for user {} on renewal", user.getUsername());
+            } catch (Exception ex) {
+                log.error("[PendingDowngrade] Failed to apply monthly downgrade for user {} on renewal: {}",
+                        user.getUsername(), ex.getMessage());
+            }
         }
 
         // Skip $0 invoices (e.g. trial-start invoice with no charge)
