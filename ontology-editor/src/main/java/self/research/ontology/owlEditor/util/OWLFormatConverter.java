@@ -231,25 +231,43 @@ public class OWLFormatConverter {
             return;
         }
 
-        // StackOverflowError from AbstractTranslator: strip axiom annotations and retry.
+        // StackOverflowError from AbstractTranslator: the cycle is in OWLEquivalentClassesAxiom
+        // translation — OWLAPI 5.5.0 re-enters visit(OWLEquivalentClassesAxiom) when processing
+        // the class expressions inside the axiom's operand list. Convert all EquivalentClasses
+        // axioms to pairs of SubClassOf axioms (semantically identical) to bypass that path.
         log.warn("OWLAPI RDF serialization hit StackOverflowError (AbstractTranslator cycle) — "
-                + "retrying with annotation-stripped ontology copy");
+                + "retrying with EquivalentClasses→SubClassOf conversion");
         try {
             OWLOntologyManager freshManager = createManagerWithSilentImports();
-            OWLOntology stripped = freshManager.createOntology(ontology.getOntologyID());
-            ontology.axioms()
-                    .map(ax -> (OWLAxiom) ax.getAxiomWithoutAnnotations())
-                    .forEach(ax -> freshManager.addAxiom(stripped, ax));
+            OWLOntology flattened = freshManager.createOntology(ontology.getOntologyID());
+            OWLDataFactory df = freshManager.getOWLDataFactory();
+            ontology.axioms().forEach(ax -> {
+                if (ax instanceof OWLEquivalentClassesAxiom eca) {
+                    // Replace EquivalentClasses(A,B,C) with all pairwise SubClassOf axioms.
+                    // AbstractTranslator.visit(OWLSubClassOfAxiom) doesn't have the same cycle.
+                    java.util.List<OWLClassExpression> ops = eca.getOperandsAsList();
+                    for (int i = 0; i < ops.size(); i++) {
+                        for (int j = 0; j < ops.size(); j++) {
+                            if (i != j) {
+                                freshManager.addAxiom(flattened,
+                                        df.getOWLSubClassOfAxiom(ops.get(i), ops.get(j)));
+                            }
+                        }
+                    }
+                } else {
+                    freshManager.addAxiom(flattened, (OWLAxiom) ax.getAxiomWithoutAnnotations());
+                }
+            });
 
-            Throwable secondError = trySaveOnThread(freshManager, stripped, format, out);
+            Throwable secondError = trySaveOnThread(freshManager, flattened, format, out);
             if (secondError == null) {
-                log.info("Serialization succeeded after annotation stripping");
+                log.info("Serialization succeeded after EquivalentClasses→SubClassOf conversion");
                 return;
             }
-            log.error("Serialization still failed after annotation stripping: {}", secondError.getMessage());
+            log.error("Serialization still failed after EquivalentClasses→SubClassOf: {}", secondError.getMessage());
             rethrow(secondError);
         } catch (OWLOntologyCreationException e) {
-            throw new IOException("Failed to create stripped ontology for retry", e);
+            throw new IOException("Failed to create flattened ontology for retry", e);
         }
     }
 
