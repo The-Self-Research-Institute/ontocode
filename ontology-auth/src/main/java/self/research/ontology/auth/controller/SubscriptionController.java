@@ -424,6 +424,33 @@ public class SubscriptionController {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // GET /api/billing/preview-interval-change?interval=annual
+    // Returns the exact charge amount before committing the switch
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @GetMapping("/preview-interval-change")
+    public ResponseEntity<?> previewIntervalChange(
+            @AuthenticationPrincipal UserDetails principal,
+            @RequestParam String interval) {
+        if (interval == null || !interval.matches("^(monthly|annual|yearly)$")) {
+            return ResponseEntity.badRequest().body(Map.of("error", "interval must be monthly or annual"));
+        }
+        try {
+            User user = resolveUser(principal);
+            Map<String, Object> result = stripeService.previewIntervalChange(user, interval);
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (com.stripe.exception.StripeException e) {
+            log.error("Stripe preview error for {}: {}", principal.getUsername(), e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getUserMessage() != null ? e.getUserMessage() : e.getMessage()));
+        } catch (Exception e) {
+            log.error("Preview interval change failed for {}: {}", principal.getUsername(), e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to preview interval change"));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // POST /api/billing/change-interval — switch between monthly and annual
     // Body: { "interval": "monthly" | "annual" }
     // ─────────────────────────────────────────────────────────────────────────
