@@ -121,12 +121,14 @@ public class SubscriptionController {
                                               ? user.getSubscriptionCurrentPeriodEnd().toString() : "",
                 "canceledAt",             user.getSubscriptionCanceledAt() != null
                                               ? user.getSubscriptionCanceledAt().toString() : "",
-                "hasStripeCustomer",      user.getStripeCustomerId() != null,
-                "hasUsedFreeTrial",       user.isHasUsedFreeTrial(),
-                "trialEligible",          !user.isHasUsedFreeTrial()
-                                              && user.getFirstSubscriptionAt() == null
-                                              && (user.getStripeSubscriptionId() == null || user.getStripeSubscriptionId().isBlank()),
-                "enterpriseDomainBypass", false
+                "hasStripeCustomer",          user.getStripeCustomerId() != null,
+                "hasUsedFreeTrial",           user.isHasUsedFreeTrial(),
+                "trialEligible",              !user.isHasUsedFreeTrial()
+                                                  && user.getFirstSubscriptionAt() == null
+                                                  && (user.getStripeSubscriptionId() == null || user.getStripeSubscriptionId().isBlank()),
+                "enterpriseDomainBypass",     false,
+                "pendingBillingInterval",     user.getPendingBillingInterval() != null ? user.getPendingBillingInterval() : "",
+                "pendingBillingIntervalDate", user.getPendingBillingIntervalDate() != null ? user.getPendingBillingIntervalDate().toString() : ""
         ));
     }
 

@@ -73,6 +73,9 @@ public class User {
      */
     private boolean hasUsedFreeTrial = false;
     private LocalDateTime firstSubscriptionAt;
+    // Pending billing interval downgrade — annual→monthly queued for next renewal
+    private String pendingBillingInterval;
+    private LocalDateTime pendingBillingIntervalDate;
     // Pending checkout lock — cleared once checkout.session.completed fires
     private String pendingCheckoutSessionId;
     private LocalDateTime pendingCheckoutCreatedAt;
@@ -281,6 +284,12 @@ public class User {
 
     public String getBillingInterval() { return billingInterval; }
     public void setBillingInterval(String billingInterval) { this.billingInterval = billingInterval; }
+
+    public String getPendingBillingInterval() { return pendingBillingInterval; }
+    public void setPendingBillingInterval(String pendingBillingInterval) { this.pendingBillingInterval = pendingBillingInterval; }
+
+    public LocalDateTime getPendingBillingIntervalDate() { return pendingBillingIntervalDate; }
+    public void setPendingBillingIntervalDate(LocalDateTime pendingBillingIntervalDate) { this.pendingBillingIntervalDate = pendingBillingIntervalDate; }
 
     public LocalDateTime getSubscriptionCurrentPeriodEnd() { return subscriptionCurrentPeriodEnd; }
     public void setSubscriptionCurrentPeriodEnd(LocalDateTime subscriptionCurrentPeriodEnd) { this.subscriptionCurrentPeriodEnd = subscriptionCurrentPeriodEnd; }

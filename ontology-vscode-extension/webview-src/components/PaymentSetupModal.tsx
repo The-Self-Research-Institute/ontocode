@@ -40,6 +40,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
     const { getDisplayPrice, trialPeriodDays } = usePlanPricing();
     const price = getDisplayPrice(planName, interval);
     const isEnterprisePlan = planName.toUpperCase() === 'ENTERPRISE';
+    const effectiveTrialEligible = trialEligible && !isEnterprisePlan;
     const showEnterpriseTrialEndingWarning = isEnterprisePlan && currentStatus?.toLowerCase() === 'trialing';
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -98,8 +99,8 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                 </div>
                 <div className="text-right">
                     <p className="text-purple-300 font-semibold">{price}</p>
-                    <p className={`text-[11px] ${trialEligible ? 'text-green-400' : 'text-amber-300'}`}>
-                        {trialEligible
+                    <p className={`text-[11px] ${effectiveTrialEligible ? 'text-green-400' : 'text-amber-300'}`}>
+                        {effectiveTrialEligible
                             ? `First ${trialPeriodDays} days free`
                             : isEnterprisePlan
                                 ? 'No trial • charged immediately'
@@ -137,7 +138,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
             <div className="hidden">
                 <Shield size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
                 <span>
-                    {trialEligible
+                    {effectiveTrialEligible
                         ? `Secured by Stripe — card not charged for ${trialPeriodDays} days — cancel any time before trial ends`
                         : isEnterprisePlan
                             ? 'Secured by Stripe — Enterprise upgrades are charged immediately and do not include a new trial'
@@ -168,7 +169,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                     ) : (
                         <>
                             <CheckCircle size={18} />
-                            {trialEligible ? `Start ${trialPeriodDays}-day free trial` : 'Confirm and pay'}
+                            {effectiveTrialEligible ? `Start ${trialPeriodDays}-day free trial` : 'Confirm and pay'}
                         </>
                     )}
                 </button>
@@ -192,6 +193,8 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
 }) => {
     const stripePromise = useMemo(() => loadStripe(publishableKey), [publishableKey]);
     const { trialPeriodDays } = usePlanPricing();
+    const isEnterprisePlan = planName.toUpperCase() === 'ENTERPRISE';
+    const effectiveTrialEligible = trialEligible && !isEnterprisePlan;
 
     const options: StripeElementsOptions = {
         clientSecret,
@@ -245,12 +248,14 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
                 <div className="flex items-center justify-between px-6 py-5 border-b border-white/10 flex-shrink-0">
                     <div>
                         <h2 className="text-lg font-bold text-white">
-                            {trialEligible ? 'Start your free trial' : 'Activate your plan'}
+                            {effectiveTrialEligible ? 'Start your free trial' : 'Activate your plan'}
                         </h2>
                         <p className="text-xs text-gray-400 mt-0.5">
-                            {trialEligible
+                            {effectiveTrialEligible
                                 ? `Card saved securely — charged only after ${trialPeriodDays} days`
-                                : 'Your trial was already used — your card will be charged when activated'}
+                                : isEnterprisePlan
+                                    ? 'Card charged immediately — no trial period for Enterprise'
+                                    : 'Your trial was already used — your card will be charged when activated'}
                         </p>
                     </div>
                     <button
@@ -269,7 +274,7 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
                             planName={planName}
                             interval={interval}
                             workspaceId={workspaceId}
-                            trialEligible={trialEligible}
+                            trialEligible={effectiveTrialEligible}
                             currentStatus={currentStatus}
                             onConfirmed={onConfirmed}
                             onClose={onClose}
