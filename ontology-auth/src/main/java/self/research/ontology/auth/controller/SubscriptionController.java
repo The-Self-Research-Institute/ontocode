@@ -112,23 +112,23 @@ public class SubscriptionController {
         // Sync live status + period end from Stripe to repair any stale snapshot in MongoDB
         // (e.g. period end stuck at trial-end timestamp after immediate trial→paid upgrade).
         String liveStatus = stripeService.syncStatusFromStripe(user);
-        return ResponseEntity.ok(Map.of(
-                "planName",               orEmpty(user.getSubscriptionPlanName()),
-                "status",                 liveStatus,
-                "billingInterval",        orEmpty(user.getBillingInterval()),
-                "autoRenewEnabled",       user.isAutoRenewEnabled(),
-                "currentPeriodEnd",       user.getSubscriptionCurrentPeriodEnd() != null
-                                              ? user.getSubscriptionCurrentPeriodEnd().toString() : "",
-                "canceledAt",             user.getSubscriptionCanceledAt() != null
-                                              ? user.getSubscriptionCanceledAt().toString() : "",
-                "hasStripeCustomer",          user.getStripeCustomerId() != null,
-                "hasUsedFreeTrial",           user.isHasUsedFreeTrial(),
-                "trialEligible",              !user.isHasUsedFreeTrial()
-                                                  && user.getFirstSubscriptionAt() == null
-                                                  && (user.getStripeSubscriptionId() == null || user.getStripeSubscriptionId().isBlank()),
-                "enterpriseDomainBypass",     false,
-                "pendingBillingInterval",     user.getPendingBillingInterval() != null ? user.getPendingBillingInterval() : "",
-                "pendingBillingIntervalDate", user.getPendingBillingIntervalDate() != null ? user.getPendingBillingIntervalDate().toString() : ""
+        return ResponseEntity.ok(Map.ofEntries(
+                Map.entry("planName",               orEmpty(user.getSubscriptionPlanName())),
+                Map.entry("status",                 liveStatus),
+                Map.entry("billingInterval",        orEmpty(user.getBillingInterval())),
+                Map.entry("autoRenewEnabled",       user.isAutoRenewEnabled()),
+                Map.entry("currentPeriodEnd",       user.getSubscriptionCurrentPeriodEnd() != null
+                                                        ? user.getSubscriptionCurrentPeriodEnd().toString() : ""),
+                Map.entry("canceledAt",             user.getSubscriptionCanceledAt() != null
+                                                        ? user.getSubscriptionCanceledAt().toString() : ""),
+                Map.entry("hasStripeCustomer",      user.getStripeCustomerId() != null),
+                Map.entry("hasUsedFreeTrial",       user.isHasUsedFreeTrial()),
+                Map.entry("trialEligible",          !user.isHasUsedFreeTrial()
+                                                        && user.getFirstSubscriptionAt() == null
+                                                        && (user.getStripeSubscriptionId() == null || user.getStripeSubscriptionId().isBlank())),
+                Map.entry("enterpriseDomainBypass", false),
+                Map.entry("pendingBillingInterval",     user.getPendingBillingInterval() != null ? user.getPendingBillingInterval() : ""),
+                Map.entry("pendingBillingIntervalDate", user.getPendingBillingIntervalDate() != null ? user.getPendingBillingIntervalDate().toString() : "")
         ));
     }
 
