@@ -209,32 +209,38 @@ public class OWLFormatConverter {
     }
 
     /**
-     * Serializes an ontology, with a fallback that strips axiom annotations if OWLAPI's
-     * AbstractTranslator hits infinite recursion (StackOverflowError).
+     * Serializes an ontology to the given stream using a 32 MB stack thread to give OWLAPI's
+     * AbstractTranslator headroom for deep class hierarchies.
      *
-     * Root cause: AbstractTranslator re-queues annotation axioms whose values form circular
-     * IRI/blank-node chains with OWLEquivalentClassesAxiom operands, looping forever.
-     * Stripping annotations removes the circular references while preserving all semantic axioms.
-     * A 32 MB per-thread stack is used to give genuine deep recursion headroom before the
-     * StackOverflowError triggers the fallback.
+     * Fallback: if OWLAPI's AbstractTranslator hits StackOverflowError (caused by
+     * self-referential OWLEquivalentClassesAxiom operands creating an infinite visitor cycle),
+     * all EquivalentClasses axioms are converted to semantically-equivalent pairwise SubClassOf
+     * axioms and serialization is retried. Unary EquivalentClasses(A) axioms (degenerate, no
+     * semantic content) are silently dropped.
+     *
+     * The stream is only written to on success — a failed attempt never corrupts {@code out}.
      */
     private static void saveOntologyLargeStack(OWLOntologyManager manager,
                                                OWLOntology ontology,
                                                OWLDocumentFormat format,
                                                java.io.OutputStream out) throws IOException, OWLOntologyStorageException {
-        // First attempt
-        Throwable firstError = trySaveOnThread(manager, ontology, format, out);
-        if (firstError == null) return;
+        // Buffer the first attempt — write to `out` only on success so a mid-stream
+        // StackOverflowError never leaves partially-written bytes in the output.
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        Throwable firstError = trySaveOnThread(manager, ontology, format, buf);
+        if (firstError == null) {
+            buf.writeTo(out);
+            return;
+        }
 
         if (!(firstError instanceof StackOverflowError)) {
             rethrow(firstError);
             return;
         }
 
-        // StackOverflowError from AbstractTranslator: the cycle is in OWLEquivalentClassesAxiom
-        // translation — OWLAPI 5.5.0 re-enters visit(OWLEquivalentClassesAxiom) when processing
-        // the class expressions inside the axiom's operand list. Convert all EquivalentClasses
-        // axioms to pairs of SubClassOf axioms (semantically identical) to bypass that path.
+        // StackOverflowError: cycle is in OWLEquivalentClassesAxiom visitor path.
+        // Replace all EquivalentClasses axioms with pairwise SubClassOf axioms, which
+        // AbstractTranslator serializes without re-entering the EquivalentClasses visitor.
         log.warn("OWLAPI RDF serialization hit StackOverflowError (AbstractTranslator cycle) — "
                 + "retrying with EquivalentClasses→SubClassOf conversion");
         try {
@@ -243,8 +249,6 @@ public class OWLFormatConverter {
             OWLDataFactory df = freshManager.getOWLDataFactory();
             ontology.axioms().forEach(ax -> {
                 if (ax instanceof OWLEquivalentClassesAxiom eca) {
-                    // Replace EquivalentClasses(A,B,C) with all pairwise SubClassOf axioms.
-                    // AbstractTranslator.visit(OWLSubClassOfAxiom) doesn't have the same cycle.
                     java.util.List<OWLClassExpression> ops = eca.getOperandsAsList();
                     for (int i = 0; i < ops.size(); i++) {
                         for (int j = 0; j < ops.size(); j++) {
@@ -254,13 +258,16 @@ public class OWLFormatConverter {
                             }
                         }
                     }
+                    // Unary EquivalentClasses(A): no pairs generated — semantically vacuous, drop it.
                 } else {
-                    freshManager.addAxiom(flattened, (OWLAxiom) ax.getAxiomWithoutAnnotations());
+                    freshManager.addAxiom(flattened, ax);
                 }
             });
 
-            Throwable secondError = trySaveOnThread(freshManager, flattened, format, out);
+            ByteArrayOutputStream fallbackBuf = new ByteArrayOutputStream();
+            Throwable secondError = trySaveOnThread(freshManager, flattened, format, fallbackBuf);
             if (secondError == null) {
+                fallbackBuf.writeTo(out);
                 log.info("Serialization succeeded after EquivalentClasses→SubClassOf conversion");
                 return;
             }
