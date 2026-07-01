@@ -64,6 +64,8 @@ export default defineConfig(({ mode }) => {
       '__ONTOCODE_CONFIG__': JSON.stringify({
         IS_WEB_EXTENSION: true,
         CLOUD_GATEWAY_URL: env.VITE_CLOUD_GATEWAY_URL || '',
+        CLOUD_EDITOR_URL: env.VITE_CLOUD_EDITOR_URL || '',
+        CLOUD_PLUGIN_URL: env.VITE_CLOUD_PLUGIN_URL || '',
         SELF_HOSTED_GATEWAY_URL: env.VITE_SELF_HOSTED_GATEWAY_URL || '',
       }),
     },
