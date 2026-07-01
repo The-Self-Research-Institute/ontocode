@@ -209,16 +209,52 @@ public class OWLFormatConverter {
     }
 
     /**
-     * Serializes an ontology in a dedicated thread with a 32 MB stack.
-     * OWLAPI's AbstractTranslator can recurse unboundedly on ontologies that contain
-     * complex OWLEquivalentClassesAxiom chains — the JVM default stack (512 KB – 1 MB)
-     * overflows before the recursion bottoms out. Running the save in a larger-stack
-     * thread is the minimal targeted fix; no OWLAPI internals are changed.
+     * Serializes an ontology, with a fallback that strips axiom annotations if OWLAPI's
+     * AbstractTranslator hits infinite recursion (StackOverflowError).
+     *
+     * Root cause: AbstractTranslator re-queues annotation axioms whose values form circular
+     * IRI/blank-node chains with OWLEquivalentClassesAxiom operands, looping forever.
+     * Stripping annotations removes the circular references while preserving all semantic axioms.
+     * A 32 MB per-thread stack is used to give genuine deep recursion headroom before the
+     * StackOverflowError triggers the fallback.
      */
     private static void saveOntologyLargeStack(OWLOntologyManager manager,
                                                OWLOntology ontology,
                                                OWLDocumentFormat format,
                                                java.io.OutputStream out) throws IOException, OWLOntologyStorageException {
+        // First attempt
+        Throwable firstError = trySaveOnThread(manager, ontology, format, out);
+        if (firstError == null) return;
+
+        if (!(firstError instanceof StackOverflowError)) {
+            rethrow(firstError);
+            return;
+        }
+
+        // StackOverflowError from AbstractTranslator: strip axiom annotations and retry.
+        log.warn("OWLAPI RDF serialization hit StackOverflowError (AbstractTranslator cycle) — "
+                + "retrying with annotation-stripped ontology copy");
+        try {
+            OWLOntologyManager freshManager = createManagerWithSilentImports();
+            OWLOntology stripped = freshManager.createOntology(ontology.getOntologyID());
+            ontology.axioms()
+                    .map(ax -> ax.getAxiomWithoutAnnotations())
+                    .forEach(ax -> freshManager.addAxiom(stripped, ax));
+
+            Throwable secondError = trySaveOnThread(freshManager, stripped, format, out);
+            if (secondError == null) {
+                log.info("Serialization succeeded after annotation stripping");
+                return;
+            }
+            log.error("Serialization still failed after annotation stripping: {}", secondError.getMessage());
+            rethrow(secondError);
+        } catch (OWLOntologyCreationException e) {
+            throw new IOException("Failed to create stripped ontology for retry", e);
+        }
+    }
+
+    private static Throwable trySaveOnThread(OWLOntologyManager manager, OWLOntology ontology,
+                                             OWLDocumentFormat format, java.io.OutputStream out) {
         Throwable[] error = {null};
         Thread t = new Thread(null, () -> {
             try {
@@ -226,17 +262,25 @@ public class OWLFormatConverter {
             } catch (Throwable e) {
                 error[0] = e;
             }
-        }, "owlapi-serializer", 32 * 1024 * 1024); // 32 MB stack
+        }, "owlapi-serializer", 32 * 1024 * 1024);
         t.start();
         try {
             t.join();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("OWL serialization interrupted", e);
+            error[0] = e;
         }
-        if (error[0] instanceof OWLOntologyStorageException ose) throw ose;
-        if (error[0] instanceof IOException ioe) throw ioe;
-        if (error[0] != null) throw new IOException("OWL serialization failed: " + error[0].getMessage(), error[0]);
+        return error[0];
+    }
+
+    private static void rethrow(Throwable t) throws IOException, OWLOntologyStorageException {
+        if (t instanceof OWLOntologyStorageException ose) throw ose;
+        if (t instanceof IOException ioe) throw ioe;
+        if (t instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+            throw new IOException("OWL serialization interrupted", t);
+        }
+        throw new IOException("OWL serialization failed: " + t.getMessage(), t);
     }
 
     /**
