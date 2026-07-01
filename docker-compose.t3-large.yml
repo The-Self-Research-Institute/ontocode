@@ -41,7 +41,7 @@ services:
 
   owl-editor:
     environment:
-      JAVA_OPTS: "-Xms512m -Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+      JAVA_OPTS: "-Xms512m -Xmx2g -Xss4m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
       ONTOCODE_IMPORT_MAX_CONCURRENT: 1
       ONTOCODE_FASTOPEN_AUTO_WARM: "false"
       # Raised from 500K — still below production 5M cap due to 8 GB / 2g editor heap.
