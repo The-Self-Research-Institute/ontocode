@@ -238,7 +238,7 @@ public class OWLFormatConverter {
             OWLOntologyManager freshManager = createManagerWithSilentImports();
             OWLOntology stripped = freshManager.createOntology(ontology.getOntologyID());
             ontology.axioms()
-                    .map(ax -> ax.getAxiomWithoutAnnotations())
+                    .map(ax -> (OWLAxiom) ax.getAxiomWithoutAnnotations())
                     .forEach(ax -> freshManager.addAxiom(stripped, ax));
 
             Throwable secondError = trySaveOnThread(freshManager, stripped, format, out);
