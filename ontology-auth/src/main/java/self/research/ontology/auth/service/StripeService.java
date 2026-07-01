@@ -560,6 +560,57 @@ public class StripeService {
      * Returns the effective change date (ISO string) — "now" for immediate changes,
      * currentPeriodEnd for at-renewal changes.
      */
+    public Map<String, Object> previewIntervalChange(User user, String newInterval) throws StripeException {
+        requireActiveSubscription(user);
+        String normalizedNew = normalizeBillingInterval(newInterval);
+        String normalizedCurrent = normalizeBillingInterval(user.getBillingInterval());
+
+        if (!"monthly".equals(normalizedNew) && !"annual".equals(normalizedNew)) {
+            throw new IllegalArgumentException("interval must be monthly or annual");
+        }
+        if (normalizedNew.equals(normalizedCurrent)) {
+            return Map.of("alreadySet", true, "amount", 0, "amountFormatted", "$0.00");
+        }
+
+        boolean annualToMonthly = "annual".equals(normalizedCurrent) && "monthly".equals(normalizedNew);
+        if (annualToMonthly) {
+            return Map.of("amount", 0, "amountFormatted", "$0.00", "immediate", false,
+                    "description", "No charge — your annual plan continues until renewal");
+        }
+
+        // Monthly → Annual: use Stripe upcoming invoice to preview exact proration charge
+        String currentPlan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
+        String newPriceId = resolvePriceId(currentPlan.toUpperCase(), "yearly");
+
+        Subscription subscription = Subscription.retrieve(user.getStripeSubscriptionId());
+        if (subscription.getItems() == null || subscription.getItems().getData() == null
+                || subscription.getItems().getData().isEmpty()) {
+            throw new IllegalStateException("Subscription has no items.");
+        }
+        String itemId = subscription.getItems().getData().get(0).getId();
+
+        InvoiceUpcomingParams params = InvoiceUpcomingParams.builder()
+                .setCustomer(user.getStripeCustomerId())
+                .setSubscription(user.getStripeSubscriptionId())
+                .addSubscriptionItem(InvoiceUpcomingParams.SubscriptionItem.builder()
+                        .setId(itemId)
+                        .setPrice(newPriceId)
+                        .build())
+                .setSubscriptionProrationBehavior(InvoiceUpcomingParams.SubscriptionProrationBehavior.ALWAYS_INVOICE)
+                .build();
+
+        Invoice upcoming = Invoice.upcoming(params);
+        long amountDue = upcoming.getAmountDue() != null ? upcoming.getAmountDue() : 0;
+        String currency = upcoming.getCurrency() != null ? upcoming.getCurrency().toUpperCase() : "USD";
+
+        return Map.of(
+                "amount", amountDue,
+                "amountFormatted", String.format("$%.2f %s", amountDue / 100.0, currency),
+                "immediate", true,
+                "description", "Annual plan — prorated charge (credit for remaining days of current monthly period deducted)"
+        );
+    }
+
     public Map<String, Object> changeSubscriptionInterval(User user, String newInterval) throws StripeException {
         requireActiveSubscription(user);
 

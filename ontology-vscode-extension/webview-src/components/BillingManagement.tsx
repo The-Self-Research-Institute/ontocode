@@ -249,6 +249,8 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     const [switchingInterval, setSwitchingInterval] = useState(false);
     const [intervalSwitchError, setIntervalSwitchError] = useState<string | null>(null);
     const [intervalSwitchSuccess, setIntervalSwitchSuccess] = useState<string | null>(null);
+    const [intervalSwitchPreview, setIntervalSwitchPreview] = useState<{ amountFormatted: string; description: string } | null>(null);
+    const [intervalSwitchConfirming, setIntervalSwitchConfirming] = useState(false);
     const [usingBackupPmId, setUsingBackupPmId] = useState<string | null>(null);
     const [backupPmError, setBackupPmError] = useState<string | null>(null);
     const [downloadingLicense, setDownloadingLicense] = useState(false);
@@ -446,9 +448,33 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     };
 
 
+    const previewAndConfirmIntervalSwitch = async (newInterval: 'monthly' | 'annual') => {
+        if (newInterval !== 'annual') {
+            // Downgrade — no charge, no confirmation needed
+            await switchBillingInterval(newInterval);
+            return;
+        }
+        setIntervalSwitchError(null);
+        setIntervalSwitchSuccess(null);
+        setIntervalSwitchConfirming(true);
+        try {
+            const res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/preview-interval-change?interval=annual`, {
+                headers: authHeaders,
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error ?? 'Failed to preview change.');
+            setIntervalSwitchPreview({ amountFormatted: data.amountFormatted, description: data.description });
+        } catch (err: any) {
+            setIntervalSwitchError(err.message);
+            setIntervalSwitchConfirming(false);
+        }
+    };
+
     const switchBillingInterval = async (newInterval: 'monthly' | 'annual') => {
         setIntervalSwitchError(null);
         setIntervalSwitchSuccess(null);
+        setIntervalSwitchPreview(null);
+        setIntervalSwitchConfirming(false);
         setSwitchingInterval(true);
         try {
             let res: Response;
@@ -743,14 +769,51 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 }
 
                                 // State: monthly (upgrade to annual) or annual without pending (schedule downgrade)
+                                if (intervalSwitchPreview && interval === 'monthly') {
+                                    // Show confirmation card with exact charge
+                                    return (
+                                        <div className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-purple-500/40 text-white">
+                                            <div className="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center text-purple-400">
+                                                <ArrowLeftRight size={24} />
+                                            </div>
+                                            <div className="text-left flex-1">
+                                                <p className="font-bold text-lg">Confirm Switch to Annual</p>
+                                                <p className="text-sm text-slate-300 mt-1">
+                                                    You will be charged <strong className="text-white">{intervalSwitchPreview.amountFormatted}</strong> today.
+                                                </p>
+                                                <p className="text-xs text-slate-400 mt-1">{intervalSwitchPreview.description}</p>
+                                                <div className="flex gap-2 mt-3">
+                                                    <button
+                                                        onClick={() => switchBillingInterval('annual')}
+                                                        disabled={switchingInterval}
+                                                        className="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors disabled:opacity-50"
+                                                    >
+                                                        {switchingInterval ? 'Processing…' : `Confirm — pay ${intervalSwitchPreview.amountFormatted}`}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => { setIntervalSwitchPreview(null); setIntervalSwitchConfirming(false); }}
+                                                        disabled={switchingInterval}
+                                                        className="px-4 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 text-sm transition-colors disabled:opacity-50"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            {intervalSwitchError && (
+                                                <p className="text-xs text-red-400">{intervalSwitchError}</p>
+                                            )}
+                                        </div>
+                                    );
+                                }
+
                                 return (
                                     <button
-                                        onClick={() => switchBillingInterval(interval === 'annual' ? 'monthly' : 'annual')}
-                                        disabled={switchingInterval}
+                                        onClick={() => previewAndConfirmIntervalSwitch(interval === 'annual' ? 'monthly' : 'annual')}
+                                        disabled={switchingInterval || intervalSwitchConfirming}
                                         className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-blue-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
                                     >
                                         <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
-                                            {switchingInterval ? <Loader2 size={24} className="animate-spin" /> : <ArrowLeftRight size={24} />}
+                                            {(switchingInterval || intervalSwitchConfirming) ? <Loader2 size={24} className="animate-spin" /> : <ArrowLeftRight size={24} />}
                                         </div>
                                         <div className="text-left">
                                             <p className="font-bold text-lg">
@@ -759,7 +822,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                             <p className="text-sm text-slate-400 mt-1 text-balance">
                                                 {interval === 'annual'
                                                     ? 'No charge now. Your annual plan continues until renewal, then switches to monthly.'
-                                                    : "Switch to annual and save 20%. You'll be charged the annual price difference today."}
+                                                    : "Save 20% with annual billing. You'll see the exact charge before confirming."}
                                             </p>
                                             {intervalSwitchSuccess && (
                                                 <p className="text-xs text-green-400 mt-2">{intervalSwitchSuccess}</p>
@@ -864,6 +927,12 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                         const amount = item.amountPaid && item.amountPaid !== '0.00'
                                             ? `${item.currency || 'USD'} ${item.amountPaid}`
                                             : `${item.currency || 'USD'} ${item.amountDue || '0.00'}`;
+                                        const rawDesc = item.description || item.number || 'Subscription Charge';
+                                        const isProration = rawDesc.toLowerCase().includes('unused time');
+                                        const displayDesc = isProration
+                                            ? rawDesc.replace(/^Unused time on /i, 'Annual upgrade charge — prorated (replacing ')
+                                                .replace(/ after (\d+ \w+ \d+)$/, ' from $1)')
+                                            : rawDesc;
                                         return (
                                             <div key={item.invoiceId}
                                                 className="group flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all">
@@ -873,7 +942,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                                     </div>
                                                     <div>
                                                         <p className="font-bold text-white group-hover:text-purple-200 transition-colors">
-                                                            {item.description || item.number || 'Subscription Charge'}
+                                                            {displayDesc}
                                                         </p>
                                                         <p className="text-xs text-slate-500 mt-1 font-medium">
                                                             {formatBillingDate(item.createdAt)}{item.periodEnd ? ` • Period ends ${formatBillingDate(item.periodEnd)}` : ''}
