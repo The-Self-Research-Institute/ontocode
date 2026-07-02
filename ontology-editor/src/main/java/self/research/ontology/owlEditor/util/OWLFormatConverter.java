@@ -16,6 +16,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -37,7 +40,17 @@ public class OWLFormatConverter {
 
         // Prevent all network access for import resolution - this is the #1 performance killer.
         // Without this, OWL API tries to HTTP-fetch every <Import> URL and waits for timeout.
+        // SILENT mode still tries to connect before ignoring — so we redirect HTTP/HTTPS IRIs
+        // to a nonexistent local path for instant failure (same fix as HierarchySnapshotBuildService).
         manager.getIRIMappers().clear();
+        manager.addIRIMapper(iri -> {
+            String s = iri.toString();
+            if (s.startsWith("http://") || s.startsWith("https://")) {
+                return org.semanticweb.owlapi.model.IRI.create(
+                        "file:///intentionally-missing-import-" + Math.abs(s.hashCode()));
+            }
+            return null;
+        });
 
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
@@ -127,7 +140,25 @@ public class OWLFormatConverter {
 
         // Load ontology (OWL API will auto-detect format)
         long loadStart = System.nanoTime();
-        OWLOntology ontology = manager.loadOntologyFromOntologyDocument(fileToLoad.toFile());
+        OWLOntology ontology;
+        try {
+            ontology = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return manager.loadOntologyFromOntologyDocument(fileToLoad.toFile());
+                } catch (OWLOntologyCreationException e) {
+                    throw new java.util.concurrent.CompletionException(e);
+                }
+            }).get(30, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            throw new IOException("OWL API timed out after 30s loading " + inputPath.getFileName() + " (likely hung on owl:imports fetch)");
+        } catch (java.util.concurrent.ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof OWLOntologyCreationException owlEx) throw owlEx;
+            throw new IOException("OWL API load failed: " + cause.getMessage(), cause);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("OWL API load interrupted");
+        }
         long loadDuration = (System.nanoTime() - loadStart) / 1_000_000;
         log.info("Loaded ontology in {} ms. Axioms: {}", loadDuration, ontology.getAxiomCount());
         
@@ -151,10 +182,13 @@ public class OWLFormatConverter {
             log.info("Preserved {} namespace prefixes", prefixFormat.getPrefixName2PrefixMap().size());
         }
         
-        // Save as RDF/XML
+        // Save as RDF/XML — run in a dedicated thread with a large stack.
+        // OWLAPI's AbstractTranslator recurses into OWLEquivalentClassesAxiom visitors,
+        // which causes StackOverflowError on ontologies with complex equivalence chains.
+        // A 32 MB per-thread stack is isolated; the rest of the JVM is unaffected.
         long saveStart = System.nanoTime();
         try (FileOutputStream fos = new FileOutputStream(outputPath.toFile())) {
-            manager.saveOntology(ontology, rdfXmlFormat, fos);
+            saveOntologyLargeStack(manager, ontology, rdfXmlFormat, fos);
         }
         long saveDuration = (System.nanoTime() - saveStart) / 1_000_000;
         
@@ -172,6 +206,106 @@ public class OWLFormatConverter {
         }
 
         return outputPath;
+    }
+
+    /**
+     * Serializes an ontology to the given stream using a 32 MB stack thread to give OWLAPI's
+     * AbstractTranslator headroom for deep class hierarchies.
+     *
+     * Fallback: if OWLAPI's AbstractTranslator hits StackOverflowError (caused by
+     * self-referential OWLEquivalentClassesAxiom operands creating an infinite visitor cycle),
+     * all EquivalentClasses axioms are converted to semantically-equivalent pairwise SubClassOf
+     * axioms and serialization is retried. Unary EquivalentClasses(A) axioms (degenerate, no
+     * semantic content) are silently dropped.
+     *
+     * The stream is only written to on success — a failed attempt never corrupts {@code out}.
+     */
+    private static void saveOntologyLargeStack(OWLOntologyManager manager,
+                                               OWLOntology ontology,
+                                               OWLDocumentFormat format,
+                                               java.io.OutputStream out) throws IOException, OWLOntologyStorageException {
+        // Buffer the first attempt — write to `out` only on success so a mid-stream
+        // StackOverflowError never leaves partially-written bytes in the output.
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        Throwable firstError = trySaveOnThread(manager, ontology, format, buf);
+        if (firstError == null) {
+            buf.writeTo(out);
+            return;
+        }
+
+        if (!(firstError instanceof StackOverflowError)) {
+            rethrow(firstError);
+            return;
+        }
+
+        // StackOverflowError: cycle is in OWLEquivalentClassesAxiom visitor path.
+        // Replace all EquivalentClasses axioms with pairwise SubClassOf axioms, which
+        // AbstractTranslator serializes without re-entering the EquivalentClasses visitor.
+        log.warn("OWLAPI RDF serialization hit StackOverflowError (AbstractTranslator cycle) — "
+                + "retrying with EquivalentClasses→SubClassOf conversion");
+        try {
+            OWLOntologyManager freshManager = createManagerWithSilentImports();
+            OWLOntology flattened = freshManager.createOntology(ontology.getOntologyID());
+            OWLDataFactory df = freshManager.getOWLDataFactory();
+            ontology.axioms().forEach(ax -> {
+                if (ax instanceof OWLEquivalentClassesAxiom eca) {
+                    java.util.List<OWLClassExpression> ops = eca.getOperandsAsList();
+                    for (int i = 0; i < ops.size(); i++) {
+                        for (int j = 0; j < ops.size(); j++) {
+                            if (i != j) {
+                                freshManager.addAxiom(flattened,
+                                        df.getOWLSubClassOfAxiom(ops.get(i), ops.get(j)));
+                            }
+                        }
+                    }
+                    // Unary EquivalentClasses(A): no pairs generated — semantically vacuous, drop it.
+                } else {
+                    freshManager.addAxiom(flattened, ax);
+                }
+            });
+
+            ByteArrayOutputStream fallbackBuf = new ByteArrayOutputStream();
+            Throwable secondError = trySaveOnThread(freshManager, flattened, format, fallbackBuf);
+            if (secondError == null) {
+                fallbackBuf.writeTo(out);
+                log.info("Serialization succeeded after EquivalentClasses→SubClassOf conversion");
+                return;
+            }
+            log.error("Serialization still failed after EquivalentClasses→SubClassOf: {}", secondError.getMessage());
+            rethrow(secondError);
+        } catch (OWLOntologyCreationException e) {
+            throw new IOException("Failed to create flattened ontology for retry", e);
+        }
+    }
+
+    private static Throwable trySaveOnThread(OWLOntologyManager manager, OWLOntology ontology,
+                                             OWLDocumentFormat format, java.io.OutputStream out) {
+        Throwable[] error = {null};
+        Thread t = new Thread(null, () -> {
+            try {
+                manager.saveOntology(ontology, format, out);
+            } catch (Throwable e) {
+                error[0] = e;
+            }
+        }, "owlapi-serializer", 32 * 1024 * 1024);
+        t.start();
+        try {
+            t.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            error[0] = e;
+        }
+        return error[0];
+    }
+
+    private static void rethrow(Throwable t) throws IOException, OWLOntologyStorageException {
+        if (t instanceof OWLOntologyStorageException ose) throw ose;
+        if (t instanceof IOException ioe) throw ioe;
+        if (t instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+            throw new IOException("OWL serialization interrupted", t);
+        }
+        throw new IOException("OWL serialization failed: " + t.getMessage(), t);
     }
 
     /**
@@ -278,13 +412,10 @@ public class OWLFormatConverter {
             sanitizeNTriplesIRIs(filePath);
             reserializeWithOwlApi(filePath);
         } else {
-            // For large files: skip OWL API re-serialization (loads entire file into ~2GB of memory)
-            // and skip fixMalformedRdfXml (reads entire file as String).
-            // The RDF4J streaming parser in bulkLoadChunked handles these formats directly.
-            // If parsing fails, ProjectImportService has an OWL API fallback anyway.
-            fixMalformedRdfXml(filePath);
-            sanitizeNTriplesIRIs(filePath);
-            log.info("[PERFORMANCE] Large file sanitization complete (skipped OWL API re-serialization and RDF/XML fixup)");
+            // Large files: prefix strip only. Whole-file RDF/XML fixup and OWL API
+            // re-serialization load the entire ontology into memory; streaming GraphDB
+            // import handles RDF/XML directly, with OWL API fallback on structural errors.
+            log.info("[PERFORMANCE] Large file sanitization complete (prefix check only; skipped RDF/XML fixup and OWL API re-serialization)");
         }
     }
     
@@ -750,11 +881,39 @@ public class OWLFormatConverter {
             return;
         }
         
-        log.info("Re-serializing file with OWL API to fix namespace issues: {}", filePath.getFileName());
-        
+        // Log any owl:imports declarations — these are the network-fetch candidates that can cause hangs
+        java.util.regex.Matcher importMatcher = java.util.regex.Pattern
+                .compile("owl:imports[^>]*rdf:resource=\"([^\"]+)\"")
+                .matcher(content);
+        java.util.List<String> imports = new java.util.ArrayList<>();
+        while (importMatcher.find()) imports.add(importMatcher.group(1));
+        if (imports.isEmpty()) {
+            log.info("Re-serializing {} with OWL API — no owl:imports declared", filePath.getFileName());
+        } else {
+            log.warn("Re-serializing {} with OWL API — {} owl:imports found (these may trigger network calls): {}",
+                    filePath.getFileName(), imports.size(), imports);
+        }
+
         try {
             OWLOntologyManager manager = createManagerWithSilentImports();
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(filePath.toFile());
+            OWLOntology ontology;
+            try {
+                ontology = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return manager.loadOntologyFromOntologyDocument(filePath.toFile());
+                    } catch (OWLOntologyCreationException e) {
+                        throw new java.util.concurrent.CompletionException(e);
+                    }
+                }).get(30, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                log.warn("OWL API load timed out after 30s for {} (likely hung on owl:imports fetch) — skipping re-serialization", filePath.getFileName());
+                return;
+            } catch (java.util.concurrent.ExecutionException e) {
+                throw new RuntimeException(e.getCause());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
             log.info("OWL API loaded ontology: {} axioms", ontology.getAxiomCount());
             
             // Get original format and prefixes
@@ -769,16 +928,27 @@ public class OWLFormatConverter {
                 prefixFormat.getPrefixName2PrefixMap().forEach(rdfXmlFormat::setPrefix);
             }
             
-            // Write clean RDF/XML back to the file
-            try (OutputStream out = Files.newOutputStream(filePath)) {
-                manager.saveOntology(ontology, rdfXmlFormat, out);
+            // Write to a temp file first — NOT directly to filePath.
+            // Files.newOutputStream(filePath) truncates the file to 0 bytes before any writing happens.
+            // If saveOntology() then throws StackOverflowError, the original file is already destroyed.
+            // Writing to a temp file and atomically moving it only on success prevents this data loss.
+            Path tempOut = filePath.resolveSibling("reserialized-" + filePath.getFileName());
+            try (OutputStream out = Files.newOutputStream(tempOut)) {
+                saveOntologyLargeStack(manager, ontology, rdfXmlFormat, out);
             }
-            
+            Files.move(tempOut, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
             log.info("Successfully re-serialized file as clean RDF/XML: {}", filePath.getFileName());
-            
-        } catch (Exception e) {
-            log.warn("OWL API re-serialization failed (will try original file): {}", e.getMessage());
-            // Don't throw - let the original file be used as-is
+
+        } catch (Throwable t) {
+            // Catch Throwable (not just Exception) because OWL API's RDF/XML serializer can throw
+            // StackOverflowError on deeply nested ontologies — StackOverflowError extends Error, not Exception,
+            // so a plain catch(Exception) misses it and kills the worker thread silently.
+            log.warn("OWL API re-serialization failed ({}) for {} — skipping, original file will be used: {}",
+                    t.getClass().getSimpleName(), filePath.getFileName(), t.getMessage());
+            // Clean up temp file if the write started before the error
+            try { Files.deleteIfExists(filePath.resolveSibling("reserialized-" + filePath.getFileName())); }
+            catch (Exception ignored) {}
         }
     }
 

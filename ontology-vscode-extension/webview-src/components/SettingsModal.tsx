@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff } from 'lucide-react';
+import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2, KeyRound, Upload, Info } from 'lucide-react';
 import apiClient from '../services/apiClient';
+import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from '../utils/desktop';
+import { fetchLatestDesktopInstallerVersion, getAppVersion } from '../utils/appVersion';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -12,9 +14,11 @@ interface SettingsModalProps {
         workspaceName?: string;
         workspaceId?: string;
     };
+    isWorkspaceOwner?: boolean;
+    onWorkspaceRenamed?: (workspaceName: string) => void;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout, user }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout, user, isWorkspaceOwner = false, onWorkspaceRenamed }) => {
     const [activeTab, setActiveTab] = useState('profile');
     const [saving, setSaving] = useState(false);
     const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -24,7 +28,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         notifications: true,
         emailNotifications: true,
         theme: 'light',
-        language: 'en'
+        language: 'en',
+        workspaceName: user.workspaceName || ''
     });
     const [passwordData, setPasswordData] = useState({
         currentPassword: '',
@@ -36,6 +41,49 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         newPassword: false,
         confirmPassword: false
     });
+    const desktop = isDesktop();
+    const [license, setLicense] = useState<DesktopLicense | null>(null);
+    const [licenseImporting, setLicenseImporting] = useState(false);
+    const [licenseMessage, setLicenseMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    const [appVersion, setAppVersion] = useState<string>('');
+    const [latestDesktopVersion, setLatestDesktopVersion] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!desktop || !isOpen) return;
+        getDesktopLicense().then(setLicense).catch(() => setLicense(null));
+    }, [desktop, isOpen]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        getAppVersion().then(setAppVersion).catch(() => setAppVersion(''));
+        if (!desktop) {
+            fetchLatestDesktopInstallerVersion().then(setLatestDesktopVersion).catch(() => setLatestDesktopVersion(null));
+        }
+    }, [desktop, isOpen]);
+
+    const handleLicenseFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) return;
+        setLicenseMessage(null);
+        setLicenseImporting(true);
+        try {
+            const text = await file.text();
+            const api = (window as any).electronAPI;
+            const result = await api?.importLicense?.(text);
+            if (result?.ok) {
+                setLicense(result.license || null);
+                setLicenseMessage({ type: 'success', text: 'License imported. Restart the app to fully apply the new plan.' });
+                window.dispatchEvent(new CustomEvent(DESKTOP_LICENSE_UPDATED_EVENT));
+            } else {
+                setLicenseMessage({ type: 'error', text: result?.error || 'Could not import this license file.' });
+            }
+        } catch (e: any) {
+            setLicenseMessage({ type: 'error', text: e?.message || 'Could not read the license file.' });
+        } finally {
+            setLicenseImporting(false);
+        }
+    };
 
     // Reset settings when user changes or modal opens
     useEffect(() => {
@@ -50,7 +98,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                     notifications: parsed.notifications ?? true,
                     emailNotifications: parsed.emailNotifications ?? true,
                     theme: parsed.theme || 'light',
-                    language: parsed.language || 'en'
+                    language: parsed.language || 'en',
+                    workspaceName: user.workspaceName || ''
                 });
             } catch (e) {
                 // Fall back to defaults
@@ -60,7 +109,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                     notifications: true,
                     emailNotifications: true,
                     theme: 'light',
-                    language: 'en'
+                    language: 'en',
+                    workspaceName: user.workspaceName || ''
                 });
             }
         } else {
@@ -70,7 +120,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 notifications: true,
                 emailNotifications: true,
                 theme: 'light',
-                language: 'en'
+                language: 'en',
+                workspaceName: user.workspaceName || ''
             });
         }
     }, [user, isOpen]);
@@ -79,10 +130,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
 
     const tabs = [
         { id: 'profile', label: 'Profile', icon: User },
+        // Desktop: no shared workspace settings / password — show License instead.
+        ...(desktop
+            ? [{ id: 'license', label: 'License', icon: KeyRound }]
+            : [
+                { id: 'workspace', label: 'Workspace', icon: Building2 },
+                { id: 'security', label: 'Security', icon: Lock },
+              ]),
         // { id: 'notifications', label: 'Notifications', icon: Bell },
-        { id: 'security', label: 'Security', icon: Lock },
         // { id: 'appearance', label: 'Appearance', icon: Palette },
         // { id: 'preferences', label: 'Preferences', icon: Globe }
+        { id: 'about', label: 'About', icon: Info },
     ];
 
     const showMessage = (type: 'success' | 'error', text: string) => {
@@ -94,6 +152,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         try {
             setSaving(true);
             console.log('Saving settings:', settings);
+
+            if (activeTab === 'workspace') {
+                if (!user.workspaceId) {
+                    showMessage('error', 'No workspace selected');
+                    return;
+                }
+                const workspaceName = settings.workspaceName.trim();
+                if (!workspaceName) {
+                    showMessage('error', 'Workspace name is required');
+                    return;
+                }
+
+                const response = await apiClient.patch(`/api/workspaces/${user.workspaceId}`, {
+                    name: workspaceName
+                });
+                const data = response?.data || response;
+                const updatedName = data?.workspace?.name || workspaceName;
+                onWorkspaceRenamed?.(updatedName);
+                showMessage('success', 'Workspace name updated successfully!');
+                setTimeout(() => onClose(), 1500);
+                return;
+            }
             
             // Try to save profile settings - handle gracefully if endpoint doesn't exist
             try {
@@ -263,6 +343,95 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 </div>
               )}
 
+              {activeTab === "license" && (
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-1">License</h4>
+                    <p className="text-sm text-gray-500 mb-4">
+                      Your plan and account details come from your license file. Get a license from the web app
+                      (Billing → Desktop License), then import it here. The free tier needs no file.
+                    </p>
+
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Name</span>
+                        <span className="font-medium text-gray-900">{license?.name || 'Desktop User'}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Email</span>
+                        <span className="font-medium text-gray-900">{license?.email || 'local@ontocode.desktop'}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Plan</span>
+                        <span className="font-semibold text-purple-700">{licensePlan(license)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Expires</span>
+                        <span className={`font-medium ${isLicenseExpired(license) ? 'text-red-600' : 'text-gray-900'}`}>
+                          {license?.expiresAt
+                            ? new Date(license.expiresAt).toLocaleDateString() + (isLicenseExpired(license) ? ' (expired)' : '')
+                            : 'Never'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium cursor-pointer transition-colors">
+                        {licenseImporting ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                        Import license file
+                        <input
+                          type="file"
+                          accept=".lic,application/json,application/octet-stream"
+                          onChange={handleLicenseFile}
+                          disabled={licenseImporting}
+                          className="hidden"
+                        />
+                      </label>
+                      <button
+                        onClick={() => (window as any).electronAPI?.openPurchase?.(licensePlan(license).toLowerCase())}
+                        className="ml-3 px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-100 transition-colors"
+                      >
+                        Get a license on the web
+                      </button>
+                    </div>
+
+                    {licenseMessage && (
+                      <p className={`text-sm mt-3 ${licenseMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                        {licenseMessage.text}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === "workspace" && (
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-4">Workspace Settings</h4>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Workspace Name</label>
+                        <input
+                          type="text"
+                          value={settings.workspaceName}
+                          onChange={(e) => setSettings({ ...settings, workspaceName: e.target.value })}
+                          disabled={!isWorkspaceOwner}
+                          className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent ${
+                            isWorkspaceOwner ? "bg-white text-gray-900" : "bg-gray-100 text-gray-600 cursor-not-allowed"
+                          }`}
+                          placeholder="Workspace name"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          {isWorkspaceOwner
+                            ? "This name is shown across the project dashboard and workspace switcher."
+                            : "Only the workspace owner can change the workspace name."}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Notifications tab - commented out
                         {activeTab === 'notifications' && (
                             <div className="space-y-6">
@@ -377,6 +546,39 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 </div>
               )}
 
+              {activeTab === "about" && (
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-1">About OntoCode</h4>
+                    <p className="text-sm text-gray-500 mb-4">
+                      Version information for the app you are running now.
+                    </p>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Edition</span>
+                        <span className="font-medium text-gray-900">{desktop ? "Desktop" : "Web"}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">App version</span>
+                        <span className="font-medium text-gray-900">{appVersion ? `v${appVersion}` : "…"}</span>
+                      </div>
+                      {!desktop && latestDesktopVersion && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Latest desktop installer</span>
+                          <span className="font-medium text-gray-900">v{latestDesktopVersion}</span>
+                        </div>
+                      )}
+                    </div>
+                    {!desktop && (
+                      <p className="text-xs text-gray-500 mt-4 leading-relaxed">
+                        Desktop download analytics use a privacy-friendly hashed IP (never stored in plain text).
+                        See the download page for details.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Appearance tab - commented out
                         {activeTab === 'appearance' && (
                             <div className="space-y-6">
@@ -447,7 +649,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 </div>
               )}
             </div>
-            {activeTab !== "profile" && activeTab !== "security" && (
+            {activeTab !== "profile" && activeTab !== "security" && activeTab !== "about" && (
               <div className="flex items-center gap-3">
                 <button
                   onClick={onClose}
@@ -458,7 +660,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || (activeTab === "workspace" && !isWorkspaceOwner)}
                   className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
                 >
                   {saving && <Loader2 size={16} className="animate-spin" />}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, Suspense, lazy } from "react";
 import {
   FolderOpen,
   Users,
@@ -23,27 +23,44 @@ import {
   Building2,
   FileText,
   Shield,
+  Lock,
   UserMinus,
   Save,
   Loader2,
   Crown,
   Zap,
   Sparkles,
-  Code2,
   ArrowLeft,
   HelpCircle,
+  CreditCard,
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
+import { isDesktop } from "../utils/desktop";
+import { clearSessionCache } from "../utils/sessionCleanup";
 import InviteMemberModal from "./InviteMemberModal";
 import SettingsModal from "./SettingsModal";
 import CreateProjectModal from "./CreateProjectModal";
 import ConfirmationModal from "./ConfirmationModal";
-import PlanDetailsModal from "./PlanDetailsModal";
+const PlanDetailsModal = lazy(() => import("./PlanDetailsModal"));
 import { UserGuideModal } from "./UserGuideModal";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { Bug } from "lucide-react";
+import AdminSettingsModal from "./AdminSettingsModal";
+import { OntoCodeLogo } from "./OntoCodeLogo";
+import { AppVersionBadge } from "./AppVersionBadge";
+import { getAppVersion } from "../utils/appVersion";
+import {
+  WORKSPACE_ROLES,
+  type WorkspaceRole,
+  normalizeRole,
+  canCreateProjectsInWorkspace,
+  canManageWorkspaceMembership,
+  canEditProjectContent,
+  canManageProjectSettings,
+  parseProjectRole,
+} from "../utils/roles";
 
 interface ProjectMember {
   userId: string;
@@ -51,6 +68,8 @@ interface ProjectMember {
   email: string;
   role: string;
   joinedAt: string;
+  /** WORKSPACE_OWNER | WORKSPACE_ADMIN when auto-linked on shared projects */
+  workspaceEditorLink?: string | null;
 }
 
 interface Project {
@@ -67,6 +86,7 @@ interface Project {
   fileCount: number;
   createdAt: string;
   updatedAt: string;
+  isPrivateRestricted?: boolean;
 }
 
 interface TeamMember {
@@ -83,16 +103,18 @@ interface ProjectDashboardProps {
   onSelectProject: (projectId: string, projectName: string) => void;
   pendingFile?: { fileName: string; fileContent: string; fileSize: number } | null;
   onOpenLocalFile?: () => void;
-  onOpenEditor?: () => void;
+  onManageSubscription?: () => void;
+  onOpenSubscriptionPlans?: () => void;
 }
 
 const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   onSelectProject,
   pendingFile,
   onOpenLocalFile,
-  onOpenEditor,
+  onManageSubscription,
+  onOpenSubscriptionPlans,
 }) => {
-  const { user, logout, switchWorkspace, updateSubscriptionPlan } = useAuth();
+  const { user, logout, switchWorkspace, refreshPermissions } = useAuth();
   console.log("[ProjectDashboard] Rendered with user:", {
     email: user?.email,
     workspaceId: user?.workspaceId,
@@ -101,9 +123,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   console.log("[ProjectDashboard] switchWorkspace function:", typeof switchWorkspace);
 
   const subscription = useSubscription();
+  const isOwner = user?.workspaceRole === "OWNER";
   const [projects, setProjects] = useState<Project[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
+  const [workspaceDisplayName, setWorkspaceDisplayName] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -111,6 +135,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [showInviteMember, setShowInviteMember] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAdminSettings, setShowAdminSettings] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
   const [showPlanDetails, setShowPlanDetails] = useState(false);
   const [showUserGuide, setShowUserGuide] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
@@ -128,7 +154,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [projectSettingsTab, setProjectSettingsTab] = useState<"general" | "members" | "danger">("general");
   const [showAddMemberForm, setShowAddMemberForm] = useState(false);
   const [newMemberEmail, setNewMemberEmail] = useState("");
-  const [newMemberUsername, setNewMemberUsername] = useState("");
   const [newMemberRole, setNewMemberRole] = useState("VIEWER");
   const [addingMember, setAddingMember] = useState(false);
 
@@ -147,36 +172,66 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     type?: "danger" | "warning" | "info";
   } | null>(null);
 
-  // Check if current user is workspace owner
-  // Check both userId match and if user has OWNER role in the workspace
-  const isWorkspaceOwner = user?.userId === workspaceOwnerId || user?.workspaceRole === "OWNER";
-    const isWorkspaceAdmin = user?.workspaceRole === "ADMIN";
-    const canInviteMembers = isWorkspaceOwner || isWorkspaceAdmin;
-  const isViewer = user?.workspaceRole === "VIEWER";
+  const currentUserInTeam = useMemo(() => teamMembers.find(m => m.id === user?.userId || m.email === user?.email || m.username === user?.username), [teamMembers, user]);
+  const isWorkspaceOwner =
+    user?.userId === workspaceOwnerId ||
+    user?.workspaceRole?.toUpperCase() === "OWNER" ||
+    currentUserInTeam?.roles?.some((r) => r.toUpperCase() === "OWNER");
 
-  // Handle workspace subscription plan upgrade
-  const handleUpgradePlan = async (planId: string) => {
-    setUpgradingPlan(true);
-    try {
-      // Convert plan ID to uppercase (backend expects FREE, PRO, ENTERPRISE)
-      const upperCasePlan = planId.toUpperCase();
-      console.log("[ProjectDashboard] Upgrading plan from", subscription.plan, "to", upperCasePlan);
+  const projectMemberRoleLocked = (member: ProjectMember) =>
+    member.workspaceEditorLink === "WORKSPACE_OWNER" ||
+    (member.workspaceEditorLink === "WORKSPACE_ADMIN" && !isWorkspaceOwner);
 
-      // Update subscription plan (this calls the API and updates user state)
-      await updateSubscriptionPlan(upperCasePlan);
+  const canRemoveThisProjectMember = (member: ProjectMember) =>
+    member.role !== "OWNER" &&
+    member.workspaceEditorLink !== "WORKSPACE_OWNER" &&
+    (member.workspaceEditorLink !== "WORKSPACE_ADMIN" || isWorkspaceOwner);
 
-      // Close modal
-      setShowPlanDetails(false);
+  /** Resolved workspace role: JWT, team membership, or workspace owner id. */
+  const workspaceRoleResolved = useMemo((): WorkspaceRole | null => {
+    const jwt = normalizeRole(user?.workspaceRole);
+    if ((WORKSPACE_ROLES as readonly string[]).includes(jwt)) return jwt as WorkspaceRole;
+    if (user?.userId && workspaceOwnerId && user.userId === workspaceOwnerId) return "OWNER";
+    const fromTeam = currentUserInTeam?.roles
+      ?.map((r) => normalizeRole(r))
+      .find((r) => (WORKSPACE_ROLES as readonly string[]).includes(r));
+    return fromTeam ? (fromTeam as WorkspaceRole) : null;
+  }, [user?.workspaceRole, user?.userId, workspaceOwnerId, currentUserInTeam]);
 
-      // Show success toast
-      showToast(`Successfully upgraded to ${upperCasePlan} plan!`, "success");
+  const effectiveWorkspaceRole = workspaceRoleResolved;
 
-      // Reload data to update subscription limits and workspace info
-      await loadData();
-    } catch (error: any) {
-      console.error("Failed to upgrade workspace plan:", error);
-      showToast(error?.response?.data?.error || "Failed to upgrade plan. Please try again.", "error");
-      setUpgradingPlan(false);
+  const canCreateProjects = canCreateProjectsInWorkspace(effectiveWorkspaceRole);
+  const canInviteMembers = canManageWorkspaceMembership(effectiveWorkspaceRole);
+
+  const projectRoleForUser = (project: Project | null): ReturnType<typeof parseProjectRole> => {
+    if (!project || !user?.userId) return null;
+    if (project.ownerId === user.userId) return "OWNER";
+    const m = project.members?.find((mem) => mem.userId === user.userId);
+    return parseProjectRole(m?.role);
+  };
+
+  const canEditOpenProject = projectSettingsModal
+    ? canEditProjectContent(projectRoleForUser(projectSettingsModal), effectiveWorkspaceRole)
+    : false;
+
+  const canManageOpenProject = projectSettingsModal
+    ? canManageProjectSettings(projectRoleForUser(projectSettingsModal), effectiveWorkspaceRole)
+    : false;
+  const currentWorkspaceName = isDesktop()
+    ? "My projects"
+    : workspaceDisplayName || user?.workspaceName || "Workspace";
+
+  const canManageProjectRow = (project: Project) =>
+    canManageProjectSettings(projectRoleForUser(project), effectiveWorkspaceRole);
+
+  // Paid purchases are account-level and handled by the /subscription page.
+  const handleUpgradePlan = async () => {
+    setShowPlanDetails(false);
+    setUpgradingPlan(false);
+    if (onOpenSubscriptionPlans) {
+      onOpenSubscriptionPlans();
+    } else {
+      window.vscode?.postMessage({ type: "showSubscriptionPlans" });
     }
   };
 
@@ -198,13 +253,30 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     setConfirmModal(options);
   };
 
+  const clearCacheAndLogout = () => {
+    clearSessionCache();
+    logout();
+  };
+
   useEffect(() => {
     loadData();
   }, []);
 
-  // Poll for workspace member changes (e.g. when invitees accept)
   useEffect(() => {
-    if (!user?.workspaceId) return;
+    getAppVersion().then(setAppVersion).catch(() => setAppVersion(""));
+  }, []);
+
+  // Poll workspace state every 15s. Two responsibilities:
+  //   1. Surface member changes (pending → active when invitees accept).
+  //   2. Bug #38: detect when the owner upgrades / downgrades / cancels
+  //      and force-refresh the JWT so members pick up the new plan
+  //      without having to switch workspaces and back.
+  useEffect(() => {
+    if (isDesktop() || !user?.workspaceId) return;
+
+    let lastSeenPlan = "";
+    let lastSeenStatus = "";
+
     const interval = setInterval(async () => {
       try {
         const workspaceResponse = await apiClient.get(`/api/workspaces/${user.workspaceId}`);
@@ -230,11 +302,47 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           return prev;
         });
         setWorkspaceOwnerId(workspaceData?.ownerId || null);
+        setWorkspaceDisplayName(workspaceData?.name || "");
+
+        // ── Plan / billing-status change detection (Bug #38) ──
+        const currentPlan = String(workspaceData?.subscriptionPlan || "").toUpperCase();
+        const currentStatus = String(workspaceData?.billingStatus || "").toUpperCase();
+        const planChanged = currentPlan && currentPlan !== lastSeenPlan;
+        const statusChanged = currentStatus && currentStatus !== lastSeenStatus;
+        if ((planChanged || statusChanged) && (lastSeenPlan || lastSeenStatus)) {
+          console.log(
+            "[ProjectDashboard] Subscription state changed (%s/%s -> %s/%s) — refreshing permissions",
+            lastSeenPlan, lastSeenStatus, currentPlan, currentStatus,
+          );
+          // refreshPermissions re-issues the JWT and updates the user object,
+          // which propagates the new `subscriptionPlan` through useSubscription.
+          await refreshPermissions().catch(() => undefined);
+        }
+        lastSeenPlan = currentPlan || lastSeenPlan;
+        lastSeenStatus = currentStatus || lastSeenStatus;
       } catch (e) {
         // Silently ignore polling errors
       }
     }, 15000);
     return () => clearInterval(interval);
+  }, [user?.workspaceId, user?.subscriptionPlan, refreshPermissions]);
+
+  // Refresh project list on workspace events (e.g. PROJECT_DELETED broadcast via WebSocket)
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const event = (e as CustomEvent).detail;
+      if (event?.type === "PROJECT_DELETED" || event?.type === "PROJECT_CREATED") {
+        try {
+          const resp = await apiClient.get(`/api/projects/my?workspaceId=${user?.workspaceId}`);
+          const data = resp?.data || resp;
+          setProjects(data?.projects || []);
+        } catch {
+          // silently ignore
+        }
+      }
+    };
+    window.addEventListener("workspaceEvent", handler);
+    return () => window.removeEventListener("workspaceEvent", handler);
   }, [user?.workspaceId]);
 
   // Close menu when clicking outside
@@ -275,8 +383,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         console.log("[ProjectDashboard] No projects returned from API");
       }
 
-      // Load team members from workspace (includes both active and pending members)
-      if (user?.workspaceId) {
+      // Workspace members / invites are cloud-only — desktop is single-user local.
+      if (!isDesktop() && user?.workspaceId) {
         try {
           const workspaceResponse = await apiClient.get(`/api/workspaces/${user.workspaceId}`);
           const workspaceData = workspaceResponse?.data || workspaceResponse;
@@ -284,11 +392,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
           // Store workspace owner ID
           setWorkspaceOwnerId(workspaceData?.ownerId || null);
+          setWorkspaceDisplayName(workspaceData?.name || "");
 
           console.log("[ProjectDashboard] Workspace members from backend:", members);
           console.log("[ProjectDashboard] Workspace owner ID:", workspaceData?.ownerId);
 
-          // Convert workspace members to team members format
+          // Convert workspace members to workspace members format
           // Now includes both ACTIVE and PENDING members from the workspace
           const teamMembersList = members.map((member: any) => {
             // Determine status: if userId is null, it's a pending member
@@ -310,13 +419,29 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           console.log("[ProjectDashboard] Team members loaded:", activeCount, "active +", pendingCount, "pending");
           setTeamMembers(teamMembersList);
         } catch (error) {
-          console.error("[ProjectDashboard] Error loading team members:", error);
+          console.error("[ProjectDashboard] Error loading workspace members:", error);
         }
       }
-    } catch (error) {
+    } catch (error: any) {
+      // Bug #41: previously this auto-called clearCacheAndLogout(), which
+      // wiped the session whenever projects failed to load (e.g. right
+      // after the owner cancelled and the workspace lost paid access).
+      // Result: the user couldn't even reach billing to renew. Now we
+      // surface the error and offer routes back to billing / workspace
+      // selection. Only an explicit 401 should force a re-login.
       console.error("Error loading dashboard data:", error);
-      setLoadError("Failed to load projects. Click retry to try again.");
-      showToast("Failed to load projects", "error");
+      const status = error?.status ?? error?.response?.status;
+      if (status === 401) {
+        clearCacheAndLogout();
+        return;
+      }
+      const fallback = "We couldn't load this workspace's projects.";
+      const message = error?.data?.error || error?.message || fallback;
+      setLoadError(
+        status === 402 || status === 403
+          ? `${message} This often means the workspace subscription was cancelled or expired. Renew the plan to restore access.`
+          : message
+      );
     } finally {
       setLoading(false);
     }
@@ -357,34 +482,38 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
       // Check if user is already a member
       const existingMember = members.find((m: any) => m.email?.toLowerCase() === email.toLowerCase());
+      const isActiveMember =
+        existingMember &&
+        existingMember.userId &&
+        (existingMember.status === "ACTIVE" || !existingMember.status || existingMember.status === "active");
 
-      if (existingMember) {
-        // User already exists - show warning but allow invitation
-        showToast(
-          `User "${email}" is already a member with role: ${existingMember.role}. Sending invitation anyway.`,
-          "warning",
-        );
+      if (isActiveMember) {
+        showToast(`User "${email}" is already a member of this workspace.`, "warning");
+        return;
       }
 
-      // Check pending invitations too
+      // Check pending invitations (do not swallow duplicate detection in a catch)
+      let pendingInvites: any[] = [];
       try {
         const pendingResponse = await apiClient.get(`/api/invitations/workspace/${user?.workspaceId}`);
-        const pendingInvites = pendingResponse?.data || pendingResponse;
+        const raw = pendingResponse?.data ?? pendingResponse;
+        pendingInvites = Array.isArray(raw) ? raw : raw?.invitations || [];
+      } catch (e) {
+        console.warn("Could not check pending invitations:", e);
+        showToast("Could not verify pending invitations. Please try again.", "warning");
+        return;
+      }
 
-        const pendingInvite = pendingInvites.find(
-          (inv: any) => inv.email?.toLowerCase() === email.toLowerCase() && inv.status === "PENDING",
+      const pendingInvite = pendingInvites.find(
+        (inv: any) => inv.email?.toLowerCase() === email.toLowerCase() && String(inv.status || "").toUpperCase() === "PENDING",
+      );
+
+      if (pendingInvite) {
+        showToast(
+          `An invitation was already sent to "${email}" on ${new Date(pendingInvite.createdAt).toLocaleDateString()}. Please wait for them to accept.`,
+          "warning",
         );
-
-        if (pendingInvite) {
-          showToast(
-            `An invitation was already sent to "${email}" on ${new Date(pendingInvite.createdAt).toLocaleDateString()}. Please wait for them to accept.`,
-            "warning",
-          );
-          throw { message: "Invitation email already sent to this address" };
-        }
-      } catch (pendingError) {
-        // If we can't check pending invitations, continue anyway
-        console.warn("Could not check pending invitations:", pendingError);
+        return;
       }
 
       const response = await apiClient.post("/api/invitations/send", {
@@ -406,17 +535,33 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   };
 
   const handleRemoveMember = async (member: TeamMember, projectId?: string) => {
-    // Prevent removing yourself
+    // Non-owner may leave the workspace (self-removal)
     if (member.email === user?.email) {
-      showToast(
-        "You cannot remove yourself from the workspace. Please contact the workspace owner if you want to leave.",
-        "warning",
+      if (member.roles.some((r) => r.toUpperCase() === "OWNER")) {
+        showToast(
+          "Workspace owners cannot leave. Transfer ownership or delete the workspace.",
+          "warning",
+        );
+        return;
+      }
+      const confirmed = await showConfirmDialog(
+        "Leave workspace?",
+        "You will lose access to this workspace and its projects. You can rejoin if invited again.",
+        "Leave workspace",
       );
+      if (!confirmed || !user?.workspaceId) return;
+      try {
+        await apiClient.post(`/api/workspaces/${user.workspaceId}/leave`);
+        showToast("You have left the workspace", "success");
+        switchWorkspace();
+      } catch (error: any) {
+        showToast(error?.error || error?.message || "Failed to leave workspace", "error");
+      }
       return;
     }
 
     // Prevent removing workspace owner
-    if (member.id === workspaceOwnerId || member.roles.includes("OWNER")) {
+    if (member.roles.some(r => r.toUpperCase() === "OWNER")) {
       showToast("Cannot remove workspace owner. Please transfer ownership or delete the workspace.", "error");
       return;
     }
@@ -429,14 +574,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
     // Show confirmation modal for active members
     showConfirm({
-      title: "Remove Team Member",
+      title: "Remove Workspace Member",
       message: `Are you sure you want to remove ${member.username} (${member.email}) from this workspace? This action cannot be undone.`,
       type: "danger",
       confirmText: "Remove",
       onConfirm: async () => {
         try {
-          console.log("[ProjectDashboard] Removing active member:", member.id, member.email);
-          await apiClient.delete(`/api/workspaces/${user?.workspaceId}/members/${member.id}`);
+          console.log("[ProjectDashboard] Removing active member:", member.email);
+          await apiClient.delete(`/api/workspaces/${user?.workspaceId}/members/${member.email}`);
           showToast(`${member.username} has been removed from the workspace successfully.`, "success");
           await loadData();
         } catch (error: any) {
@@ -619,14 +764,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   // Add member to project
   const handleAddProjectMember = async () => {
-    if (!projectSettingsModal || !newMemberUsername.trim()) return;
+    if (!projectSettingsModal || !newMemberEmail.trim()) return;
 
     try {
       setAddingMember(true);
 
-      // Add member to project
+      // Backend expects `email` (see ProjectController.AddMemberRequest)
       await apiClient.post(`/api/projects/${projectSettingsModal.projectId}/members`, {
-        username: newMemberUsername.trim(),
+        email: newMemberEmail.trim(),
         role: newMemberRole,
       });
 
@@ -634,7 +779,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
       // Reset form
       setNewMemberEmail("");
-      setNewMemberUsername("");
       setNewMemberRole("VIEWER");
       setShowAddMemberForm(false);
 
@@ -653,7 +797,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
   };
 
-  // Get available team members (not already in project)
+  // Get available workspace members (not already in project)
   const getAvailableTeamMembers = () => {
     if (!projectSettingsModal) return [];
 
@@ -689,16 +833,40 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   if (loadError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+        <div className="text-center max-w-md">
           <XCircle size={48} className="text-red-400 mx-auto mb-4" />
-          <p className="text-gray-700 mb-4">{loadError}</p>
-          <button
-            onClick={loadData}
-            className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-          >
-            Retry
-          </button>
+          <p className="text-gray-800 font-semibold mb-2">Couldn't open this workspace</p>
+          <p className="text-gray-600 mb-6 text-sm leading-relaxed">{loadError}</p>
+          <div className="flex flex-wrap justify-center gap-3">
+            <button
+              onClick={loadData}
+              className="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+            >
+              Retry
+            </button>
+            {/* Bug #41: always offer a way out so the user isn't stranded. */}
+            <button
+              onClick={() => switchWorkspace()}
+              className="px-5 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              Switch Workspace
+            </button>
+            {isOwner && onManageSubscription && (
+              <button
+                onClick={onManageSubscription}
+                className="px-5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+              >
+                Manage Subscription
+              </button>
+            )}
+            <button
+              onClick={clearCacheAndLogout}
+              className="px-5 py-2 border border-gray-300 text-gray-500 rounded-lg hover:bg-gray-100 transition-colors text-sm"
+            >
+              Log out
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -774,119 +942,166 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       {/* Header */}
       <header className="bg-white border-b border-gray-200 flex-shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => {
-                  console.log("[ProjectDashboard] 🔙 Back to workspace clicked");
-                  switchWorkspace();
-                }}
-                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Back to Workspace"
-              >
-                <ArrowLeft size={20} />
-              </button>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">OntoCode</h1>
-                <p className="text-sm text-gray-500">
-                  Welcome, {user?.username}
-                  {user?.workspaceName && (
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 py-3 sm:py-4">
+            <div className="flex items-center gap-3 min-w-0">
+              {!isDesktop() && (
+                <button
+                  onClick={() => {
+                    console.log("[ProjectDashboard] 🔙 Back to workspace clicked");
+                    switchWorkspace();
+                  }}
+                  className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Back to Workspace"
+                >
+                  <ArrowLeft size={20} />
+                </button>
+              )}
+              <div className="min-w-0">
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate flex items-center gap-2">
+                  <OntoCodeLogo size={24} />
+                  <span className="truncate">{currentWorkspaceName}</span>
+                </h1>
+                <p className="text-xs sm:text-sm text-gray-500 truncate">
+                  OntoCode Project Dashboard{appVersion ? ` v${appVersion}` : ""} · Welcome, {user?.username}
+                  {!isDesktop() && currentWorkspaceName && (
                     <button
                       onClick={() => {
                         console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (inline)");
                         switchWorkspace();
                       }}
-                      className="ml-2 px-2.5 py-0.5 bg-gradient-to-r from-purple-50 to-indigo-50 text-purple-700 border border-purple-200 rounded-full text-xs hover:from-purple-100 hover:to-indigo-100 hover:border-purple-300 hover:shadow-sm transition-all inline-flex items-center gap-1.5 font-medium"
+                      className="ml-2 px-2.5 py-0.5 bg-gradient-to-r from-purple-50 to-indigo-50 text-purple-700 border border-purple-200 rounded-full text-xs hover:from-purple-100 hover:to-indigo-100 hover:border-purple-300 hover:shadow-sm transition-all inline-flex items-center gap-1.5 font-medium max-w-[55vw] sm:max-w-none"
                       title="Click to switch workspace"
                     >
                       <Building2 size={11} />
-                      {user.workspaceName}
+                      <span className="truncate">Switch workspace</span>
                     </button>
                   )}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              {/* Workspace Subscription Plan Badge */}
-              <button
-                onClick={() => setShowPlanDetails(true)}
-                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer ${
-                  subscription.isEnterprise
-                    ? "bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600"
-                    : subscription.isPro
-                      ? "bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                }`}
-                title={`Workspace Plan: ${subscription.plan.toUpperCase()} - Click for details`}
-              >
-                {subscription.isEnterprise ? (
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap justify-start sm:justify-end w-full sm:w-auto">
+              <AppVersionBadge variant="header" />
+              {/* Workspace Subscription Plan Badge — hidden in desktop (no plans/pricing) */}
+              {!isDesktop() && (isWorkspaceOwner ? (
+                <button
+                  onClick={() => setShowPlanDetails(true)}
+                  className={`h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer ${
+                    subscription.isEnterprise
+                      ? "bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600"
+                      : subscription.isPro
+                        ? "bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                  title={`Workspace Plan: ${subscription.plan.toUpperCase()} - Click for current plan details`}
+                >
+                  {subscription.isEnterprise ? (
+                    <Crown size={14} />
+                  ) : subscription.isPro ? (
+                    <Zap size={14} />
+                  ) : (
+                    <Sparkles size={14} />
+                  )}
+                  {subscription.plan.toUpperCase()}
+                </button>
+              ) : (
+                <span
+                  className="h-8 inline-flex items-center justify-center gap-1.5 px-3 text-[11px] font-semibold rounded-full border border-slate-600/70 bg-slate-800/70 text-slate-300"
+                  title={`Workspace Plan: ${subscription.plan.toUpperCase()}`}
+                >
+                  <Shield size={12} className="text-slate-400" />
+                  Plan: {subscription.plan.toUpperCase()}
+                </span>
+              ))}
+              {!isDesktop() && isWorkspaceOwner && onOpenSubscriptionPlans && !subscription.isEnterprise && (
+                <button
+                  onClick={onOpenSubscriptionPlans}
+                  className="h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600"
+                  title="Upgrade your account plan"
+                >
                   <Crown size={14} />
-                ) : subscription.isPro ? (
-                  <Zap size={14} />
-                ) : (
-                  <Sparkles size={14} />
-                )}
-                {subscription.plan.toUpperCase()}
-              </button>
-              <button
-                onClick={() => {
-                  console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (main button)");
-                  switchWorkspace();
-                }}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600"
-                title="Switch Workspace"
-              >
-                <Building2 size={14} />
-                <span className="hidden sm:inline">Switch Workspace</span>
-              </button>
-              {!isViewer && (
+                  Upgrade Plan
+                </button>
+              )}
+              {!isDesktop() && (
+                <button
+                  onClick={() => {
+                    console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (main button)");
+                    switchWorkspace();
+                  }}
+                  className="h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600"
+                  title="Switch Workspace"
+                >
+                  <Building2 size={14} />
+                  <span className="hidden sm:inline">Switch Workspace</span>
+                </button>
+              )}
+              {canCreateProjects && (
                 <button
                   onClick={() => setShowCreateProject(true)}
-                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
+                  className="h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
                   title="Create New Project"
                 >
                   <Plus size={14} />
                   New Project
                 </button>
               )}
-              {onOpenEditor && (
-                <button
-                  onClick={onOpenEditor}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-blue-600 border border-blue-300 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors font-medium"
-                  title="Open OntoCode Editor"
-                >
-                  <Code2 size={14} />
-                  Editor
-                </button>
-              )}
               <button
                 onClick={() => setShowUserGuide(true)}
-                className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                className="h-9 w-9 inline-flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg"
                 title="User Guide"
               >
                 <HelpCircle size={20} />
               </button>
               <button
                 onClick={() => setIsReportIssueModalOpen(true)}
-                className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                className="h-9 w-9 inline-flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg"
                 title="Report Issue"
               >
                 <Bug size={20} />
               </button>
+              {!isDesktop() && (
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent('navigate-desktop-download'))}
+                  className="h-9 w-9 inline-flex items-center justify-center text-purple-600 hover:bg-purple-50 rounded-lg"
+                  title="Download Desktop App"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                </button>
+              )}
+              {isOwner && onManageSubscription && !user?.enterpriseDomainBypass && (
+                <button
+                  onClick={onManageSubscription}
+                  className="h-9 w-9 inline-flex items-center justify-center text-purple-600 hover:bg-purple-50 rounded-lg"
+                  title="Manage subscription"
+                >
+                  <CreditCard size={20} />
+                </button>
+              )}
+              {user?.isAdmin && (
+                <button
+                  onClick={() => setShowAdminSettings(true)}
+                  className="h-9 w-9 inline-flex items-center justify-center text-purple-600 hover:bg-purple-50 rounded-lg"
+                  title="Admin Settings"
+                >
+                  <Shield size={20} />
+                </button>
+              )}
               <button
                 onClick={() => setShowSettings(true)}
-                className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                className="h-9 w-9 inline-flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg"
                 title="Settings"
               >
                 <Settings size={20} />
               </button>
-              <button
-                onClick={logout}
-                className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-              >
-                <LogOut size={20} />
-                Logout
-              </button>
+              {!isDesktop() && (
+                <button
+                  onClick={() => logout()}
+                  className="h-9 inline-flex items-center justify-center gap-2 px-3 sm:px-4 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                >
+                  <LogOut size={20} />
+                  Logout
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -894,7 +1109,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
           {/* Search and View Controls */}
           <div className="flex justify-between items-center mb-6">
             <div className="flex-1 max-w-lg">
@@ -942,7 +1157,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   <p className="text-gray-500 mb-4">
                     {searchQuery ? "No projects found matching your search" : "No projects yet"}
                   </p>
-                  {!searchQuery && !isViewer && (
+                  {!searchQuery && canCreateProjects && (
                     <button
                       onClick={() => setShowCreateProject(true)}
                       className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
@@ -958,26 +1173,39 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   {filteredProjects.map((project) => (
                     <div
                       key={project.id}
-                      onClick={() => onSelectProject(project.projectId, project.name)}
+                      onClick={() => {
+                        if (project.isPrivateRestricted) return;
+                        onSelectProject(project.projectId, project.name);
+                      }}
                       className={`
-                                        border border-gray-200 rounded-lg p-4 cursor-pointer
-                                        hover:border-purple-400 hover:shadow-md transition-all flex
+                                        border rounded-lg p-4 transition-all flex
+                                        ${project.isPrivateRestricted
+                                          ? "border-gray-200 bg-gray-50 cursor-not-allowed opacity-70"
+                                          : "border-gray-200 cursor-pointer hover:border-purple-400 hover:shadow-md"}
                                         ${viewMode === "list" ? "items-center" : "items-start"}
                                     `}
+                      title={project.isPrivateRestricted ? "Private project — you can rename or delete but cannot open it" : undefined}
                     >
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-2">
-                          <FolderOpen size={20} className="text-purple-600 flex-shrink-0" />
+                          {project.isPrivateRestricted
+                            ? <Lock size={20} className="text-gray-400 flex-shrink-0" />
+                            : <FolderOpen size={20} className="text-purple-600 flex-shrink-0" />}
                           <span className="truncate">{project.name}</span>
+                          {project.isPrivateRestricted && (
+                            <span className="ml-1 text-xs text-gray-400 font-normal">(private)</span>
+                          )}
                         </h3>
                         <p className="text-sm text-gray-600 mb-3 line-clamp-2">
                           {project.description || "No description"}
                         </p>
                         <div className="flex items-center gap-4 text-xs text-gray-500">
-                          <span className="flex items-center gap-1">
-                            <Users size={14} />
-                            {project.memberCount} members
-                          </span>
+                          {!isDesktop() && (
+                            <span className="flex items-center gap-1">
+                              <Users size={14} />
+                              {project.memberCount} members
+                            </span>
+                          )}
                           <span className="flex items-center gap-1">
                             <FolderOpen size={14} />
                             {project.fileCount} files
@@ -1003,17 +1231,19 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                             </button>
                             {openMenuProjectId === project.projectId && (
                               <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openProjectSettings(project);
-                                  }}
-                                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                                >
-                                  <Settings size={14} />
-                                  Project Settings
-                                </button>
-                                {!isViewer && (project.ownerId === user?.userId || isWorkspaceOwner) && (
+                                {!project.isPrivateRestricted && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openProjectSettings(project);
+                                    }}
+                                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                  >
+                                    <Settings size={14} />
+                                    Project Settings
+                                  </button>
+                                )}
+                                {canManageProjectRow(project) && (
                                   <>
                                     <button
                                       onClick={(e) => {
@@ -1041,7 +1271,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                               </div>
                             )}
                           </div>
-                        {viewMode === "list" && <ChevronRight size={20} className="text-gray-400" />}
+                        {viewMode === "list" && !project.isPrivateRestricted && <ChevronRight size={20} className="text-gray-400" />}
                       </div>
                     </div>
                   ))}
@@ -1050,28 +1280,48 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
             </div>
           </div>
 
-          {/* Team Members Section */}
+          {/* Workspace Members — cloud collaboration only */}
+          {!isDesktop() && (
           <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
                 <Users size={24} className="text-purple-600" />
-                Team Members
+                Workspace Members
                 <span className="text-sm font-normal text-gray-500">({teamMembers.length})</span>
               </h2>
-              {(isWorkspaceOwner || isWorkspaceAdmin) ? (
+              {!subscription.canAccessFeature("hasBasicCollaboration") ? (
+                isWorkspaceOwner && onOpenSubscriptionPlans ? (
+                  <button
+                    onClick={onOpenSubscriptionPlans}
+                    className="h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-purple-200 rounded-lg bg-purple-50 text-purple-600 hover:bg-purple-100 transition-colors"
+                    title="Upgrade to Professional to invite workspace members"
+                  >
+                    <UserPlus size={16} />
+                    Invite Member
+                    <span className="bg-purple-500 text-white text-[10px] px-1.5 py-0.5 rounded">PRO</span>
+                  </button>
+                ) : (
+                  <div
+                    className="h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-purple-200 rounded-lg bg-purple-50 text-purple-500 cursor-not-allowed"
+                    title="Only the workspace owner can upgrade to invite workspace members"
+                  >
+                    <UserPlus size={16} />
+                    Invite Member
+                    <span className="bg-purple-500 text-white text-[10px] px-1.5 py-0.5 rounded">PRO</span>
+                  </div>
+                )
+              ) : canInviteMembers ? (
                 <button
-                  onClick={() => {
-                    setShowInviteMember(true);
-                  }}
-                  className={`flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 ${
+                  onClick={() => setShowInviteMember(true)}
+                  className={`h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 ${
                     !subscription.isWithinLimit(teamMembers.length, "maxTeamMembers")
                       ? "border-amber-300 bg-amber-50"
                       : ""
                   }`}
                   title={
                     !subscription.isWithinLimit(teamMembers.length, "maxTeamMembers")
-                      ? `Limit reached (${subscription.limits.maxTeamMembers} members). Click to see upgrade options.`
-                      : "Invite a new team member"
+                      ? `Limit reached (${subscription.limits.maxTeamMembers} members). Upgrade to add more.`
+                      : "Invite a new workspace member"
                   }
                 >
                   <UserPlus size={16} />
@@ -1082,7 +1332,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 </button>
               ) : (
                 <div
-                  className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-400 cursor-not-allowed"
+                  className="h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-400 cursor-not-allowed"
                   title="Only workspace owners and admins can invite members"
                 >
                   <UserPlus size={16} />
@@ -1094,7 +1344,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
             <div className="pr-2 custom-scrollbar">
               {teamMembers.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">No team members yet</div>
+                <div className="text-center py-8 text-gray-500">No workspace members yet</div>
               ) : (
                 <div className="space-y-2">
                   {teamMembers.map((member) => (
@@ -1125,14 +1375,27 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">
-                          {member.roles.join(", ")}
-                        </span>
-                        {isWorkspaceOwner &&
+                        <div className="flex items-center gap-2">
+                          {member.roles.map((role) => {
+                            const upperRole = role.toUpperCase();
+                            const roleStyles = {
+                              OWNER: "bg-yellow-500/20 text-yellow-500 border-yellow-500/30",
+                              ADMIN: "bg-purple-500/20 text-purple-500 border-purple-500/30",
+                              MEMBER: "bg-blue-500/20 text-blue-500 border-blue-500/30",
+                              VIEWER: "bg-gray-500/20 text-gray-500 border-gray-500/30",
+                            };
+                            const style = roleStyles[upperRole as keyof typeof roleStyles] || roleStyles.MEMBER;
+                            return (
+                              <span key={role} className={`px-2 py-0.5 text-[10px] font-bold rounded border ${style}`}>
+                                {upperRole}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        {canInviteMembers &&
                           member.email !== user?.email &&
                           member.status !== "PENDING" &&
-                          member.id !== workspaceOwnerId &&
-                          !member.roles.includes("OWNER") && (
+                          !member.roles.some(r => r.toUpperCase() === "OWNER") && (
                             <button
                               onClick={() => handleRemoveMember(member)}
                               className="p-1.5 hover:bg-red-50 rounded text-red-600 hover:text-red-700 transition-colors"
@@ -1141,16 +1404,18 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                               <Trash2 size={16} />
                             </button>
                           )}
-                        {(member.id === workspaceOwnerId || member.roles.includes("OWNER")) &&
-                          member.email !== user?.email && (
-                            <span
-                              className="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded-full"
-                              title="Workspace owner cannot be removed"
+                        {member.email === user?.email &&
+                          !member.roles.some((r) => r.toUpperCase() === "OWNER") &&
+                          member.status !== "PENDING" && (
+                            <button
+                              onClick={() => handleRemoveMember(member)}
+                              className="px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded border border-red-200"
+                              title="Leave this workspace"
                             >
-                              Owner
-                            </span>
+                              Leave
+                            </button>
                           )}
-                        {isWorkspaceOwner && member.status === "PENDING" && (
+                        {canInviteMembers && member.status === "PENDING" && (
                           <button
                             onClick={() => handleCancelInvitation(member)}
                             className="p-1.5 hover:bg-red-50 rounded text-red-600 hover:text-red-700 transition-colors"
@@ -1169,6 +1434,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               )}
             </div>
           </div>
+          )}
         </div>
       </main>
 
@@ -1217,25 +1483,29 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         </div>
       )}
 
-      {/* Invite Member Modal */}
-      <InviteMemberModal
-        isOpen={showInviteMember}
-        onClose={() => setShowInviteMember(false)}
-        workspaceId={user?.workspaceId || "default"}
-        workspaceName={user?.workspaceName || "Workspace"}
-        subscriptionPlan={user?.subscriptionPlan || "FREE"}
-        currentMemberCount={teamMembers.length}
-        maxMembers={subscription.limits.maxTeamMembers}
-        existingMemberEmails={teamMembers.map((m) => m.email)}
-        isWorkspaceOwner={isWorkspaceOwner}
-        onUpgradePlan={() => {
-          // Navigate to subscription plan page
-          // if (window.vscode) {
-          window.vscode.postMessage({ type: "showSubscriptionPlans" });
-          // }
-        }}
-        onInvite={handleInviteMember}
-      />
+      {/* Invite Member Modal — cloud only */}
+      {!isDesktop() && (
+        <InviteMemberModal
+          isOpen={showInviteMember}
+          onClose={() => setShowInviteMember(false)}
+          workspaceId={user?.workspaceId || "default"}
+          workspaceName={user?.workspaceName || "Workspace"}
+          subscriptionPlan={user?.subscriptionPlan || "FREE"}
+          currentMemberCount={teamMembers.length}
+          maxMembers={subscription.limits.maxTeamMembers}
+          existingMemberEmails={teamMembers.map((m) => m.email)}
+          isWorkspaceOwner={isWorkspaceOwner}
+          onUpgradePlan={() => {
+            setShowInviteMember(false);
+            if (onOpenSubscriptionPlans) {
+              onOpenSubscriptionPlans();
+            } else {
+              window.vscode?.postMessage({ type: "showSubscriptionPlans" });
+            }
+          }}
+          onInvite={handleInviteMember}
+        />
+      )}
 
       {/* Confirmation Modal */}
       {confirmModal && (
@@ -1251,6 +1521,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         />
       )}
 
+      {/* Admin Settings Modal */}
+      <AdminSettingsModal
+        isOpen={showAdminSettings}
+        onClose={() => setShowAdminSettings(false)}
+      />
+
       {/* Settings Modal */}
       <SettingsModal
         isOpen={showSettings}
@@ -1259,8 +1535,13 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         user={{
           username: user?.username || "",
           email: user?.email,
-          workspaceName: user?.workspaceName,
+          workspaceName: currentWorkspaceName,
           workspaceId: user?.workspaceId,
+        }}
+        isWorkspaceOwner={isWorkspaceOwner}
+        onWorkspaceRenamed={(workspaceName) => {
+          setWorkspaceDisplayName(workspaceName);
+          refreshPermissions().catch(() => undefined);
         }}
       />
 
@@ -1300,18 +1581,20 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <FileText size={16} />
                 General
               </button>
-              <button
-                onClick={() => setProjectSettingsTab("members")}
-                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                  projectSettingsTab === "members"
-                    ? "text-purple-600 border-b-2 border-purple-600 bg-purple-50"
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                }`}
-              >
-                <Users size={16} />
-                Members ({projectSettingsModal.members?.length || 0})
-              </button>
-              {!isViewer && (
+              {!isDesktop() && (
+                <button
+                  onClick={() => setProjectSettingsTab("members")}
+                  className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    projectSettingsTab === "members"
+                      ? "text-purple-600 border-b-2 border-purple-600 bg-purple-50"
+                      : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                  }`}
+                >
+                  <Users size={16} />
+                  Members ({projectSettingsModal.members?.length || 0})
+                </button>
+              )}
+              {canManageOpenProject && (
                 <button
                   onClick={() => setProjectSettingsTab("danger")}
                   className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
@@ -1337,9 +1620,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       type="text"
                       value={editingProjectName}
                       onChange={(e) => setEditingProjectName(e.target.value)}
-                      className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent ${isViewer ? "bg-gray-100 cursor-not-allowed" : ""}`}
+                      className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent ${!canEditOpenProject ? "bg-gray-100 cursor-not-allowed" : ""}`}
                       placeholder="Enter project name"
-                      disabled={isViewer}
+                      disabled={!canEditOpenProject}
                     />
                   </div>
                   <div>
@@ -1348,9 +1631,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       value={editingProjectDescription}
                       onChange={(e) => setEditingProjectDescription(e.target.value)}
                       rows={4}
-                      className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none ${isViewer ? "bg-gray-100 cursor-not-allowed" : ""}`}
+                      className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none ${!canEditOpenProject ? "bg-gray-100 cursor-not-allowed" : ""}`}
                       placeholder="Enter project description"
-                      disabled={isViewer}
+                      disabled={!canEditOpenProject}
                     />
                   </div>
                   <div className="bg-gray-50 rounded-lg p-4">
@@ -1372,23 +1655,27 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                         <span className="text-gray-500">Files:</span>
                         <span className="ml-2 text-gray-900">{projectSettingsModal.fileCount}</span>
                       </div>
-                      <div>
-                        <span className="text-gray-500">Members:</span>
-                        <span className="ml-2 text-gray-900">{projectSettingsModal.memberCount}</span>
-                      </div>
+                      {!isDesktop() && (
+                        <div>
+                          <span className="text-gray-500">Members:</span>
+                          <span className="ml-2 text-gray-900">{projectSettingsModal.memberCount}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Members Tab */}
-              {projectSettingsTab === "members" && (
+              {/* Members Tab — cloud collaboration only */}
+              {!isDesktop() && projectSettingsTab === "members" && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <p className="text-sm text-gray-600">
-                      {isViewer ? "View who has access to this project and their permissions." : "Manage who has access to this project and their permissions."}
+                      {canManageOpenProject
+                        ? "Manage who has access to this project and their project-level role (separate from workspace role)."
+                        : "View who has access to this project and their project role."}
                     </p>
-                    {!isViewer && (projectSettingsModal.ownerId === user?.userId || isWorkspaceOwner) && (
+                    {canManageOpenProject && (
                       <button
                         onClick={() => setShowAddMemberForm(!showAddMemberForm)}
                         className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors"
@@ -1406,47 +1693,38 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       {getAvailableTeamMembers().length > 0 ? (
                         <>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Select Team Member</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Select workspace member (by email)</label>
                             <select
-                              value={newMemberUsername}
-                              onChange={(e) => {
-                                setNewMemberUsername(e.target.value);
-                                // Also set email for display purposes if needed
-                                const selectedMember = getAvailableTeamMembers().find(
-                                  (m) => m.username === e.target.value,
-                                );
-                                if (selectedMember) {
-                                  setNewMemberEmail(selectedMember.email);
-                                }
-                              }}
+                              value={newMemberEmail}
+                              onChange={(e) => setNewMemberEmail(e.target.value)}
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                               disabled={addingMember}
                             >
-                              <option value="">-- Select a team member --</option>
+                              <option value="">-- Select a workspace member --</option>
                               {getAvailableTeamMembers().map((member) => (
-                                <option key={member.id} value={member.username}>
+                                <option key={member.id} value={member.email}>
                                   {member.username} ({member.email})
                                 </option>
                               ))}
                             </select>
-                            <p className="text-xs text-gray-500 mt-1">Choose from workspace team members</p>
+                            <p className="text-xs text-gray-500 mt-1">User must already belong to the workspace. Project role is separate from workspace role.</p>
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Project role</label>
                             <select
                               value={newMemberRole}
                               onChange={(e) => setNewMemberRole(e.target.value)}
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
                               disabled={addingMember}
                             >
-                              <option value="VIEWER">Viewer - Read only access</option>
-                              <option value="EDITOR">Editor - Can edit files</option>
-                              <option value="ADMIN">Admin - Full access</option>
+                              <option value="VIEWER">Viewer — public view only, no edits</option>
+                              <option value="EDITOR">Editor — direct edits + draft access</option>
+                              <option value="DRAFT_EDITOR">Draft Editor — view public + draft + raise PR</option>
                             </select>
                           </div>
                           <button
                             onClick={handleAddProjectMember}
-                            disabled={addingMember || !newMemberUsername.trim()}
+                            disabled={addingMember || !newMemberEmail.trim()}
                             className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                           >
                             {addingMember ? (
@@ -1487,10 +1765,17 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                             <div>
                               <p className="font-medium text-gray-900">{member.username}</p>
                               <p className="text-sm text-gray-500">{member.email}</p>
+                              {member.workspaceEditorLink && (
+                                <p className="text-xs text-amber-700 mt-0.5">
+                                  {member.workspaceEditorLink === "WORKSPACE_OWNER"
+                                    ? "Workspace owner — always on shared projects"
+                                    : "Workspace admin — removable only by workspace owner"}
+                                </p>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            {isViewer ? (
+                            {!canManageOpenProject ? (
                               <span className="text-sm px-2 py-1 bg-gray-100 text-gray-700 rounded">
                                 {member.role}
                               </span>
@@ -1502,14 +1787,15 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                                     handleUpdateProjectMemberRole(projectSettingsModal, member, e.target.value)
                                   }
                                   className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-purple-500"
-                                  disabled={member.role === "OWNER" || (projectSettingsModal.ownerId !== user?.userId && !isWorkspaceOwner)}
+                                  disabled={member.role === "OWNER" || projectMemberRoleLocked(member)}
                                 >
-                                  <option value="OWNER">Owner</option>
-                                  <option value="ADMIN">Admin</option>
+                                  {member.role === "OWNER" && <option value="OWNER">Owner</option>}
+                                  {member.role === "ADMIN" && <option value="ADMIN">Admin</option>}
                                   <option value="EDITOR">Editor</option>
+                                  <option value="DRAFT_EDITOR">Draft Editor</option>
                                   <option value="VIEWER">Viewer</option>
                                 </select>
-                                {member.role !== "OWNER" && (projectSettingsModal.ownerId === user?.userId || isWorkspaceOwner) && (
+                                {member.role !== "OWNER" && canManageOpenProject && canRemoveThisProjectMember(member) && (
                                   <button
                                     onClick={() => handleRemoveProjectMember(projectSettingsModal, member)}
                                     className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -1573,9 +1859,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   onClick={() => setProjectSettingsModal(null)}
                   className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 font-medium transition-colors"
                 >
-                  {isViewer ? "Close" : "Cancel"}
+                  {!canEditOpenProject ? "Close" : "Cancel"}
                 </button>
-                {!isViewer && (
+                {canEditOpenProject && (
                   <button
                     onClick={handleSaveProjectSettings}
                     disabled={savingProject || !editingProjectName.trim()}
@@ -1593,12 +1879,18 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       )}
 
       {/* Plan Details Modal */}
-      <PlanDetailsModal
-        isOpen={showPlanDetails}
-        onClose={() => setShowPlanDetails(false)}
-        onUpgrade={handleUpgradePlan}
-        isUpgrading={upgradingPlan}
-      />
+      {showPlanDetails && (
+        <Suspense fallback={null}>
+          <PlanDetailsModal
+            isOpen={showPlanDetails}
+            onClose={() => setShowPlanDetails(false)}
+            onUpgrade={handleUpgradePlan}
+            isUpgrading={upgradingPlan}
+            workspaceId={user?.workspaceId || ''}
+            currentPlanOnly
+          />
+        </Suspense>
+      )}
 
       {/* User Guide Modal */}
       <UserGuideModal isOpen={showUserGuide} onClose={() => setShowUserGuide(false)} />
@@ -1609,6 +1901,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       )}
     </div>
   );
-};;
+}
 
 export default ProjectDashboard;

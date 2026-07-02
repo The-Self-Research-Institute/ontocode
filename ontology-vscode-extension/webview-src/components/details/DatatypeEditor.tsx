@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Search } from 'lucide-react';
-import { Panel, AnnotationsDisplay } from './common';
+import { Plus, Trash2, Loader2, Search } from 'lucide-react';
+import { Panel, AnnotationsDisplay, CollaboratorPresenceBar } from './common';
 import { DatatypeDefinitionDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import datatypeDefinitionService, { DatatypeDefinition } from '../../services/datatypeDefinitionService';
@@ -121,6 +121,7 @@ const DescriptionTab: React.FC<{
   const [definitions, setDefinitions] = useState<DatatypeDefinition[]>([]);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isLoadingDefinitions, setIsLoadingDefinitions] = useState(false);
+  const [deletingDefId, setDeletingDefId] = useState<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -150,6 +151,22 @@ const DescriptionTab: React.FC<{
     };
   }, [item?.id, projectId]);
 
+  // Auto-reload when a collaborator modifies this datatype's definitions
+  useEffect(() => {
+    const handleRemoteEdit = (e: Event) => {
+      const edit = (e as CustomEvent).detail;
+      if (!edit || edit.nodeId !== item?.id) return;
+      if (edit.type === "CLASS_MODIFIED" || edit.type === "CLASS_ADDED" || edit.type === "CLASS_DELETED") {
+        datatypeDefinitionService.listDefinitions(projectId, item.id)
+          .then(data => setDefinitions(data || []))
+          .catch(() => {});
+      }
+    };
+    window.addEventListener("remoteEditReceived", handleRemoteEdit);
+    return () => window.removeEventListener("remoteEditReceived", handleRemoteEdit);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id, projectId]);
+
   const handleAddDefinition = () => {
     setIsAddDialogOpen(true);
   };
@@ -175,11 +192,14 @@ const DescriptionTab: React.FC<{
   };
 
   const handleDeleteDefinition = async (id: string) => {
+    setDeletingDefId(id);
     try {
       await datatypeDefinitionService.deleteDefinition(projectId, id);
       setDefinitions(prev => prev.filter(d => d.id !== id));
     } catch (error) {
       console.error('Failed to delete datatype definition:', error);
+    } finally {
+      setDeletingDefId(null);
     }
   };
 
@@ -211,7 +231,7 @@ const DescriptionTab: React.FC<{
             </div>
           ) : (
             definitions.map(def => (
-              <div key={def.id} className="flex items-center justify-between p-2 bg-white border border-gray-200 rounded text-xs hover:bg-gray-50">
+              <div key={def.id} className={`flex items-center justify-between p-2 bg-white border border-gray-200 rounded text-xs hover:bg-gray-50 transition-opacity duration-300 ${deletingDefId === def.id ? 'opacity-40' : ''}`}>
                 <div className="flex-1">
                   <div className="font-mono text-gray-800">{def.expression}</div>
                   <div className="text-[10px] text-gray-500 mt-1">{def.definitionType}</div>
@@ -220,8 +240,9 @@ const DescriptionTab: React.FC<{
                   onClick={() => handleDeleteDefinition(def.id)}
                   className="p-1 rounded hover:bg-red-100 text-red-600 transition-colors ml-2"
                   title="Delete definition"
+                  disabled={deletingDefId === def.id}
                 >
-                  <Trash2 size={12} />
+                  {deletingDefId === def.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                 </button>
               </div>
             ))
@@ -247,6 +268,8 @@ const DatatypeEditor: React.FC<{
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   projectId: string;
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
 }> = ({
     item,
     onUpdate,
@@ -254,7 +277,9 @@ const DatatypeEditor: React.FC<{
     onEditAnnotation,
     onDeleteAnnotation,
     activeTheme,
-    projectId
+    projectId,
+    isViewOnly = false,
+    onViewOnlyAction,
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('description');
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -280,6 +305,7 @@ const DatatypeEditor: React.FC<{
           </div>
         </div>
       </div>
+      <CollaboratorPresenceBar entityId={item.id} />
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 bg-gray-50 flex-shrink-0">
@@ -316,15 +342,15 @@ const DatatypeEditor: React.FC<{
             themeColor="bg-gradient-to-b from-gray-50 to-gray-100 text-gray-800 border-gray-200"
             actions={
               <button
-                onClick={onAddAnnotation}
+                onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation}
                 className="p-1 rounded hover:bg-gray-200 transition-colors"
-                title="Add annotation"
+                title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}
               >
                 <Plus size={14} />
               </button>
             }
           >
-            <AnnotationsDisplay annotations={item.annotations || {}} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
+            <AnnotationsDisplay annotations={item.annotations || {}} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} isViewOnly={isViewOnly} onViewOnlyAction={onViewOnlyAction} />
           </Panel>
         )}
 

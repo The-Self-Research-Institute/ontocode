@@ -79,7 +79,59 @@
   <!-- Overview -->
   <section id="overview">
     <h2>1. Overview</h2>
-    <p>The Fuzzy Ontology Plugin provides advanced fuzzy ontology support with membership degrees, fuzzy reasoning (T-norms, T-conorms), interactive visualization, and a custom query DSL &mdash; capabilities beyond standard Prot&eacute;g&eacute;.</p>
+    
+    <h3>What is Fuzzy Ontology? (For Testers)</h3>
+    <p><strong>Standard Ontology Problem:</strong> "Is this patient diabetic?" → Binary answer: YES or NO</p>
+    <p><strong>Real-World Problem:</strong> Medical reality is fuzzy! A patient might be:</p>
+    <ul>
+      <li>"Somewhat diabetic" (early stage, pre-diabetic)</li>
+      <li>"Moderately diabetic" (diagnosed, controlled)</li>
+      <li>"Severely diabetic" (complications present)</li>
+    </ul>
+    <p><strong>Fuzzy Ontology Solution:</strong> Instead of YES/NO, express degrees of membership:</p>
+    <ul>
+      <li>Patient A: Diabetic(0.95) ← "Almost certainly diabetic"</li>
+      <li>Patient B: Diabetic(0.50) ← "Borderline diabetic"</li>
+      <li>Patient C: Diabetic(0.10) ← "Unlikely to be diabetic"</li>
+    </ul>
+    
+    <h3>Real-World Applications</h3>
+    <table style="margin: 1rem 0; font-size: 0.92rem;">
+      <thead><tr><th>Domain</th><th>Example</th><th>Why Fuzzy?</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Healthcare</strong></td>
+          <td>Patient risk classification (low/medium/high)</td>
+          <td>Risk isn't binary; patients span a spectrum</td>
+        </tr>
+        <tr>
+          <td><strong>Banking</strong></td>
+          <td>Credit rating (poor/fair/good/excellent)</td>
+          <td>Credit scores are continuous, not discrete buckets</td>
+        </tr>
+        <tr>
+          <td><strong>E-commerce</strong></td>
+          <td>Product recommendations (poor/fair/good match)</td>
+          <td>User preferences have shades, not absolute fits</td>
+        </tr>
+        <tr>
+          <td><strong>IoT Sensors</strong></td>
+          <td>Temperature zones (cold/cool/warm/hot)</td>
+          <td>Temperature gradients are continuous, overlapping</td>
+        </tr>
+      </tbody>
+    </table>
+    
+    <h3>Key Testing Principles for Testers</h3>
+    <ul style="margin: 1rem 0; line-height: 1.8;">
+      <li><strong>✓ Range Validation:</strong> All membership degrees must be between 0.0 and 1.0</li>
+      <li><strong>✓ Symmetry:</strong> If a function is symmetric, test it at equal distances from peak</li>
+      <li><strong>✓ Logic Consistency:</strong> Fuzzy AND/OR must obey De Morgan's Laws</li>
+      <li><strong>✓ Edge Cases:</strong> Test with extreme values (negatives, very large numbers, NaN)</li>
+      <li><strong>✓ Real Data:</strong> Run with actual domain data (patients, products, sensors)</li>
+    </ul>
+
+    <p><strong>The Fuzzy Ontology Plugin provides advanced fuzzy ontology support with membership degrees, fuzzy reasoning (T-norms, T-conorms), interactive visualization, and a custom query DSL &mdash; capabilities beyond standard Prot&eacute;g&eacute;.</strong></p>
     <h3>Key Components Under Test</h3>
     <ul>
       <li><code>FuzzyEditor.tsx</code> &mdash; Main editor with tabs for memberships, rules, queries</li>
@@ -121,10 +173,37 @@
   <!-- Membership Function Tests -->
   <section id="membership-function-tests">
     <h2>3. Membership Function Tests</h2>
+    
+    <h3>Why We Test Membership Functions</h3>
+    <p><strong>What are membership functions?</strong> They're the mathematical "bridges" that translate real-world values into fuzzy membership degrees. Example:</p>
+    <ul>
+      <li><strong>Input:</strong> A patient's age = 65 years</li>
+      <li><strong>Function:</strong> "Elderly" membership function</li>
+      <li><strong>Output:</strong> Degree = 0.75 ("fairly elderly")</li>
+    </ul>
+    <p><strong>Why test them?</strong> If membership functions are wrong, <strong>the entire reasoning system is broken</strong>. Bad membership functions → bad classifications → wrong decisions.</p>
 
     <div class="test-case">
       <h3>TC-FZ-001: Triangular Membership Function</h3>
       <p class="objective">Verify triangular membership function computes correct degrees</p>
+      
+      <h4>Why Triangular? (For Testers)</h4>
+      <p><strong>Shape:</strong> A triangle peaks at the center (b), declining to zero at edges (a and c). Used when there's a single "ideal" value.</p>
+      <p><strong>Real-World Example:</strong> "Optimal Blood Pressure"</p>
+      <ul style="font-size: 0.92rem; margin: 0.5rem 0;">
+        <li>80 mmHg (point a): Not optimal yet (degree 0.0)</li>
+        <li>120 mmHg (point b): Perfect! (degree 1.0)</li>
+        <li>160 mmHg (point c): Too high (degree 0.0)</li>
+      </ul>
+      
+      <h4>How It Works (Mathematical)</h4>
+      <p>For input x in range [a, b, c]:</p>
+      <ul style="font-size: 0.92rem;">
+        <li>If x ≤ a or x ≥ c: degree = 0.0 (outside range)</li>
+        <li>If a &lt; x ≤ b: degree = (x - a) / (b - a) (rising line)</li>
+        <li>If b &lt; x &lt; c: degree = (c - x) / (c - b) (falling line)</li>
+      </ul>
+      
       <h4>Steps</h4>
       <ol>
         <li>Open Fuzzy Editor</li>
@@ -133,21 +212,48 @@
       </ol>
       <h4>Expected Results</h4>
       <table>
-        <thead><tr><th>Input</th><th>Membership Degree</th></tr></thead>
+        <thead><tr><th>Input</th><th>Membership Degree</th><th>Why This Value?</th></tr></thead>
         <tbody>
-          <tr><td>20</td><td>0.0</td></tr>
-          <tr><td>35</td><td>0.5</td></tr>
-          <tr><td>50</td><td>1.0</td></tr>
-          <tr><td>65</td><td>0.5</td></tr>
-          <tr><td>80</td><td>0.0</td></tr>
-          <tr><td>90</td><td>0.0</td></tr>
+          <tr><td>20</td><td>0.0</td><td>Exactly at left edge (a)</td></tr>
+          <tr><td>35</td><td>0.5</td><td>Halfway between a(20) and b(50): (35-20)/(50-20) = 0.5</td></tr>
+          <tr><td>50</td><td>1.0</td><td>At peak (b)</td></tr>
+          <tr><td>65</td><td>0.5</td><td>Halfway down from peak: (80-65)/(80-50) = 0.5</td></tr>
+          <tr><td>80</td><td>0.0</td><td>Exactly at right edge (c)</td></tr>
+          <tr><td>90</td><td>0.0</td><td>Outside range, beyond c(80)</td></tr>
         </tbody>
       </table>
+      
+      <h4>Key Test Points (What Could Go Wrong?)</h4>
+      <ul style="font-size: 0.92rem;">
+        <li><strong>✓ Symmetry:</strong> The distances from peak (50) should be symmetric (35 and 65 both give 0.5)</li>
+        <li><strong>✓ Peak:</strong> Value at peak must always be exactly 1.0</li>
+        <li><strong>✓ Range Bounds:</strong> Values at edges (a, c) must be exactly 0.0</li>
+        <li><strong>✗ Bug Example:</strong> If (35) returns 0.6 instead of 0.5, the formula calculation is broken</li>
+      </ul>
     </div>
 
     <div class="test-case">
       <h3>TC-FZ-002: Trapezoidal Membership Function</h3>
       <p class="objective">Verify trapezoidal function with flat top</p>
+      
+      <h4>Why Trapezoidal? (For Testers)</h4>
+      <p><strong>Shape:</strong> A trapezoid with a flat top. Used when there's a <strong>range of ideal values</strong>, not just one point.</p>
+      <p><strong>Real-World Example:</strong> "Normal Blood Pressure Range"</p>
+      <ul style="font-size: 0.92rem; margin: 0.5rem 0;">
+        <li>60-90 mmHg (rising): Getting closer to normal</li>
+        <li>90-120 mmHg (plateau): All perfectly normal here!</li>
+        <li>120-150 mmHg (falling): Getting above normal</li>
+      </ul>
+      
+      <h4>How It Works (Mathematical)</h4>
+      <p>For input x in range [a, b, c, d]:</p>
+      <ul style="font-size: 0.92rem;">
+        <li>If x ≤ a or x ≥ d: degree = 0.0 (outside range)</li>
+        <li>If a &lt; x ≤ b: degree = (x - a) / (b - a) (rising line)</li>
+        <li>If b ≤ x ≤ c: degree = 1.0 (flat plateau - all equally good)</li>
+        <li>If c &lt; x &lt; d: degree = (d - x) / (d - c) (falling line)</li>
+      </ul>
+      
       <h4>Steps</h4>
       <ol>
         <li>Create fuzzy class "Normal" with trapezoidal function (a=60, b=80, c=120, d=140)</li>
@@ -155,15 +261,22 @@
       </ol>
       <h4>Expected Results</h4>
       <table>
-        <thead><tr><th>Input</th><th>Membership Degree</th></tr></thead>
+        <thead><tr><th>Input</th><th>Membership Degree</th><th>Why This Value?</th></tr></thead>
         <tbody>
-          <tr><td>50</td><td>0.0</td></tr>
-          <tr><td>70</td><td>0.5</td></tr>
-          <tr><td>100</td><td>1.0</td></tr>
-          <tr><td>130</td><td>0.5</td></tr>
-          <tr><td>150</td><td>0.0</td></tr>
+          <tr><td>50</td><td>0.0</td><td>Below range (a=60)</td></tr>
+          <tr><td>70</td><td>0.5</td><td>On rising edge: (70-60)/(80-60) = 0.5</td></tr>
+          <tr><td>100</td><td>1.0</td><td>In plateau zone (between b=80 and c=120)</td></tr>
+          <tr><td>130</td><td>0.5</td><td>On falling edge: (140-130)/(140-120) = 0.5</td></tr>
+          <tr><td>150</td><td>0.0</td><td>Above range (d=140)</td></tr>
         </tbody>
       </table>
+      
+      <h4>Key Test Points (What Could Go Wrong?)</h4>
+      <ul style="font-size: 0.92rem;">
+        <li><strong>✓ Plateau:</strong> All values in [b, c] must return 1.0 (the "equally good" zone)</li>
+        <li><strong>✓ Symmetry:</strong> If plateau is 40 units wide, left and right slopes should be proportional</li>
+        <li><strong>✗ Bug Example:</strong> If (100) returns 0.8 instead of 1.0, the plateau logic is broken</li>
+      </ul>
     </div>
 
     <div class="test-case">
@@ -220,6 +333,11 @@
     <div class="test-case">
       <h3>TC-FZ-006: Add Membership to Entity</h3>
       <p class="objective">Verify assigning membership degree to an individual</p>
+      
+      <h4>Why This Matters (For Testers)</h4>
+      <p>This test verifies the core fuzzy ontology function: <strong>assigning real-world entities to fuzzy classes with a degree</strong>.</p>
+      <p><strong>Example:</strong> Patient001 has diabetes at 85% confidence (not 100% certain, but strong evidence).</p>
+      
       <h4>Steps</h4>
       <ol>
         <li>Select Membership tab in Fuzzy Editor</li>
@@ -232,8 +350,9 @@
       <ul>
         <li>Membership saved successfully</li>
         <li>Entity listed in membership table</li>
-        <li>Degree displayed correctly</li>
+        <li>Degree displayed correctly (0.85)</li>
         <li>Can edit/delete membership</li>
+        <li>Degree persisted to database</li>
       </ul>
     </div>
   </section>
@@ -241,69 +360,127 @@
   <!-- Fuzzy Reasoning Tests -->
   <section id="fuzzy-reasoning-tests">
     <h2>4. Fuzzy Reasoning Tests</h2>
+    
+    <h3>Why We Test Fuzzy Reasoning</h3>
+    <p><strong>Problem:</strong> What happens when we combine multiple fuzzy memberships? For example:</p>
+    <ul style="margin: 1rem 0;">
+      <li>"This patient is 80% diabetic AND 60% hypertensive"</li>
+      <li>How confident are we that both conditions apply? (Use AND operation)</li>
+      <li>How confident are we that at least one applies? (Use OR operation)</li>
+      <li>How confident are we that the patient is NOT diabetic? (Use NOT operation)</li>
+    </ul>
+    <p><strong>Why test this?</strong> These operations are the foundation of fuzzy rule inference. <strong>Wrong operations = wrong conclusions</strong>. This is where silent bugs hide!</p>
+    
+    <h3>Understanding T-norms and T-conorms</h3>
+    <p><strong>T-norms (AND):</strong> How to combine two conditions that both must be true?</p>
+    <p><strong>T-conorms (OR):</strong> How to combine two conditions where at least one must be true?</p>
+    <table style="margin: 1rem 0; font-size: 0.9rem;">
+      <thead><tr><th>Operation</th><th>Min (Standard)</th><th>Product</th><th>Łukasiewicz</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>T-norm (AND):</strong> 0.8 AND 0.6</td>
+          <td>min(0.8, 0.6) = <strong>0.6</strong></td>
+          <td>0.8 × 0.6 = <strong>0.48</strong></td>
+          <td>max(0.8+0.6-1, 0) = <strong>0.4</strong></td>
+        </tr>
+        <tr>
+          <td><strong>T-conorm (OR):</strong> 0.8 OR 0.6</td>
+          <td>max(0.8, 0.6) = <strong>0.8</strong></td>
+          <td>0.8+0.6-(0.8×0.6) = <strong>0.92</strong></td>
+          <td>min(0.8+0.6, 1) = <strong>1.0</strong></td>
+        </tr>
+      </tbody>
+    </table>
+    
+    <p><strong>Key Point:</strong> Different T-norm operations give DIFFERENT RESULTS! The plugin must consistently apply the correct one.</p>
 
     <div class="test-case">
-      <h3>TC-FZ-007: T-Norm &mdash; Product (Fuzzy AND)</h3>
+      <h3>TC-FZ-007: T-Norm — Product (Fuzzy AND)</h3>
       <p class="objective">Verify Product T-norm computation</p>
       <p><strong>Test Data:</strong> Patient with Diabetic(0.8) AND Hypertensive(0.6)</p>
-      <p><strong>Expected Result:</strong> 0.8 &times; 0.6 = <strong>0.48</strong></p>
+      <p><strong>Mathematical Formula:</strong> 0.8 × 0.6 = 0.48</p>
+      <p><strong>Expected Result:</strong> <strong>0.48</strong></p>
+      <p style="background: #f0f4ff; padding: 0.75rem; border-radius: 4px; margin-top: 0.5rem;"><strong>What if it fails?</strong> If result is 0.6 (min operation) instead of 0.48, the wrong T-norm is being used.</p>
     </div>
 
     <div class="test-case">
-      <h3>TC-FZ-008: T-Norm &mdash; G&ouml;del/Min (Fuzzy AND)</h3>
-      <p class="objective">Verify G&ouml;del (minimum) T-norm</p>
+      <h3>TC-FZ-008: T-Norm — Gödel/Min (Fuzzy AND)</h3>
+      <p class="objective">Verify Gödel (minimum) T-norm</p>
       <p><strong>Test Data:</strong> Patient with Diabetic(0.8) AND Hypertensive(0.6)</p>
-      <p><strong>Expected Result:</strong> min(0.8, 0.6) = <strong>0.6</strong></p>
+      <p><strong>Mathematical Formula:</strong> min(0.8, 0.6) = 0.6</p>
+      <p><strong>Expected Result:</strong> <strong>0.6</strong></p>
+      <p style="background: #f0f4ff; padding: 0.75rem; border-radius: 4px; margin-top: 0.5rem;"><strong>Why Min?</strong> For AND: confidence is limited by the weaker condition. If diabetic is 80% sure and hypertensive is only 60% sure, confidence in BOTH is 60%.</p>
     </div>
 
     <div class="test-case">
-      <h3>TC-FZ-009: T-Norm &mdash; &#321;ukasiewicz (Fuzzy AND)</h3>
-      <p class="objective">Verify &#321;ukasiewicz T-norm</p>
+      <h3>TC-FZ-009: T-Norm — Łukasiewicz (Fuzzy AND)</h3>
+      <p class="objective">Verify Łukasiewicz T-norm</p>
       <p><strong>Test Data:</strong> Patient with Diabetic(0.8) AND Hypertensive(0.6)</p>
-      <p><strong>Expected Result:</strong> max(0.8 + 0.6 - 1, 0) = <strong>0.4</strong></p>
+      <p><strong>Mathematical Formula:</strong> max(0.8 + 0.6 - 1, 0) = max(0.4, 0) = 0.4</p>
+      <p><strong>Expected Result:</strong> <strong>0.4</strong></p>
+      <p style="background: #f0f4ff; padding: 0.75rem; border-radius: 4px; margin-top: 0.5rem;"><strong>More Conservative:</strong> Łukasiewicz requires even more evidence than Product. Less forgiving of uncertainty.</p>
     </div>
 
     <div class="test-case">
-      <h3>TC-FZ-010: T-CoNorm &mdash; Probabilistic (Fuzzy OR)</h3>
+      <h3>TC-FZ-010: T-CoNorm — Probabilistic (Fuzzy OR)</h3>
       <p class="objective">Verify probabilistic T-conorm</p>
       <p><strong>Test Data:</strong> Patient with Diabetic(0.8) OR Hypertensive(0.6)</p>
-      <p><strong>Expected Result:</strong> 0.8 + 0.6 - (0.8 &times; 0.6) = <strong>0.92</strong></p>
+      <p><strong>Mathematical Formula:</strong> 0.8 + 0.6 - (0.8 × 0.6) = 1.4 - 0.48 = 0.92</p>
+      <p><strong>Expected Result:</strong> <strong>0.92</strong></p>
+      <p style="background: #f0f4ff; padding: 0.75rem; border-radius: 4px; margin-top: 0.5rem;"><strong>Why?</strong> For OR: confidence in "at least one" is high if either is probable. Probabilistic avoids double-counting.</p>
     </div>
 
     <div class="test-case">
-      <h3>TC-FZ-011: T-CoNorm &mdash; G&ouml;del/Max (Fuzzy OR)</h3>
-      <p class="objective">Verify G&ouml;del (maximum) T-conorm</p>
+      <h3>TC-FZ-011: T-CoNorm — Gödel/Max (Fuzzy OR)</h3>
+      <p class="objective">Verify Gödel (maximum) T-conorm</p>
       <p><strong>Test Data:</strong> Patient with Diabetic(0.8) OR Hypertensive(0.6)</p>
-      <p><strong>Expected Result:</strong> max(0.8, 0.6) = <strong>0.8</strong></p>
+      <p><strong>Mathematical Formula:</strong> max(0.8, 0.6) = 0.8</p>
+      <p><strong>Expected Result:</strong> <strong>0.8</strong></p>
+      <p style="background: #f0f4ff; padding: 0.75rem; border-radius: 4px; margin-top: 0.5rem;"><strong>Why Max?</strong> For OR: confidence is determined by the stronger condition. If diabetic is 80% likely, then "diabetic OR hypertensive" is at least 80% likely.</p>
     </div>
 
     <div class="test-case">
-      <h3>TC-FZ-012: T-CoNorm &mdash; &#321;ukasiewicz (Fuzzy OR)</h3>
-      <p class="objective">Verify &#321;ukasiewicz T-conorm</p>
+      <h3>TC-FZ-012: T-CoNorm — Łukasiewicz (Fuzzy OR)</h3>
+      <p class="objective">Verify Łukasiewicz T-conorm</p>
       <p><strong>Test Data:</strong> Patient with Diabetic(0.8) OR Hypertensive(0.6)</p>
-      <p><strong>Expected Result:</strong> min(0.8 + 0.6, 1) = <strong>1.0</strong></p>
+      <p><strong>Mathematical Formula:</strong> min(0.8 + 0.6, 1) = min(1.4, 1.0) = 1.0</p>
+      <p><strong>Expected Result:</strong> <strong>1.0</strong></p>
+      <p style="background: #f0f4ff; padding: 0.75rem; border-radius: 4px; margin-top: 0.5rem;"><strong>Most Permissive:</strong> Łukasiewicz is most generous with OR. Combined degrees that exceed 1.0 are capped at 1.0.</p>
     </div>
 
     <div class="test-case">
-      <h3>TC-FZ-013: Fuzzy Negation &mdash; Standard</h3>
+      <h3>TC-FZ-013: Fuzzy Negation — Standard</h3>
       <p class="objective">Verify standard fuzzy negation (1 - x)</p>
       <p><strong>Test Data:</strong> Diabetic(0.8)</p>
-      <p><strong>Expected Result:</strong> NOT Diabetic = 1 - 0.8 = <strong>0.2</strong></p>
+      <p><strong>Why NOT Operation?</strong> If a patient is 80% diabetic, they're 20% "not diabetic" (or more precisely, 20% likely to NOT have diabetes).</p>
+      <p><strong>Mathematical Formula:</strong> NOT(x) = 1 - x = 1 - 0.8 = 0.2</p>
+      <p><strong>Expected Result:</strong> NOT Diabetic = <strong>0.2</strong></p>
+      <p style="background: #f0f4ff; padding: 0.75rem; border-radius: 4px; margin-top: 0.5rem;"><strong>Key Property:</strong> Standard negation is linear and symmetric. If you negate twice: NOT(NOT(0.8)) = 1 - (1 - 0.8) = 0.8 ✓</p>
     </div>
 
     <div class="test-case">
-      <h3>TC-FZ-014: Fuzzy Negation &mdash; Sugeno</h3>
+      <h3>TC-FZ-014: Fuzzy Negation — Sugeno</h3>
       <p class="objective">Verify Sugeno negation</p>
-      <p><strong>Test Data:</strong> Degree 0.8, parameter &lambda;=2</p>
-      <p><strong>Expected Result:</strong> (1 - 0.8) / (1 + 2 &times; 0.8) = 0.2 / 2.6 &asymp; <strong>0.077</strong></p>
+      <p><strong>Test Data:</strong> Degree 0.8, parameter λ=2</p>
+      <p><strong>Why Sugeno?</strong> Sugeno negation is less "harsh" than standard. It's used when you want to be more conservative about negation.</p>
+      <p><strong>Mathematical Formula:</strong> NOT_λ(x) = (1 - x) / (1 + λx)</p>
+      <p style="margin: 0.5rem 0;">For x=0.8, λ=2: (1 - 0.8) / (1 + 2×0.8) = 0.2 / (1 + 1.6) = 0.2 / 2.6 ≈ 0.077</p>
+      <p><strong>Expected Result:</strong> ≈ <strong>0.077</strong></p>
+      <p style="background: #f0f4ff; padding: 0.75rem; border-radius: 4px; margin-top: 0.5rem;"><strong>Compare:</strong> Standard would give 0.2, but Sugeno gives 0.077 (less membership in NOT diabetic). Sugeno is more permissive toward original membership.</p>
     </div>
 
     <div class="test-case">
       <h3>TC-FZ-015: Subsumption Checking</h3>
       <p class="objective">Verify fuzzy subsumption with degrees</p>
+      
+      <h4>Why Subsumption Matters</h4>
+      <p><strong>Standard Ontology:</strong> "Is Diabetic a subclass of Chronic?" → YES or NO</p>
+      <p><strong>Fuzzy Ontology:</strong> "To what degree is Diabetic subsumed by Chronic?" → 0.0 to 1.0</p>
+      <p><strong>Example:</strong> Diabetes is "quite often" a chronic condition, but not always (juvenile diabetes remission). Subsumption degree = 0.85</p>
+      
       <h4>Steps</h4>
       <ol>
-        <li>Define fuzzy concepts: Diabetic &#8849;<sub>d</sub> Chronic (with degree d)</li>
+        <li>Define fuzzy concepts: Diabetic ⊑<sub>d</sub> Chronic (with degree d)</li>
         <li>Call <code>checkSubsumption("Diabetic", "Chronic")</code></li>
         <li>Verify subsumption degree returned</li>
       </ol>
@@ -311,13 +488,18 @@
       <ul>
         <li>Subsumption relation detected</li>
         <li>Degree value between 0 and 1</li>
-        <li>Reasoning trace available</li>
+        <li>Reasoning trace available showing how degree was computed</li>
       </ul>
     </div>
 
     <div class="test-case">
       <h3>TC-FZ-016: Equivalence Checking</h3>
       <p class="objective">Verify fuzzy concept equivalence</p>
+      
+      <h4>Why Equivalence Matters</h4>
+      <p><strong>Problem:</strong> Two different medical terms might mean almost the same thing. Are "Hypertension" and "HighBloodPressure" equivalent? To what degree?</p>
+      <p><strong>Fuzzy Answer:</strong> They might be 95% equivalent (slight nuance difference), not 100%.</p>
+      
       <h4>Steps</h4>
       <ol>
         <li>Define two concepts with overlapping membership</li>
@@ -325,45 +507,64 @@
       </ol>
       <h4>Expected Results</h4>
       <ul>
-        <li>Returns equivalence degree</li>
-        <li>Degree = 1.0 for truly equivalent concepts</li>
-        <li>Degree &lt; 1.0 for partially overlapping concepts</li>
-        <li>Reasoning trace shows steps</li>
+        <li>Returns equivalence degree between 0.0 and 1.0</li>
+        <li>Degree = 1.0 for identical concepts</li>
+        <li>Degree &lt; 1.0 for partially overlapping concepts (e.g., 0.95)</li>
+        <li>Reasoning trace shows steps of computation</li>
       </ul>
     </div>
 
     <div class="test-case">
       <h3>TC-FZ-017: Alpha-Cut Reasoning</h3>
       <p class="objective">Verify alpha-cut based filtering</p>
+      
+      <h4>What is an Alpha-Cut?</h4>
+      <p><strong>Simple Explanation:</strong> A threshold for membership. "Give me all patients who are diabetic with at least 70% confidence."</p>
+      <p><strong>Formula:</strong> Alpha-cut at 0.7 = {x : μ(x) ≥ 0.7}</p>
+      <p><strong>Use Case:</strong> Risk classification - only high-risk patients (≥0.8) get early intervention.</p>
+      
       <h4>Steps</h4>
       <ol>
         <li>Set alpha threshold to 0.7</li>
         <li>Query fuzzy class "Diabetic"</li>
-        <li>Only individuals with membership &ge; 0.7 returned</li>
+        <li>Verify: only individuals with membership ≥ 0.7 returned</li>
       </ol>
       <h4>Expected Results</h4>
       <ul>
-        <li>Individuals below alpha threshold excluded</li>
-        <li>Those at or above threshold included</li>
+        <li>Patient A (Diabetic 0.85): ✓ Included (≥ 0.7)</li>
+        <li>Patient B (Diabetic 0.65): ✗ Excluded (< 0.7)</li>
         <li>Different alpha values produce different result sets</li>
+        <li>Alpha 0.9 produces smaller set than Alpha 0.7</li>
       </ul>
     </div>
 
     <div class="test-case">
       <h3>TC-FZ-018: Fuzzy Rule Inference</h3>
       <p class="objective">Verify fuzzy rule creates new memberships</p>
-      <p><strong>Rule:</strong> IF Diabetic(x) &ge; 0.7 AND BMI(x) &gt; 30 THEN HighRisk(x) = min(Diabetic(x), Obese(x))</p>
+      
+      <h4>What is Fuzzy Rule Inference?</h4>
+      <p><strong>Rule:</strong> IF Diabetic(x) ≥ 0.7 AND BMI(x) > 30 THEN HighRisk(x) = min(Diabetic(x), Obese(x))</p>
+      <p><strong>In Plain English:</strong> "If someone is fairly diabetic (≥70%) AND obese, then classify them as high risk. The risk degree is the minimum of their diabetes and obesity scores."</p>
+      <p><strong>Real Example:</strong></p>
+      <ul style="font-size: 0.92rem; margin: 0.75rem 0;">
+        <li>Patient A: Diabetic(0.85) AND Obese(0.75) → HighRisk = min(0.85, 0.75) = 0.75</li>
+        <li>Patient B: Diabetic(0.65) AND Obese(0.90) → Rule condition fails (diabetic &lt; 0.7), no HighRisk membership</li>
+        <li>Patient C: Diabetic(0.80) AND Obese(0.40) → HighRisk = min(0.80, 0.40) = 0.40 (lower risk due to lower obesity)</li>
+      </ul>
+      
       <h4>Steps</h4>
       <ol>
         <li>Create rule in Fuzzy Editor rules tab</li>
-        <li>Define condition and action</li>
-        <li>Execute rule</li>
+        <li>Define condition: <code>Diabetic(x) >= 0.7 AND BMI(x) > 30</code></li>
+        <li>Define action: <code>HighRisk(x) = min(Diabetic(x), Obese(x))</code></li>
+        <li>Execute rule against patient population</li>
       </ol>
       <h4>Expected Results</h4>
       <ul>
         <li>Matching individuals get HighRisk membership</li>
-        <li>Degree computed from rule formula</li>
+        <li>Degree computed from rule formula (min in this case)</li>
         <li>New memberships visible in membership table</li>
+        <li>Non-matching individuals have no HighRisk membership (or 0.0)</li>
       </ul>
     </div>
   </section>
@@ -371,39 +572,60 @@
   <!-- Fuzzy Query DSL Tests -->
   <section id="fuzzy-query-dsl-tests">
     <h2>5. Fuzzy Query DSL Tests</h2>
+    
+    <h3>What is Fuzzy Query DSL?</h3>
+    <p><strong>Standard Query:</strong> "SELECT all diabetic patients" → All-or-nothing match</p>
+    <p><strong>Fuzzy Query:</strong> "FIND patients who are fairly diabetic (≥0.8)" → Partial matches with degrees</p>
+    <p><strong>Benefit:</strong> You can rank results by confidence instead of binary yes/no.</p>
 
     <div class="test-case">
       <h3>TC-FZ-019: Basic Membership Query</h3>
+      <h4>What This Tests</h4>
+      <p>Simple threshold query: "Give me patients with strong diabetic diagnosis (at least 80% confident)."</p>
+      
       <h4>Query</h4>
       <pre><code>FIND individuals WHERE memberOf(Diabetic) >= 0.8</code></pre>
       <h4>Expected Results</h4>
       <ul>
-        <li>Only individuals with Diabetic membership &ge; 0.8 returned</li>
+        <li>Only individuals with Diabetic membership ≥ 0.8 returned</li>
+        <li>Example: Patient001(0.85), Patient003(0.92) → Included; Patient002(0.75) → Excluded</li>
         <li>Results show entity IRI and membership degree</li>
       </ul>
     </div>
 
     <div class="test-case">
       <h3>TC-FZ-020: Compound Condition Query (AND)</h3>
+      <h4>What This Tests</h4>
+      <p>Complex query combining fuzzy conditions: "Find patients who are both diabetic AND hypertensive with combined confidence > 60%."</p>
+      
       <h4>Query</h4>
       <pre><code>FIND individuals WHERE memberOf(Diabetic AND Hypertensive) > 0.6</code></pre>
+      <h4>How It Works</h4>
+      <ul style="font-size: 0.92rem;">
+        <li>For each patient, compute: min(μ_Diabetic, μ_Hypertensive)</li>
+        <li>Patient A: min(0.8, 0.7) = 0.7 ✓ Included (> 0.6)</li>
+        <li>Patient B: min(0.9, 0.5) = 0.5 ✗ Excluded (≤ 0.6)</li>
+      </ul>
       <h4>Expected Results</h4>
       <ul>
-        <li>Fuzzy AND (T-norm) applied between memberships</li>
-        <li>Only combined degree &gt; 0.6 returned</li>
-        <li>T-norm type respects current configuration</li>
+        <li>Fuzzy AND (T-norm/min) applied between memberships</li>
+        <li>Only combined degree > 0.6 returned</li>
+        <li>T-norm type respects current configuration (min by default)</li>
       </ul>
     </div>
 
     <div class="test-case">
       <h3>TC-FZ-021: Top-N Query with Ordering</h3>
+      <h4>What This Tests</h4>
+      <p>Ranking query: "Show me the 10 highest-risk patients, sorted by risk level."</p>
+      
       <h4>Query</h4>
       <pre><code>SELECT TOP 10 FROM Patient ORDER BY memberOf(HighRisk) DESC</code></pre>
       <h4>Expected Results</h4>
       <ul>
         <li>Returns maximum 10 patients</li>
-        <li>Ordered by HighRisk membership degree descending</li>
-        <li>Highest risk patients listed first</li>
+        <li>Ordered by HighRisk membership degree descending (highest risk first)</li>
+        <li>Example output: Patient001(0.95), Patient005(0.88), Patient012(0.82), ...</li>
       </ul>
     </div>
 

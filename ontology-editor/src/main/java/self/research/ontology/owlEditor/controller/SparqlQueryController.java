@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.model.SparqlQueryEntity;
 import self.research.ontology.owlEditor.repository.SparqlQueryRepository;
-import self.research.ontology.owlEditor.service.GraphDBDatasetService;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
 
 import java.util.ArrayList;
 import java.util.Date;
@@ -30,11 +30,11 @@ import java.util.Map;
 @CrossOrigin
 public class SparqlQueryController {
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final SimpMessagingTemplate messagingTemplate;
     private final SparqlQueryRepository queryRepository;
 
-    public SparqlQueryController(GraphDBDatasetService datasetService,
+    public SparqlQueryController(SparqlDatasetService datasetService,
                                 SimpMessagingTemplate messagingTemplate,
                                 SparqlQueryRepository queryRepository) {
         this.datasetService = datasetService;
@@ -94,29 +94,35 @@ public class SparqlQueryController {
 
     // ==================== Query Execution ====================
 
+    // Typed response so Jackson serializes results as List<Map> not raw Object
+    record SparqlHead(List<String> vars) {}
+    record SparqlQueryResponse(SparqlHead head, List<Map<String, String>> results, long executionTime) {}
+
     @PostMapping("/query/{projectId}")
     public ResponseEntity<?> query(@PathVariable String projectId,
                                    @RequestBody SparqlRequest request) {
-        long startTime = System.currentTimeMillis();
-        
-        TupleQueryResult rs = datasetService.execSelect(projectId, request.query());
-        List<String> vars = rs.getBindingNames();
-        List<Map<String, String>> rows = new ArrayList<>();
-        while (rs.hasNext()) {
-            BindingSet sol = rs.next();
-            Map<String, String> row = new LinkedHashMap<>();
-            for (String var : vars) {
-                row.put(var, toValue(sol.hasBinding(var) ? sol.getValue(var) : null));
-            }
-            rows.add(row);
+        if (request.query() == null || request.query().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Query must not be empty"));
         }
-        
-        long executionTime = System.currentTimeMillis() - startTime;
-        
-        return ResponseEntity.ok(Map.of(
-                "head", Map.of("vars", vars),
-                "results", rows,
-                "executionTime", executionTime));
+        long startTime = System.currentTimeMillis();
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, request.query());
+            List<String> vars = rs.getBindingNames();
+            List<Map<String, String>> rows = new ArrayList<>();
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                Map<String, String> row = new LinkedHashMap<>();
+                for (String var : vars) {
+                    row.put(var, toValue(sol.hasBinding(var) ? sol.getValue(var) : null));
+                }
+                rows.add(row);
+            }
+            long executionTime = System.currentTimeMillis() - startTime;
+            return ResponseEntity.ok(new SparqlQueryResponse(new SparqlHead(vars), rows, executionTime));
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return ResponseEntity.badRequest().body(Map.of("error", msg));
+        }
     }
 
     @PostMapping("/update/{projectId}")
@@ -124,6 +130,10 @@ public class SparqlQueryController {
                                     @RequestBody SparqlRequest request,
                                     @RequestParam(required = false, defaultValue = "anonymous") String userId,
                                     @RequestParam(required = false, defaultValue = "Anonymous") String username) {
+        if (request.query() == null || request.query().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Query must not be empty"));
+        }
+        try {
         datasetService.execUpdate(projectId, request.query());
         
         // Broadcast a generic SPARQL update notification to collaborators
@@ -138,8 +148,11 @@ public class SparqlQueryController {
             "message", "SPARQL update executed - please refresh"
         );
         messagingTemplate.convertAndSend("/topic/ontology/" + projectId, sparqlUpdateNotification);
-        
         return ResponseEntity.ok(Map.of("success", true));
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return ResponseEntity.badRequest().body(Map.of("error", msg));
+        }
     }
 
     private String toValue(Value node) {

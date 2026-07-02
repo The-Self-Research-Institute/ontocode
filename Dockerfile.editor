@@ -13,17 +13,13 @@ COPY ontology-gateway/ ./ontology-gateway/
 COPY ontology-editor/ ./ontology-editor/
 COPY ontology-swrl/ ./ontology-swrl/
 COPY ontology-plugin-service/ ./ontology-plugin-service/
+COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
 
 # Build shared modules first (these are dependencies for all services)
 # Uses BuildKit cache for ~/.m2 to avoid re-downloading dependencies on every build.
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
-        clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp
-
-# Build editor module - package goal includes spring-boot:repackage automatically
-RUN --mount=type=cache,target=/root/.m2 \
-    mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
-        clean package -pl ontology-editor -DskipTests -B -ntp
+        clean install -pl shared/common-models,shared/common-utils,ontology-editor -DskipTests -B -ntp
 
 # Runtime stage
 FROM eclipse-temurin:21-jre
@@ -37,12 +33,14 @@ RUN if ! getent group 1000 >/dev/null; then groupadd -g 1000 appuser; else echo 
 # Install wget for health checks
 RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
 
-# Create directories for data and logs
+# Create writable directories for data and logs
 RUN mkdir -p /app/data /app/logs && \
-    chown -R 1000:1000 /app
+    chown 1000:1000 /app/data /app/logs
 
 # Copy the built JAR (spring-boot:repackage creates executable JAR)
-COPY --from=build /build/ontology-editor/target/*.jar app.jar
+# classifier=exec produces owlEditor-1.0.0-exec.jar (fat JAR) + owlEditor-1.0.0.jar (plain)
+# Copy the exec JAR explicitly to avoid picking up the plain non-executable JAR
+COPY --from=build --chown=1000:1000 /build/ontology-editor/target/*-exec.jar app.jar
 
 USER 1000
 

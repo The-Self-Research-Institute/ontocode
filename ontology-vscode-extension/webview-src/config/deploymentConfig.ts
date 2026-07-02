@@ -8,6 +8,10 @@
 // ─── Deployment Types ────────────────────────────────────────────────────────
 export type DeploymentType = 'self-hosted' | 'cloud';
 
+declare const __ONTOCODE_CONFIG__:
+    | Record<string, string>
+    | undefined;
+
 // ─── Detect where we're running ─────────────────────────────────────────────
 const isViteDevServer = typeof window !== 'undefined' && window.location.port === '3001';
 const isLocalhost = typeof window !== 'undefined' &&
@@ -28,6 +32,9 @@ const DEFAULTS = {
 
 // ─── Read the __ONTOCODE_CONFIG__ injected by extension / vite ───────────────
 function getConfig(): Record<string, string> | undefined {
+    if (typeof __ONTOCODE_CONFIG__ !== 'undefined' && __ONTOCODE_CONFIG__) {
+        return __ONTOCODE_CONFIG__;
+    }
     return (window as any).__ONTOCODE_CONFIG__;
 }
 
@@ -41,7 +48,7 @@ export function getStoredDeploymentType(): DeploymentType {
             return 'cloud';
         }
     }
-    
+
     try {
         const val = localStorage.getItem('deploymentType');
         if (val === 'self-hosted' || val === 'cloud') return val;
@@ -51,10 +58,26 @@ export function getStoredDeploymentType(): DeploymentType {
 
 // ─── Gateway URL ─────────────────────────────────────────────────────────────
 export function getGatewayUrl(type?: DeploymentType): string {
+    // Desktop Electron: preload.js sets this before React initialises.
+    // We cannot rely on the Vite build-time __ONTOCODE_CONFIG__ constant here
+    // because it has empty strings when built without env vars, and
+    // window.location.hostname is "" under file:// so isLocalhost is false.
+    if (typeof window !== 'undefined' && (window as any).__DESKTOP_API_URL__) {
+        return (window as any).__DESKTOP_API_URL__;
+    }
     const deploymentType = type ?? getStoredDeploymentType();
     const config = getConfig();
     if (deploymentType === 'cloud') {
-        return config?.CLOUD_GATEWAY_URL || DEFAULTS.CLOUD_GATEWAY_URL;
+        if (config?.CLOUD_GATEWAY_URL) return config.CLOUD_GATEWAY_URL;
+        // Real server (http/https, not localhost): use the page's own hostname.
+        // localhost, vscode-webview:, and Node.js all fall through to ontocodeapi.
+        if (typeof window !== 'undefined') {
+            const proto = window.location.protocol;
+            if ((proto === 'http:' || proto === 'https:') && !isLocalhost) {
+                return proto + '//' + window.location.hostname;
+            }
+        }
+        return DEFAULTS.CLOUD_GATEWAY_URL;
     }
     return config?.SELF_HOSTED_GATEWAY_URL || DEFAULTS.SELF_HOSTED_GATEWAY_URL;
 }
@@ -82,6 +105,13 @@ export function getPluginUrl(type?: DeploymentType): string {
 // ─── Resolve API Base URL (always computes fresh from localStorage) ──────────
 export function getApiBaseUrl(): string {
     return getGatewayUrl();
+}
+
+// ─── Cloud Gateway URL (bypasses desktop localhost — for cloud-only features) ─
+// preload.js overwrites CLOUD_GATEWAY_URL with the local proxy, so we must
+// ignore __ONTOCODE_CONFIG__ here and always return the hardcoded cloud URL.
+export function getCloudGatewayUrl(): string {
+    return DEFAULTS.CLOUD_GATEWAY_URL;
 }
 
 // ─── Boolean helpers ─────────────────────────────────────────────────────────

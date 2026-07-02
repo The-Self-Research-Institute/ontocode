@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Code, X, Info } from 'lucide-react';
+import apiClient from '../../services/apiClient';
 
 interface GCIEditorDialogProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface GCIEditorDialogProps {
   initialSuperClass?: string;
   editMode?: boolean;
   availableClasses?: Array<{ id: string; label: string }>;
+  projectId?: string;
 }
 
 const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({ 
@@ -18,11 +20,13 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
   initialSubClass = '', 
   initialSuperClass = '',
   editMode = false,
-  availableClasses
+  availableClasses,
+  projectId,
 }) => {
   const [subClass, setSubClass] = useState(initialSubClass);
   const [superClass, setSuperClass] = useState(initialSuperClass);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
   const [showSubClassSuggestions, setShowSubClassSuggestions] = useState(false);
   const [showSuperClassSuggestions, setShowSuperClassSuggestions] = useState(false);
 
@@ -59,15 +63,32 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
 
   if (!isOpen) return null;
 
+  const validateExpression = async (expression: string): Promise<string | null> => {
+    if (!projectId || !expression.trim()) return null;
+    try {
+      const res = await apiClient.post<any>(`/api/ontology/${encodeURIComponent(projectId)}/expression/parse`, {
+        expression: expression.trim(),
+      });
+      if (res?.success === false || res?.data?.success === false) {
+        return res?.error || res?.data?.error || 'Invalid Manchester expression';
+      }
+      return null;
+    } catch (error: any) {
+      return error?.response?.data?.error || error?.message || 'Expression validation failed';
+    }
+  };
+
   const handleSave = async () => {
     if (!subClass.trim() || !superClass.trim()) return;
 
     setIsSubmitting(true);
+    setParseError(null);
     try {
       await onSave(subClass.trim(), superClass.trim());
       onClose();
     } catch (error) {
       console.error('Failed to save GCI:', error);
+      setParseError(error instanceof Error ? error.message : 'Failed to save GCI');
     } finally {
       setIsSubmitting(false);
     }
@@ -169,6 +190,12 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
               )}
             </div>
           </div>
+
+          {parseError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-xs p-2 rounded">
+              {parseError}
+            </div>
+          )}
         </div>
 
         {/* Footer */}

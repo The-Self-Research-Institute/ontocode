@@ -82,6 +82,12 @@
             <optional>true</optional>
         </dependency>
 
+        <dependency>
+            <groupId>self.research.ontology</groupId>
+            <artifactId>common-utils</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -119,13 +125,14 @@
             <version>5.0.3</version>
         </dependency>
 
-        <!-- ELK Reasoner (incremental OWL EL reasoner - compatible with OWLAPI 5 at compile time) -->
+        <!-- ELK OWL EL reasoner. io.github.liveontologies:elk-owlapi:0.6.0 supports OWLAPI 5.x;
+             the old org.semanticweb.elk:elk-owlapi:0.4.3 was OWLAPI 4-only (NoSuchMethodError
+             on OWLAPI 5.5.0). Exclude transitive OWLAPI so owlapi-distribution 5.x wins. -->
         <dependency>
-            <groupId>org.semanticweb.elk</groupId>
+            <groupId>io.github.liveontologies</groupId>
             <artifactId>elk-owlapi</artifactId>
-            <version>0.4.3</version>
+            <version>0.6.0</version>
             <exclusions>
-                <!-- Exclude OWLAPI 4 to avoid conflict with owlapi-distribution 5.x -->
                 <exclusion>
                     <groupId>net.sourceforge.owlapi</groupId>
                     <artifactId>owlapi-api</artifactId>
@@ -133,6 +140,10 @@
                 <exclusion>
                     <groupId>net.sourceforge.owlapi</groupId>
                     <artifactId>owlapi-apibinding</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-distribution</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -144,6 +155,9 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
+                    <!-- classifier=exec keeps the plain JAR as the primary artifact so
+                         ontology-desktop can depend on it; the fat JAR gets -exec suffix. -->
+                    <classifier>exec</classifier>
                     <excludes>
                         <exclude>
                             <groupId>org.projectlombok</groupId>

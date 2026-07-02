@@ -23,7 +23,7 @@ import java.util.UUID;
 public class HistorySyncService {
 
     private final HistoryChangeRepository historyChangeRepository;
-    private final GraphDBHistoryService graphDBHistoryService;
+    private final OntologyHistoryService historyService;
 
     /**
      * Sync a single change from GraphDB to MongoDB.
@@ -102,7 +102,7 @@ public class HistorySyncService {
      */
     public void syncRecentChanges(String projectId, int count) {
         try {
-            List<Map<String, Object>> recentChanges = graphDBHistoryService.getHistory(projectId, count);
+            List<Map<String, Object>> recentChanges = historyService.getHistory(projectId, count);
             
             int syncedCount = 0;
             for (Map<String, Object> change : recentChanges) {

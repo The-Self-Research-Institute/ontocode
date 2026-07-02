@@ -1,7 +1,9 @@
 package self.research.ontology.owlEditor.service;
 
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.io.FileDocumentSource;
+import org.semanticweb.owlapi.io.StringDocumentSource;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.util.OWLEntityRenamer;
 import org.semanticweb.owlapi.vocab.OWLRDFVocabulary;
@@ -17,9 +19,12 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 import self.research.ontology.owlEditor.model.merge.*;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -38,7 +43,7 @@ public class OntologyMergeService {
 
     private static final Logger log = LoggerFactory.getLogger(OntologyMergeService.class);
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final ProjectImportService importService;
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
@@ -48,7 +53,7 @@ public class OntologyMergeService {
 
     private final RestTemplate restTemplate = new RestTemplate();
 
-    public OntologyMergeService(GraphDBDatasetService datasetService,
+    public OntologyMergeService(SparqlDatasetService datasetService,
                                ProjectImportService importService,
                                StorageManager storageManager,
                                ProjectMetadataService metadataService) {
@@ -1488,5 +1493,106 @@ public class OntologyMergeService {
         String iri = entityIri.toString();
         String local = iri.contains("#") ? iri.substring(iri.lastIndexOf('#') + 1) : iri.substring(iri.lastIndexOf('/') + 1);
         return local.isBlank() ? iri : local;
+    }
+
+    // ── Draft publish three-way merge (baseline / ours / theirs) ─────────────
+
+    public OWLOntology loadOntologyFromRdf(String rdfXml) throws OWLOntologyCreationException {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
+                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
+        OWLOntology loaded = manager.loadOntologyFromOntologyDocument(
+                new StringDocumentSource(rdfXml), config);
+        return cloneAsAnonymousOntology(manager, loaded);
+    }
+
+    public String saveOntologyToRdfXml(OWLOntology ontology) throws OWLOntologyStorageException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ontology.getOWLOntologyManager().saveOntology(ontology, new RDFXMLDocumentFormat(), out);
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
+    public void removeEntityFromOntology(OWLOntology ontology, IRI entityIRI) {
+        removeDefiningAxioms(ontology, entityIRI, ontology.getOWLOntologyManager());
+    }
+
+    /**
+     * Three-way merge for draft publish: start from {@code theirs} (current main),
+     * apply the user's deltas from {@code ours} relative to {@code baseline},
+     * resolving overlapping IRIs per {@code resolutions} (default MERGE).
+     */
+    public OWLOntology mergeDraftPublishThreeWay(OWLOntology baseline,
+                                                 OWLOntology ours,
+                                                 OWLOntology theirs,
+                                                 Set<String> conflictEntityIris,
+                                                 Map<String, ConflictResolution> resolutions)
+            throws OWLOntologyCreationException {
+        OWLOntologyManager manager = theirs.getOWLOntologyManager();
+        Set<String> touchedIris = collectTouchedIris(baseline, ours);
+        Map<String, ConflictResolution> safeResolutions =
+                resolutions != null ? resolutions : Collections.emptyMap();
+
+        log.info("[DRAFT-MERGE] Three-way merge: {} touched IRIs, {} conflicts",
+                touchedIris.size(), conflictEntityIris != null ? conflictEntityIris.size() : 0);
+
+        for (String iriStr : touchedIris) {
+            IRI iri = IRI.create(iriStr);
+            Set<OWLAxiom> baseDefs = getDefiningAxioms(baseline, iri);
+            Set<OWLAxiom> ourDefs = getDefiningAxioms(ours, iri);
+            if (ourDefs.equals(baseDefs)) {
+                continue;
+            }
+
+            if (conflictEntityIris != null && conflictEntityIris.contains(iriStr)) {
+                ConflictResolution resolution = safeResolutions.get(iriStr);
+                if (resolution == null) {
+                    resolution = new ConflictResolution();
+                    resolution.setAction(ResolutionAction.MERGE);
+                }
+                applyDraftConflictResolution(ours, theirs, iri, resolution, manager);
+            } else {
+                removeDefiningAxioms(theirs, iri, manager);
+                addDefiningAxioms(ours, theirs, iri, manager);
+            }
+        }
+        return theirs;
+    }
+
+    private Set<String> collectTouchedIris(OWLOntology baseline, OWLOntology ours) {
+        Set<String> touched = new LinkedHashSet<>();
+        for (OWLEntity entity : ours.getSignature()) {
+            if (entity.isBuiltIn()) {
+                continue;
+            }
+            IRI iri = entity.getIRI();
+            if (!getDefiningAxioms(baseline, iri).equals(getDefiningAxioms(ours, iri))) {
+                touched.add(iri.toString());
+            }
+        }
+        return touched;
+    }
+
+    private void applyDraftConflictResolution(OWLOntology ours,
+                                              OWLOntology target,
+                                              IRI entityIRI,
+                                              ConflictResolution resolution,
+                                              OWLOntologyManager manager) {
+        OWLDataFactory factory = manager.getOWLDataFactory();
+        switch (resolution.getAction()) {
+            case KEEP_SOURCE -> {
+                removeDefiningAxioms(target, entityIRI, manager);
+                addDefiningAxioms(ours, target, entityIRI, manager);
+            }
+            case KEEP_TARGET -> {
+                // current main already has their version
+            }
+            case MERGE -> addDefiningAxioms(ours, target, entityIRI, manager);
+            case RENAME_SOURCE -> {
+                String suffix = resolution.getRenameSuffix() != null
+                        ? resolution.getRenameSuffix() : "_draft";
+                addEntityWithRename(ours, target, entityIRI, suffix, manager, factory);
+            }
+            case SKIP -> removeDefiningAxioms(target, entityIRI, manager);
+        }
     }
 }

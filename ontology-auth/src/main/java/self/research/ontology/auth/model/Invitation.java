@@ -37,15 +37,13 @@ public class Invitation {
     @NotBlank
     private String role; // VIEWER, MEMBER, ADMIN
 
-    private String status; // PENDING, ACCEPTED, EXPIRED
+    private String status; // PENDING, ACCEPTED, CANCELLED
 
     private LocalDateTime createdAt;
-    private LocalDateTime expiresAt;
     private LocalDateTime acceptedAt;
 
     public Invitation() {
         this.createdAt = LocalDateTime.now();
-        this.expiresAt = LocalDateTime.now().plusDays(7); // 7 days expiry
         this.status = "PENDING";
     }
 
@@ -130,24 +128,12 @@ public class Invitation {
         this.createdAt = createdAt;
     }
 
-    public LocalDateTime getExpiresAt() {
-        return expiresAt;
-    }
-
-    public void setExpiresAt(LocalDateTime expiresAt) {
-        this.expiresAt = expiresAt;
-    }
-
     public LocalDateTime getAcceptedAt() {
         return acceptedAt;
     }
 
     public void setAcceptedAt(LocalDateTime acceptedAt) {
         this.acceptedAt = acceptedAt;
-    }
-
-    public boolean isExpired() {
-        return LocalDateTime.now().isAfter(expiresAt);
     }
 
     public boolean isPending() {

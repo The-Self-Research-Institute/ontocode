@@ -59,6 +59,8 @@ interface MergeWizardProps {
   initialProjectId?: string;
   availableFiles?: Array<string | { id?: string; name?: string; filename?: string }>;
   onMergeComplete?: (targetProjectId: string, isNewFile?: boolean) => Promise<void> | void;
+  isViewOnly?: boolean;
+  onProAction?: () => void;
 }
 
 interface MergeTargetOption {
@@ -77,6 +79,8 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
   initialProjectId,
   availableFiles = [],
   onMergeComplete,
+  isViewOnly = false,
+  onProAction,
 }) => {
   const toShortName = (iri: string) => {
     if (!iri) return "";
@@ -105,6 +109,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
   const [targetMode, setTargetMode] = useState<"current" | "existingFile" | "newFile">("current");
   const [selectedTargetFileName, setSelectedTargetFileName] = useState("");
   const [newOutputFileName, setNewOutputFileName] = useState("merged-output.owl");
+  const [mergeError, setMergeError] = useState<string | null>(null);
 
   const targetOptions = useMemo<MergeTargetOption[]>(() => {
     return (availableFiles || [])
@@ -132,6 +137,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
       setTargetMode("current");
       setSelectedTargetFileName("");
       setNewOutputFileName("merged-output.owl");
+      setMergeError(null);
     }
   }, [isOpen, projectId]);
 
@@ -161,6 +167,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
     if (!selectedFile) return;
 
     setAnalyzing(true);
+    setMergeError(null);
     try {
       const formData = new FormData();
       formData.append("file", selectedFile);
@@ -184,13 +191,15 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
       setStep(2);
     } catch (error: any) {
       console.error("Error analyzing ontologies:", error);
-      alert("Analysis failed: " + (error.message || "Unknown error"));
+      const errMsg = error?.response?.data?.error || error?.data?.error || error?.message || "Unknown error";
+      setMergeError("Analysis failed: " + errMsg);
     } finally {
       setAnalyzing(false);
     }
   };
 
   const handleMerge = async () => {
+    if (isViewOnly) { onProAction?.(); return; }
     if (!selectedFile) return;
 
     setMerging(true);
@@ -287,7 +296,14 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
       setStep(4);
     } catch (error: any) {
       console.error("Error merging ontologies:", error);
-      alert("Merge failed: " + (error.message || "Unknown error"));
+      const status = error?.response?.status;
+      const errMsg = error?.response?.data?.error || error?.data?.error || error?.message || "Unknown error";
+      if (status === 403) {
+        onClose();
+        onProAction?.();
+      } else {
+        setMergeError("Merge failed: " + errMsg);
+      }
     } finally {
       setMerging(false);
     }
@@ -565,6 +581,12 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                 )}
               </div>
 
+              {mergeError && (
+                <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{mergeError}</span>
+                </div>
+              )}
               <div className="flex justify-end gap-2 mt-6">
                 <button
                   onClick={onClose}
@@ -1019,7 +1041,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                   <ChevronLeft className="w-4 h-4" /> Back
                 </button>
                 <button
-                  onClick={handleMerge}
+                  onClick={() => { setMergeError(null); handleMerge(); }}
                   disabled={merging}
                   className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2"
                 >
@@ -1035,6 +1057,12 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                   )}
                 </button>
               </div>
+              {mergeError && (
+                <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{mergeError}</span>
+                </div>
+              )}
             </div>
           )}
 

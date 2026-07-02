@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Edit2, Trash2, Globe } from 'lucide-react';
+import { Search, Plus, Edit2, Trash2, RefreshCw, Check, X } from 'lucide-react';
 import type { AnnotationProperty } from '../../types';
 
 interface AddAnnotationDialogProps {
@@ -18,19 +18,28 @@ interface AddAnnotationDialogProps {
   initialValue?: string;
   initialLang?: string;
   initialDatatype?: string;
+  /** Create a new annotation property in the ontology */
+  onCreateProperty?: (iri: string, label: string) => Promise<void>;
+  /** Refresh the available properties list from the server */
+  onRefreshProperties?: () => void;
+  /** Ontology namespace for auto-generating new property IRIs */
+  ontologyNamespace?: string;
 }
 
-const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({ 
-  isOpen, 
-  onClose, 
-  onAdd, 
+const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
+  isOpen,
+  onClose,
+  onAdd,
   availableProperties,
   entities = { classes: [], objectProperties: [], dataProperties: [], individuals: [] },
   editMode = false,
   initialProperty = '',
   initialValue = '',
   initialLang = '',
-  initialDatatype = 'xsd:string'
+  initialDatatype = 'xsd:string',
+  onCreateProperty,
+  onRefreshProperties,
+  ontologyNamespace = 'http://ontocode.org/ontology/annotation#',
 }) => {
   const [selectedProperty, setSelectedProperty] = useState(initialProperty);
   const [value, setValue] = useState(initialValue);
@@ -39,6 +48,13 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
   const [activeTab, setActiveTab] = useState('Literal');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Inline "create new annotation property" form state
+  const [showCreate, setShowCreate] = useState(false);
+  const [newPropLabel, setNewPropLabel] = useState('');
+  const [newPropIri, setNewPropIri] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   // Reset form when opening
   useEffect(() => {
     if (isOpen) {
@@ -46,19 +62,58 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
       setValue(initialValue);
       setLang(initialLang);
       setDatatype(initialDatatype || 'xsd:string');
-    } else if (!isOpen) {
-      // Reset on close
+      setShowCreate(false);
+      setNewPropLabel('');
+      setNewPropIri('');
+    } else {
       setSelectedProperty('');
       setValue('');
       setDatatype('xsd:string');
       setSearchQuery('');
-      setLang(initialLang);
-      setDatatype(initialDatatype);
+      setLang('');
       setActiveTab('Literal');
+      setShowCreate(false);
     }
   }, [isOpen, initialProperty, initialValue, initialLang, initialDatatype]);
 
   if (!isOpen) return null;
+
+  // Auto-generate a safe IRI fragment from a label
+  const labelToIriFrag = (lbl: string) =>
+    lbl.trim().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_-]/g, '');
+
+  const handleNewLabelChange = (lbl: string) => {
+    setNewPropLabel(lbl);
+    const frag = labelToIriFrag(lbl);
+    if (frag) setNewPropIri(`${ontologyNamespace}${frag}`);
+    else setNewPropIri('');
+  };
+
+  const handleCreateProperty = async () => {
+    if (!newPropLabel.trim() || !newPropIri.trim() || !onCreateProperty) return;
+    setIsCreating(true);
+    try {
+      await onCreateProperty(newPropIri.trim(), newPropLabel.trim());
+      setShowCreate(false);
+      setNewPropLabel('');
+      setNewPropIri('');
+      // Refresh so the new property appears in the list
+      onRefreshProperties?.();
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (!onRefreshProperties) return;
+    setIsRefreshing(true);
+    try {
+      onRefreshProperties();
+    } finally {
+      // Small visual delay so the spin animation is visible
+      setTimeout(() => setIsRefreshing(false), 600);
+    }
+  };
 
   // Standard OWL/RDFS annotation properties
   const standardProperties = [
@@ -82,7 +137,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
   });
 
   // Filter properties based on search
-  const filteredProperties = allProperties.filter(p => 
+  const filteredProperties = allProperties.filter(p =>
     p.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.iri.toLowerCase().includes(searchQuery.toLowerCase())
   ).sort((a, b) => a.label.localeCompare(b.label));
@@ -118,12 +173,77 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
           <div className="w-1/3 flex flex-col border-r border-gray-300 bg-white">
             {/* Toolbar */}
             <div className="p-2 flex gap-2 border-b border-gray-200 bg-gray-50">
-              <button className="p-1 hover:bg-gray-200 rounded text-gray-600" title="Add Property"><Plus size={16} /></button>
-              <button className="p-1 hover:bg-gray-200 rounded text-gray-600" title="Edit Property"><Edit2 size={16} /></button>
-              <button className="p-1 hover:bg-gray-200 rounded text-gray-400 cursor-not-allowed" disabled><Trash2 size={16} /></button>
-              <button className="p-1 hover:bg-gray-200 rounded text-gray-600" title="Refresh"><Globe size={16} /></button>
+              <button
+                onClick={() => { setShowCreate((prev: boolean) => !prev); setNewPropLabel(''); setNewPropIri(''); }}
+                className={`p-1 rounded ${onCreateProperty ? 'hover:bg-gray-200 text-gray-600' : 'text-gray-300 cursor-not-allowed'}`}
+                title={onCreateProperty ? 'Add annotation property' : 'Not available'}
+                disabled={!onCreateProperty}
+              >
+                <Plus size={16} />
+              </button>
+              <button
+                className="p-1 text-gray-300 cursor-not-allowed"
+                title="Edit annotation property (select one first)"
+                disabled
+              >
+                <Edit2 size={16} />
+              </button>
+              <button
+                className="p-1 text-gray-300 cursor-not-allowed"
+                title="Delete annotation property (use Entities panel)"
+                disabled
+              >
+                <Trash2 size={16} />
+              </button>
+              <button
+                onClick={handleRefresh}
+                className={`p-1 rounded ${onRefreshProperties ? 'hover:bg-gray-200 text-gray-600' : 'text-gray-300 cursor-not-allowed'}`}
+                title={onRefreshProperties ? 'Refresh properties list' : 'Not available'}
+                disabled={!onRefreshProperties}
+              >
+                <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
+              </button>
             </div>
-            
+
+            {/* Inline create new annotation property form */}
+            {showCreate && onCreateProperty && (
+              <div className="p-2 border-b border-blue-200 bg-blue-50 space-y-1">
+                <p className="text-xs font-medium text-blue-700">New Annotation Property</p>
+                <input
+                  type="text"
+                  value={newPropLabel}
+                  onChange={e => handleNewLabelChange(e.target.value)}
+                  placeholder="Label (e.g. Review Status)"
+                  className="w-full px-2 py-1 text-xs border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  autoFocus
+                />
+                <input
+                  type="text"
+                  value={newPropIri}
+                  onChange={e => setNewPropIri(e.target.value)}
+                  placeholder="IRI"
+                  className="w-full px-2 py-1 text-xs border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                />
+                <div className="flex gap-1 justify-end">
+                  <button
+                    onClick={() => setShowCreate(false)}
+                    className="p-1 rounded hover:bg-blue-100 text-blue-400"
+                    title="Cancel"
+                  >
+                    <X size={14} />
+                  </button>
+                  <button
+                    onClick={handleCreateProperty}
+                    disabled={!newPropLabel.trim() || !newPropIri.trim() || isCreating}
+                    className="p-1 rounded hover:bg-blue-100 text-blue-600 disabled:text-blue-200 disabled:cursor-not-allowed"
+                    title="Create property"
+                  >
+                    <Check size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Search */}
             <div className="p-2 border-b border-gray-200">
               <div className="relative">
@@ -141,13 +261,13 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
             {/* Property List */}
             <div className="flex-1 overflow-y-auto">
               {filteredProperties.map(prop => (
-                <div 
+                <div
                   key={prop.iri}
                   onClick={() => setSelectedProperty(prop.iri)}
                   className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-blue-50 ${selectedProperty === prop.iri ? 'bg-blue-100' : ''}`}
                 >
                   <div className="w-3 h-3 bg-[#B87333] rounded-sm flex-shrink-0" />
-                  <span className={`text-xs truncate ${selectedProperty === prop.iri ? 'text-blue-700 font-medium' : 'text-red-600'}`}>
+                  <span className={`text-xs truncate ${selectedProperty === prop.iri ? 'text-blue-700 font-medium' : 'text-gray-700'}`}>
                     {prop.label}
                   </span>
                 </div>
@@ -232,15 +352,12 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
                             type="text"
                             placeholder="Search entities..."
                             className="w-full pl-8 pr-2 py-1 text-xs border border-gray-300 rounded focus:outline-none"
-                            onChange={(e) => {
-                              // Local search logic could be added here
-                            }}
                           />
                         </div>
                       </div>
                       <div className="flex-1 overflow-y-auto p-2 space-y-1">
                         {[...entities.classes, ...entities.objectProperties, ...entities.dataProperties, ...entities.individuals].map(entity => (
-                          <div 
+                          <div
                             key={entity.id || entity.iri}
                             onClick={() => {
                               setValue(entity.id || entity.iri);
@@ -302,7 +419,8 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
         <div className="bg-[#F0F0F0] p-4 flex justify-end gap-2 border-t border-gray-300">
           <button
             onClick={handleAdd}
-            className="px-6 py-1.5 bg-white border border-gray-400 rounded text-sm hover:bg-gray-50 text-black min-w-[80px]"
+            disabled={!selectedProperty || !value.trim()}
+            className="px-6 py-1.5 bg-white border border-gray-400 rounded text-sm hover:bg-gray-50 text-black min-w-[80px] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             OK
           </button>
@@ -319,4 +437,3 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
 };
 
 export default AddAnnotationDialog;
-

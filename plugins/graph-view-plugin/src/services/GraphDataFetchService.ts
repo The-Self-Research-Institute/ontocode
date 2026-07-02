@@ -80,6 +80,9 @@ export class GraphDataFetchService {
         this.processClassNode(cls, nodes, edges, processedClasses);
       }
 
+      // Ensure every subClassOf parent IRI has a node (edges were dropped when parent was missing)
+      this.ensureHierarchyEndpointNodes(nodes, edges, processedClasses);
+
       // CRITICAL FIX: Re-parent orphan classes under owl:Thing so the sidebar
       // hierarchy tree renders properly even when the backend bulk endpoint
       // omits subClassOf for top-level classes. Without this, every class
@@ -141,10 +144,12 @@ export class GraphDataFetchService {
       }
 
       const propertyRelationEdges = edges.filter(e => e.type === 'propertyRelation');
+      const subClassOfEdges = edges.filter(e => e.type === 'subClassOf');
       
       console.log('[GraphDataFetchService] ✅ Transformation complete:', {
         totalNodes: nodes.length,
         totalEdges: edges.length,
+        subClassOfEdges: subClassOfEdges.length,
         classes: processedClasses.size,
         individuals: individualsData.length,
         properties: objectPropsData.length + dataPropsData.length + annotationPropsData.length,
@@ -459,7 +464,7 @@ export class GraphDataFetchService {
     });
     processedClasses.add(classIri);
 
-    // Add subClassOf edges
+    // Add subClassOf edges — prefer explicit array from bulk endpoint
     const superClasses = classData.subClassOf || classData.superClasses || classData.parents || [];
     // Also accept singular parent / parentIri (used by recursive fallback fetcher)
     const singleParent = classData.parent || classData.parentIri || classData.parentIRI;
@@ -468,6 +473,7 @@ export class GraphDataFetchService {
       allParents.push(singleParent);
     }
     for (const parent of allParents) {
+      if (!parent || parent === classIri) continue;
       edges.push({
         id: `${classIri}-subClassOf-${parent}`,
         from: classIri,
@@ -499,6 +505,44 @@ export class GraphDataFetchService {
         type: 'disjointWith',
         label: 'disjointWith'
       });
+    }
+  }
+
+  /**
+   * Create stub class nodes for superclass IRIs referenced by subClassOf edges
+   * but missing from the class list (common when parent is owl:Thing or external).
+   */
+  private ensureHierarchyEndpointNodes(
+    nodes: OntologyNode[],
+    edges: OntologyEdge[],
+    processedClasses: Set<string>
+  ): void {
+    const nodeIds = new Set(nodes.map(n => n.id));
+    const builtin = new Set([
+      'http://www.w3.org/2002/07/owl#Thing',
+      'http://www.w3.org/2002/07/owl#Nothing',
+      'http://www.w3.org/2002/07/owl#Class'
+    ]);
+    let added = 0;
+
+    for (const edge of edges) {
+      if (edge.type !== 'subClassOf') continue;
+      const parentIri = edge.to;
+      if (!parentIri || nodeIds.has(parentIri) || builtin.has(parentIri)) continue;
+
+      nodes.push({
+        id: parentIri,
+        label: parentIri.split('#').pop()?.split('/').pop() || parentIri,
+        type: 'class',
+        uri: parentIri
+      });
+      nodeIds.add(parentIri);
+      processedClasses.add(parentIri);
+      added++;
+    }
+
+    if (added > 0) {
+      console.log(`[GraphDataFetchService] 🌳 Added ${added} missing superclass nodes for subClassOf edges`);
     }
   }
 

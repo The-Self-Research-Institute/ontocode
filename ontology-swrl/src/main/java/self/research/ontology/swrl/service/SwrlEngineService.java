@@ -105,65 +105,74 @@ public class SwrlEngineService {
             long fetchDuration = System.currentTimeMillis() - fetchStart;
             engineLog.info("[VALIDATE] Ontology fetched in {}ms project={}", fetchDuration, projectId);
 
-            // Register namespace prefixes before engine creation and rule resolution
-            if (ensureNamespacePrefixes(projectId, ontology)) {
-                engineCache.remove(projectId);
-            }
-            
+            // Register namespace prefixes for name resolution only (don't touch the shared engine cache)
+            ensureNamespacePrefixes(projectId, ontology);
+
+            // Use a FRESH isolated engine for validation so that infer() only runs the one
+            // rule being validated — not all previously saved/enabled rules in the cached engine.
             long engineStart = System.currentTimeMillis();
-            SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
+            SWRLRuleEngine validationEngine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
             long engineDuration = System.currentTimeMillis() - engineStart;
-            engineLog.info("[VALIDATE] Engine obtained in {}ms project={} (cached={})", 
-                    engineDuration, projectId, engineDuration < 10 ? "yes" : "no");
-            
+            engineLog.info("[VALIDATE] Fresh validation engine created in {}ms project={}", engineDuration, projectId);
+
             String tempName = "temp_validation_" + System.currentTimeMillis();
             String resolvedText = resolveEntityNames(ruleText, ontology);
-            engine.createSWRLRule(tempName, resolvedText);
-            
-            // Semantic validation: attempt inference to catch built-in binding errors
-            // (e.g., swrlb:lessThanOrEqual with unbound arguments)
+
             try {
-                engine.infer();
+                validationEngine.createSWRLRule(tempName, resolvedText);
+            } catch (SWRLParseException parseEx) {
+                // Re-throw so the outer catch block handles it with enhanced suggestions
+                throw parseEx;
+            } catch (Exception createEx) {
+                // createSWRLRule throws a non-parse exception when a class/property name in
+                // the rule does not exist in the ontology (e.g. "Invalid SWRL atom predicate").
+                String msg = createEx.getMessage() != null ? createEx.getMessage() : createEx.getClass().getSimpleName();
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("Invalid SWRL atom predicate '([^']+)'").matcher(msg);
+                if (m.find()) {
+                    String missing = m.group(1);
+                    return new ValidationResult(false,
+                        "Unknown class or property '" + missing + "'",
+                        List.of(
+                            "'" + missing + "' does not exist in this ontology.",
+                            "To infer new class membership: create the class '" + missing + "' first using the Entities panel, then use it in this rule.",
+                            "To use an existing class: check the spelling against the Entities panel."
+                        ));
+                }
+                throw createEx;
+            }
+
+            // Semantic validation: run inference on the isolated engine to catch unbound
+            // argument errors in built-ins. Only the one temp rule runs here.
+            try {
+                validationEngine.infer();
             } catch (Exception inferEx) {
-                engine.deleteSWRLRule(tempName);
-                
                 String errorMsg = inferEx.getMessage() != null ? inferEx.getMessage() : inferEx.getClass().getSimpleName();
-                
-                // Check if this is a built-in binding error
+
                 if (inferEx instanceof SWRLBuiltInException
-                    || errorMsg.contains("built-in")
-                    || errorMsg.contains("do not support argument binding")) {
-                    
+                        || errorMsg.contains("built-in")
+                        || errorMsg.contains("do not support argument binding")) {
+
                     logger.warn("SWRL built-in validation error for project {}: {}", projectId, errorMsg);
-                    
+
                     if (meterRegistry != null) {
                         meterRegistry.counter("swrl.validation.errors",
-                            "projectId", projectId,
-                            "type", "builtin").increment();
+                            "projectId", projectId, "type", "builtin").increment();
                     }
-                    
+
                     List<String> suggestions = new ArrayList<>();
-                    if (errorMsg.contains("comparison built-ins do not support argument binding") 
-                        || errorMsg.contains("do not support argument binding")) {
-                        suggestions.add("Comparison built-ins (swrlb:lessThan, swrlb:greaterThan, swrlb:lessThanOrEqual, etc.) require all arguments to be already bound.");
-                        suggestions.add("Ensure variables are bound by class or property atoms before using them in comparison built-ins.");
-                        suggestions.add("Example: Person(?p) ^ hasAge(?p, ?age) ^ swrlb:lessThanOrEqual(?age, 25) -> Young(?p)");
+                    if (errorMsg.contains("do not support argument binding")) {
+                        suggestions.add("Comparison built-ins require all arguments to be already bound by a class or property atom.");
+                        suggestions.add("Example: Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)");
                     }
-                    
-                    return new ValidationResult(false,
-                        "Built-in function error: " + errorMsg,
-                        suggestions);
+                    if (errorMsg.contains("PlainLiteral") || errorMsg.contains("xsd:string")) {
+                        suggestions.add("The property's range is declared as a string type. Change it to xsd:integer or xsd:decimal for numeric comparisons.");
+                    }
+
+                    return new ValidationResult(false, "Built-in function error: " + errorMsg, suggestions);
                 }
-                
-                // Re-throw non-built-in errors
+
                 throw inferEx;
-            } finally {
-                // Cleanup: delete temp rule to restore engine state
-                try {
-                    engine.deleteSWRLRule(tempName);
-                } catch (Exception cleanupEx) {
-                    logger.debug("Cleanup after validation: {}", cleanupEx.getMessage());
-                }
             }
             
             logger.info("Rule validation successful for project: {}", projectId);
@@ -681,6 +690,16 @@ public class SwrlEngineService {
             pf.setPrefix(entry.getValue(), entry.getKey());
         }
 
+        // Always force-register the default namespace as ':' so SWRL4J can resolve bare entity
+        // names like Employee(?x). GraphDB re-exports strip xmlns="" so ':' is absent. Other
+        // prefixes like co: may already map to the same namespace but SWRL4J only uses ':'.
+        if (defaultNs != null) {
+            pf.setPrefix(":", defaultNs);
+            newPrefixesAdded = true;
+            logger.info("Registered default namespace '{}' as ':' prefix for SWRL4J entity resolution (project {})",
+                    defaultNs, projectId);
+        }
+
         return newPrefixesAdded;
     }
 
@@ -1139,6 +1158,20 @@ public class SwrlEngineService {
             
             // Create SQWRL query engine
             org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
+
+            // SQWRL queries run on a fresh engine, so load the saved enabled
+            // SWRL rules first. Otherwise queries for inferred classes (for
+            // example HonorsStudent after a GPA rule) return no rows.
+            List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
+            for (SwrlRule rule : enabledRules) {
+                try {
+                    String resolvedRule = resolveEntityNames(rule.getRuleText(), ontology);
+                    queryEngine.createSWRLRule(rule.getRuleName(), resolvedRule);
+                } catch (org.swrlapi.parser.SWRLParseException e) {
+                    logger.warn("Skipping saved SWRL rule '{}' while preparing SQWRL query: {}",
+                            rule.getRuleName(), e.getMessage());
+                }
+            }
             
             logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);
             

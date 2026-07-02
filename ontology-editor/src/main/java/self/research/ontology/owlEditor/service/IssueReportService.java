@@ -27,6 +27,12 @@ public class IssueReportService {
     
     /**
      * Submit an issue report, creating a Jira ticket if enabled
+     * 
+     * IMPORTANT: This method saves issue reports for ALL USERS regardless of subscription plan (FREE/PRO/ENTERPRISE)
+     * - Free users can report issues just like paid users
+     * - Reports are ALWAYS saved to MongoDB with success: true
+     * - Jira ticket creation is attempted but failures don't prevent local storage
+     * - This ensures users get immediate feedback that their issue was received and stored
      */
     public IssueReportResult submitIssueReport(IssueReport issueReport, List<MultipartFile> attachments) {
         try {
@@ -120,6 +126,7 @@ public class IssueReportService {
                             .success(true)
                             .message("Issue saved locally but failed to create Jira ticket. Our team has been notified.")
                             .issueReportId(saved.getId())
+                            .jiraFailureReason(jiraResult.getErrorMessage())
                             .build();
                     }
                     
@@ -133,6 +140,7 @@ public class IssueReportService {
                         .success(true)
                         .message("Issue saved locally but failed to create Jira ticket: " + e.getMessage())
                         .issueReportId(saved.getId())
+                        .jiraFailureReason(e.getMessage())
                         .build();
                 }
             } else {
@@ -236,5 +244,6 @@ public class IssueReportService {
         private String issueReportId;
         private String jiraIssueKey;
         private String jiraIssueUrl;
+        private String jiraFailureReason;
     }
 }

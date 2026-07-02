@@ -14,6 +14,18 @@ import java.util.List;
 @Document(collection = "projects")
 public class Project {
 
+    /**
+     * Project member was auto-linked as the workspace billing owner (non-private projects).
+     * Removal and role changes are restricted (see ProjectService).
+     */
+    public static final String WS_EDITOR_LINK_OWNER = "WORKSPACE_OWNER";
+
+    /**
+     * Project member was auto-linked as a workspace administrator (non-private projects).
+     * Removal is allowed only for the workspace owner; role changes follow the same rule.
+     */
+    public static final String WS_EDITOR_LINK_ADMIN = "WORKSPACE_ADMIN";
+
     @Id
     private String id;
     
@@ -38,6 +50,13 @@ public class Project {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     
+    // Visibility controls auto-add behaviour when new workspace members join.
+    // "PRIVATE"   – only the owner; never auto-added.
+    // "WORKSPACE" – created with "all workspace members"; new members get auto-added as viewer.
+    // "SPECIFIC"  – created for a hand-picked set; new admins are added, regular viewers are not.
+    // null        – legacy; treated like SPECIFIC (non-private for admins, not auto-added for viewers).
+    private String visibility;
+
     // Soft delete fields
     private Boolean isDeleted = false;
     private LocalDateTime deletedAt;
@@ -108,9 +127,11 @@ public class Project {
         private String userId;
         private String username;
         private String email;
-        private String role; // OWNER, EDITOR, VIEWER
+        private String role; // OWNER, ADMIN, EDITOR, VIEWER
         private LocalDateTime joinedAt;
-        
+        /** {@link Project#WS_EDITOR_LINK_OWNER} or {@link Project#WS_EDITOR_LINK_ADMIN} when set; otherwise normal membership */
+        private String workspaceEditorLink;
+
         // Constructors
         public ProjectMember() {}
         
@@ -120,6 +141,11 @@ public class Project {
             this.email = email;
             this.role = role;
             this.joinedAt = LocalDateTime.now();
+        }
+
+        public ProjectMember(String userId, String username, String email, String role, String workspaceEditorLink) {
+            this(userId, username, email, role);
+            this.workspaceEditorLink = workspaceEditorLink;
         }
         
         // Getters and Setters
@@ -137,6 +163,9 @@ public class Project {
         
         public LocalDateTime getJoinedAt() { return joinedAt; }
         public void setJoinedAt(LocalDateTime joinedAt) { this.joinedAt = joinedAt; }
+
+        public String getWorkspaceEditorLink() { return workspaceEditorLink; }
+        public void setWorkspaceEditorLink(String workspaceEditorLink) { this.workspaceEditorLink = workspaceEditorLink; }
     }
     
     // Constructors
@@ -148,7 +177,11 @@ public class Project {
     
     // Helper methods
     public void addMember(String userId, String username, String email, String role) {
-        ProjectMember member = new ProjectMember(userId, username, email, role);
+        addMember(userId, username, email, role, null);
+    }
+
+    public void addMember(String userId, String username, String email, String role, String workspaceEditorLink) {
+        ProjectMember member = new ProjectMember(userId, username, email, role, workspaceEditorLink);
         this.members.add(member);
         this.updatedAt = LocalDateTime.now();
     }
@@ -266,6 +299,9 @@ public class Project {
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
     
+    public String getVisibility() { return visibility; }
+    public void setVisibility(String visibility) { this.visibility = visibility; }
+
     public Boolean getIsDeleted() { return isDeleted; }
     public void setIsDeleted(Boolean isDeleted) { this.isDeleted = isDeleted; }
     

@@ -1,0 +1,1702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OntoCode — Knowledge Transfer</title>
+<style>
+:root {
+  --bg: #0f172a;
+  --bg-2: #111827;
+  --bg-3: #1f2937;
+  --border: #1f2937;
+  --border-strong: #334155;
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-faint: #64748b;
+  --accent: #8b5cf6;
+  --accent-2: #6366f1;
+  --green: #10b981;
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --code-bg: #0b1020;
+  --code-border: #1e293b;
+  --link: #a78bfa;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* ── Layout ───────────────────────────────────────────────── */
+.layout { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { position: relative !important; height: auto !important; border-right: 0 !important; border-bottom: 1px solid var(--border); }
+  .sidebar nav { max-height: 240px; overflow-y: auto; }
+}
+
+/* ── Sidebar ──────────────────────────────────────────────── */
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  padding: 24px 16px;
+  overflow-y: auto;
+}
+
+.sidebar h1 {
+  font-size: 18px;
+  margin: 0 0 4px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.sidebar .subtitle {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 24px;
+}
+
+.sidebar nav { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.sidebar nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border-left: 2px solid transparent;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.sidebar nav a:hover { color: var(--text); background: var(--bg-3); }
+.sidebar nav a.section-head {
+  margin-top: 14px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 700;
+  padding-bottom: 2px;
+}
+.sidebar nav a.section-head:hover { background: transparent; color: var(--accent); }
+
+/* ── Main ─────────────────────────────────────────────────── */
+main { padding: 48px 56px; max-width: 1100px; }
+@media (max-width: 700px) { main { padding: 24px 16px; } }
+
+h1, h2, h3, h4 { color: #f8fafc; line-height: 1.25; }
+h1 { font-size: 36px; margin-top: 0; }
+h2 {
+  font-size: 26px;
+  margin-top: 56px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-strong);
+}
+h3 { font-size: 19px; margin-top: 32px; }
+h4 { font-size: 15px; margin-top: 24px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; }
+
+p, ul, ol { color: var(--text); }
+ul, ol { padding-left: 22px; }
+li { margin-bottom: 6px; }
+strong { color: #f8fafc; }
+
+a { color: var(--link); }
+a:hover { text-decoration: underline; }
+
+/* ── Code ─────────────────────────────────────────────────── */
+code, pre, kbd, .mono {
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", "Monaco", monospace;
+  font-size: 13px;
+}
+code:not(pre code) {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: #c4b5fd;
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  margin: 16px 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+pre code { background: transparent; border: 0; padding: 0; color: var(--text); }
+pre.tree { color: var(--text-muted); font-size: 12px; }
+pre.tree .dir { color: #c4b5fd; }
+pre.tree .file { color: var(--text-muted); }
+pre.tree .note { color: var(--text-faint); font-style: italic; }
+
+/* ── Callouts ─────────────────────────────────────────────── */
+.callout {
+  margin: 18px 0;
+  padding: 14px 18px;
+  border-radius: 8px;
+  border-left: 3px solid var(--accent);
+  background: rgba(139, 92, 246, 0.08);
+}
+.callout.info { border-left-color: var(--accent); background: rgba(139, 92, 246, 0.08); }
+.callout.warn { border-left-color: var(--amber); background: rgba(245, 158, 11, 0.08); }
+.callout.danger { border-left-color: var(--red); background: rgba(239, 68, 68, 0.08); }
+.callout.success { border-left-color: var(--green); background: rgba(16, 185, 129, 0.08); }
+.callout strong:first-child { display: inline-block; margin-bottom: 4px; }
+
+/* ── Tables ───────────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 18px 0;
+  font-size: 13px;
+}
+th, td {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-strong);
+  vertical-align: top;
+}
+th {
+  background: var(--bg-2);
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+tr:hover td { background: rgba(139, 92, 246, 0.04); }
+
+/* ── Pills / badges ───────────────────────────────────────── */
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin: 0 2px;
+  vertical-align: middle;
+}
+.pill.java { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+.pill.ts { background: rgba(96, 165, 250, 0.15); color: #93c5fd; border: 1px solid rgba(96, 165, 250, 0.3); }
+.pill.react { background: rgba(34, 211, 238, 0.15); color: #67e8f9; border: 1px solid rgba(34, 211, 238, 0.3); }
+.pill.spring { background: rgba(110, 231, 183, 0.15); color: #6ee7b7; border: 1px solid rgba(110, 231, 183, 0.3); }
+.pill.mongo { background: rgba(110, 231, 183, 0.10); color: #86efac; border: 1px solid rgba(110, 231, 183, 0.25); }
+.pill.graphdb { background: rgba(167, 139, 250, 0.15); color: #c4b5fd; border: 1px solid rgba(167, 139, 250, 0.3); }
+.pill.stripe { background: rgba(168, 85, 247, 0.15); color: #d8b4fe; border: 1px solid rgba(168, 85, 247, 0.3); }
+.pill.docker { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
+.pill.k8s { background: rgba(56, 189, 248, 0.15); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.3); }
+.pill.severity-low { background: rgba(110, 231, 183, 0.12); color: #6ee7b7; }
+.pill.severity-med { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.pill.severity-high { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+
+/* ── Cards ────────────────────────────────────────────────── */
+.cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin: 20px 0; }
+.card {
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 16px 18px;
+  background: var(--bg-2);
+}
+.card h4 { margin: 0 0 8px; font-size: 13px; letter-spacing: 0.06em; }
+.card p { margin: 0; font-size: 13px; color: var(--text-muted); }
+.card .port { font-family: monospace; color: var(--accent); font-size: 11px; }
+
+/* ── ASCII art block ──────────────────────────────────────── */
+pre.diagram { line-height: 1.3; font-size: 11.5px; color: var(--text-muted); }
+pre.diagram .arrow { color: var(--accent); }
+
+/* ── Print ────────────────────────────────────────────────── */
+@media print {
+  .sidebar { display: none; }
+  .layout { grid-template-columns: 1fr; }
+  main { padding: 0; max-width: 100%; }
+  pre { page-break-inside: avoid; }
+  h2, h3 { page-break-after: avoid; }
+}
+
+/* Smooth anchor offset so headings aren't hidden under sticky elements */
+section { scroll-margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <h1>OntoCode</h1>
+    <p class="subtitle">Knowledge transfer</p>
+    <nav>
+      <a class="section-head">Start here</a>
+      <a href="#welcome">Welcome / How to use</a>
+      <a href="#what-is">What is OntoCode</a>
+      <a href="#tech-stack">Tech stack</a>
+
+      <a class="section-head">Architecture</a>
+      <a href="#high-level">High-level diagram</a>
+      <a href="#services">Services overview</a>
+      <a href="#repo-layout">Repository layout</a>
+
+      <a class="section-head">Backend</a>
+      <a href="#gateway">ontology-gateway</a>
+      <a href="#auth">ontology-auth</a>
+      <a href="#editor">ontology-editor</a>
+      <a href="#swrl">ontology-swrl</a>
+      <a href="#plugin-svc">ontology-plugin-service</a>
+
+      <a class="section-head">Frontend</a>
+      <a href="#frontend-arch">Webview architecture</a>
+      <a href="#routing">Routing &amp; navigation</a>
+      <a href="#auth-context">Auth context</a>
+      <a href="#api-client">API client</a>
+      <a href="#components-map">Component map</a>
+
+      <a class="section-head">Data</a>
+      <a href="#data-model">Data model</a>
+      <a href="#mongo-schema">MongoDB collections</a>
+      <a href="#graphdb">GraphDB &amp; named graphs</a>
+
+      <a class="section-head">Domain flows</a>
+      <a href="#auth-flow">Authentication flow</a>
+      <a href="#workspace-flow">Workspace lifecycle</a>
+      <a href="#billing">Billing &amp; subscriptions</a>
+      <a href="#editing">Ontology editing</a>
+      <a href="#citations">Citations &amp; DOI validation</a>
+      <a href="#collab">Real-time collaboration</a>
+
+      <a class="section-head">Operations</a>
+      <a href="#logging">Logging</a>
+      <a href="#deployment">Deployment</a>
+      <a href="#local-dev">Local development</a>
+      <a href="#secrets">Secrets &amp; config</a>
+
+      <a class="section-head">Reference</a>
+      <a href="#bugs">Bug history (recent fixes)</a>
+      <a href="#pitfalls">Common pitfalls</a>
+      <a href="#kt-checklist">KT checklist</a>
+      <a href="#file-finder">Where to find things</a>
+      <a href="#glossary">Glossary</a>
+    </nav>
+  </aside>
+
+  <main>
+
+<!-- ============================================================ -->
+<!--  WELCOME                                                     -->
+<!-- ============================================================ -->
+<section id="welcome">
+  <h1>OntoCode — Knowledge Transfer</h1>
+  <p style="color: var(--text-muted); font-size: 15px; margin-top: -4px;">
+    A practical handoff document for engineers picking up the OntoCode codebase.
+    Read top to bottom on day one; use the sidebar as a reference after.
+  </p>
+
+  <div class="callout info">
+    <strong>How to use this document.</strong>
+    The first three sections (<em>What is OntoCode</em>, <em>Tech stack</em>, <em>High-level diagram</em>)
+    give you the mental model in 10 minutes. The <em>Backend</em> and <em>Frontend</em> chapters
+    explain each module so you can grep with intent. The <em>Domain flows</em> chapter
+    walks through the four flows you'll touch most often: auth, billing, editing, citations.
+    The <em>Bug history</em> chapter is the cheat sheet for "why is it like that" — look
+    here before re-deriving why a guard exists.
+  </div>
+
+  <h3>Reading order if you have one hour</h3>
+  <ol>
+    <li><a href="#what-is">What is OntoCode</a> — the product</li>
+    <li><a href="#high-level">High-level diagram</a> — the wiring</li>
+    <li><a href="#repo-layout">Repository layout</a> — where things live</li>
+    <li><a href="#auth-flow">Authentication flow</a> — how a user gets in</li>
+    <li><a href="#billing">Billing &amp; subscriptions</a> — the trickiest part</li>
+    <li><a href="#editing">Ontology editing</a> — the core product loop</li>
+  </ol>
+</section>
+
+<!-- ============================================================ -->
+<!--  WHAT IS                                                     -->
+<!-- ============================================================ -->
+<section id="what-is">
+  <h2>What is OntoCode</h2>
+  <p>
+    OntoCode is a collaborative web/IDE platform for editing OWL/RDF ontologies. Think of it
+    as <em>Protégé in the browser</em>, with workspaces, role-based collaboration, version control,
+    SPARQL/SWRL/DL-Query tooling, citation insertion (Zotero), and a plugin marketplace.
+  </p>
+
+  <p>It ships in two surfaces:</p>
+  <ul>
+    <li><strong>Standalone web app</strong> — accessed at <code>ontocode.selfresearch.org</code> via the API at <code>ontocodeapi.selfresearch.org</code>.</li>
+    <li><strong>VS Code extension</strong> — same UI hosted in a VS Code webview. Talks to the same backend; uses a postMessage proxy when CORS would otherwise block direct calls.</li>
+  </ul>
+
+  <h3>What users do here</h3>
+  <ul>
+    <li>Create/import OWL ontologies (<code>.owl</code>, <code>.ttl</code>, <code>.rdf</code>).</li>
+    <li>Edit class hierarchies, properties, individuals, datatypes, annotations.</li>
+    <li>Run a reasoner (<a href="#editor">ELK / HermiT</a>) and SWRL rules.</li>
+    <li>Query with SPARQL and DL Query.</li>
+    <li>Insert citations from Zotero with DOI validation.</li>
+    <li>Collaborate with workspace members (Pro+).</li>
+    <li>Track changes (audit history) and merge versions.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<!--  TECH STACK                                                  -->
+<!-- ============================================================ -->
+<section id="tech-stack">
+  <h2>Tech stack</h2>
+  <div class="cards">
+    <div class="card">
+      <h4>Backend</h4>
+      <p>
+        <span class="pill java">Java 21</span>
+        <span class="pill spring">Spring Boot 3</span>
+        Spring Cloud Gateway, Spring Security with JWT, Spring Data MongoDB.
+      </p>
+    </div>
+    <div class="card">
+      <h4>Ontology engine</h4>
+      <p>
+        <span class="pill java">OWL API</span>
+        <span class="pill graphdb">RDF4J</span>
+        Reasoners: ELK (EL), HermiT (DL). SWRL via SWRLAPI.
+      </p>
+    </div>
+    <div class="card">
+      <h4>Storage</h4>
+      <p>
+        <span class="pill mongo">MongoDB</span> for users, workspaces, projects, file
+        metadata, GridFS for raw OWL bytes.
+        <span class="pill graphdb">Ontotext GraphDB</span> for the actual triple store
+        (one named graph per project file).
+      </p>
+    </div>
+    <div class="card">
+      <h4>Frontend</h4>
+      <p>
+        <span class="pill react">React 18</span>
+        <span class="pill ts">TypeScript</span>
+        Vite, Tailwind, Lucide icons. Stripe Elements for card capture.
+      </p>
+    </div>
+    <div class="card">
+      <h4>Billing</h4>
+      <p>
+        <span class="pill stripe">Stripe</span>
+        Account-level subscriptions (Model B). SetupIntent → Subscription native flow,
+        plus a checkout-session fallback. Webhook-driven sync.
+      </p>
+    </div>
+    <div class="card">
+      <h4>Infrastructure</h4>
+      <p>
+        <span class="pill docker">Docker</span>
+        <span class="pill k8s">Kubernetes</span>
+        Logback rolling+gzip. Per-service rolling logs.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  HIGH LEVEL DIAGRAM                                          -->
+<!-- ============================================================ -->
+<section id="high-level">
+  <h2>High-level diagram</h2>
+  <pre class="diagram">
+                  ┌─────────────────────────────────────────────┐
+                  │                  Clients                     │
+                  │  ┌─────────────┐    ┌─────────────────────┐  │
+                  │  │  Web (SPA)  │    │  VS Code extension  │  │
+                  │  │  React/Vite │    │  (same SPA bundle)  │  │
+                  │  └──────┬──────┘    └──────────┬──────────┘  │
+                  └─────────┼──────────────────────┼─────────────┘
+                            │  HTTPS / JWT (postMessage in VS Code)
+                            ▼                      ▼
+                  ┌──────────────────────────────────────────────┐
+                  │   ontology-gateway  (Spring Cloud Gateway)   │
+                  │      :80     · routes, CORS, auth filter     │
+                  └────┬───────────────┬───────────────┬─────────┘
+                       │               │               │
+       ┌───────────────▼─┐    ┌────────▼────────┐    ┌─▼───────────────┐
+       │  ontology-auth  │    │ ontology-editor │    │ ontology-swrl   │
+       │  :8086 · users, │    │ :8083 · OWL API,│    │ :8084 · SWRL    │
+       │  workspaces,    │    │ GraphDB, query, │    │  rules, reason. │
+       │  Stripe billing │    │ versioning      │    │                 │
+       └────┬────────────┘    └────────┬────────┘    └────────┬────────┘
+            │                          │                      │
+            ▼                          ▼                      ▼
+       ┌─────────┐            ┌──────────────────┐   ┌──────────────┐
+       │ MongoDB │            │ Ontotext GraphDB │   │ shared-deps  │
+       │ Stripe  │            │ (named graphs)   │   │   (jars)     │
+       └─────────┘            └──────────────────┘   └──────────────┘
+
+                  ┌──────────────────────────────────────────────┐
+                  │  ontology-plugin-service  (:8087, optional)  │
+                  │       hosts custom-plugin metadata           │
+                  └──────────────────────────────────────────────┘
+  </pre>
+
+  <h3>Runtime contract in one sentence</h3>
+  <p>
+    Every authenticated request from a client carries a JWT minted by
+    <code>ontology-auth</code>; the gateway validates it, attaches user identity to
+    downstream calls, and the editor/swrl services use that identity plus the
+    project context (a <code>projectId</code> path param) to do their work against
+    GraphDB and MongoDB.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  SERVICES OVERVIEW                                           -->
+<!-- ============================================================ -->
+<section id="services">
+  <h2>Services overview</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Service</th>
+        <th>Port</th>
+        <th>Owns</th>
+        <th>Talks to</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>ontology-gateway</code></td>
+        <td>80</td>
+        <td>Routing, CORS, auth filter, request log.</td>
+        <td>All other services.</td>
+      </tr>
+      <tr>
+        <td><code>ontology-auth</code></td>
+        <td>8086</td>
+        <td>Sign up / login / verify, JWT issuance, password reset, workspaces, members, invitations, Stripe customers/subscriptions, plan feature config.</td>
+        <td>MongoDB, Stripe, SMTP.</td>
+      </tr>
+      <tr>
+        <td><code>ontology-editor</code></td>
+        <td>8083</td>
+        <td>OWL parsing, GraphDB CRUD, SPARQL, class/property/individual/annotation queries, project metadata, file storage (GridFS), citations, history, collaboration.</td>
+        <td>MongoDB, GraphDB, ontology-auth (for token refresh).</td>
+      </tr>
+      <tr>
+        <td><code>ontology-swrl</code></td>
+        <td>8084</td>
+        <td>SWRL rule storage, parsing, execution; ELK/HermiT reasoning when triggered.</td>
+        <td>MongoDB, GraphDB.</td>
+      </tr>
+      <tr>
+        <td><code>ontology-plugin-service</code></td>
+        <td>8087</td>
+        <td>Plugin marketplace metadata (optional in dev).</td>
+        <td>MongoDB.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <strong>Why a separate auth service?</strong>
+    The editor service talks to GraphDB and parses large OWL files; we don't want the
+    JVM that hosts the OWL API to be in the hot path for every login. Keeping auth
+    isolated also means the auth service can scale horizontally to handle Stripe
+    webhook bursts without restarting heavy editor instances.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  REPO LAYOUT                                                 -->
+<!-- ============================================================ -->
+<section id="repo-layout">
+  <h2>Repository layout</h2>
+  <pre class="tree"><span class="dir">ontocode/</span>
+├── <span class="dir">ontology-gateway/</span>          <span class="note"># Spring Cloud Gateway, JWT filter, CORS</span>
+│   ├── src/main/java/.../GatewayApplication.java
+│   ├── src/main/resources/application.properties
+│   └── src/main/resources/logback-spring.xml
+├── <span class="dir">ontology-auth/</span>             <span class="note"># users, workspaces, Stripe</span>
+│   ├── src/main/java/.../auth/
+│   │   ├── controller/        <span class="note"># REST endpoints</span>
+│   │   ├── service/           <span class="note"># StripeService, WorkspaceService, …</span>
+│   │   ├── model/             <span class="note"># User, Workspace, Invitation, PlanFeatureConfig</span>
+│   │   ├── repository/        <span class="note"># Mongo repos</span>
+│   │   ├── security/          <span class="note"># JWT, filters</span>
+│   │   └── dto/               <span class="note"># request/response shapes</span>
+│   └── src/main/resources/{application.properties, logback-spring.xml}
+├── <span class="dir">ontology-editor/</span>           <span class="note"># OWL/RDF heavy lifting</span>
+│   └── src/main/java/.../owlEditor/
+│       ├── controller/        <span class="note"># /api/ontology/*, /api/citations/*</span>
+│       ├── service/           <span class="note"># GraphDBDatasetService, OntologyQueryService, CitationService, …</span>
+│       ├── model/             <span class="note"># DTOs, history, merge analysis</span>
+│       ├── config/            <span class="note"># GraphDB connection, security</span>
+│       └── util/
+├── <span class="dir">ontology-swrl/</span>             <span class="note"># SWRL + reasoning</span>
+├── <span class="dir">ontology-plugin-service/</span>   <span class="note"># plugin metadata (optional)</span>
+├── <span class="dir">ontology-vscode-extension/</span>
+│   ├── src/                   <span class="note"># VS Code host: extension.ts, services, panels</span>
+│   ├── webview-src/           <span class="note"># React SPA (also used by webapp build)</span>
+│   │   ├── App.tsx            <span class="note"># top-level router/state</span>
+│   │   ├── components/        <span class="note"># Dashboard, BillingManagement, …</span>
+│   │   ├── hooks/             <span class="note"># useRouter, useSubscription, usePlanPricing</span>
+│   │   ├── contexts/          <span class="note"># AuthContexts.tsx, CollaborationContext</span>
+│   │   ├── services/          <span class="note"># apiClient, doiValidationService, citationLibraryCache</span>
+│   │   ├── utils/             <span class="note"># doi, sessionCleanup, planFeatures</span>
+│   │   └── config/            <span class="note"># deploymentConfig, routes</span>
+│   └── package.json           <span class="note"># 'webview-src' is an embedded sub-package</span>
+├── <span class="dir">k8s/</span>                       <span class="note"># Kubernetes manifests</span>
+├── <span class="dir">docker/</span>                    <span class="note"># Dockerfiles + compose</span>
+├── <span class="dir">test-data/</span>                 <span class="note"># sample ontologies for manual testing</span>
+└── <span class="dir">docs/</span>                      <span class="note"># this folder</span>
+</pre>
+
+  <div class="callout info">
+    <strong>Two TypeScript packages, one bundle.</strong>
+    <code>ontology-vscode-extension/webview-src</code> is the React SPA. Both the standalone
+    webapp and the VS Code webview load the same bundle. Detection happens at runtime
+    via <code>window.vscode</code> and <code>__ONTOCODE_BROWSER_BRIDGE__</code>; see
+    <a href="#api-client"><code>services/apiClient.ts</code></a>.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  GATEWAY                                                     -->
+<!-- ============================================================ -->
+<section id="gateway">
+  <h2>Service: ontology-gateway</h2>
+  <p>
+    Spring Cloud Gateway. Single ingress for the API. Owns CORS, route mapping, and
+    JWT validation. Forwards to the appropriate downstream service based on path
+    prefix.
+  </p>
+
+  <h3>Routes</h3>
+  <table>
+    <thead><tr><th>Prefix</th><th>Target</th></tr></thead>
+    <tbody>
+      <tr><td><code>/api/auth/**</code>, <code>/api/users/**</code>, <code>/api/workspaces/**</code>, <code>/api/billing/**</code>, <code>/api/invitations/**</code></td><td>ontology-auth</td></tr>
+      <tr><td><code>/api/ontology/**</code>, <code>/api/citations/**</code>, <code>/api/projects/**</code>, <code>/api/files/**</code>, <code>/api/history/**</code></td><td>ontology-editor</td></tr>
+      <tr><td><code>/api/swrl/**</code>, <code>/api/reasoner/**</code></td><td>ontology-swrl</td></tr>
+      <tr><td><code>/api/plugins/**</code></td><td>ontology-plugin-service</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Auth filter</h3>
+  <p>
+    The gateway extracts the <code>Authorization: Bearer</code> JWT, validates the
+    signature against the shared secret, and rewrites <code>X-User-Id</code> /
+    <code>X-User-Email</code> downstream so the editor and SWRL services don't need
+    to re-decode the JWT for every request.
+  </p>
+
+  <h3>Logging</h3>
+  <p>
+    Logback rolling policy at <code>ontology-gateway/src/main/resources/logback-spring.xml</code>
+    — daily + 50 MB roll, 30-day app retention, 90-day error retention, gzip on roll.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  AUTH SERVICE                                                -->
+<!-- ============================================================ -->
+<section id="auth">
+  <h2>Service: ontology-auth</h2>
+  <p>
+    Owns identity, workspace membership, invitations, and Stripe billing. This is
+    where almost every "is this user allowed to…" decision is made.
+  </p>
+
+  <h3>Key controllers</h3>
+  <table>
+    <thead><tr><th>Class</th><th>Surface</th></tr></thead>
+    <tbody>
+      <tr><td><code>AuthController</code></td><td><code>/api/auth/login</code>, <code>signup</code>, <code>refresh</code>, <code>verify-email</code>, <code>forgot-password</code>, <code>reset-password</code>.</td></tr>
+      <tr><td><code>WorkspaceController</code></td><td><code>/api/workspaces</code>: list, create, get, delete, members, role updates, invitations, billing-status check.</td></tr>
+      <tr><td><code>SubscriptionController</code></td><td><code>/api/billing/*</code>: setup, update-payment-method, cancel-workspace, portal, auto-renew/disable, subscription/details. Also Stripe webhook receiver.</td></tr>
+      <tr><td><code>InvitationController</code></td><td><code>/api/invitations</code>: send, accept, decline.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Key services</h3>
+  <table>
+    <thead><tr><th>Class</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td><code>StripeService</code></td>
+          <td>Stripe customer/subscription CRUD, webhook handling, trial gating, plan resolution.</td></tr>
+      <tr><td><code>WorkspaceService</code></td>
+          <td>Workspace CRUD, member management, <code>syncWorkspacesToOwnerPlan()</code> propagates account plan changes to every owned workspace, billing-status resolution.</td></tr>
+      <tr><td><code>PlanFeatureConfigService</code></td>
+          <td>Pulls per-plan feature flags from the <code>plan_feature_config</code> Mongo collection (overridable by ops without a code deploy).</td></tr>
+      <tr><td><code>EmailService</code></td>
+          <td>Verification, password reset, trial reminders, payment-failure notices.</td></tr>
+      <tr><td><code>BillingReminderService</code></td>
+          <td>Scheduled job: trial-end reminders at 15, 7, and 1 day.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Security</h3>
+  <p>
+    JWT minted with <code>jjwt</code>. Custom <code>JwtAuthenticationFilter</code> in the
+    auth service for endpoints that the gateway doesn't already authenticate
+    (e.g. webhook handlers, public verification endpoints). Password reset tokens are
+    single-use and time-bounded by <code>security.tokens.password-reset-hours</code>.
+  </p>
+
+  <div class="callout warn">
+    <strong>Where billing logic lives.</strong>
+    All Stripe API calls happen in <code>StripeService</code>. The webhook handler in
+    <code>SubscriptionController</code> turns Stripe events into local DB writes via
+    <code>WorkspaceService.syncWorkspacesToOwnerPlan</code>. If you're chasing a
+    "plan didn't propagate" bug, that's the function to read first.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  EDITOR                                                      -->
+<!-- ============================================================ -->
+<section id="editor">
+  <h2>Service: ontology-editor</h2>
+  <p>
+    The heaviest service. Hosts the OWL API runtime, talks to GraphDB, persists files
+    in MongoDB GridFS, runs SPARQL, owns versioning and history, and exposes the
+    citation insertion / DOI validation endpoints.
+  </p>
+
+  <h3>Major controllers</h3>
+  <table>
+    <thead><tr><th>Class</th><th>Surface</th></tr></thead>
+    <tbody>
+      <tr><td><code>ProjectController</code></td><td><code>/api/projects</code>: create, list, rename, delete, members, sharing.</td></tr>
+      <tr><td><code>ProjectLoadController</code></td><td>Upload &amp; import (with progress streaming), <code>/graphdb/check</code> fast-path duplicate detection.</td></tr>
+      <tr><td><code>OntologyMetadataController</code></td><td><code>/api/ontology/metadata/{projectId}</code> — counts, ontology IRI, prefixes, axioms, annotations.</td></tr>
+      <tr><td><code>OntologyQueryController</code></td><td><code>/api/ontology/classes/*</code>, <code>/properties/*</code>, <code>/individuals/*</code>: top-level, all, children, details, usage.</td></tr>
+      <tr><td><code>OntologyMutationController</code></td><td>Atomic batch mutations (create/delete class, addSubClassOf, addSubPropertyOf, …).</td></tr>
+      <tr><td><code>CitationController</code></td><td><code>/api/citations/{projectId}/insert</code>, <code>/api/citations/validate-doi</code>.</td></tr>
+      <tr><td><code>HistoryController</code></td><td>Audit log, restore, diff.</td></tr>
+      <tr><td><code>ReasonerController</code></td><td>Trigger reasoner, fetch inferred hierarchy.</td></tr>
+      <tr><td><code>SparqlController</code></td><td>SPARQL SELECT / UPDATE, with rate limits.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Key services</h3>
+  <table>
+    <thead><tr><th>Class</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td><code>GraphDBDatasetService</code></td>
+          <td>The boundary to Ontotext GraphDB. Manages repository connection, named-graph creation, SPARQL UPDATE, partition cache, ASK / count helpers, <code>checkFileExistsInGraphDB</code>.</td></tr>
+      <tr><td><code>ProjectRepoCache</code></td>
+          <td>Per-project in-memory RDF4J <code>MemoryStore</code> mirror. Lets read-heavy SPARQL queries skip GraphDB. LRU-bounded by <code>ontocode.cache.memstore.max-projects</code>.</td></tr>
+      <tr><td><code>OntologyQueryService</code></td>
+          <td>Spring-cached SPARQL helpers for class/property hierarchies, instance counts, etc. <code>@CacheEvict</code>'d by mutations.</td></tr>
+      <tr><td><code>OntologyMutationService</code></td>
+          <td>Single entry point for write operations. Translates a list of <code>{type, iri, …}</code> ops into a SPARQL UPDATE; keeps cache invalidation atomic with the write.</td></tr>
+      <tr><td><code>CitationService</code></td>
+          <td>Inserts citation triples into the project graph. Authoritative DOI validation via doi.org content negotiation (Crossref/DataCite CSL JSON).</td></tr>
+      <tr><td><code>GridFSFileService</code></td>
+          <td>Raw OWL bytes in MongoDB GridFS. Used on initial import and for reload-from-source.</td></tr>
+      <tr><td><code>CollaborativeEditService</code></td>
+          <td>WebSocket fan-out for live editing.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>The GraphDB naming convention</h3>
+  <p>
+    Each opened file is assigned a derived id:
+    <code>ontologyProjectId = `${initialProjectId}--${fileId}`</code>.
+    The named graph URI is
+    <code>http://ontocode.org/project/{ontologyProjectId}</code>. SPARQL
+    queries are scoped via <code>FROM &lt;graphURI&gt;</code> injection inside
+    <code>GraphDBDatasetService</code>.
+  </p>
+
+  <h3>Reasoners</h3>
+  <p>
+    ELK is the default (fast, EL profile). HermiT is available as a fallback for full
+    DL but expensive on large ontologies. Triggering a reasoner runs in
+    <code>ReasonerService</code>; results are written back into a parallel
+    <code>inferred</code> named graph so the asserted graph is never mutated.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  SWRL                                                        -->
+<!-- ============================================================ -->
+<section id="swrl">
+  <h2>Service: ontology-swrl</h2>
+  <p>
+    Hosts SWRL rule storage and execution. Uses SWRLAPI on top of OWL API. Rules are
+    stored in MongoDB and re-applied to the project's GraphDB graph when triggered.
+    Reasoning passes write inferences to the <code>inferred</code> named graph.
+  </p>
+  <ul>
+    <li><strong>Rule lifecycle:</strong> create → parse (SWRLAPI) → save → run-on-demand or scheduled.</li>
+    <li><strong>Logging:</strong> dedicated <code>SWRL_FILE</code> appender; rule traces don't pollute the main log.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<!--  PLUGIN SERVICE                                              -->
+<!-- ============================================================ -->
+<section id="plugin-svc">
+  <h2>Service: ontology-plugin-service</h2>
+  <p>
+    Optional. Stores plugin manifests for the marketplace. The frontend's
+    <code>PluginMarketplace</code> + <code>pluginLoader</code> read from this service
+    and dynamically import plugin bundles.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  FRONTEND ARCH                                               -->
+<!-- ============================================================ -->
+<section id="frontend-arch">
+  <h2>Frontend: webview architecture</h2>
+  <p>
+    Single Vite-built React SPA at <code>ontology-vscode-extension/webview-src</code>.
+    Loaded by both the standalone web build and the VS Code webview panel.
+  </p>
+
+  <h3>Top-level shape</h3>
+  <pre><code>App.tsx                       ← top-level state machine + router
+├── AuthContexts                ← user, JWT, refreshPermissions
+├── useRouter                   ← URL ↔ RouteState sync
+├── currentRoute (useMemo)      ← derives the active view from state
+└── render switch
+      ├── deployment            DeploymentSelector
+      ├── login / signup        LoginForm / SignupForm
+      ├── invitation            InviteAcceptPage
+      ├── billing               BillingManagement   (always account-level)
+      ├── workspace             WorkspaceSelection
+      ├── subscription          SubscriptionPlanSelection
+      ├── projectDashboard      ProjectDashboard
+      ├── projectLibrary        ProjectLibrary
+      └── dashboard             Dashboard           (the editor)
+</code></pre>
+
+  <h3>State conventions</h3>
+  <ul>
+    <li><strong>Persistent UI state</strong> (selected file, expanded nodes) lives in
+        <code>sessionStorage</code> via small helpers in <code>utils/sessionCleanup.ts</code>
+        so the user can refresh without losing context.</li>
+    <li><strong>Route history</strong> is also persisted in <code>sessionStorage</code>
+        (<code>useRouter</code>) so browser back/forward works after refresh.</li>
+    <li><strong>API state</strong> mostly lives in the components that need it; we
+        haven't adopted React Query. The trade-off is duplication, not chaos —
+        it's been intentional to keep the bundle small.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<!--  ROUTING                                                     -->
+<!-- ============================================================ -->
+<section id="routing">
+  <h2>Routing &amp; navigation</h2>
+  <p>
+    There are two layers: the <em>logical</em> route stored in <code>RouteState</code>,
+    and the <em>URL</em> generated from it.
+  </p>
+
+  <h3>Logical route</h3>
+  <pre><code>// hooks/useRouter.ts
+type View =
+  | 'deployment' | 'login' | 'signup' | 'invitation'
+  | 'workspace' | 'subscription' | 'billing'
+  | 'projectDashboard' | 'projectLibrary' | 'dashboard';
+
+interface RouteState {
+  view: View;
+  projectId?: string | null;
+  projectName?: string;
+  fileId?: string | null;
+  fileName?: string;
+  isLoginView?: boolean;
+  inviteToken?: string | null;
+  resetToken?: string | null;
+  showAuthForInvitation?: boolean;
+  deploymentType?: string | null;
+  showSubscriptionPlan?: boolean;
+}
+</code></pre>
+
+  <h3>URL mapping</h3>
+  <p>
+    See <code>config/routes.ts</code>. In a hosted browser the URL uses pathname
+    routing (<code>/billing</code>, <code>/projects/:projectName</code>). In the VS Code
+    webview the protocol is <code>vscode-webview://</code> which can't have a real
+    pathname, so we fall back to hash routing. The detection is at the top of
+    <code>routes.ts</code>:
+  </p>
+<pre><code>const shouldUseHashRouting = (): boolean => {
+  const protocol = window.location.protocol;
+  return protocol.startsWith('vscode-webview') ||
+         protocol.startsWith('vscode-webview-resource');
+};</code></pre>
+
+  <h3>Navigation rules</h3>
+  <ul>
+    <li><strong>currentRoute</strong> is derived from app state in <code>App.tsx</code>
+        useMemo. The render branch then matches on <code>currentRoute.view</code>.</li>
+    <li><strong>navigateTo({ view })</strong> calls <code>onRouteChange</code>, which
+        flips state booleans (e.g. <code>setShowBillingPage(true)</code>); on the next
+        render <code>currentRoute</code> recomputes and the URL is pushed.</li>
+    <li><strong>Order matters.</strong> The <code>currentRoute</code> useMemo evaluates
+        branches top-down. Billing and other "modal" views need to outrank
+        workspace-selection so they aren't immediately overwritten.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<!--  AUTH CONTEXT                                                -->
+<!-- ============================================================ -->
+<section id="auth-context">
+  <h2>Auth context</h2>
+  <p>
+    <code>contexts/AuthContexts.tsx</code> is the single source of truth for
+    "who is the logged-in user". It exposes:
+  </p>
+  <pre><code>{
+  user: User | null,
+  loading: boolean,
+  needsWorkspaceSelection: boolean,
+  login, signup, logout,
+  forgotPassword, resetPassword, resendVerification, verifyEmailAndLogin,
+  selectWorkspace, switchWorkspace,
+  updateSubscriptionPlan, updateUserRole,
+  refreshPermissions,
+  sessionExpiredMessage,
+}</code></pre>
+
+  <p>
+    The JWT carries <code>workspaceId</code> and <code>subscriptionPlan</code>, so when
+    those change server-side (e.g. owner upgrades, member is added) we call
+    <code>refreshPermissions()</code> which hits <code>/api/auth/refresh</code> and
+    swaps the token. Components downstream see the new <code>user.subscriptionPlan</code>
+    on the next render.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  API CLIENT                                                  -->
+<!-- ============================================================ -->
+<section id="api-client">
+  <h2>API client</h2>
+  <p>
+    <code>services/apiClient.ts</code> is a singleton with two transport modes:
+  </p>
+  <ol>
+    <li><strong>Direct HTTP</strong> (axios) — used in the standalone web app.</li>
+    <li><strong>VS Code proxy</strong> — when running inside a VS Code webview, CORS
+        prevents direct calls to the backend, so we proxy through the extension host
+        via <code>postMessage</code>. Each call gets a unique request id; the
+        extension answers with another <code>postMessage</code> and the client
+        resolves the matching promise.</li>
+  </ol>
+
+  <p>
+    Detection happens once at instantiation:
+  </p>
+  <pre><code>private isVSCode = typeof window !== 'undefined' &&
+  !!window.vscode &&
+  !(window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION &&
+  !(window as any).__ONTOCODE_BROWSER_BRIDGE__;</code></pre>
+
+  <div class="callout info">
+    <strong>Two flags, two escape hatches.</strong>
+    <code>IS_WEB_EXTENSION</code> is set when the same SPA runs in the Browser
+    "extension" packaging. <code>__ONTOCODE_BROWSER_BRIDGE__</code> is set by a
+    Chrome bridge used in dev. Both force direct HTTP even when <code>window.vscode</code>
+    is present.
+  </div>
+
+  <h3>Errors</h3>
+  <p>
+    Both transports normalize failures into <code>ApiError</code> with
+    <code>{ status, data, code }</code>. Always read <code>error.status</code> /
+    <code>error.data</code>, not <code>error.response.*</code> — that's an axios-shape
+    that doesn't survive the VS Code proxy.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  COMPONENTS MAP                                              -->
+<!-- ============================================================ -->
+<section id="components-map">
+  <h2>Component map</h2>
+  <p>The components you'll touch most often. Big ones in bold.</p>
+  <table>
+    <thead><tr><th>Component</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><strong><code>Dashboard.tsx</code></strong></td><td>The editor. Class/property/individual hierarchies, tabbed entity panes, code view, citation insertion, reasoning. Largest file in the repo.</td></tr>
+      <tr><td><strong><code>EntityHierarchy.tsx</code></strong></td><td>Left tree (classes / object props / data props / annotation props / datatypes / individuals) with toolbar Add buttons.</td></tr>
+      <tr><td><code>details/ClassEditor.tsx</code> / <code>PropertyEditor.tsx</code> / <code>IndividualEditor.tsx</code> / <code>AnnotationPropertyEditor.tsx</code> / <code>DatatypeEditor.tsx</code></td><td>Right-pane editors per entity type.</td></tr>
+      <tr><td><code>CodeHighlighter.tsx</code></td><td>RDF code view with copy/download (export-gated).</td></tr>
+      <tr><td><strong><code>BillingManagement.tsx</code></strong></td><td>Account-level billing page. Plan card, payment history, update card, cancel, view plans.</td></tr>
+      <tr><td><code>SubscriptionPlanSelection.tsx</code></td><td>Plan picker with monthly/annual toggle and trial info.</td></tr>
+      <tr><td><code>WorkspaceSelection.tsx</code></td><td>List workspaces, create new, manage account billing pill.</td></tr>
+      <tr><td><code>ProjectDashboard.tsx</code></td><td>List projects in the current workspace, manage members.</td></tr>
+      <tr><td><code>ProjectLibrary.tsx</code></td><td>Files inside a project, upload, delete, rename.</td></tr>
+      <tr><td><code>CitationPickerDialog.tsx</code></td><td>Zotero library picker with DOI validation.</td></tr>
+      <tr><td><code>ManualCitationDialog.tsx</code></td><td>Manual citation entry; uses same DOI validator.</td></tr>
+      <tr><td><code>dialogs/*</code></td><td>~30 modals: AddClass, AddObjectProperty, ClassExpression, IRIEditor, etc.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<!--  DATA MODEL                                                  -->
+<!-- ============================================================ -->
+<section id="data-model">
+  <h2>Data model</h2>
+  <pre class="diagram">
+   User                          Workspace                  Project
+   ────                          ─────────                  ───────
+   _id                           workspaceId  ──owner──→    _id
+   email                         ownerId                    projectId
+   passwordHash                  name                       workspaceId
+   subscriptionStatus            members[]    ─owner/admin/ name
+   subscriptionPlanName            { userId,    member/      members[]
+   stripeCustomerId                  email,     viewer       files[]
+   stripeSubscriptionId              role,                   sharedWith[]
+   subscriptionCanceledAt            joinedAt }
+   hasUsedFreeTrial              subscriptionPlan
+   firstSubscriptionAt           billingStatus           File (FileMetadata)
+                                 stripeSubscriptionId    ────────────────────
+                                 currentPeriodEnd        fileId, projectId
+                                 collaborationEnabled    name, gridfsId
+                                                         createdAt, version
+  </pre>
+
+  <h3>Identity rules</h3>
+  <ul>
+    <li><strong>Account = User.</strong> Stripe customer is created per-user. One account, one paid subscription.</li>
+    <li><strong>Workspace.ownerId</strong> is the User who owns the workspace. The owner's account plan is reflected onto the workspace via <code>syncWorkspacesToOwnerPlan</code>.</li>
+    <li><strong>Workspace.members</strong> is an embedded list. Each entry has its own <code>role</code> (<code>OWNER</code> / <code>ADMIN</code> / <code>MEMBER</code> / <code>VIEWER</code>).</li>
+    <li><strong>Project.members</strong> is project-scoped, separate from workspace members. Used for project-level sharing.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<!--  MONGO SCHEMA                                                -->
+<!-- ============================================================ -->
+<section id="mongo-schema">
+  <h2>MongoDB collections</h2>
+  <table>
+    <thead><tr><th>Collection</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>users</code></td><td>User accounts, password hashes, Stripe ids, plan state, trial flags.</td></tr>
+      <tr><td><code>workspaces</code></td><td>Workspaces with embedded members and billing status.</td></tr>
+      <tr><td><code>invitations</code></td><td>Pending workspace invitations (token, email, role).</td></tr>
+      <tr><td><code>projects</code></td><td>Projects within a workspace.</td></tr>
+      <tr><td><code>file_metadata</code></td><td>File metadata; raw bytes in GridFS (<code>fs.files</code> / <code>fs.chunks</code>).</td></tr>
+      <tr><td><code>history</code></td><td>Audit log of edits per project.</td></tr>
+      <tr><td><code>plan_feature_config</code></td><td>Per-plan feature config so ops can tune limits without redeploy.</td></tr>
+      <tr><td><code>swrl_rules</code></td><td>SWRL rules per project.</td></tr>
+      <tr><td><code>plugin_manifests</code></td><td>Plugin metadata (optional service).</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<!--  GRAPHDB                                                     -->
+<!-- ============================================================ -->
+<section id="graphdb">
+  <h2>GraphDB &amp; named graphs</h2>
+  <p>
+    Ontotext GraphDB is the actual triple store. We use a single shared repository,
+    with one named graph per <em>(project, file)</em> pair:
+  </p>
+  <pre><code>graph URI = http://ontocode.org/project/{projectId}--{fileId}</code></pre>
+
+  <h3>Lifecycle</h3>
+  <ol>
+    <li>User uploads a file → <code>ProjectImportService</code> parses it (OWL API) and SPARQL-INSERTs it into the named graph.</li>
+    <li>Reads happen via <code>GraphDBDatasetService</code> (with a <code>FROM &lt;graph&gt;</code> clause) or the in-memory <code>ProjectRepoCache</code>.</li>
+    <li>Mutations go through <code>OntologyMutationService</code> which emits SPARQL UPDATE and immediately invalidates Spring caches and the per-project memstore.</li>
+    <li>Reasoner output goes to a parallel <code>{graph}-inferred</code> named graph.</li>
+  </ol>
+
+  <h3>Cache layers</h3>
+  <table>
+    <thead><tr><th>Layer</th><th>Where</th><th>Invalidated by</th></tr></thead>
+    <tbody>
+      <tr><td>HTTP browser cache</td><td>responses of <code>/api/ontology/*</code></td><td>cache-bust query param when <code>forceRefresh</code></td></tr>
+      <tr><td>Spring <code>@Cacheable</code> (Caffeine)</td><td><code>topLevelClasses</code>, <code>allClasses</code>, <code>classChildren</code>, …</td><td><code>OntologyMutationService</code> @CacheEvict + <code>GraphDBDatasetService.invalidateContextCaches</code> on import</td></tr>
+      <tr><td>ProjectRepoCache (RDF4J memstore)</td><td>per-project in JVM, LRU 3</td><td><code>projectRepoCache.evict(projectId)</code> on writes</td></tr>
+      <tr><td>GraphDB internal cache</td><td>Ontotext owns it</td><td>n/a</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <strong>Stale-cache footgun.</strong>
+    None of the above invalidates on subscription state changes. If a workspace
+    transitions <code>canceled → active</code> while a poisoned empty result is
+    cached, opening the file shows zero classes. See <a href="#bug-43">bug #43</a>
+    in the bug history for the diagnosis and recommended remediation.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  AUTH FLOW                                                   -->
+<!-- ============================================================ -->
+<section id="auth-flow">
+  <h2>Authentication flow</h2>
+  <pre class="diagram">
+   user            web app           gateway          auth-svc        Mongo
+   │                 │                  │                │              │
+   │ submit login    │                  │                │              │
+   ├────────────────▶│ POST /api/auth/login              │              │
+   │                 ├─────────────────▶│ POST /login    │              │
+   │                 │                  ├───────────────▶│              │
+   │                 │                  │                │ find user    │
+   │                 │                  │                ├─────────────▶│
+   │                 │                  │                │◀─────────────┤
+   │                 │                  │                │ verify hash  │
+   │                 │                  │                │ mint JWT     │
+   │                 │                  │◀───────────────┤  (15-min)    │
+   │                 │◀─────────────────┤ { jwt }        │              │
+   │                 │ store in localStorage             │              │
+   │                 │                                   │              │
+   │                 │  next request: Authorization: Bearer &lt;jwt&gt;       │
+   │                 ├──────────────────▶ gateway validates              │
+   │                 │                   forwards with X-User-Id header  │
+  </pre>
+
+  <h3>Token lifetime</h3>
+  <ul>
+    <li>JWT is short-lived (~15 minutes). The frontend silently calls
+        <code>/api/auth/refresh</code> when needed (e.g. after plan changes via
+        <code>refreshPermissions</code>).</li>
+    <li>Tokens are stored in <code>localStorage</code> (web) and persisted in VS Code
+        secret storage via <code>saveAuthToken</code> postMessage.</li>
+    <li>Logout clears both, plus session-storage caches via
+        <code>clearSessionCache()</code>.</li>
+  </ul>
+
+  <h3>Email verification</h3>
+  <p>
+    Signup creates an unverified user, sends a token-bearing link. The
+    <code>/verify-email</code> route on the SPA processes the token via
+    <code>verifyEmailAndLogin</code> which both verifies and signs the user in.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  WORKSPACE FLOW                                              -->
+<!-- ============================================================ -->
+<section id="workspace-flow">
+  <h2>Workspace lifecycle</h2>
+  <ol>
+    <li><strong>First login</strong> → no workspace yet. The SPA renders
+        <code>WorkspaceSelection</code> which prompts the user to create one.</li>
+    <li><strong>Create workspace</strong> → <code>POST /api/workspaces</code>. Owner
+        becomes the workspace owner with role <code>OWNER</code>. Workspace inherits
+        the user's account plan.</li>
+    <li><strong>Invite members</strong> → <code>POST /api/invitations</code> generates
+        a token and sends an email. Acceptee can sign up if needed and gains
+        membership.</li>
+    <li><strong>Owner upgrades plan</strong> → <code>StripeService</code> updates the
+        Stripe subscription; webhook fires; <code>WorkspaceService.syncWorkspacesToOwnerPlan</code>
+        propagates the new plan to every workspace they own. Members' JWTs refresh on
+        the next 15-second poll (see <a href="#bug-38">bug #38</a>).</li>
+    <li><strong>Owner cancels</strong> → workspace billing status flips to
+        <code>CANCELED</code>; <code>collaborationEnabled</code> is turned off;
+        access remains until <code>currentPeriodEnd</code>.</li>
+    <li><strong>Workspace delete</strong> → only the owner; blocked while a paid
+        subscription is active within the validity window (see
+        <code>WorkspaceController.deleteWorkspace</code>).</li>
+  </ol>
+</section>
+
+<!-- ============================================================ -->
+<!--  BILLING                                                     -->
+<!-- ============================================================ -->
+<section id="billing">
+  <h2>Billing &amp; subscriptions</h2>
+
+  <h3>Model B: account-level billing</h3>
+  <p>
+    There is exactly one Stripe customer per user account, and at most one active
+    subscription per account. Workspaces inherit the account's plan via
+    <code>WorkspaceService.syncWorkspacesToOwnerPlan</code>. There is no per-workspace
+    Stripe customer. This is why the <em>"Read-only billing view"</em> notice was
+    removed — there is no workspace-vs-account distinction at the billing layer.
+  </p>
+
+  <h3>Two subscription paths</h3>
+  <ol>
+    <li><strong>Native flow</strong> (preferred):
+      <ol>
+        <li>Frontend asks for a SetupIntent: <code>POST /api/billing/setup</code>.</li>
+        <li>Stripe Elements collects the card; <code>stripe.confirmSetup</code> returns a <code>setupIntentId</code>.</li>
+        <li>Frontend confirms: <code>POST /api/billing/confirm-subscription</code> which calls <code>StripeService.createSubscriptionAfterSetup</code> — creates or updates the subscription with the saved card.</li>
+      </ol>
+    </li>
+    <li><strong>Checkout session</strong> (legacy fallback): <code>StripeService.createCheckoutSession</code> opens Stripe-hosted Checkout. Used when SetupIntent isn't available.</li>
+  </ol>
+
+  <h3>Trial gating</h3>
+  <p>
+    Stripe doesn't track trial-eligibility per customer. We do, via two columns on
+    <code>User</code>:
+  </p>
+  <pre><code>private boolean hasUsedFreeTrial = false;
+private LocalDateTime firstSubscriptionAt;</code></pre>
+  <p>
+    Both create paths in <code>StripeService</code> only call <code>setTrialPeriodDays</code>
+    when <code>hasUsedFreeTrial == false &amp;&amp; firstSubscriptionAt == null</code>.
+    The flag is set atomically with the subscription create (so a double-submit can't
+    grant two trials).
+  </p>
+
+  <h3>Webhook handling</h3>
+  <p>
+    Stripe events arrive at <code>POST /api/billing/webhook</code>. Signature is
+    verified against <code>stripe.webhook-secret</code>. We listen for:
+  </p>
+  <ul>
+    <li><code>customer.subscription.created</code> → set local subscription record, sync workspaces.</li>
+    <li><code>customer.subscription.updated</code> → propagate plan / status / period end changes.</li>
+    <li><code>customer.subscription.deleted</code> → mark canceled, disable collaboration on owned workspaces.</li>
+    <li><code>invoice.payment_succeeded</code> / <code>invoice.payment_failed</code> → email + status update.</li>
+  </ul>
+
+  <h3>UI gating</h3>
+  <table>
+    <thead><tr><th>Feature</th><th>Free</th><th>Pro</th><th>Enterprise</th></tr></thead>
+    <tbody>
+      <tr><td>Max workspaces</td><td>3</td><td>10</td><td>∞</td></tr>
+      <tr><td>Members per workspace</td><td>3 (view-only)</td><td>10</td><td>∞</td></tr>
+      <tr><td>Storage</td><td>10 GB</td><td>100 GB</td><td>∞</td></tr>
+      <tr><td>Multi-format export</td><td>—</td><td>✔</td><td>✔</td></tr>
+      <tr><td>Code-view copy / download</td><td>—</td><td>✔</td><td>✔</td></tr>
+      <tr><td>Real-time collaboration</td><td>—</td><td>✔ (since bug #49)</td><td>✔</td></tr>
+      <tr><td>Version control</td><td>—</td><td>✔</td><td>✔</td></tr>
+      <tr><td>SLA / on-prem / dedicated support</td><td>—</td><td>—</td><td>✔</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Source of truth: <code>webview-src/hooks/useSubscription.ts</code>. Treat unknown
+    feature keys as <strong>denied</strong> by default — that's the lesson from
+    <a href="#bug-36">bug #36</a>.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  EDITING                                                     -->
+<!-- ============================================================ -->
+<section id="editing">
+  <h2>Ontology editing flow</h2>
+
+  <h3>File open path (the "fast path")</h3>
+  <ol>
+    <li>User clicks a file → <code>Dashboard.handleLoadProjectFile</code>.</li>
+    <li>Compute <code>ontologyProjectId = `${initialProjectId}--${fileId}`</code>.</li>
+    <li>Skip if already loaded:
+        <code>projectId === ontologyProjectIdCheck &amp;&amp; classHierarchy.length &gt; 0</code>.</li>
+    <li>Probe GraphDB:
+        <code>GET /api/ontology/{id}/graphdb/check?fileName=…</code>.
+        If it returns <code>exists: true, graphSize &gt; 0</code> we skip
+        re-uploading and call <code>fetchData</code>.</li>
+    <li><code>fetchData</code> queries metadata, top-level classes, hierarchies, etc.
+        in parallel.</li>
+    <li>Otherwise: full upload from MongoDB → SPARQL INSERT → poll status →
+        <code>fetchData</code>.</li>
+  </ol>
+
+  <h3>Add Class / Subclass / Sibling UX</h3>
+  <p>
+    The toolbar in <code>EntityHierarchy.tsx</code> has two buttons per entity-tab:
+  </p>
+  <ul>
+    <li><strong>Sibling / top-level</strong> (<code>Rows3</code> icon) — contextual:
+        with no selection it creates at the top (under <code>owl:Thing</code> /
+        <code>owl:topObjectProperty</code> / etc.); with a selection it creates a
+        sibling.</li>
+    <li><strong>Subclass / sub-property</strong> (<code>CornerDownRight</code> icon) —
+        always creates a child of the selection. Without a selection it surfaces a
+        notification ("select a class first").</li>
+  </ul>
+  <p>
+    Buttons are never <code>disabled</code> — see <a href="#bug-46">bug #46</a> for why
+    that was wrong.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  CITATIONS                                                   -->
+<!-- ============================================================ -->
+<section id="citations">
+  <h2>Citations &amp; DOI validation</h2>
+  <p>
+    Two entry points: the Zotero picker (<code>CitationPickerDialog</code>) and the
+    manual entry dialog (<code>ManualCitationDialog</code>). Both go through one
+    validation service: <code>services/doiValidationService.ts</code> →
+    <code>GET /api/citations/validate-doi</code>.
+  </p>
+
+  <h3>Authoritative validation</h3>
+  <p>
+    Pure regex isn't validation. The backend resolves the DOI via doi.org with content
+    negotiation and reads CSL JSON from the registrar (Crossref / DataCite):
+  </p>
+  <pre><code>GET https://doi.org/{doi}
+Accept: application/vnd.citationstyles.csl+json</code></pre>
+  <ul>
+    <li><code>200</code> → DOI exists; record returned. Compare against the citation
+        (title, journal, year) using fuzzy token-overlap (≥0.7 coverage).</li>
+    <li><code>404</code> → unregistered. Hard fail.</li>
+    <li><code>5xx</code> → resolver outage. Don't cache, retry available.</li>
+  </ul>
+
+  <h3>Three result states</h3>
+  <table>
+    <thead><tr><th>State</th><th>Meaning</th><th>UX</th></tr></thead>
+    <tbody>
+      <tr><td><strong>ok</strong></td><td>valid + relevant</td><td>insert silently with the registrar-canonical DOI string</td></tr>
+      <tr><td><strong>warn</strong></td><td>valid but registrar metadata disagrees</td><td>show registrar's title/journal/year; second click on "Insert anyway" overrides</td></tr>
+      <tr><td><strong>fail</strong></td><td>doi.org returned 404</td><td>insert disabled; user must correct or skip</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Zotero field name footgun</h3>
+  <p>
+    Zotero's Web API uses <code>data.DOI</code> (uppercase) for journal articles,
+    books, theses, etc. Lowercase <code>data.doi</code> appears in some legacy
+    translators. The <code>extra</code> free-text field often holds
+    <code>DOI: 10.x/y</code>. <code>utils/doi.ts</code>:<code>extractDoiFromZoteroData</code>
+    handles all three.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  COLLAB                                                      -->
+<!-- ============================================================ -->
+<section id="collab">
+  <h2>Real-time collaboration</h2>
+  <p>
+    Available on Pro and Enterprise plans (see <a href="#bug-49">bug #49</a>).
+    WebSocket-based. <code>CollaborationContext</code> on the frontend opens a socket
+    when a project is loaded; <code>CollaborativeEditService</code> on the editor
+    backend fans out edit events to other connected members.
+  </p>
+  <ul>
+    <li>Edit events: class added/renamed, property added, axiom changed.</li>
+    <li>Each edit carries the originator's user id; the local UI ignores its own echoes.</li>
+    <li>Cursor position is broadcast in <code>CollaborativeCursor</code>.</li>
+    <li>Reconnect is automatic; on reconnect we trigger a <code>fetchData</code> with
+        <code>forceRefresh</code> to resync.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<!--  LOGGING                                                     -->
+<!-- ============================================================ -->
+<section id="logging">
+  <h2>Logging</h2>
+  <p>Every Java service ships with a <code>logback-spring.xml</code> using a size+time rolling policy with gzip compression on roll.</p>
+  <ul>
+    <li>Default log dir: <code>./logs</code> (override <code>LOG_DIR</code> env var).</li>
+    <li>App log: rolls daily and at 50 MB, 30-day retention, 1 GB total cap.</li>
+    <li>Error log (WARN+): 90-day retention, kept longer than app logs.</li>
+    <li>Compressed archives go to <code>logs/archive/&lt;svc&gt;-{app|error}-YYYY-MM-DD.N.log.gz</code>.</li>
+    <li><code>cleanHistoryOnStart=true</code> ensures retention is enforced on boot.</li>
+  </ul>
+
+  <h3>Per-service specifics</h3>
+  <table>
+    <thead><tr><th>Service</th><th>Extras</th></tr></thead>
+    <tbody>
+      <tr><td>ontology-gateway</td><td>app + error files; Netty/reactive noise filtered to WARN.</td></tr>
+      <tr><td>ontology-auth</td><td>app + error; Stripe set to INFO.</td></tr>
+      <tr><td>ontology-editor</td><td>extra dedicated files: <code>SPARQL_FILE</code>, <code>IMPORT_FILE</code>, <code>PERF_FILE</code>. MDC carries <code>userId</code>, <code>projectId</code>.</td></tr>
+      <tr><td>ontology-swrl</td><td>extra <code>SWRL_FILE</code> for rule traces.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Useful one-liners</h3>
+  <pre><code># tail the live app log
+tail -f ontology-editor/logs/owl-editor-app.log
+
+# grep across compressed archives
+zgrep -r 'Stripe' ontology-auth/logs/archive/
+
+# sample 100 most recent perf entries
+tail -n 100 ontology-editor/logs/owl-editor-performance.log</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!--  DEPLOYMENT                                                  -->
+<!-- ============================================================ -->
+<section id="deployment">
+  <h2>Deployment</h2>
+  <h3>Cloud</h3>
+  <ul>
+    <li>Hosted on Kubernetes — see <code>k8s/</code>.</li>
+    <li>One <code>Deployment</code> + <code>Service</code> per microservice.</li>
+    <li>Ingress terminates TLS at <code>ontocodeapi.selfresearch.org</code> and
+        forwards to <code>ontology-gateway</code>.</li>
+    <li>MongoDB is managed (Atlas-style).</li>
+    <li>GraphDB runs in-cluster (or as a managed Ontotext instance).</li>
+    <li>Stripe webhook endpoint: <code>https://ontocodeapi.selfresearch.org/api/billing/webhook</code>.</li>
+  </ul>
+
+  <h3>Self-hosted</h3>
+  <p>
+    All services on <code>localhost</code> with Spring profiles. Frontend uses
+    <code>SELF_HOSTED_GATEWAY_URL = http://localhost:80</code> (see
+    <code>config/deploymentConfig.ts</code>).
+  </p>
+
+  <h3>Build</h3>
+  <pre><code># backend (each service is a Maven module)
+cd ontology-auth && ./mvnw clean package -DskipTests
+
+# frontend
+cd ontology-vscode-extension/webview-src
+npm ci
+npm run build         # vite build → dist/
+
+# vs code extension package
+cd ontology-vscode-extension
+npm ci
+npm run package       # → ontocode-extension-X.Y.Z.vsix</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!--  LOCAL DEV                                                   -->
+<!-- ============================================================ -->
+<section id="local-dev">
+  <h2>Local development</h2>
+  <h3>Prerequisites</h3>
+  <ul>
+    <li>JDK 21</li>
+    <li>Node 20+</li>
+    <li>MongoDB (local or Atlas)</li>
+    <li>Ontotext GraphDB (free edition is enough for dev)</li>
+    <li>Stripe test keys (no live card needed)</li>
+  </ul>
+
+  <h3>Order to start</h3>
+  <ol>
+    <li>MongoDB</li>
+    <li>GraphDB</li>
+    <li><code>ontology-auth</code> (port 8086)</li>
+    <li><code>ontology-editor</code> (8083), <code>ontology-swrl</code> (8084), optional <code>ontology-plugin-service</code> (8087)</li>
+    <li><code>ontology-gateway</code> (80) — last, because it probes the others on start in some configs</li>
+    <li>Frontend: <code>cd webview-src &amp;&amp; npm run dev</code> on :3001</li>
+  </ol>
+
+  <h3>VS Code extension dev</h3>
+  <p>
+    Open <code>ontology-vscode-extension</code> in VS Code, hit <kbd>F5</kbd> for the
+    Extension Development Host. The webview hot-reloads if you build the SPA in watch
+    mode (<code>npm run dev</code> from <code>webview-src</code>).
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  SECRETS                                                     -->
+<!-- ============================================================ -->
+<section id="secrets">
+  <h2>Secrets &amp; config</h2>
+  <p>
+    Runtime config is split between <code>application.properties</code> per service
+    and environment variables. Common ones:
+  </p>
+  <table>
+    <thead><tr><th>Env / property</th><th>Where</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>SPRING_DATA_MONGODB_URI</code></td><td>auth, editor, swrl, plugin</td><td>Mongo connection string.</td></tr>
+      <tr><td><code>JWT_SECRET</code></td><td>auth, gateway</td><td>HMAC key. Must match across services.</td></tr>
+      <tr><td><code>STRIPE_API_KEY</code></td><td>auth</td><td>Test key in dev. Never log.</td></tr>
+      <tr><td><code>STRIPE_WEBHOOK_SECRET</code></td><td>auth</td><td>Verify webhook signature.</td></tr>
+      <tr><td><code>stripe.trial-period-days</code></td><td>auth/application.properties</td><td>1 in prod, 14 default.</td></tr>
+      <tr><td><code>GRAPHDB_URL</code></td><td>editor, swrl</td><td>e.g. <code>http://localhost:7200/repositories/ontocode</code>.</td></tr>
+      <tr><td><code>SMTP_*</code></td><td>auth</td><td>Verification + reset emails.</td></tr>
+      <tr><td><code>LOG_DIR</code></td><td>all services</td><td>Override default <code>./logs</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>Don't commit secrets.</strong> The <code>.properties</code> files in the repo
+    contain only test/dev defaults. Production values live in K8s
+    <code>Secret</code> resources mounted as env vars.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  BUG HISTORY                                                 -->
+<!-- ============================================================ -->
+<section id="bugs">
+  <h2>Bug history (recent fixes)</h2>
+  <p>
+    A condensed log of recently-fixed issues with the <em>why</em>. When a guard or
+    pattern looks weird, check here before deleting it.
+  </p>
+
+  <h3 id="bug-36">#36 / #37 — Free plan could export</h3>
+  <p>
+    <code>useSubscription.canAccessFeature</code> returned <code>true</code> for any
+    key not in <code>SubscriptionLimits</code>. <code>'hasMultipleExportFormats'</code>
+    wasn't defined, so it always allowed. Fix: changed the default to <code>false</code>
+    and added explicit <code>hasExport</code> / <code>hasMultipleExportFormats</code>
+    keys per plan. Code-view Copy All / Download now also gate on
+    <code>canExport</code> via a prop on <code>CodeHighlighter</code>.
+  </p>
+
+  <h3 id="bug-38">#38 — Members didn't see the new plan after owner upgrade</h3>
+  <p>
+    The 15-second workspace polling loop in <code>ProjectDashboard</code> only
+    refreshed members; it didn't notice plan/status changes. Fix: extended the loop
+    to compare <code>subscriptionPlan</code> / <code>billingStatus</code> against the
+    last seen values and call <code>refreshPermissions()</code> on change.
+  </p>
+
+  <h3 id="bug-39">#39 / #40 — Re-trial after cancellation</h3>
+  <p>
+    Stripe doesn't track trial eligibility per customer. Cancelling and re-subscribing
+    granted a brand-new trial each time. Fix: added <code>hasUsedFreeTrial</code> +
+    <code>firstSubscriptionAt</code> on <code>User</code>; both create paths in
+    <code>StripeService</code> skip <code>setTrialPeriodDays</code> when either is
+    set. The flag is set atomically with the subscription create.
+  </p>
+
+  <h3 id="bug-41">#41 — Failed to load projects after cancel = forced logout</h3>
+  <p>
+    <code>ProjectDashboard.loadData</code> called <code>clearCacheAndLogout()</code> on
+    any error. Cancellation can produce 402/403 from <code>/api/projects/my</code>,
+    which dumped the user out entirely. Fix: only auto-logout on 401; otherwise show
+    a tailored error with Retry / Switch Workspace / Manage Subscription / Log out
+    buttons.
+  </p>
+
+  <h3 id="bug-42">#42 — Cancel button shown to all members</h3>
+  <p>
+    Frontend hid no destructive billing actions for non-owners. Fix:
+    <code>BillingManagement</code> now takes <code>isOwner</code>; backend
+    <code>/api/billing/cancel-workspace</code> double-checks
+    <code>workspace.ownerId === user.id</code> and returns 403 otherwise. Later
+    refined further: billing is account-level, so the page treats the logged-in user
+    as their own account owner unconditionally (<a href="#bug-50">bug #50</a>).
+  </p>
+
+  <h3 id="bug-43">#43 — File opens with 0 classes after cancel→renew</h3>
+  <p>
+    Two server-side caches survive a cancel→renew cycle without any invalidation:
+  </p>
+  <ol>
+    <li>Spring <code>@Cacheable</code> on <code>topLevelClasses</code> /
+        <code>allClasses</code> / etc., only evicted on mutations or imports.</li>
+    <li><code>ProjectRepoCache</code> in-memory mirror, only evicted on writes.</li>
+  </ol>
+  <p>
+    If anything populated the cache with empty results during the gap, that empty
+    list is sticky. Recommended remediation (not yet implemented):
+  </p>
+  <ul>
+    <li>Add <code>@CacheEvict</code> on cancel and re-subscribe webhook handlers.</li>
+    <li>Or: refuse to cache empty results — <code>unless = "#result == null || #result.isEmpty()"</code>.</li>
+    <li>Or: bust the GraphDB fast-path on detected plan transition <code>canceled → active</code> in the frontend.</li>
+  </ul>
+
+  <h3 id="bug-44">#44 — Manage Billing button didn't navigate</h3>
+  <p>
+    <code>showBillingPage</code> flipped to true on click, but the
+    <code>currentRoute</code> useMemo evaluated workspace-selection branch first and
+    immediately overwrote the route. Fix: added a billing branch <em>above</em>
+    workspace-selection in the useMemo, and moved the BillingManagement render block
+    above the workspace-selection block.
+  </p>
+
+  <h3 id="bug-45">#45 — Annotation property creation missing</h3>
+  <p>
+    No toolbar Add button on the AnnotationProperties tab; sub-annotation-property
+    not supported. Fix: added Add buttons (top + sub) to
+    <code>EntityHierarchy.tsx</code>; <code>handleCreateAnnotationProperty</code> now
+    calls <code>addSubPropertyOf</code> after create when the user clicked "Add
+    sub-property". Backend mutation is the generic <code>addSubPropertyOf</code>
+    SPARQL — no Java change needed.
+  </p>
+
+  <h3 id="bug-46">#46 — Class add UX</h3>
+  <p>
+    Buttons used <code>disabled={!selectedItem}</code> which was a silent no-op when
+    you clicked. <code>Binary</code> icon for "sibling" was nonsensical. Fix:
+    buttons are always clickable; handler shows a notification when a selection
+    is required; <code>Rows3</code> for sibling/top-level, <code>CornerDownRight</code>
+    for subclass/sub-property.
+  </p>
+
+  <h3 id="bug-47">#47 — Notifications invisible in the webapp</h3>
+  <p>
+    Local <code>showNotification</code> in Dashboard.tsx only postMessage'd to VS
+    Code. In the standalone webapp (no <code>window.vscode</code>) it just
+    <code>console.log</code>'d — silently. Fix: routes through
+    <code>notificationService.notify</code> which uses toast/Notification API on web
+    and postMessage in VS Code.
+  </p>
+
+  <h3 id="bug-48">#48 — Billing route piggybacking on workspace state</h3>
+  <p>
+    Same root cause as <a href="#bug-44">#44</a>. Added a dedicated
+    <code>view: 'billing'</code> branch in <code>currentRoute</code> with
+    <code>showBillingPage</code> in deps. URL is <code>/billing</code> (or
+    <code>#/billing</code> in VS Code).
+  </p>
+
+  <h3 id="bug-49">#49 — Collaboration disabled on Pro</h3>
+  <p>
+    <code>PLAN_LIMITS.pro.hasAdvancedCollaboration</code> was <code>false</code>.
+    Backend already had <code>collaborationEnabled = true</code> for Pro. Fix:
+    flipped the frontend flag to <code>true</code>. Enterprise still differentiated
+    by SLA / on-prem / advanced security / dedicated support / custom integrations.
+  </p>
+
+  <h3 id="bug-50">#50 — Read-only billing notice was misleading</h3>
+  <p>
+    Billing is account-level. The "Only the workspace owner can change…" notice
+    conflated account ownership with workspace ownership. Fix: removed the notice;
+    BillingManagement always treats the logged-in user as their own account owner
+    (<code>isOwner=true</code>); cancel always sends <code>workspaceId: ""</code> so
+    the backend takes the account-level path.
+  </p>
+
+  <h3 id="bug-51">#51 — Upgrade Plan inaccessible from account-level billing</h3>
+  <p>
+    SubscriptionPlanSelection render gate required <code>user.isAdmin &amp;&amp; user.workspaceId</code>.
+    From WorkspaceSelection or account-level billing, both are missing. Fix: relaxed to
+    <code>user &amp;&amp; showSubscriptionPlan</code>; pass empty <code>workspaceId</code>;
+    auto-enable <code>allowCurrentPlanSelection</code> when status isn't active/trialing
+    so users can re-pick the same plan to renew.
+  </p>
+
+  <h3 id="bug-52">#52 — Logging without rotation in the gateway</h3>
+  <p>
+    Editor and SWRL had rolling configs; gateway and auth didn't. Fix: created
+    <code>logback-spring.xml</code> in the missing services with the standard
+    50 MB / daily / gzip / 30-day policy.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!--  PITFALLS                                                    -->
+<!-- ============================================================ -->
+<section id="pitfalls">
+  <h2>Common pitfalls</h2>
+  <ul>
+    <li><strong>Two run modes, one bundle.</strong> The same React build runs in browser and VS Code webview. <code>window.vscode</code> presence determines transport. If something works in one but not the other, that's almost always the fork to suspect.</li>
+    <li><strong>Spring caches survive subscription state.</strong> Cancel/renew flows aren't an invalidation trigger. If "data is missing after renewing", suspect the cache before suspecting the data.</li>
+    <li><strong>Zotero field casing.</strong> <code>data.DOI</code> uppercase is the canonical Zotero name. Lowercase exists too. The <code>extra</code> field is free text and can hold a DOI as <code>"DOI: 10.x/y"</code>.</li>
+    <li><strong>Account-level billing.</strong> Don't add per-workspace Stripe customers. Workspace plan = account plan, propagated by <code>syncWorkspacesToOwnerPlan</code>.</li>
+    <li><strong>Trial gate is not on Stripe.</strong> Stripe will happily grant trials forever. Server-side check via <code>hasUsedFreeTrial</code> / <code>firstSubscriptionAt</code> is what stops it.</li>
+    <li><strong>Route useMemo order matters.</strong> Branches evaluate top-down. Add new high-priority views (like billing) above the workspace-selection branch.</li>
+    <li><strong>Don't <code>disabled</code> a contextual button silently.</strong> Either keep it clickable and explain via notification, or hide it. Silent disabled = "broken click" complaint.</li>
+    <li><strong>API base URL.</strong> Always read via <code>getGatewayUrl()</code> — never hard-code. Cloud / self-hosted detection lives in <code>config/deploymentConfig.ts</code>.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<!--  KT CHECKLIST                                                -->
+<!-- ============================================================ -->
+<section id="kt-checklist">
+  <h2>KT checklist</h2>
+  <p>Tick these off in your first week.</p>
+  <ul>
+    <li>☐ Run all five services locally; sign up; verify; log in.</li>
+    <li>☐ Create a workspace; create a project; upload a sample <code>.owl</code> from <code>test-data/</code>.</li>
+    <li>☐ Add a class, a subclass, a sibling — observe the toolbar icons.</li>
+    <li>☐ Insert a citation from the manual dialog with a real DOI; observe validation.</li>
+    <li>☐ Run a SPARQL query; run the reasoner.</li>
+    <li>☐ With Stripe test keys, walk through the trial → upgrade → cancel → re-subscribe loop. Inspect <code>users</code> and <code>workspaces</code> documents in Mongo at each step.</li>
+    <li>☐ Trigger a Stripe webhook locally with the Stripe CLI; watch <code>SubscriptionController</code> log lines.</li>
+    <li>☐ Open the bundled SPA in both the browser and the VS Code webview.</li>
+    <li>☐ Read <code>StripeService</code>, <code>WorkspaceService</code>, <code>OntologyMutationService</code>, <code>GraphDBDatasetService</code> end-to-end.</li>
+    <li>☐ Browse <code>App.tsx</code>'s render switch and trace one route from URL to component.</li>
+    <li>☐ Tail each service's app log; observe the rotation pattern after a forced large write.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<!--  FILE FINDER                                                 -->
+<!-- ============================================================ -->
+<section id="file-finder">
+  <h2>Where to find things</h2>
+  <table>
+    <thead><tr><th>If you need…</th><th>Look at</th></tr></thead>
+    <tbody>
+      <tr><td>JWT issuance</td><td><code>ontology-auth/.../security/JwtUtil.java</code> + <code>AuthController</code>.</td></tr>
+      <tr><td>Login screen</td><td><code>webview-src/components/LoginForm.tsx</code>.</td></tr>
+      <tr><td>Plan limits / feature gates</td><td><code>webview-src/hooks/useSubscription.ts</code>; backend <code>PlanFeatureConfig</code>.</td></tr>
+      <tr><td>Stripe API calls</td><td><code>ontology-auth/.../service/StripeService.java</code> (only place).</td></tr>
+      <tr><td>Stripe webhook receiver</td><td><code>ontology-auth/.../controller/SubscriptionController.java</code>.</td></tr>
+      <tr><td>Workspace plan propagation</td><td><code>WorkspaceService.syncWorkspacesToOwnerPlan</code>.</td></tr>
+      <tr><td>Project dashboard polling</td><td><code>webview-src/components/ProjectDashboard.tsx</code> useEffect on <code>user.workspaceId</code>.</td></tr>
+      <tr><td>GraphDB reads</td><td><code>OntologyQueryService</code>, <code>GraphDBDatasetService</code>.</td></tr>
+      <tr><td>GraphDB writes</td><td><code>OntologyMutationService</code> (single funnel; cache-evicts).</td></tr>
+      <tr><td>OWL import / file upload</td><td><code>ProjectImportService</code>, <code>ProjectLoadController</code>.</td></tr>
+      <tr><td>SPARQL endpoint</td><td><code>SparqlController</code>, <code>SparqlQueryService</code>, <code>SparqlUpdateService</code>.</td></tr>
+      <tr><td>Reasoner trigger</td><td><code>ReasonerController</code> → <code>ReasonerService</code>.</td></tr>
+      <tr><td>SWRL rule storage</td><td><code>ontology-swrl</code> service; rules in Mongo.</td></tr>
+      <tr><td>Citation insertion</td><td><code>CitationController</code>, <code>CitationService</code>.</td></tr>
+      <tr><td>DOI validation (frontend)</td><td><code>webview-src/services/doiValidationService.ts</code> + <code>utils/doi.ts</code>.</td></tr>
+      <tr><td>DOI validation (backend)</td><td><code>CitationService.validateDoi</code> + <code>resolveDoiMetadata</code>.</td></tr>
+      <tr><td>Class add toolbar</td><td><code>webview-src/components/EntityHierarchy.tsx</code>.</td></tr>
+      <tr><td>Editor pane (right side)</td><td><code>webview-src/components/details/*</code>.</td></tr>
+      <tr><td>Routing</td><td><code>webview-src/App.tsx</code> useMemo + <code>hooks/useRouter.ts</code> + <code>config/routes.ts</code>.</td></tr>
+      <tr><td>Notifications (web/VS Code)</td><td><code>webview-src/services/notificationService.ts</code>.</td></tr>
+      <tr><td>Logging config (per service)</td><td><code>&lt;service&gt;/src/main/resources/logback-spring.xml</code>.</td></tr>
+      <tr><td>K8s manifests</td><td><code>k8s/</code>.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<!--  GLOSSARY                                                    -->
+<!-- ============================================================ -->
+<section id="glossary">
+  <h2>Glossary</h2>
+  <table>
+    <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><strong>OWL</strong></td><td>Web Ontology Language — W3C standard for ontologies.</td></tr>
+      <tr><td><strong>RDF / Turtle / RDF-XML</strong></td><td>Triples and their serialization formats.</td></tr>
+      <tr><td><strong>IRI</strong></td><td>Internationalized Resource Identifier — what a class/property/individual is named by.</td></tr>
+      <tr><td><strong>Named graph</strong></td><td>A SPARQL-level partition of the triple store. We use one per project file.</td></tr>
+      <tr><td><strong>Reasoner</strong></td><td>Software that infers entailed triples from asserted ones (ELK, HermiT).</td></tr>
+      <tr><td><strong>SWRL</strong></td><td>Semantic Web Rule Language — rules like <code>Person(?p) ∧ hasParent(?p,?q) → hasChild(?q,?p)</code>.</td></tr>
+      <tr><td><strong>DL Query</strong></td><td>Description-logic-style query against the reasoner.</td></tr>
+      <tr><td><strong>SetupIntent</strong></td><td>Stripe object representing card capture without an immediate charge.</td></tr>
+      <tr><td><strong>Model B</strong></td><td>Our billing model: one Stripe customer per user account; workspaces inherit plan.</td></tr>
+      <tr><td><strong>Trial gate</strong></td><td>Server-side check in <code>StripeService</code> that prevents granting a trial more than once per account.</td></tr>
+      <tr><td><strong>Project / File</strong></td><td>Project = container in a workspace; File = one ontology file inside a project. The triple-store partition is keyed on <code>{projectId}--{fileId}</code>.</td></tr>
+      <tr><td><strong>Webview</strong></td><td>The VS Code panel that hosts an HTML/JS UI. Loads the same SPA bundle as the standalone webapp.</td></tr>
+      <tr><td><strong>postMessage proxy</strong></td><td>The mechanism we use to send HTTP requests from the webview through the extension host to bypass CORS.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer style="margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--border-strong); color: var(--text-faint); font-size: 12px;">
+  <p>OntoCode KT document. Generated as a self-contained HTML.
+     Edit at <code>docs/KT_HANDOVER.html</code> and re-share.</p>
+  <p>If something here is wrong: that's the most useful PR you can open in your first week.</p>
+</footer>
+
+  </main>
+</div>
+</body>
+</html>

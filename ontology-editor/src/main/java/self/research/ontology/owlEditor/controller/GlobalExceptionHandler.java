@@ -3,14 +3,16 @@ package self.research.ontology.owlEditor.controller;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import self.research.ontology.owlEditor.service.DraftNotReadyException;
 
 import java.util.Map;
 
-@RestControllerAdvice
+@RestControllerAdvice("owlEditorGlobalExceptionHandler")
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
@@ -26,10 +28,35 @@ public class GlobalExceptionHandler {
         // Do NOT attempt to write a response – the socket is already closed.
     }
 
+    // 409 when the copy-on-switch draft graph isn't ready yet — all mutation paths hit this
+    @ExceptionHandler(DraftNotReadyException.class)
+    public ResponseEntity<Map<String, Object>> handleDraftNotReady(DraftNotReadyException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of(
+                        "success", false,
+                        "draftCopyNotReady", true,
+                        "error", ex.getMessage()
+                ));
+    }
+
+    // 400 for explicit bad-input rejections (e.g. ontology too large for reasoning)
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
+        log.warn("Bad request: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of(
+                        "success", false,
+                        "error", ex.getMessage() != null ? ex.getMessage() : "Bad request"
+                ));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleException(Exception ex) {
         log.error("Unhandled exception in controller: {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of(
                         "success", false,
                         "error", ex.getMessage() != null ? ex.getMessage() : "Internal server error"

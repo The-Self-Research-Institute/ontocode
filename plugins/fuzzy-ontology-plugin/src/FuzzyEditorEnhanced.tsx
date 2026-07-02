@@ -2,12 +2,28 @@ import React, { useState, useEffect } from 'react';
 import { Sparkles, Plus, Trash2, Save, Play, Download, Edit2, TrendingUp, Zap } from 'lucide-react';
 import MembershipFunctionCanvas from './components/MembershipFunctionCanvas';
 
+declare global {
+  interface Window { API_BASE_URL?: string; }
+}
+
+function apiUrl(path: string) {
+  const base = (window.API_BASE_URL || '').replace(/\/$/, '');
+  return `${base}${path}`;
+}
+
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = localStorage.getItem('authToken');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+}
+
 // Fuzzy modifier functions (like Protégé)
 
 const FUZZY_MODIFIERS = {
-  'extremely': (degree: number) => degree * degree,
-  'very': (degree: number) => Math.pow(degree, 3),
-  'slightly': (degree: number) => Math.pow(degree, 4),
+  'extremely': (degree: number) => Math.pow(degree, 4),
+  'very': (degree: number) => degree * degree,
+  'slightly': (degree: number) => Math.pow(degree, 0.75),
   'more_or_less': (degree: number) => Math.sqrt(degree),
   'somewhat': (degree: number) => Math.pow(degree, 0.33),
 };
@@ -166,12 +182,9 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
   const loadFuzzyData = async () => {
     try {
       // Load memberships
-      const membershipResponse = await fetch(`http://localhost:8082/api/sparql/query/${projectId}`, {
+      const membershipResponse = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           query: `
             PREFIX fuzzy: <http://fuzzy.org/ontology#>
@@ -221,12 +234,9 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
       }
 
       // Load rules
-      const ruleResponse = await fetch(`http://localhost:8082/api/sparql/query/${projectId}`, {
+      const ruleResponse = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           query: `
             PREFIX fuzzy: <http://fuzzy.org/ontology#>
@@ -438,12 +448,9 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
       console.log('🗑️ Deleting existing fuzzy data...');
       
-      const deleteResponse = await fetch(`http://localhost:8082/api/sparql/update/${projectId}`, {
+      const deleteResponse = await fetch(apiUrl(`/api/sparql/update/${projectId}`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           query: deleteQuery
         })
@@ -451,7 +458,7 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
       if (!deleteResponse.ok) {
         console.error('❌ Failed to delete existing fuzzy data');
-        showSuccess('Failed to clear existing data');
+        setQueryError('Failed to clear existing data before save. Try again.');
         return;
       }
 
@@ -512,26 +519,24 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
       console.log('📝 Inserting new fuzzy data...');
 
-      const response = await fetch(`http://localhost:8082/api/sparql/update/${projectId}`, {
+      const response = await fetch(apiUrl(`/api/sparql/update/${projectId}`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           query: sparqlUpdate
         })
       });
 
       if (response.ok) {
-        console.log('✅ Fuzzy ontology saved successfully! (no duplicates)');
         showSuccess('Fuzzy ontology saved successfully!');
       } else {
-        console.error('❌ Failed to save fuzzy ontology');
-        showSuccess('Failed to save fuzzy ontology');
+        const errText = await response.text().catch(() => '');
+        let msg = `Failed to save fuzzy ontology (${response.status})`;
+        try { msg = JSON.parse(errText).error || msg; } catch { /* ignore */ }
+        setQueryError(msg);
       }
     } catch (error) {
-      console.error('❌ Error saving fuzzy ontology:', error);
+      setQueryError(`Save error: ${error}`);
     }
   };
 
@@ -553,12 +558,9 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
     try {
       setQueryError(''); // Clear previous errors
-      const response = await fetch(`http://localhost:8082/api/sparql/query/${projectId}`, {
+      const response = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
+        headers: authHeaders(),
         body: JSON.stringify({
           query: fuzzyQuery
         })
@@ -852,9 +854,9 @@ ${rules.map(r => `<http://example.org/rules/${r.id}> a fuzzy:Rule ;
                   style={styles.select}
                 >
                   <option value="none">None</option>
-                  <option value="extremely">extremely (x²) - much much stronger membership</option>
-                  <option value="very">very (x³) - much stronger membership</option>
-                  <option value="slightly">slightly (x⁴) - stronger membership</option>
+                  <option value="extremely">extremely (x⁴) - much much stronger membership</option>
+                  <option value="very">very (x²) - much stronger membership</option>
+                  <option value="slightly">slightly (x^0.75) - slightly weaker membership</option>
                   <option value="more_or_less">more or less (√x) - weaker membership</option>
                   <option value="somewhat">somewhat (x^0.33) - much weaker membership</option>
                 </select>
@@ -1010,9 +1012,9 @@ ${rules.map(r => `<http://example.org/rules/${r.id}> a fuzzy:Rule ;
               <div key={name} style={styles.modifierCard}>
                 <h4 style={styles.modifierName}>{name.replace('_', ' ')}</h4>
                 <div style={styles.modifierFormula}>
-                  {name === 'extremely' && 'μ′(x) = μ(x)² (much much stronger membership)'}
-                  {name === 'very' && 'μ′(x) = μ(x)³ (much stronger membership)'}
-                  {name === 'slightly' && 'μ′(x) = μ(x)⁴ (stronger membership)'}
+                  {name === 'extremely' && 'μ′(x) = μ(x)⁴ (much much stronger membership)'}
+                  {name === 'very' && 'μ′(x) = μ(x)² (much stronger membership)'}
+                  {name === 'slightly' && 'μ′(x) = μ(x)^0.75 (slightly weaker membership)'}
                   {name === 'more_or_less' && 'μ′(x) = √μ(x) (weaker membership)'}
                   {name === 'somewhat' && 'μ′(x) = μ(x)^0.33 (much weaker membership)'}
                 </div>
@@ -1617,17 +1619,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
     zIndex: 1000,
+    overflowY: 'auto',
+    padding: '16px',
   },
   modalContent: {
     backgroundColor: 'var(--surface-2)',
     padding: '24px',
     borderRadius: '12px',
     maxWidth: '600px',
-    width: '90%',
+    width: '100%',
     border: '1px solid var(--border)',
+    margin: 'auto',
   },
   modalActions: {
     display: 'flex',

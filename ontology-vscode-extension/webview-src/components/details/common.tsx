@@ -1,7 +1,13 @@
-import React, { useState, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, HelpCircle, Tag } from "lucide-react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2, HelpCircle, AtSign, Circle, Loader } from "lucide-react";
+import { useCollaboration } from "../../contexts/CollaborationContext";
+import apiClient from "../../services/apiClient";
+import axiomAnnotationService from "../../services/axiomAnnotationService";
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
+
+type JustificationAxiom = { type: string; manchester: string; entities: { iri: string; label: string; type: string }[]; isAsserted: boolean };
+type Justification = { index: number; axioms: JustificationAxiom[]; isAsserted: boolean };
 
 // Protégé-style: Text is BLACK, only keywords are colored (magenta/pink)
 // Links are shown as underlined text for clickable entities
@@ -88,7 +94,7 @@ const getEntityTypeFromAxiom = (axiom: Axiom, dataProperties: any[] = [], proper
 // Text is BLACK, only keywords (some, and, or, etc.) are MAGENTA/PINK
 // Property names in restrictions can be shown as links (underlined)
 const ColorizedAxiomDefinition: React.FC<{
-  definition: string;
+  definition: string | undefined | null;
   axiom: Axiom;
   properties?: any[];
   dataProperties?: any[];
@@ -96,7 +102,8 @@ const ColorizedAxiomDefinition: React.FC<{
 }> = ({ definition, axiom, properties = [], dataProperties = [], onNavigate }) => {
   // Tokenize and colorize: only keywords get color, everything else is black
   // This matches Protégé's style exactly
-  
+  if (!definition) return <span className="text-gray-400 italic text-xs">(no definition)</span>;
+
   const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
   
   // Helper function to extract label from IRI
@@ -152,7 +159,7 @@ const ColorizedAxiomDefinition: React.FC<{
           <span className="font-bold text-gray-900">
             {/* Property name - can be a link */}
             <span 
-              className={onNavigate ? "text-fuchsia-600 underline cursor-pointer hover:text-fuchsia-800" : "text-gray-900"}
+              className={onNavigate ? "text-blue-600 underline cursor-pointer hover:text-blue-800" : "text-gray-900"}
               onClick={onNavigate ? () => onNavigate(axiom.propertyIri!, 'property') : undefined}
               title={axiom.propertyIri}
             >
@@ -285,8 +292,8 @@ const ColorizedAxiomDefinition: React.FC<{
 
 export const AxiomRow: React.FC<{
   axiom: Axiom;
-  onDelete: (id: string) => void;
-  onEdit?: (id: string, newDefinition: string) => void;
+  onDelete?: (id: string) => Promise<void> | void;
+  onEdit?: (id: string, newDefinition: string) => Promise<void> | void;
   onEditClick?: (axiom: Axiom, initialTab?: 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression', restrictionData?: any) => void;
   isInferred?: boolean;
   isInActiveOntology?: boolean;
@@ -295,16 +302,54 @@ export const AxiomRow: React.FC<{
   properties?: any[];
   dataProperties?: any[];
   onNavigate?: (iri: string, type: string) => void;
-}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [], onNavigate }) => {
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+  projectId?: string;
+  parentEntityIri?: string;
+  sectionName?: string;
+}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations: hasAxiomAnnotationsProp = false, properties = [], dataProperties = [], onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, sectionName }) => {
   // Handle isInferred from prop or axiom object (can be boolean or string 'true')
   const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
   const [isEditing, setIsEditing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [showAxiomAnnotations, setShowAxiomAnnotations] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
+  const [axiomAnnotations, setAxiomAnnotations] = useState<Array<{ property: string; value: string; language?: string }>>([]);
+  const [newAnnotProp, setNewAnnotProp] = useState('http://www.w3.org/2000/01/rdf-schema#comment');
+  const [newAnnotValue, setNewAnnotValue] = useState('');
+  const [showAddAxiomAnnotForm, setShowAddAxiomAnnotForm] = useState(false);
+  const [annotationsLoading, setAnnotationsLoading] = useState(false);
+  const [deletingAnnotIdx, setDeletingAnnotIdx] = useState<number | null>(null);
+  const [isSavingAnnot, setIsSavingAnnot] = useState(false);
 
-  const handleEdit = (newDefinition: string) => {
+  const relatedIri = axiom.id?.includes('|||') ? axiom.id.split('|||')[0] : axiom.id;
+  const hasAxiomAnnotations = hasAxiomAnnotationsProp || axiomAnnotations.length > 0;
+
+  const loadAxiomAnnotations = useCallback(async () => {
+    if (!projectId || !parentEntityIri || !relatedIri) return;
+    setAnnotationsLoading(true);
+    try {
+      const data = await axiomAnnotationService.getAnnotations(
+        projectId, parentEntityIri, relatedIri, sectionName,
+      );
+      setAxiomAnnotations(data);
+    } catch (error) {
+      console.warn('Failed to load axiom annotations', error);
+      setAxiomAnnotations([]);
+    } finally {
+      setAnnotationsLoading(false);
+    }
+  }, [projectId, parentEntityIri, relatedIri, sectionName]);
+
+  useEffect(() => {
+    if (showAxiomAnnotations) {
+      void loadAxiomAnnotations();
+    }
+  }, [showAxiomAnnotations, loadAxiomAnnotations]);
+
+  const handleEdit = async (newDefinition: string) => {
     if (onEdit) {
-      onEdit(axiom.id, newDefinition);
+      await onEdit(axiom.id, newDefinition);
     }
     setIsEditing(false);
   };
@@ -359,6 +404,7 @@ export const AxiomRow: React.FC<{
 
   // Handle double-click to edit (Protégé-style)
   const handleDoubleClick = () => {
+    if (isViewOnly) { onViewOnlyAction?.(); return; }
     if (!isInferred && (onEdit || onEditClick)) {
       if (onEditClick) {
         const initialTab = determineInitialTab();
@@ -372,17 +418,16 @@ export const AxiomRow: React.FC<{
 
   // Handle keyboard shortcuts (Protégé-style)
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Only handle if this row is focused
     if (!isFocused) return;
-    
+
     if (e.key === 'Enter' && !isInferred && (onEdit || onEditClick)) {
       e.preventDefault();
+      if (isViewOnly) { onViewOnlyAction?.(); return; }
       handleDoubleClick();
-    } else if (e.key === 'Delete' && !isInferred) {
+    } else if (e.key === 'Delete' && !isInferred && !isDeleting) {
       e.preventDefault();
-      if (window.confirm('Delete this axiom?')) {
-        onDelete(axiom.id);
-      }
+      if (isViewOnly) { onViewOnlyAction?.(); return; }
+      onDelete(axiom.id);
     } else if (e.key === 'Escape' && isEditing) {
       e.preventDefault();
       setIsEditing(false);
@@ -390,22 +435,25 @@ export const AxiomRow: React.FC<{
   };
 
   return (
-    <div 
-      className={`group flex justify-between items-start px-3 py-2 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors ${
-        isInferred ? 'bg-yellow-50' : 'bg-white'
-      } ${isFocused ? 'ring-2' : ''} ${!isInferred ? 'cursor-pointer' : ''}`}
-      title={ontologyIri ? `Defined in: ${ontologyIri}${!isInferred ? ' (Double-click to edit, Del to delete)' : ''}` : (!isInferred ? 'Double-click to edit, Del to delete' : undefined)}
+    <div
+      className={`group border-b last:border-0 transition-colors ${isFocused ? 'ring-2' : ''} ${!isInferred ? 'cursor-pointer' : ''}`}
       data-axiom-id={axiom.id}
       data-axiom-type={axiom.type}
+      style={{
+        borderColor: 'var(--border)',
+        backgroundColor: isInferred ? 'var(--warning-tint)' : 'var(--surface-1)',
+        borderLeft: isInActiveOntology ? '3px solid #D97706' : 'none',
+      }}
+    >
+    <div
+      className="flex justify-between items-start px-3 py-2"
+      title={ontologyIri ? `Defined in: ${ontologyIri}${!isInferred ? ' (Double-click to edit, Del to delete)' : ''}` : (!isInferred ? 'Double-click to edit, Del to delete' : undefined)}
       tabIndex={0}
       onFocus={() => setIsFocused(true)}
       onBlur={() => setIsFocused(false)}
       onDoubleClick={handleDoubleClick}
       onKeyDown={handleKeyDown}
-      style={{
-        borderLeft: isInActiveOntology ? '3px solid #D97706' : 'none',
-        paddingLeft: isInActiveOntology ? '9px' : undefined
-      }}
+      style={{ paddingLeft: isInActiveOntology ? '9px' : undefined }}
     >
       {isEditing ? (
         <div className="flex-1">
@@ -428,21 +476,16 @@ export const AxiomRow: React.FC<{
                 onNavigate={onNavigate}
               />
               {isInferred && (
-                <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
+                <span
+                  className="ml-2 text-[10px] px-1.5 py-0.5 rounded font-medium"
+                  style={{ backgroundColor: 'var(--warning-tint)', color: 'var(--warning)' }}
+                >
+                  Inferred
+                </span>
               )}
             </div>
           </div>
           <div className="flex items-center gap-1 ml-2">
-            {/* Explain Inference button */}
-            <button 
-              className={`p-1 rounded hover:bg-purple-100 text-gray-400 hover:text-purple-600 transition-all ${isFocused || showAxiomAnnotations ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-              title="Explain why this axiom holds"
-              aria-label="Explain inference"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <HelpCircle size={14} />
-            </button>
-
             {/* Axiom Annotations button */}
             <button 
               onClick={(e) => {
@@ -460,9 +503,10 @@ export const AxiomRow: React.FC<{
 
             {/* Edit button - only for asserted axioms */}
             {!isInferred && (onEdit || onEditClick) && (
-              <button 
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (isViewOnly) { onViewOnlyAction?.(); return; }
                   if (onEditClick) {
                     const initialTab = determineInitialTab();
                     const restrictionData = buildRestrictionData();
@@ -472,40 +516,136 @@ export const AxiomRow: React.FC<{
                   }
                 }}
                 className={`p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                title="Edit axiom (or press Enter)"
+                title={isViewOnly ? "View-only: upgrade to edit" : "Edit axiom (or press Enter)"}
                 aria-label="Edit"
               >
                 <Edit2 size={14} />
               </button>
             )}
 
-            {/* Delete button - only for asserted axioms */}
-            {!isInferred && (
-              <button 
-                onClick={(e) => {
+            {/* Delete button - only for asserted axioms that have a delete handler */}
+            {!isInferred && onDelete && (
+              <button
+                onClick={async (e) => {
                   e.stopPropagation();
-                  if (window.confirm('Delete this axiom?')) {
-                    onDelete(axiom.id);
-                  }
+                  if (isViewOnly) { onViewOnlyAction?.(); return; }
+                  setIsDeleting(true);
+                  try { await onDelete(axiom.id); } finally { setIsDeleting(false); }
                 }}
-                className={`p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                disabled={isDeleting}
+                className={`p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                 title="Delete axiom (or press Delete)"
                 aria-label="Delete"
               >
-                <Trash2 size={14} />
+                {isDeleting ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
               </button>
             )}
           </div>
         </>
       )}
-      
+    </div>
+
       {/* Axiom Annotations Panel */}
       {showAxiomAnnotations && (
-        <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
-          <div className="font-semibold text-blue-900 mb-1">Axiom Annotations</div>
-          <div className="text-gray-600 italic">
-            {hasAxiomAnnotations ? 'Axiom annotations would be displayed here' : 'No annotations on this axiom'}
-          </div>
+        <div className="mx-3 mb-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs">
+          <div className="font-semibold text-amber-800 mb-1">Axiom Annotations</div>
+          {annotationsLoading ? (
+            <div className="text-gray-500 italic">Loading…</div>
+          ) : (
+            <>
+              {axiomAnnotations.map((ann, idx) => (
+                <div key={idx} className={`flex items-start justify-between bg-white border border-amber-100 rounded px-2 py-1 mb-1 transition-opacity duration-300 ${deletingAnnotIdx === idx ? 'opacity-40' : ''}`}>
+                  <div>
+                    <div className="text-[10px] font-medium text-amber-700">{ann.property.split('#').pop() || ann.property.split('/').pop()}</div>
+                    <div className="text-[10px] text-gray-700">{ann.value}</div>
+                  </div>
+                  {!isInferred && !isViewOnly && projectId && parentEntityIri && (
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setDeletingAnnotIdx(idx);
+                        try {
+                          await axiomAnnotationService.deleteAnnotation(projectId, {
+                            entityIri: parentEntityIri,
+                            relatedIri,
+                            sectionName,
+                            annotationProperty: ann.property,
+                            value: ann.value,
+                          });
+                          await loadAxiomAnnotations();
+                        } finally {
+                          setDeletingAnnotIdx(null);
+                        }
+                      }}
+                      disabled={deletingAnnotIdx === idx}
+                      className="ml-1 p-0.5 text-gray-400 hover:text-red-500 disabled:opacity-50"
+                      title="Remove annotation"
+                    >
+                      {deletingAnnotIdx === idx ? <Loader size={10} className="animate-spin" /> : <Trash2 size={10} />}
+                    </button>
+                  )}
+                </div>
+              ))}
+              {!isInferred && !isViewOnly && projectId && parentEntityIri && (
+                showAddAxiomAnnotForm ? (
+                  <div className="mt-1 p-2 bg-white border border-amber-300 rounded" onClick={(e) => e.stopPropagation()}>
+                    <select
+                      value={newAnnotProp}
+                      onChange={(e) => setNewAnnotProp(e.target.value)}
+                      className="w-full mb-1 px-2 py-1 text-[10px] border border-amber-200 rounded"
+                    >
+                      <option value="http://www.w3.org/2000/01/rdf-schema#comment">rdfs:comment</option>
+                      <option value="http://www.w3.org/2000/01/rdf-schema#label">rdfs:label</option>
+                      <option value="http://www.w3.org/2000/01/rdf-schema#seeAlso">rdfs:seeAlso</option>
+                      <option value="http://www.w3.org/2000/01/rdf-schema#isDefinedBy">rdfs:isDefinedBy</option>
+                    </select>
+                    <textarea
+                      autoFocus
+                      value={newAnnotValue}
+                      onChange={(e) => setNewAnnotValue(e.target.value)}
+                      rows={2}
+                      className="w-full mb-1 px-2 py-1 text-[10px] border border-amber-200 rounded resize-none"
+                      placeholder="Annotation value…"
+                    />
+                    <div className="flex justify-end gap-1">
+                      <button className="px-2 py-0.5 text-[10px] bg-gray-100 rounded" onClick={() => { setShowAddAxiomAnnotForm(false); setNewAnnotValue(''); }}>Cancel</button>
+                      <button
+                        disabled={!newAnnotValue.trim() || isSavingAnnot}
+                        className="px-2 py-0.5 text-[10px] bg-amber-500 text-white rounded disabled:opacity-40 flex items-center gap-1"
+                        onClick={async () => {
+                          setIsSavingAnnot(true);
+                          try {
+                            await axiomAnnotationService.addAnnotation(projectId, {
+                              entityIri: parentEntityIri,
+                              relatedIri,
+                              sectionName,
+                              annotationProperty: newAnnotProp,
+                              value: newAnnotValue.trim(),
+                            });
+                            setNewAnnotValue('');
+                            setShowAddAxiomAnnotForm(false);
+                            await loadAxiomAnnotations();
+                          } finally {
+                            setIsSavingAnnot(false);
+                          }
+                        }}
+                      >{isSavingAnnot ? <><Loader size={10} className="animate-spin" /> Saving…</> : 'Save'}</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    className="mt-1 text-[10px] text-amber-700 hover:text-amber-900 flex items-center gap-0.5"
+                    onClick={(e) => { e.stopPropagation(); setShowAddAxiomAnnotForm(true); }}
+                  >
+                    <Plus size={11} /> Add annotation
+                  </button>
+                )
+              )}
+              {axiomAnnotations.length === 0 && !showAddAxiomAnnotForm && (
+                <div className="text-gray-500 italic">No annotations on this axiom.</div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -516,18 +656,24 @@ export const AxiomSubsection: React.FC<{
   title: string;
   axioms: Axiom[] | undefined;
   inferredAxioms?: Axiom[];
+  /** Protégé-style: inferred rows only when hierarchy/view is in inferred mode */
+  viewMode?: 'asserted' | 'inferred';
   onAdd: (definition: string) => void;
-  onEdit?: (id: string, newDefinition: string) => void;
+  onEdit?: (id: string, newDefinition: string) => Promise<void> | void;
   onEditClick?: (axiom: Axiom, initialTab?: 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression', restrictionData?: any) => void;
-  onDelete: (id: string) => void;
+  onDelete?: (id: string) => Promise<void> | void;
   emptyMessage?: string;
   onAddClick?: () => void;
   activeOntologyIri?: string;
   properties?: any[];
   dataProperties?: any[];
-  themeColor?: 'yellow' | 'blue' | 'green' | 'orange' | 'purple'; // Protégé-style colored headers
+  themeColor?: 'yellow' | 'blue' | 'green' | 'orange' | 'purple';
   onNavigate?: (iri: string, type: string) => void;
-}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate }) => {
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+  projectId?: string;
+  parentEntityIri?: string;
+}> = ({ title, axioms, inferredAxioms, viewMode = 'asserted', onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -537,6 +683,7 @@ export const AxiomSubsection: React.FC<{
   };
 
   const handleAddButtonClick = () => {
+    if (isViewOnly) { onViewOnlyAction?.(); return; }
     if (onAddClick) {
       onAddClick();
     } else {
@@ -557,7 +704,8 @@ export const AxiomSubsection: React.FC<{
     }
   };
 
-  const allAxioms = [...(axioms || []), ...(inferredAxioms || [])];
+  const visibleInferred = viewMode === 'inferred' ? (inferredAxioms || []) : [];
+  const allAxioms = [...(axioms || []), ...visibleInferred];
   const hasContent = allAxioms.length > 0;
 
   // Clean minimal theme colors - subtle and professional
@@ -615,11 +763,11 @@ export const AxiomSubsection: React.FC<{
         <button 
           onClick={handleAddButtonClick}
           onKeyDown={handleHeaderKeyDown}
-          className={`w-full flex justify-between items-center px-3 py-2 transition-colors ${isFocused ? 'ring-2 ring-amber-300' : ''} font-medium shadow-sm`}
+          className={`w-full flex justify-between items-center px-3 py-2 transition-colors ${isFocused ? 'ring-2 ring-amber-300' : ''} font-medium shadow-sm text-gray-900`}
           style={{
             backgroundColor: isFocused ? 'var(--selected-bg)' : '#FEF3C7',
             borderLeft: `3px solid ${themeBorder}`,
-          
+            color: '#111827',
           }}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
@@ -633,7 +781,7 @@ export const AxiomSubsection: React.FC<{
         </button>
       ) : (
         // Default header style
-        <div 
+        <div
           className={`flex justify-between items-center mb-1 px-2 py-1 rounded ${isFocused ? 'ring-2 ring-purple-300' : ''}`}
           tabIndex={0}
           onFocus={() => setIsFocused(true)}
@@ -642,45 +790,49 @@ export const AxiomSubsection: React.FC<{
         >
           <h4 className="text-xs font-bold text-tertiary uppercase tracking-wider">
             {title}
-            {isFocused && <span className="ml-2 text-[10px] text-accent">(Press Enter to add)</span>}
+            {isFocused && !isViewOnly && <span className="ml-2 text-[10px] text-accent">(Press Enter to add)</span>}
           </h4>
-          <button 
-            onClick={handleAddButtonClick} 
-            className="p-1 hover-overlay rounded text-tertiary hover-text-accent transition-colors" 
-            title={`Add ${title} (Enter when focused)`}
+          <button
+            onClick={handleAddButtonClick}
+            className="p-1 hover-overlay rounded text-tertiary hover-text-accent transition-colors"
+            title={isViewOnly ? "View-only: upgrade to edit" : `Add ${title} (Enter when focused)`}
           >
             <Plus size={14} />
           </button>
         </div>
       )}
       <div
-        className={`border overflow-hidden shadow-sm ${theme ? 'border-t-0 rounded-b-sm' : 'rounded-md'}`}
+        className={`border shadow-sm ${theme ? 'border-t-0 rounded-b-sm' : 'rounded-md'} ${allAxioms.length > 5 ? 'overflow-y-auto max-h-48' : 'overflow-hidden'}`}
         style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}
       >
         {hasContent ? (
           <>
             {/* Asserted axioms */}
             {axioms?.map(axiom => (
-              <AxiomRow 
-                key={axiom.id} 
-                axiom={axiom} 
+              <AxiomRow
+                key={axiom.id}
+                axiom={axiom}
                 onDelete={onDelete}
                 onEdit={onEdit}
                 onEditClick={onEditClick}
                 isInferred={false}
                 isInActiveOntology={axiom.ontologyIri === activeOntologyIri}
                 ontologyIri={axiom.ontologyIri}
-                hasAxiomAnnotations={false}
                 properties={properties}
                 dataProperties={dataProperties}
                 onNavigate={onNavigate}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={parentEntityIri}
+                sectionName={title}
               />
             ))}
-            {/* Inferred axioms */}
-            {inferredAxioms?.map(axiom => (
-              <AxiomRow 
-                key={`inferred-${axiom.id}`} 
-                axiom={axiom} 
+            {/* Inferred axioms (Protégé: only in inferred view) */}
+            {visibleInferred.map(axiom => (
+              <AxiomRow
+                key={`inferred-${axiom.id}`}
+                axiom={axiom}
                 onDelete={onDelete}
                 onEdit={onEdit}
                 onEditClick={onEditClick}
@@ -689,6 +841,8 @@ export const AxiomSubsection: React.FC<{
                 properties={properties}
                 dataProperties={dataProperties}
                 onNavigate={onNavigate}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
             ))}
           </>
@@ -723,16 +877,24 @@ export const AnnotationValue = ({ value }: { value: string }) => {
   return <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{cleanedValue}</p>;
 };
 
-/**
- * Extract readable property name from full URI
- */
+const WELL_KNOWN_PREFIXES: [string, string][] = [
+  ['http://www.w3.org/2000/01/rdf-schema#', 'rdfs:'],
+  ['http://www.w3.org/2002/07/owl#', 'owl:'],
+  ['http://www.w3.org/1999/02/22-rdf-syntax-ns#', 'rdf:'],
+  ['http://www.w3.org/2001/XMLSchema#', 'xsd:'],
+  ['http://www.w3.org/2004/02/skos/core#', 'skos:'],
+  ['http://purl.org/dc/terms/', 'dcterms:'],
+  ['http://purl.org/dc/elements/1.1/', 'dc:'],
+];
+
 const getPropertyLabel = (uri: string): string => {
-  if (uri.includes('#')) {
-    return uri.split('#').pop() || uri;
+  for (const [ns, prefix] of WELL_KNOWN_PREFIXES) {
+    if (uri.startsWith(ns)) {
+      return prefix + uri.slice(ns.length);
+    }
   }
-  if (uri.includes('/')) {
-    return uri.split('/').pop() || uri;
-  }
+  if (uri.includes('#')) return uri.split('#').pop() || uri;
+  if (uri.includes('/')) return uri.split('/').pop() || uri;
   return uri;
 };
 
@@ -741,18 +903,38 @@ const getPropertyLabel = (uri: string): string => {
  * in Protégé style - grouped by property with full URI displayed.
  * Sorts annotations to show rdfs:comment first, then rdfs:label, then others alphabetically.
  */
-export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: { 
-  annotations?: Record<string, string>, 
-  onDelete: (key: string) => void,
-  onEdit?: (key: string, currentValue: string) => void 
+type AnnotationMap = Record<string, string | string[]>;
+
+const flattenAnnotations = (annotations?: AnnotationMap) => {
+  const rows: Array<{ property: string; value: string; rowKey: string }> = [];
+  if (!annotations) return rows;
+  const seen = new Set<string>();
+  Object.entries(annotations).forEach(([property, rawValue]) => {
+    const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+    values.forEach((value) => {
+      const key = `${property}::${value}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push({ property, value, rowKey: key });
+    });
+  });
+  return rows;
+};
+
+export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly = false, onViewOnlyAction }: {
+  annotations?: AnnotationMap,
+  onDelete: (property: string, value?: string) => void,
+  onEdit?: (property: string, currentValue: string) => void,
+  isViewOnly?: boolean,
+  onViewOnlyAction?: () => void,
 }) => {
-  if (!annotations || Object.keys(annotations).length === 0) {
+  const rows = flattenAnnotations(annotations);
+  if (rows.length === 0) {
     return (
         <div className="p-3 text-xs text-gray-400 italic text-center">No annotations</div>
     );
   }
   
-  // Priority annotation properties (shown first)
   const priorityProps = [
     'http://www.w3.org/2000/01/rdf-schema#label',
     'http://www.w3.org/2000/01/rdf-schema#comment',
@@ -760,70 +942,56 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: {
     'http://www.w3.org/2000/01/rdf-schema#seeAlso'
   ];
   
-  const sortedAnnotations = Object.entries(annotations).sort(([keyA], [keyB]) => {
-    const priorityA = priorityProps.indexOf(keyA);
-    const priorityB = priorityProps.indexOf(keyB);
-    
-    // If both have priority, sort by priority order
-    if (priorityA !== -1 && priorityB !== -1) {
-      return priorityA - priorityB;
-    }
-    // If only A has priority, A comes first
+  const sortedRows = [...rows].sort((a, b) => {
+    const priorityA = priorityProps.indexOf(a.property);
+    const priorityB = priorityProps.indexOf(b.property);
+    if (priorityA !== -1 && priorityB !== -1) return priorityA - priorityB;
     if (priorityA !== -1) return -1;
-    // If only B has priority, B comes first
     if (priorityB !== -1) return 1;
-    // Otherwise sort alphabetically by label
-    const labelA = getPropertyLabel(keyA);
-    const labelB = getPropertyLabel(keyB);
-    return labelA.localeCompare(labelB);
+    return getPropertyLabel(a.property).localeCompare(getPropertyLabel(b.property));
   });
   
   return (
     <div className="rounded-sm overflow-hidden" style={{ border: '1px solid var(--border)' }}>
-      {sortedAnnotations.map(([key, value]) => {
-        const propertyLabel = getPropertyLabel(key);
+      {sortedRows.map((row) => {
+        const propertyLabel = getPropertyLabel(row.property);
         
         return (
           <div
-            key={key}
+            key={row.rowKey}
             className="group transition-colors border-b last:border-b-0"
             style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}
           >
-            {/* Property header row - Clean minimal style */}
             <div
               className="flex items-center justify-between px-3 py-1.5 border-b"
               style={{ backgroundColor: 'var(--surface-2)', borderColor: 'var(--border)' }}
             >
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                <span className="text-xs font-medium text-secondary">
+                <span className="text-xs font-medium text-secondary font-mono" title={row.property}>
                   {propertyLabel}
-                </span>
-                <span className="text-[10px] text-tertiary font-mono truncate" title={key}>
-                  ({key})
                 </span>
               </div>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 {onEdit && (
-                  <button 
-                    onClick={() => onEdit(key, value)} 
+                  <button
+                    onClick={() => isViewOnly ? onViewOnlyAction?.() : onEdit(row.property, row.value)}
                     className="p-1 rounded hover-overlay transition-all"
-                    title={`Edit ${propertyLabel}`}
+                    title={isViewOnly ? "View-only: upgrade to edit" : `Edit ${propertyLabel}`}
                   >
                     <Edit2 size={12} className="text-tertiary hover-text-accent" />
                   </button>
                 )}
-                <button 
-                  onClick={() => onDelete(key)} 
+                <button
+                  onClick={() => isViewOnly ? onViewOnlyAction?.() : onDelete(row.property, row.value)}
                   className="p-1 rounded hover-overlay transition-all"
-                  title={`Delete ${propertyLabel}`}
+                  title={isViewOnly ? "View-only: upgrade to edit" : `Delete ${propertyLabel}`}
                 >
                   <Trash2 size={12} className="text-tertiary hover-text-error" />
                 </button>
               </div>
             </div>
-            {/* Value row */}
             <div className="px-3 py-2">
-              <AnnotationValue value={value} />
+              <AnnotationValue value={row.value} />
             </div>
           </div>
         );
@@ -903,20 +1071,101 @@ export const Panel = ({
 
 export const MultiSelectItem: React.FC<{
   item: string;
-  onDelete: (item: string) => void;
+  onDelete: (item: string) => Promise<void> | void;
+  onEdit?: (item: string) => void;
   entityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual';
   themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple';
   isInferred?: boolean;
-}> = ({ item, onDelete, entityType, themeColor = 'blue', isInferred = false }) => {
+  sectionName?: string;
+  onNavigate?: (iri: string, type: string) => void;
+  projectId?: string;
+  parentEntityIri?: string;
+}> = ({ item, onDelete, onEdit, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate, projectId, parentEntityIri }) => {
+    const [showExplanation, setShowExplanation] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [showAnnotations, setShowAnnotations] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const [isHovered, setIsHovered] = useState(false);
+    const [justType, setJustType] = useState<'regular' | 'laconic'>('laconic');
+    const [limitJustifications, setLimitJustifications] = useState(true);
+    const [justLimit, setJustLimit] = useState(3);
+    const [showLaconicExpl, setShowLaconicExpl] = useState(false);
+    const [explanationData, setExplanationData] = useState<Justification[] | null>(null);
+    const [explanationLoading, setExplanationLoading] = useState(false);
+    const [explanationError, setExplanationError] = useState<string | null>(null);
+    const [showAddAnnotationForm, setShowAddAnnotationForm] = useState(false);
+    const [newAnnotProp, setNewAnnotProp] = useState('http://www.w3.org/2000/01/rdf-schema#comment');
+    const [newAnnotValue, setNewAnnotValue] = useState('');
+    const [localAnnotations, setLocalAnnotations] = useState<{ property: string; value: string }[]>([]);
+    const [annotationsLoading, setAnnotationsLoading] = useState(false);
+
+    const displayItem = item.includes('|||') ? item.split('|||')[0] : item;
+
+    const fetchAxiomAnnotations = useCallback(async () => {
+        if (!projectId || !parentEntityIri) return;
+        setAnnotationsLoading(true);
+        try {
+            const data = await axiomAnnotationService.getAnnotations(
+                projectId, parentEntityIri, displayItem, sectionName,
+            );
+            setLocalAnnotations(data);
+        } catch (error) {
+            console.warn('Failed to load axiom annotations', error);
+            setLocalAnnotations([]);
+        } finally {
+            setAnnotationsLoading(false);
+        }
+    }, [projectId, parentEntityIri, displayItem, sectionName]);
+
+    const fetchExplanation = useCallback(async (type: 'regular' | 'laconic', limit: number) => {
+        if (!projectId || !parentEntityIri) return;
+        setExplanationLoading(true);
+        setExplanationError(null);
+        try {
+            const res = await apiClient.post<any>(`/api/ontology/${projectId}/explain-axiom`, {
+                entityIri: parentEntityIri,
+                relatedIri: displayItem,
+                sectionName,
+                justificationType: type,
+                maxJustifications: limit,
+            });
+            const data = res?.data ?? res;
+            setExplanationData(data?.justifications ?? []);
+        } catch (e: any) {
+            setExplanationError(e?.message ?? 'Failed to load explanation');
+        } finally {
+            setExplanationLoading(false);
+        }
+    }, [projectId, parentEntityIri, displayItem, sectionName]);
+
+    useEffect(() => {
+        if (showExplanation) {
+            setExplanationData(null);
+            fetchExplanation(justType, limitJustifications ? justLimit : 99);
+        }
+    }, [showExplanation]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        if (showAnnotations) {
+            void fetchAxiomAnnotations();
+        }
+    }, [showAnnotations, fetchAxiomAnnotations]);
+
+    const handleCopyIri = () => {
+        navigator.clipboard.writeText(displayItem).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        }).catch(() => {});
+    };
     // Check if this is an inverse property expression
-    const inverseMatch = item.match(/^inverse\((.+)\)$/i);
+    const inverseMatch = displayItem.match(/^inverse\((.+)\)$/i);
     const isInverse = !!inverseMatch;
-    const propertyIri = isInverse ? inverseMatch[1] : item;
-    
+    const propertyIri = isInverse ? inverseMatch[1] : displayItem;
+
     // Check if this is a restriction expression (contains 'some', 'only', 'min', 'max', 'exactly', 'value')
     const restrictionKeywords = ['some', 'only', 'min', 'max', 'exactly', 'value', 'and', 'or', 'not'];
-    const isRestrictionExpression = restrictionKeywords.some(kw => 
-        item.includes(` ${kw} `) || item.startsWith(`${kw} `) || item.endsWith(` ${kw}`)
+    const isRestrictionExpression = restrictionKeywords.some(kw =>
+        displayItem.includes(` ${kw} `) || displayItem.startsWith(`${kw} `) || displayItem.endsWith(` ${kw}`)
     );
     
     // Format display name - keep prefix for datatypes
@@ -991,75 +1240,314 @@ export const MultiSelectItem: React.FC<{
         while ((match = regex.exec(expr)) !== null) {
             // Add text before the keyword (BLACK)
             if (match.index > lastIndex) {
-                parts.push(<span key={`text-${keyIndex++}`} className="text-gray-900">{expr.slice(lastIndex, match.index)}</span>);
+                parts.push(<span key={`text-${keyIndex++}`}>{expr.slice(lastIndex, match.index)}</span>);
             }
             // Add the colored keyword (MAGENTA/PINK)
             parts.push(<span key={`kw-${keyIndex++}`} className="text-fuchsia-600 font-bold">{match[0]}</span>);
             lastIndex = regex.lastIndex;
         }
-        // Add remaining text (BLACK)
+        // Add remaining text
         if (lastIndex < expr.length) {
-            parts.push(<span key={`text-${keyIndex++}`} className="text-gray-900">{expr.slice(lastIndex)}</span>);
+            parts.push(<span key={`text-${keyIndex++}`}>{expr.slice(lastIndex)}</span>);
         }
         
         return parts.length > 0 ? parts : expr;
     };
     
-    // Hover background color based on theme
-    const hoverBgColor = themeColor === 'green' ? 'hover:bg-green-50' : themeColor === 'orange' ? 'hover:bg-orange-50' : themeColor === 'purple' ? 'hover:bg-purple-50' : 'hover:bg-blue-50';
-    
     return (
-        <div className={`group flex justify-between items-center p-1.5 border-b border-gray-100 last:border-0 ${isInferred ? 'bg-yellow-50' : 'bg-white'} ${hoverBgColor} transition-colors`}>
-            <div className="flex items-center">
-                {/* Entity type icon */}
-                {getIcon()}
-                {isInverse ? (
-                    <span className="text-sm font-bold text-gray-900">
-                        <span className="text-fuchsia-600 font-bold">inverse</span>
-                        <span className="text-gray-900">(</span>
-                        <span className="text-gray-900">'{displayName}'</span>
-                        <span className="text-gray-900">)</span>
-                    </span>
-                ) : isRestrictionExpression ? (
-                    <span className="text-sm font-bold">{formatRestrictionExpression(item)}</span>
-                ) : (
-                    <span className="text-sm font-bold text-gray-900">'{displayName}'</span>
-                )}
-                {isInferred && (
-                    <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
+        <div
+            className={`group border-b last:border-0 transition-colors transition-opacity duration-300 ${isDeleting ? 'opacity-40' : ''}`}
+            style={{
+                borderColor: 'var(--border, #f3f4f6)',
+                backgroundColor: isHovered
+                    ? 'var(--surface-2)'
+                    : isInferred ? 'rgba(254, 252, 232, 0.5)' : 'var(--surface-1)',
+                color: 'var(--color-text)',
+            }}
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+        >
+            <div className="flex justify-between items-center p-1.5">
+                <div className="flex items-center">
+                    {/* Entity type icon */}
+                    {getIcon()}
+                    {isInverse ? (
+                        <span className="text-sm font-bold">
+                            <span className="text-fuchsia-600 font-bold">inverse</span>
+                            <span>(</span>
+                            <span>'{displayName}'</span>
+                            <span>)</span>
+                        </span>
+                    ) : isRestrictionExpression ? (
+                        <span className="text-sm font-bold">{formatRestrictionExpression(displayItem)}</span>
+                    ) : (
+                        <span className="text-sm font-bold">'{displayName}'</span>
+                    )}
+                    {isInferred && (
+                        <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
+                    )}
+                </div>
+                {!isInferred && (
+                    <div className={`flex items-center gap-1 transition-all ${isDeleting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                        {/* ? — Explanation (Protégé-style justification) */}
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setShowExplanation(v => !v); if (showAnnotations) setShowAnnotations(false); }}
+                            className={`p-1 rounded transition-all ${showExplanation ? 'text-blue-600 bg-blue-50 opacity-100' : 'text-gray-400 hover:bg-blue-100 hover:text-blue-600'}`}
+                            title={`Explanation for '${displayName}'`}
+                            aria-label="Explanation"
+                        >
+                            <HelpCircle size={14} />
+                        </button>
+                        {/* @ — Axiom annotations */}
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setShowAnnotations(v => !v); if (showExplanation) setShowExplanation(false); }}
+                            className={`p-1 rounded transition-all ${showAnnotations ? 'text-amber-600 bg-amber-50 opacity-100' : 'text-gray-400 hover:bg-amber-100 hover:text-amber-600'}`}
+                            title={`Annotations for ${sectionName || 'axiom'}`}
+                            aria-label="Axiom annotations"
+                        >
+                            <AtSign size={14} />
+                        </button>
+                        {/* ✎ — Edit item */}
+                        {onEdit && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onEdit(item); }}
+                                className="p-1 rounded text-gray-400 hover:bg-blue-100 hover:text-blue-600 transition-all"
+                                title={`Edit '${displayName}'`}
+                                aria-label={`Edit ${displayName}`}
+                            >
+                                <Edit2 size={14} />
+                            </button>
+                        )}
+                        {/* ○ — Navigate to entity in hierarchy */}
+                        {onNavigate && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onNavigate(propertyIri, detectedType || 'class'); }}
+                                className="p-1 rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-all"
+                                title={`Navigate to '${displayName}'`}
+                                aria-label={`Navigate to ${displayName}`}
+                            >
+                                <Circle size={14} />
+                            </button>
+                        )}
+                        <button
+                            onClick={async () => {
+                                setIsDeleting(true);
+                                try { await onDelete(item); } finally { setIsDeleting(false); }
+                            }}
+                            disabled={isDeleting}
+                            className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title={`Remove '${displayName}'`}
+                            aria-label={`Remove ${displayName}`}
+                        >
+                            {isDeleting ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                        </button>
+                    </div>
                 )}
             </div>
-            {!isInferred && (
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                    <button 
-                    className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
-                    title="Help"
-                    aria-label="Help"
-                    >
-                        <HelpCircle size={14} />
-                    </button>
-                    <button 
-                    className="p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600"
-                    title="Axiom annotations"
-                    aria-label="Axiom annotations"
-                    >
-                        <MessageCircle size={14} />
-                    </button>
-                    <button 
-                    onClick={() => onDelete(item)} 
-                    className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
-                    title={`Remove ${displayName}`}
-                    aria-label={`Remove ${displayName}`}
-                    >
-                        <Trash2 size={14} />
-                    </button>
-                    <button 
-                    className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
-                    title="More options"
-                    aria-label="More options"
-                    >
-                        <span className="text-xs">○</span>
-                    </button>
+
+            {/* Explanation panel — Protégé-style justification dialog */}
+            {showExplanation && !isInferred && (
+                <div className="mx-1.5 mb-1.5 bg-blue-50 border border-blue-200 rounded text-xs" onClick={(e) => e.stopPropagation()}>
+                    {/* Title bar */}
+                    <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-blue-200 bg-blue-100">
+                        <HelpCircle size={11} className="text-blue-600 shrink-0" />
+                        <span className="text-[10px] font-semibold text-blue-800">
+                            Explanation for '{displayName}'{sectionName ? ` ${sectionName}` : ''}
+                        </span>
+                    </div>
+                    {/* Filter row — matches Protégé's radio layout */}
+                    <div className="px-2 pt-2 pb-1 grid grid-cols-2 gap-x-4 gap-y-0.5">
+                        <label className="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name={`just-${item}`} checked={justType === 'regular'}
+                                onChange={() => { setJustType('regular'); fetchExplanation('regular', limitJustifications ? justLimit : 99); }}
+                                className="w-2.5 h-2.5 accent-blue-600" />
+                            <span className="text-[10px] text-gray-700">Show regular justifications</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name={`just-limit-${item}`} checked={!limitJustifications}
+                                onChange={() => { setLimitJustifications(false); fetchExplanation(justType, 99); }}
+                                className="w-2.5 h-2.5 accent-blue-600" />
+                            <span className="text-[10px] text-gray-700">All justifications</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name={`just-${item}`} checked={justType === 'laconic'}
+                                onChange={() => { setJustType('laconic'); fetchExplanation('laconic', limitJustifications ? justLimit : 99); }}
+                                className="w-2.5 h-2.5 accent-blue-600" />
+                            <span className="text-[10px] text-gray-700">Show laconic justifications</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name={`just-limit-${item}`} checked={limitJustifications}
+                                onChange={() => { setLimitJustifications(true); fetchExplanation(justType, justLimit); }}
+                                className="w-2.5 h-2.5 accent-blue-600" />
+                            <span className="text-[10px] text-gray-700">Limit justifications to</span>
+                            <input
+                                type="number" min={1} max={99} value={justLimit}
+                                onChange={(e) => { const v = Math.max(1, parseInt(e.target.value) || 1); setJustLimit(v); setLimitJustifications(true); fetchExplanation(justType, v); }}
+                                onClick={() => setLimitJustifications(true)}
+                                className="w-8 px-1 py-0 text-[10px] border border-gray-300 rounded bg-white text-gray-700"
+                            />
+                        </label>
+                    </div>
+                    {/* Justification blocks */}
+                    <div className="px-2 pb-2">
+                        {explanationLoading && (
+                            <div className="flex items-center gap-1.5 py-2 text-[10px] text-blue-500">
+                                <Loader size={11} className="animate-spin" /> Loading justifications…
+                            </div>
+                        )}
+                        {explanationError && (
+                            <div className="text-[10px] text-red-500 py-1">{explanationError}</div>
+                        )}
+                        {!explanationLoading && !explanationError && explanationData !== null && (
+                            explanationData.length === 0 ? (
+                                <div className="text-[10px] text-gray-400 italic py-1">No justifications found (axiom may be inferred by the reasoner).</div>
+                            ) : (
+                                explanationData.map((just) => (
+                                    <div key={just.index} className="mb-2">
+                                        <div className="flex items-center justify-between mb-0.5">
+                                            <span className="text-[10px] font-semibold text-gray-700">Explanation {just.index}</span>
+                                            <label className="flex items-center gap-1 cursor-pointer">
+                                                <input type="checkbox" checked={showLaconicExpl} onChange={(e) => setShowLaconicExpl(e.target.checked)} className="w-2.5 h-2.5 accent-blue-600" />
+                                                <span className="text-[10px] text-gray-500">Display laconic explanation</span>
+                                            </label>
+                                        </div>
+                                        <div className="bg-white border border-blue-100 rounded overflow-hidden">
+                                            <div className="px-2 py-1 text-[10px] text-gray-500 border-b border-blue-50">
+                                                Explanation for: '{displayName}'{sectionName ? ` ${sectionName}` : ''}
+                                            </div>
+                                            {just.axioms.map((ax, ai) => (
+                                                <div key={ai} className="flex items-center justify-between px-2 py-1.5 bg-green-50">
+                                                    <span className="text-xs text-gray-900 font-semibold">{ax.manchester}</span>
+                                                    <HelpCircle size={12} className="shrink-0 text-gray-400 ml-2" />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))
+                            )
+                        )}
+                        {!explanationLoading && explanationData === null && !projectId && (
+                            <div className="text-[10px] text-gray-400 italic py-1">No project context available.</div>
+                        )}
+                        {/* IRI row */}
+                        <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mt-2 mb-1">IRI</div>
+                        <div className="flex items-start gap-2">
+                            <span className="font-mono text-gray-700 break-all flex-1 leading-relaxed select-all text-[10px]">{item}</span>
+                            <button onClick={handleCopyIri}
+                                className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                                    copied ? 'bg-green-100 border-green-300 text-green-700' : 'bg-white border-blue-300 text-blue-600 hover:bg-blue-100'
+                                }`}
+                            >{copied ? '✓ Copied' : 'Copy IRI'}</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Annotations panel — like Protégé's "Annotations for DataPropertyRange" dialog */}
+            {showAnnotations && !isInferred && (
+                <div className="mx-1.5 mb-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs">
+                    <div className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-1.5">
+                        Annotations for {sectionName || 'Axiom'}
+                    </div>
+                    {/* The axiom expression this annotation applies to */}
+                    <div className="bg-white border border-amber-100 rounded px-2 py-1.5 mb-2 text-gray-700 text-xs">
+                        <span className="font-semibold">'{displayName}'</span>
+                        {sectionName && <span className="text-blue-600 mx-1">{sectionName}</span>}
+                        <span className="font-mono">{displayName}</span>
+                    </div>
+                    <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Annotations</span>
+                        {!showAddAnnotationForm && (
+                            <button
+                                className="flex items-center gap-0.5 text-amber-600 hover:text-amber-800 text-[10px]"
+                                title="Add axiom annotation"
+                                onClick={(e) => { e.stopPropagation(); setShowAddAnnotationForm(true); setNewAnnotValue(''); }}
+                            >
+                                <Plus size={11} /> Add
+                            </button>
+                        )}
+                    </div>
+                    {/* Inline add form */}
+                    {showAddAnnotationForm && (
+                        <div className="mb-2 p-2 bg-white border border-amber-300 rounded" onClick={(e) => e.stopPropagation()}>
+                            <select
+                                value={newAnnotProp}
+                                onChange={(e) => setNewAnnotProp(e.target.value)}
+                                className="w-full mb-1 px-2 py-1 text-[10px] border border-amber-200 rounded bg-white text-gray-700"
+                            >
+                                <option value="http://www.w3.org/2000/01/rdf-schema#comment">rdfs:comment</option>
+                                <option value="http://www.w3.org/2000/01/rdf-schema#label">rdfs:label</option>
+                                <option value="http://www.w3.org/2000/01/rdf-schema#seeAlso">rdfs:seeAlso</option>
+                                <option value="http://www.w3.org/2000/01/rdf-schema#isDefinedBy">rdfs:isDefinedBy</option>
+                                <option value="http://www.w3.org/2002/07/owl#deprecated">owl:deprecated</option>
+                            </select>
+                            <textarea
+                                autoFocus
+                                value={newAnnotValue}
+                                onChange={(e) => setNewAnnotValue(e.target.value)}
+                                placeholder="Annotation value..."
+                                rows={2}
+                                className="w-full mb-1 px-2 py-1 text-[10px] border border-amber-200 rounded bg-white text-gray-700 resize-none"
+                            />
+                            <div className="flex justify-end gap-1">
+                                <button
+                                    className="px-2 py-0.5 text-[10px] bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
+                                    onClick={(e) => { e.stopPropagation(); setShowAddAnnotationForm(false); setNewAnnotValue(''); }}
+                                >Cancel</button>
+                                <button
+                                    disabled={!newAnnotValue.trim() || !projectId || !parentEntityIri}
+                                    className="px-2 py-0.5 text-[10px] bg-amber-500 text-white rounded hover:bg-amber-600 disabled:opacity-40"
+                                    onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (!newAnnotValue.trim() || !projectId || !parentEntityIri) return;
+                                        await axiomAnnotationService.addAnnotation(projectId, {
+                                            entityIri: parentEntityIri,
+                                            relatedIri: displayItem,
+                                            sectionName,
+                                            annotationProperty: newAnnotProp,
+                                            value: newAnnotValue.trim(),
+                                        });
+                                        setShowAddAnnotationForm(false);
+                                        setNewAnnotValue('');
+                                        await fetchAxiomAnnotations();
+                                    }}
+                                >Save</button>
+                            </div>
+                        </div>
+                    )}
+                    {/* Stored axiom annotations */}
+                    {localAnnotations.length > 0 ? (
+                        <div className="space-y-1 mb-1">
+                            {localAnnotations.map((ann, idx) => (
+                                <div key={idx} className="flex items-start justify-between bg-white border border-amber-100 rounded px-2 py-1">
+                                    <div>
+                                        <div className="text-[10px] font-medium text-amber-700">{ann.property.split('#').pop()}</div>
+                                        <div className="text-[10px] text-gray-700">{ann.value}</div>
+                                    </div>
+                                    <button
+                                        onClick={async (e) => {
+                                            e.stopPropagation();
+                                            if (!projectId || !parentEntityIri) return;
+                                            await axiomAnnotationService.deleteAnnotation(projectId, {
+                                                entityIri: parentEntityIri,
+                                                relatedIri: displayItem,
+                                                sectionName,
+                                                annotationProperty: ann.property,
+                                                value: ann.value,
+                                            });
+                                            await fetchAxiomAnnotations();
+                                        }}
+                                        className="ml-1 p-0.5 text-gray-400 hover:text-red-500"
+                                        title="Remove annotation"
+                                    >
+                                        <Trash2 size={10} />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        !showAddAnnotationForm && <div className="text-[10px] text-gray-400 italic">No annotations on this axiom.</div>
+                    )}
                 </div>
             )}
         </div>
@@ -1070,11 +1558,17 @@ export const MultiSelectSection: React.FC<{
     title: string;
     items: string[] | undefined;
     inferredItems?: string[] | undefined;
-    onAddClick?: () => void;
-    onDelete: (item: string) => void;
+    onAddClick?: (editingItem?: string) => void;
+    onDelete: (item: string) => Promise<void> | void;
     themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple'; // For header styling
     itemEntityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual'; // For item icons
-}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType }) => {
+    isViewOnly?: boolean;
+    onViewOnlyAction?: () => void;
+    onNavigate?: (iri: string, type: string) => void;
+    onEdit?: (item: string) => void;
+    projectId?: string;
+    parentEntityIri?: string;
+}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate, onEdit, projectId, parentEntityIri }) => {
     const [isSelected, setIsSelected] = useState(false);
     
     // Clean minimal theme colors - Protégé-style
@@ -1117,12 +1611,15 @@ export const MultiSelectSection: React.FC<{
     };
     
     const theme = themes[themeColor];
-    
+    // Pass the editingItem to onAddClick — the picker's confirm handler will do
+    // delete + add in a single API call instead of delete-now / add-later.
+    const itemEditHandler = onEdit || (onAddClick ? (editItem: string) => { onAddClick(editItem); } : undefined);
+
     const handleHeaderClick = () => {
         setIsSelected(true);
-        // If there's an add handler, trigger it
+        if (isViewOnly) { onViewOnlyAction?.(); return; }
         if (onAddClick) {
-            onAddClick();
+            onAddClick(undefined);
         }
     };
     
@@ -1146,12 +1643,12 @@ export const MultiSelectSection: React.FC<{
                  )}
              </button>
              {/* Content area */}
-             <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm overflow-hidden">
+             <div className="border border-t-0 rounded-b-sm overflow-hidden" style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border, #e5e7eb)' }}>
                  {items && items.length > 0 ? (
-                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} themeColor={themeColor} entityType={itemEntityType} />)
+                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } return onDelete(i); }} onEdit={isViewOnly ? undefined : itemEditHandler} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} />)
                  ) : null}
                  {inferredItems && inferredItems.length > 0 ? (
-                    inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} />)
+                    inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} />)
                  ) : null}
                  {(!items || items.length === 0) && (!inferredItems || inferredItems.length === 0) && (
                     <div className="p-2 text-xs text-gray-400 italic">
@@ -1161,4 +1658,32 @@ export const MultiSelectSection: React.FC<{
              </div>
          </div>
     );
+};
+
+export const CollaboratorPresenceBar: React.FC<{ entityId: string }> = ({ entityId }) => {
+  const { state } = useCollaboration();
+  const viewers = Array.from(state.activeUsers.values()).filter(
+    u => u.cursorPosition === entityId
+  );
+  if (viewers.length === 0) return null;
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 border-b border-indigo-100">
+      <MousePointer2 size={11} className="text-indigo-400 flex-shrink-0" />
+      <span className="text-[10px] text-indigo-500 mr-0.5">Also viewing:</span>
+      {viewers.map(u => (
+        <span
+          key={u.userId}
+          className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+          style={{ backgroundColor: `${u.color}20`, color: u.color, border: `1px solid ${u.color}60` }}
+          title={u.username}
+        >
+          <span
+            className="w-2 h-2 rounded-full flex-shrink-0"
+            style={{ backgroundColor: u.color }}
+          />
+          {u.username}
+        </span>
+      ))}
+    </div>
+  );
 };

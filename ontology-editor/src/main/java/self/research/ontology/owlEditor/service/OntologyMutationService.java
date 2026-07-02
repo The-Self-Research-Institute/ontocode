@@ -4,21 +4,27 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Caching;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.query.BindingSet;
+import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.controller.VisualizationController;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.Objects;
+import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 public class OntologyMutationService {
@@ -32,47 +38,67 @@ public class OntologyMutationService {
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
         """;
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final GraphGeneratingService graphGeneratingService;
+    private final TopLevelClassCacheService topLevelCacheService;
     private final Executor metadataExecutor;
 
     @Autowired @Lazy
     private VisualizationController visualizationController;
 
-    public OntologyMutationService(GraphDBDatasetService datasetService,
+    @Autowired(required = false) @Nullable
+    private HierarchyIndexService hierarchyIndexService;
+
+    @Autowired(required = false) @Nullable
+    private ProjectOntologyCache ontologyCache;
+
+    @Autowired(required = false) @Nullable
+    private DesktopOwlApiMutationService desktopOwlApiMutationService;
+
+    @Autowired(required = false) @Nullable
+    private DraftCopyService draftCopyService;
+
+    @Autowired(required = false) @Nullable
+    private EntityUsageIndexService entityUsageIndexService;
+
+    @Autowired(required = false) @Nullable
+    private ClassDetailCacheService classDetailCacheService;
+
+    @Autowired @Lazy
+    private MainGraphRevisionService mainGraphRevisionService;
+
+    public OntologyMutationService(SparqlDatasetService datasetService,
                                    OntologyIndexService indexService,
                                    ProjectMetadataService metadataService,
                                    GraphGeneratingService graphGeneratingService,
+                                   TopLevelClassCacheService topLevelCacheService,
                                    @Qualifier("metadataExecutor") Executor metadataExecutor) {
         this.datasetService = datasetService;
         this.indexService = indexService;
         this.metadataService = metadataService;
         this.graphGeneratingService = graphGeneratingService;
+        this.topLevelCacheService = topLevelCacheService;
         this.metadataExecutor = metadataExecutor;
     }
 
     /**
-     * Apply ontology mutations and clear relevant caches for instant UI updates.
-     * Use allEntries=true because @Cacheable keys are composite ("#projectId + '_' + #limit/#offset/#parentIri"),
-     * which a key="#projectId" eviction would never match -> stale data on save.
+     * Apply ontology mutations. Spring cache eviction is centralized in
+     * {@link SparqlDatasetService#execUpdate} via {@link OntologySpringCacheEvictionService}.
      */
-    @Caching(evict = {
-        @CacheEvict(value = "topLevelClasses", allEntries = true),
-        @CacheEvict(value = "classChildren", allEntries = true),
-        @CacheEvict(value = "allClasses", allEntries = true),
-        @CacheEvict(value = "ontologyProperties", allEntries = true),
-        @CacheEvict(value = "ontologyIndividuals", allEntries = true),
-        @CacheEvict(value = "classInstanceCounts", allEntries = true),
-        @CacheEvict(value = "classDetails", allEntries = true),
-        @CacheEvict(value = "classAnnotations", allEntries = true),
-        @CacheEvict(value = "classInstances", allEntries = true),
-        @CacheEvict(value = "individualCount", allEntries = true),
-        @CacheEvict(value = "debugInfo", allEntries = true),
-        @CacheEvict(value = "graphCache", allEntries = true)
-    })
     public void apply(String projectId, List<MutationOp> ops) {
+        apply(projectId, ops, false, null);
+    }
+
+    /**
+     * Apply mutations to the user's draft named graph (private editing — not visible to other users).
+     */
+    public void applyDraft(String projectId, String userId, List<MutationOp> ops) {
+        apply(projectId, ops, true, userId);
+    }
+
+    private void apply(String projectId, List<MutationOp> ops, boolean draft, String userId) {
         if (ops == null || ops.isEmpty()) {
             log.warn("[MUTATION] No operations to apply for project: {}", projectId);
             return;
@@ -88,19 +114,77 @@ public class OntologyMutationService {
         
         // Check if we have any actual statements after filtering
         if (sparql.trim().equals(PREFIXES.trim())) {
-            log.warn("[MUTATION] No valid operations to apply after filtering");
-            return;
+            String opTypes = ops.stream().map(MutationOp::type).collect(Collectors.joining(", "));
+            log.error("[MUTATION] No valid SPARQL produced for ops: {}", opTypes);
+            throw new IllegalArgumentException(
+                    "Mutation could not be applied: missing required fields or unsupported restriction type (ops: "
+                            + opTypes + ")");
         }
         
         log.info("[MUTATION] Generated SPARQL (BEFORE graph injection):");
         log.info("[MUTATION] {}", sparql);
         
         try {
+            // Protégé-style desktop: OWLAPI patch or in-memory SPARQL; defer Fuseki until SPARQL/graph.
+            if (!draft && desktopOwlApiMutationService != null
+                    && desktopOwlApiMutationService.tryApply(projectId, ops, sparql)) {
+                long version = metadataService.incrementMutationVersion(projectId);
+                if (ontologyCache != null) {
+                    ontologyCache.updateCachedVersion(projectId, version);
+                }
+                topLevelCacheService.evict(projectId);
+                if (hierarchyIndexService != null) {
+                    hierarchyIndexService.markStale(projectId);
+                }
+                if (entityUsageIndexService != null || classDetailCacheService != null) {
+                    List<String> affectedIris = ops.stream()
+                        .flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri()))
+                        .filter(Objects::nonNull)
+                        .distinct()
+                        .toList();
+                    if (entityUsageIndexService != null) entityUsageIndexService.invalidate(projectId, affectedIris);
+                    if (classDetailCacheService != null) classDetailCacheService.invalidate(projectId, affectedIris);
+                }
+                graphGeneratingService.clearGraphCache();
+                if (visualizationController != null) {
+                    visualizationController.clearCache(projectId);
+                }
+                return;
+            }
+
+            MutationContext.setOps(ops);
             long sparqlStart = System.currentTimeMillis();
-            datasetService.execUpdate(projectId, sparql);
+            if (draft) {
+                requireDraftCopyReady(projectId, userId);
+                datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
+            } else {
+                datasetService.execUpdate(projectId, sparql);
+                if (mainGraphRevisionService != null) {
+                    mainGraphRevisionService.incrementRevision(projectId);
+                }
+            }
             long sparqlDuration = System.currentTimeMillis() - sparqlStart;
             log.info("[MUTATION] SPARQL update completed in {}ms for project={}", sparqlDuration, projectId);
-            
+
+            // OWLAPI patch/evict + Spring cache eviction handled in execUpdate → mutationCoordinator
+            // MongoDB L2 cache (topLevelCacheService) only evicted for public mutations;
+            // draft mutations leave the public graph unchanged so L2 stays valid.
+            if (!draft) {
+                topLevelCacheService.evict(projectId);
+            }
+            if (hierarchyIndexService != null) {
+                hierarchyIndexService.markStale(projectId);
+            }
+            if (entityUsageIndexService != null || classDetailCacheService != null) {
+                List<String> affectedIris = ops.stream()
+                    .flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri()))
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .toList();
+                if (entityUsageIndexService != null) entityUsageIndexService.invalidate(projectId, affectedIris);
+                if (classDetailCacheService != null) classDetailCacheService.invalidate(projectId, affectedIris);
+            }
+
             // Clear graph cache after mutations
             graphGeneratingService.clearGraphCache();
             if (visualizationController != null) {
@@ -135,6 +219,20 @@ public class OntologyMutationService {
                     }
                 }
             }
+
+            // Restrictions: fail fast if GraphDB did not persist the blank-node axiom.
+            // Scope verification to the graph that was written (main vs draft), not the
+            // user's draft read scope from SparqlQueryContext.
+            String verifyGraphUri = draft
+                    ? datasetService.getDraftGraphUri(projectId, userId)
+                    : datasetService.getGraphUri(projectId);
+            for (MutationOp op : ops) {
+                if ("addDataRestriction".equals(op.type())) {
+                    verifyRestrictionInserted(projectId, verifyGraphUri, op, true);
+                } else if ("addObjectRestriction".equals(op.type())) {
+                    verifyRestrictionInserted(projectId, verifyGraphUri, op, false);
+                }
+            }
         } catch (Exception e) {
             log.error("[MUTATION] ❌ Failed to apply mutations: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to apply mutations", e);
@@ -147,24 +245,51 @@ public class OntologyMutationService {
     }
 
     /**
-     * Make sibling classes disjoint and clear relevant caches.
-     * Uses allEntries=true because @Cacheable keys are composite and cannot be matched by key="#projectId".
+     * Apply a pre-built SPARQL update for cases where the mutation payload needs
+     * anonymous OWL class expressions generated by OWLAPI, such as DL Query
+     * "Add to ontology".
      */
-    @Caching(evict = {
-        @CacheEvict(value = "topLevelClasses", allEntries = true),
-        @CacheEvict(value = "classChildren", allEntries = true),
-        @CacheEvict(value = "allClasses", allEntries = true),
-        @CacheEvict(value = "ontologyProperties", allEntries = true),
-        @CacheEvict(value = "ontologyIndividuals", allEntries = true),
-        @CacheEvict(value = "classInstanceCounts", allEntries = true),
-        @CacheEvict(value = "classDetails", allEntries = true),
-        @CacheEvict(value = "classAnnotations", allEntries = true),
-        @CacheEvict(value = "classInstances", allEntries = true),
-        @CacheEvict(value = "individualCount", allEntries = true),
-        @CacheEvict(value = "debugInfo", allEntries = true),
-        @CacheEvict(value = "graphCache", allEntries = true)
-    })
+    public void applyRawUpdate(String projectId, String sparql) {
+        applyRawUpdate(projectId, sparql, false, null);
+    }
+
+    /**
+     * Apply a pre-built SPARQL update (optionally to the user's draft graph).
+     */
+    public void applyRawUpdate(String projectId, String sparql, boolean draft, String userId) {
+        if (sparql == null || sparql.isBlank()) {
+            log.warn("[MUTATION] Empty raw SPARQL update for project={}", projectId);
+            return;
+        }
+
+        if (draft) {
+            requireDraftCopyReady(projectId, userId);
+            datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
+        } else {
+            datasetService.execUpdate(projectId, sparql);
+            if (mainGraphRevisionService != null) {
+                mainGraphRevisionService.incrementRevision(projectId);
+            }
+        }
+        topLevelCacheService.evict(projectId);
+        graphGeneratingService.clearGraphCache();
+        if (visualizationController != null) {
+            visualizationController.clearCache(projectId);
+        }
+
+        if (!draft) {
+            CompletableFuture.runAsync(() -> {
+                Map<String, Object> meta = indexService.computeMetadata(projectId);
+                metadataService.writeMeta(projectId, meta);
+            }, metadataExecutor);
+        }
+    }
+
     public void makeSiblingsDisjoint(String projectId, List<String> classIds) {
+        makeSiblingsDisjoint(projectId, classIds, false, null);
+    }
+
+    public void makeSiblingsDisjoint(String projectId, List<String> classIds, boolean draft, String userId) {
         if (classIds == null || classIds.size() < 2) {
             return;
         }
@@ -186,7 +311,17 @@ public class OntologyMutationService {
         
         sparqlBuilder.append("}");
         
-        datasetService.execUpdate(projectId, sparqlBuilder.toString());
+        String sparql = sparqlBuilder.toString();
+        if (draft) {
+            requireDraftCopyReady(projectId, userId);
+            datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
+        } else {
+            datasetService.execUpdate(projectId, sparql);
+            if (mainGraphRevisionService != null) {
+                mainGraphRevisionService.incrementRevision(projectId);
+            }
+        }
+        topLevelCacheService.evict(projectId);
 
         // Clear graph cache
         graphGeneratingService.clearGraphCache();
@@ -194,20 +329,30 @@ public class OntologyMutationService {
             visualizationController.clearCache(projectId);
         }
 
-        CompletableFuture.runAsync(() -> {
-            Map<String, Object> meta = indexService.computeMetadata(projectId);
-            metadataService.writeMeta(projectId, meta);
-        }, metadataExecutor);
+        if (!draft) {
+            CompletableFuture.runAsync(() -> {
+                Map<String, Object> meta = indexService.computeMetadata(projectId);
+                metadataService.writeMeta(projectId, meta);
+            }, metadataExecutor);
+        }
     }
 
+    // These operation types use classIri() as their subject instead of iri()
+    private static final java.util.Set<String> CLASS_IRI_OPS = java.util.Set.of(
+        "addAxiom", "addObjectRestriction", "addDataRestriction",
+        "deleteObjectRestriction", "deleteDataRestriction"
+    );
+
     private String toUpdate(String projectId, MutationOp op) {
-        // Validate IRI is not null for operations that require it
-        if (op.iri() == null || op.iri().isBlank() || "null".equals(op.iri())) {
-            log.error("[MUTATION] Invalid IRI for operation {}: iri={}", op.type(), op.iri());
-            throw new IllegalArgumentException("IRI cannot be null or empty for operation: " + op.type());
+        String type = op.type();
+        // Skip iri() validation for ops that use classIri() as their subject
+        if (!CLASS_IRI_OPS.contains(type)) {
+            if (op.iri() == null || op.iri().isBlank() || "null".equals(op.iri())) {
+                log.error("[MUTATION] Invalid IRI for operation {}: iri={}", type, op.iri());
+                throw new IllegalArgumentException("IRI cannot be null or empty for operation: " + type);
+            }
         }
 
-        String type = op.type();
         if (type == null) throw new IllegalArgumentException("Unsupported op " + type);
 
         if (type.equals("createClass")) {
@@ -225,16 +370,25 @@ public class OntologyMutationService {
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("addAnnotation")) {
             return "INSERT DATA {\n"
-                + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
+                + "<" + op.iri() + "> <" + op.property() + "> " + annotationLiteral(op.value(), op.language(), op.datatype()) + " .\n"
                 + "}";
         } else if (type.equals("updateAnnotation")) {
+            String whereClause = op.oldValue() != null && !op.oldValue().isBlank()
+                ? "{ <" + op.iri() + "> <" + op.property() + "> ?oldValue . FILTER(STR(?oldValue) = " + literal(op.oldValue()) + ") }"
+                : "{ <" + op.iri() + "> <" + op.property() + "> ?oldValue }";
             return "DELETE { <" + op.iri() + "> <" + op.property() + "> ?oldValue }\n"
-                + "INSERT { <" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " }\n"
-                + "WHERE  { <" + op.iri() + "> <" + op.property() + "> ?oldValue }";
+                + "INSERT { <" + op.iri() + "> <" + op.property() + "> " + annotationLiteral(op.value(), op.language(), op.datatype()) + " }\n"
+                + "WHERE  " + whereClause;
         } else if (type.equals("deleteAnnotation")) {
-            return "DELETE DATA {\n"
-                + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
-                + "}";
+            if (op.language() != null || op.datatype() != null) {
+                // Language/datatype known: use exact DELETE DATA
+                return "DELETE DATA {\n"
+                    + "<" + op.iri() + "> <" + op.property() + "> " + annotationLiteral(op.value(), op.language(), op.datatype()) + " .\n"
+                    + "}";
+            }
+            // Language/datatype unknown: match any literal with the same string value
+            return "DELETE { <" + op.iri() + "> <" + op.property() + "> ?v }\n"
+                + "WHERE  { <" + op.iri() + "> <" + op.property() + "> ?v . FILTER(STR(?v) = " + literal(op.value()) + ") }";
         } else if (type.equals("addSubClassOf")) {
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> rdfs:subClassOf <" + op.target() + "> .\n"
@@ -324,28 +478,32 @@ public class OntologyMutationService {
                 + "}";
         } else if (type.equals("deleteObjectProperty")) {
             return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s <" + op.iri() + "> ?o } WHERE { ?s <" + op.iri() + "> ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("deleteDataProperty")) {
             return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s <" + op.iri() + "> ?o } WHERE { ?s <" + op.iri() + "> ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("deleteAnnotationProperty")) {
             return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s <" + op.iri() + "> ?o } WHERE { ?s <" + op.iri() + "> ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("addPropertyDomain")) {
             if (op.restrictionType() != null) {
                 // Domain is a restriction
                 boolean isDataRestriction = "DataRestriction".equals(op.axiomType());
-                String restrictionBody = buildRestrictionBody(op.property(), op.restrictionType(), op.target(), op.cardinality(), isDataRestriction);
-                if (restrictionBody.isEmpty()) return "";
-                return "INSERT {\n"
-                    + "<" + op.iri() + "> rdfs:domain " + restrictionBody + " .\n"
-                    + "} WHERE {}";
+                return buildRestrictionInsertData(
+                        op.iri(), "rdfs:domain", op.property(), op.restrictionType(), op.target(),
+                        op.cardinality(), isDataRestriction);
             } else {
                 return "INSERT DATA {\n"
                     + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
                     + "}";
             }
         } else if (type.equals("deletePropertyDomain")) {
+            if (op.target() != null && op.target().contains("|||")) {
+                return buildDeletePropertyRestrictionSparql(op.iri(), "rdfs:domain", op.target());
+            }
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
                 + "}";
@@ -353,20 +511,34 @@ public class OntologyMutationService {
             if (op.restrictionType() != null) {
                 // Range is a restriction
                 boolean isDataRestriction = "DataRestriction".equals(op.axiomType());
-                String restrictionBody = buildRestrictionBody(op.property(), op.restrictionType(), op.target(), op.cardinality(), isDataRestriction);
-                if (restrictionBody.isEmpty()) return "";
-                return "INSERT {\n"
-                    + "<" + op.iri() + "> rdfs:range " + restrictionBody + " .\n"
-                    + "} WHERE {}";
-            } else {
-                return "INSERT DATA {\n"
-                    + "<" + op.iri() + "> rdfs:range <" + op.target() + "> .\n"
-                    + "}";
+                return buildRestrictionInsertData(
+                        op.iri(), "rdfs:range", op.property(), op.restrictionType(), op.target(),
+                        op.cardinality(), isDataRestriction);
+            } else if (op.target() != null && op.target().contains("[")) {
+                String drSparql = buildDatatypeRestrictionSparql(op.iri(), op.target(), "rdfs:range");
+                if (!drSparql.isEmpty()) return drSparql;
             }
+            String rangeTarget = op.target();
+            if (rangeTarget != null && !rangeTarget.startsWith("http") && rangeTarget.contains(":")) {
+                rangeTarget = resolvePrefixedIri(rangeTarget);
+            }
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> rdfs:range <" + rangeTarget + "> .\n"
+                + "}";
         } else if (type.equals("deletePropertyRange")) {
+            if (op.target() != null && op.target().contains("|||")) {
+                return buildDeletePropertyRestrictionSparql(op.iri(), "rdfs:range", op.target());
+            }
+            if (op.target() != null && op.target().contains("[")) {
+                return buildDeleteDatatypeRestrictionSparql(op.iri(), "rdfs:range");
+            }
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> rdfs:range <" + op.target() + "> .\n"
                 + "}";
+        } else if (type.equals("addDatatypeDefinition")) {
+            return buildDatatypeDefinitionSparql(op.iri(), op.value());
+        } else if (type.equals("deleteDatatypeDefinition")) {
+            return buildDeleteDatatypeDefinitionSparql(op.iri());
         } else if (type.equals("addSubPropertyOf")) {
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> .\n"
@@ -376,12 +548,16 @@ public class OntologyMutationService {
                 + "<" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> .\n"
                 + "}";
         } else if (type.equals("addInverseProperty")) {
+            // owl:inverseOf is symmetric in OWL — insert both directions so both
+            // properties show each other as inverse (matches Protégé behaviour).
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> owl:inverseOf <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:inverseOf <" + op.iri() + "> .\n"
                 + "}";
         } else if (type.equals("deleteInverseProperty")) {
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> owl:inverseOf <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:inverseOf <" + op.iri() + "> .\n"
                 + "}";
         } else if (type.equals("addDisjointProperty")) {
             return "INSERT DATA {\n"
@@ -495,6 +671,23 @@ public class OntologyMutationService {
             return buildIntersectionSparql(op.iri(), memberIris, op.axiomType());
         } else if (type.equals("deleteIntersection")) {
             return buildDeleteComplexExpressionSparql(op.iri(), op.target(), op.axiomType());
+        } else if (type.equals("addGCAIntersection")) {
+            // General Class Axiom: (A and B) SubClassOf <classIri>
+            // The anonymous intersection is the SUBJECT of SubClassOf
+            String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
+            if (memberIris.length < 2) {
+                log.warn("[MUTATION] GCA intersection requires at least 2 member classes");
+                return "";
+            }
+            return buildGCAIntersectionSparql(op.iri(), memberIris);
+        } else if (type.equals("addGCAUnion")) {
+            // General Class Axiom: (A or B) SubClassOf <classIri>
+            String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
+            if (memberIris.length < 2) {
+                log.warn("[MUTATION] GCA union requires at least 2 member classes");
+                return "";
+            }
+            return buildGCAUnionSparql(op.iri(), memberIris);
         } else if (type.equals("addUnion")) {
             String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
             if (memberIris.length < 2) {
@@ -543,7 +736,8 @@ public class OntologyMutationService {
                 + "}";
         } else if (type.equals("addDataPropertyAssertion")) {
             return "INSERT DATA {\n"
-                + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
+                + "<" + op.iri() + "> <" + op.property() + "> "
+                + annotationLiteral(op.value(), op.language(), op.datatype()) + " .\n"
                 + "}";
         } else if (type.equals("deleteDataPropertyAssertion")) {
             return "DELETE DATA {\n"
@@ -591,6 +785,20 @@ public class OntologyMutationService {
                 + "<" + op.iri() + "> owl:differentFrom <" + op.target() + "> .\n"
                 + "<" + op.target() + "> owl:differentFrom <" + op.iri() + "> .\n"
                 + "}";
+        } else if (type.equals("addPropertyChain")) {
+            String[] chainProps = op.value() != null ? op.value().split(" o ") : new String[0];
+            if (chainProps.length < 2) {
+                log.warn("[MUTATION] Property chain requires at least 2 properties, got: {}", op.value());
+                return "";
+            }
+            return buildPropertyChainSparql(op.iri(), chainProps);
+        } else if (type.equals("deletePropertyChain")) {
+            String[] chainProps = op.value() != null ? op.value().split(" o ") : new String[0];
+            if (chainProps.length < 2) {
+                log.warn("[MUTATION] Property chain delete requires at least 2 properties, got: {}", op.value());
+                return "";
+            }
+            return buildDeletePropertyChainSparql(op.iri(), chainProps);
         } else if (type.equals("addClassAssertion")) {
             // Add rdf:type assertion to an existing individual
             if (op.classIri() == null) return "";
@@ -600,9 +808,13 @@ public class OntologyMutationService {
                 + "}";
         } else if (type.equals("removeClassAssertion")) {
             // Remove rdf:type assertion from an individual
+            if (op.classIri() == null) return "";
+            String classExpr = buildClassExpressionSparql(projectId, op.classIri());
             return "DELETE DATA {\n"
-                + "<" + op.iri() + "> a <" + op.classIri() + "> .\n"
+                + "<" + op.iri() + "> a " + classExpr + " .\n"
                 + "}";
+        } else if (type.equals("deleteAxiom")) {
+            return buildDeleteBlankNodeAxiomSparql(op.iri(), op.ancestorIri());
         } else {
             throw new IllegalArgumentException("Unsupported op " + op.type());
         }
@@ -626,6 +838,19 @@ public class OntologyMutationService {
             .replace("\r", "\\r")    // Carriage return
             .replace("\t", "\\t");   // Tab
         return "\"%s\"".formatted(escaped);
+    }
+
+    private String annotationLiteral(String value, String language, String datatype) {
+        String base = literal(value);
+        if (language != null && !language.isBlank()) {
+            return base + "@" + language.trim().toLowerCase();
+        }
+        if (datatype != null && !datatype.isBlank()) {
+            // Support both full IRI and prefixed form (e.g. "xsd:boolean")
+            String dt = datatype.startsWith("http") ? "<" + datatype + ">" : datatype;
+            return base + "^^" + dt;
+        }
+        return base;
     }
 
     private String negativePropertyAssertionIri(MutationOp op, boolean isObjectTarget) {
@@ -695,9 +920,58 @@ public class OntologyMutationService {
     }
 
     /**
+     * Delete a restriction blank node connected via rdfs:range or rdfs:domain.
+     * encodedTarget format: display|||restrictionType|||onPropertyIri|||fillerIri|||cardinality
+     */
+    private String buildDeletePropertyRestrictionSparql(String propertyIri, String axiomPredicate, String encodedTarget) {
+        String[] parts = encodedTarget.split("\\|\\|\\|", -1);
+        if (parts.length < 4) {
+            log.warn("[MUTATION] Invalid encoded restriction target (expected >=4 parts): {}", encodedTarget);
+            return "";
+        }
+        String restrictionType = parts[1];
+        String onPropIri = parts[2];
+        String fillerIri = parts[3];
+        String card = parts.length > 4 ? parts[4] : "";
+
+        String fillerPattern = switch (restrictionType) {
+            case "some" -> "?r owl:someValuesFrom <" + fillerIri + "> .";
+            case "only" -> "?r owl:allValuesFrom <" + fillerIri + "> .";
+            case "value" -> "?r owl:hasValue <" + fillerIri + "> .";
+            case "min" -> "?r owl:minQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n      ?r owl:onClass <" + fillerIri + "> .";
+            case "max" -> "?r owl:maxQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n      ?r owl:onClass <" + fillerIri + "> .";
+            case "exactly" -> "?r owl:qualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n      ?r owl:onClass <" + fillerIri + "> .";
+            default -> "";
+        };
+
+        if (fillerPattern.isEmpty()) {
+            log.warn("[MUTATION] Unknown restriction type in encoded target: {}", restrictionType);
+            return "";
+        }
+
+        String sparql = PREFIXES + """
+            DELETE {
+              <%s> %s ?r .
+              ?r ?p ?o .
+            }
+            WHERE {
+              <%s> %s ?r .
+              ?r a owl:Restriction .
+              ?r owl:onProperty <%s> .
+              %s
+              ?r ?p ?o .
+              FILTER(isBlank(?r))
+            }
+            """.formatted(propertyIri, axiomPredicate, propertyIri, axiomPredicate, onPropIri, fillerPattern);
+
+        log.info("[MUTATION] buildDeletePropertyRestrictionSparql: {}", sparql);
+        return sparql;
+    }
+
+    /**
      * Build SPARQL INSERT to add an OWL restriction (object or data restriction)
      * Uses OWL 2 RDF syntax with blank nodes via INSERT WHERE pattern
-     * 
+     *
      * @param op MutationOp containing restriction details
      * @param isDataRestriction true for data restrictions, false for object restrictions
      * @return SPARQL UPDATE string
@@ -799,21 +1073,127 @@ public class OntologyMutationService {
             };
         }
         
-        String restrictionBody = buildRestrictionBody(propertyIri, restrictionType, fillerIri, cardinality, isDataRestriction);
-        
-        if (restrictionBody.isEmpty()) {
+        String sparql = buildRestrictionInsertData(
+                classIri, axiomPredicate, propertyIri, restrictionType, fillerIri, cardinality, isDataRestriction);
+        if (sparql.isEmpty()) {
             log.warn("[MUTATION] Unknown restriction type: {}", restrictionType);
             return "";
         }
-
-        String sparql = """
-            INSERT {
-              <%s> %s %s .
-            } WHERE { }
-            """.formatted(classIri, axiomPredicate, restrictionBody);
-            
         log.info("[MUTATION]   Generated restriction SPARQL: {}", sparql);
         return sparql;
+    }
+
+    /**
+     * Build INSERT DATA for a class/property restriction using explicit blank-node
+     * triples ({@code _:ontocodeR}). GraphDB/RDF4J often rejects or mishandles Turtle
+     * {@code [ ... ]} blank-node syntax inside INSERT DATA after graph injection.
+     */
+    private String buildRestrictionInsertData(String subjectIri, String axiomPredicate,
+                                              String propertyIri, String restrictionType,
+                                              String fillerIri, Integer cardinality,
+                                              boolean isDataRestriction) {
+        if (subjectIri == null || propertyIri == null || restrictionType == null || fillerIri == null) {
+            return "";
+        }
+        String bn = "<http://ontocode.org/restriction/" + java.util.UUID.randomUUID().toString().replace("-", "") + ">";
+        StringBuilder triples = new StringBuilder();
+        triples.append("<").append(subjectIri).append("> ").append(axiomPredicate).append(" ").append(bn).append(" .\n");
+        triples.append(bn).append(" a owl:Restriction .\n");
+        triples.append(bn).append(" owl:onProperty <").append(propertyIri).append("> .\n");
+
+        switch (restrictionType) {
+            case "some" -> triples.append(bn).append(" owl:someValuesFrom <").append(fillerIri).append("> .\n");
+            case "only" -> triples.append(bn).append(" owl:allValuesFrom <").append(fillerIri).append("> .\n");
+            case "value" -> triples.append(bn).append(" owl:hasValue <").append(fillerIri).append("> .\n");
+            case "min", "max", "exactly" -> {
+                int card = cardinality != null ? cardinality : 1;
+                String onClassPred = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
+                String cardPred = switch (restrictionType) {
+                    case "min" -> "owl:minQualifiedCardinality";
+                    case "max" -> "owl:maxQualifiedCardinality";
+                    default -> "owl:qualifiedCardinality";
+                };
+                triples.append(bn).append(" ").append(cardPred)
+                        .append(" \"").append(card).append("\"^^xsd:nonNegativeInteger .\n");
+                triples.append(bn).append(" ").append(onClassPred)
+                        .append(" <").append(fillerIri).append("> .\n");
+            }
+            default -> {
+                return "";
+            }
+        }
+
+        return "INSERT DATA {\n" + triples + "}";
+    }
+
+    /**
+     * Confirm a restriction axiom is readable from GraphDB immediately after INSERT.
+     * Throws if the triple pattern is missing (catches silent no-ops from bad SPARQL injection).
+     */
+    private void verifyRestrictionInserted(String projectId, String graphUri, MutationOp op,
+                                           boolean isDataRestriction) {
+        String classIri = op.iri();
+        String propertyIri = op.property();
+        String restrictionType = op.restrictionType();
+        String fillerIri = op.target();
+        String axiomType = op.axiomType();
+        Integer cardinality = op.cardinality();
+        if (classIri == null || propertyIri == null || restrictionType == null || fillerIri == null) {
+            return;
+        }
+        String axiomPredicate = "rdfs:subClassOf";
+        if (axiomType != null) {
+            axiomPredicate = switch (axiomType) {
+                case "EquivalentTo" -> "owl:equivalentClass";
+                case "DisjointWith" -> "owl:disjointWith";
+                default -> "rdfs:subClassOf";
+            };
+        }
+        String onFillerPred = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
+        String restrictionPattern = switch (restrictionType) {
+            case "some" -> "?r owl:someValuesFrom <" + fillerIri + "> .";
+            case "only" -> "?r owl:allValuesFrom <" + fillerIri + "> .";
+            case "value" -> "?r owl:hasValue <" + fillerIri + "> .";
+            case "min" -> {
+                int card = cardinality != null ? cardinality : 1;
+                yield "?r owl:minQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n"
+                        + "?r " + onFillerPred + " <" + fillerIri + "> .";
+            }
+            case "max" -> {
+                int card = cardinality != null ? cardinality : 1;
+                yield "?r owl:maxQualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n"
+                        + "?r " + onFillerPred + " <" + fillerIri + "> .";
+            }
+            case "exactly" -> {
+                int card = cardinality != null ? cardinality : 1;
+                yield "?r owl:qualifiedCardinality \"" + card + "\"^^xsd:nonNegativeInteger .\n"
+                        + "?r " + onFillerPred + " <" + fillerIri + "> .";
+            }
+            default -> null;
+        };
+        if (restrictionPattern == null) {
+            return;
+        }
+        // Use GRAPH <uri> inline so the check targets the exact named graph regardless
+        // of how the connection resolves its default graph — more reliable than FROM injection.
+        String verifyQuery = PREFIXES + """
+            ASK WHERE {
+              GRAPH <%s> {
+                <%s> %s ?r .
+                ?r owl:onProperty <%s> .
+                %s
+              }
+            }
+            """.formatted(graphUri, classIri, axiomPredicate, propertyIri, restrictionPattern);
+        log.info("[MUTATION] Verifying restriction insertion in graph {}: {}", graphUri, verifyQuery);
+        boolean found = datasetService.execAskInGraph(projectId, graphUri, verifyQuery);
+        if (!found) {
+            log.error("[MUTATION] Restriction verification FAILED for class={} property={} type={} filler={}",
+                    classIri, propertyIri, restrictionType, fillerIri);
+            throw new RuntimeException(
+                    "Restriction was not persisted to the ontology graph (verification failed)");
+        }
+        log.info("[MUTATION] Restriction verification OK for class={}", classIri);
     }
     
     /**
@@ -849,28 +1229,33 @@ public class OntologyMutationService {
             case "DisjointWith" -> "owl:disjointWith";
             default -> "rdfs:subClassOf";
         };
-        
-        // Determine the filler predicate based on restriction type
-        String fillerPredicate = switch (restrictionType) {
-            case "some" -> "owl:someValuesFrom";
-            case "only" -> "owl:allValuesFrom";
-            case "value" -> "owl:hasValue";
-            case "min" -> "owl:minQualifiedCardinality";
-            case "max" -> "owl:maxQualifiedCardinality";
-            case "exactly" -> "owl:qualifiedCardinality";
-            default -> "";
+
+        String onFillerPred = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
+        String restrictionPattern = switch (restrictionType) {
+            case "some" -> "?restriction owl:someValuesFrom <" + fillerIri + "> .";
+            case "only" -> "?restriction owl:allValuesFrom <" + fillerIri + "> .";
+            case "value" -> "?restriction owl:hasValue <" + fillerIri + "> .";
+            case "min", "max", "exactly" -> {
+                int card = cardinality != null ? cardinality : 1;
+                String cardPred = switch (restrictionType) {
+                    case "min" -> "owl:minQualifiedCardinality";
+                    case "max" -> "owl:maxQualifiedCardinality";
+                    default -> "owl:qualifiedCardinality";
+                };
+                yield "?restriction " + cardPred + " \"" + card + "\"^^xsd:nonNegativeInteger .\n"
+                        + "              ?restriction " + onFillerPred + " <" + fillerIri + "> .";
+            }
+            default -> {
+                log.warn("[MUTATION] Unknown restriction type: {}", restrictionType);
+                yield "";
+            }
         };
-        
-        if (fillerPredicate.isEmpty()) {
-            log.warn("[MUTATION] Unknown restriction type: {}", restrictionType);
+
+        if (restrictionPattern.isEmpty()) {
             throw new IllegalArgumentException("Unknown restriction type: " + restrictionType);
         }
-        
-        // IMPORTANT: We need to be very specific about which restriction to delete
-        // The WHERE clause must match ONLY the restriction connected via the correct axiom predicate
-        // This prevents accidentally deleting a similar restriction from a different axiom type
-        // (e.g., deleting from SubClassOf should not affect EquivalentTo)
-        // Also require rdf:type owl:Restriction to match the query pattern
+
+        // Match ONLY the restriction linked via the correct axiom predicate (SubClassOf vs EquivalentTo).
         String sparql = """
             DELETE {
               <%s> %s ?restriction .
@@ -880,11 +1265,10 @@ public class OntologyMutationService {
               <%s> %s ?restriction .
               ?restriction a owl:Restriction .
               ?restriction owl:onProperty <%s> .
-              ?restriction %s <%s> .
+              %s
               ?restriction ?p ?o .
-              FILTER(isBlank(?restriction))
             }
-            """.formatted(classIri, axiomPredicate, classIri, axiomPredicate, propertyIri, fillerPredicate, fillerIri);
+            """.formatted(classIri, axiomPredicate, classIri, axiomPredicate, propertyIri, restrictionPattern);
         
         log.info("[MUTATION] Generated delete restriction SPARQL:");
         log.info("[MUTATION] {}", sparql);
@@ -909,7 +1293,7 @@ public class OntologyMutationService {
         // Build an RDF list using blank nodes
         // Format: _:b1 rdf:first <member1>; rdf:rest _:b2. _:b2 rdf:first <member2>; rdf:rest rdf:nil.
         StringBuilder insertBuilder = new StringBuilder();
-        insertBuilder.append("INSERT {\n");
+        insertBuilder.append("INSERT DATA {\n");
         insertBuilder.append("  <").append(classIri).append("> owl:disjointUnionOf _:list0 .\n");
         
         for (int i = 0; i < memberIris.length; i++) {
@@ -922,7 +1306,7 @@ public class OntologyMutationService {
                 .append("             rdf:rest ").append(nextList).append(" .\n");
         }
         
-        insertBuilder.append("} WHERE { }");
+        insertBuilder.append("}\n");
         
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated disjoint union SPARQL:");
@@ -967,20 +1351,21 @@ public class OntologyMutationService {
         log.info("[MUTATION]   classIri: {}", classIri);
         log.info("[MUTATION]   propertyIris: {}", String.join(", ", propertyIris));
         
-        // Build an RDF list using blank nodes
+        // Build an RDF list with a named IRI as the list head so it can be precisely deleted later
+        String listHeadIri = "http://ontocode.org/haskey/" + UUID.randomUUID().toString().replace("-", "");
         StringBuilder insertBuilder = new StringBuilder();
-        insertBuilder.append("INSERT {\n");
-        insertBuilder.append("  <").append(classIri).append("> owl:hasKey _:keyList0 .\n");
-        
+        insertBuilder.append("INSERT DATA {\n");
+        insertBuilder.append("  <").append(classIri).append("> owl:hasKey <").append(listHeadIri).append("> .\n");
+
         for (int i = 0; i < propertyIris.length; i++) {
-            String currentList = "_:keyList" + i;
-            String nextList = (i == propertyIris.length - 1) ? "rdf:nil" : "_:keyList" + (i + 1);
-            insertBuilder.append("  ").append(currentList)
-                .append(" rdf:first <").append(propertyIris[i].trim()).append("> ;\n");
-            insertBuilder.append("             rdf:rest ").append(nextList).append(" .\n");
+            String currentNode = (i == 0) ? "<" + listHeadIri + ">" : "_:keyNode" + i;
+            String nextNode = (i == propertyIris.length - 1) ? "rdf:nil" : "_:keyNode" + (i + 1);
+            insertBuilder.append("  ").append(currentNode)
+                .append(" rdf:first <").append(propertyIris[i].trim()).append("> ;\n")
+                .append("               rdf:rest ").append(nextNode).append(" .\n");
         }
         
-        insertBuilder.append("} WHERE { }");
+        insertBuilder.append("}\n");
         
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated has key SPARQL: {}", sparql);
@@ -995,25 +1380,94 @@ public class OntologyMutationService {
         log.info("[MUTATION]   classIri: {}", classIri);
         log.info("[MUTATION]   listNodeId: {}", listNodeId);
         
-        // Delete the has key axiom and all list nodes
-        String sparql = """
-            DELETE {
-              <%s> owl:hasKey ?list .
-              ?node rdf:first ?first .
-              ?node rdf:rest ?rest .
-            }
-            WHERE {
-              <%s> owl:hasKey ?list .
-              ?list rdf:rest* ?node .
-              ?node rdf:first ?first .
-              ?node rdf:rest ?rest .
-            }
-            """.formatted(classIri, classIri);
-        
+        String sparql;
+        if (listNodeId != null && (listNodeId.startsWith("http://") || listNodeId.startsWith("https://"))) {
+            // Named IRI list head (new data format) — delete precisely by IRI
+            sparql = """
+                DELETE {
+                  <%s> owl:hasKey <%s> .
+                  ?node rdf:first ?first .
+                  ?node rdf:rest ?rest .
+                }
+                WHERE {
+                  <%s> owl:hasKey <%s> .
+                  <%s> rdf:rest* ?node .
+                  ?node rdf:first ?first .
+                  ?node rdf:rest ?rest .
+                }
+                """.formatted(classIri, listNodeId, classIri, listNodeId, listNodeId);
+        } else {
+            // Blank node list head (legacy data) — filter by internal ID via STR()
+            // STR(?bnode) behaviour is implementation-specific; in GraphDB it returns the blank node identifier.
+            // Worst case this is a no-op (safer than deleting all has-key axioms).
+            String escapedId = listNodeId != null ? listNodeId.replace("\"", "\\\"") : "";
+            sparql = """
+                DELETE {
+                  <%s> owl:hasKey ?list .
+                  ?node rdf:first ?first .
+                  ?node rdf:rest ?rest .
+                }
+                WHERE {
+                  <%s> owl:hasKey ?list .
+                  FILTER(STR(?list) = "%s")
+                  ?list rdf:rest* ?node .
+                  ?node rdf:first ?first .
+                  ?node rdf:rest ?rest .
+                }
+                """.formatted(classIri, classIri, escapedId);
+        }
+
         log.info("[MUTATION]   Generated delete has key SPARQL: {}", sparql);
         return sparql;
     }
     
+    /**
+     * Build SPARQL INSERT to add an owl:propertyChainAxiom (RDF list of property IRIs).
+     * Chain expression format: "iri1 o iri2 [o iri3 ...]"
+     */
+    private String buildPropertyChainSparql(String propertyIri, String[] chainPropertyIris) {
+        log.info("[MUTATION] buildPropertyChainSparql: property={}, chain={}", propertyIri, String.join(" o ", chainPropertyIris));
+        StringBuilder sb = new StringBuilder("INSERT DATA {\n");
+        sb.append("  <").append(propertyIri).append("> owl:propertyChainAxiom _:chain0 .\n");
+        for (int i = 0; i < chainPropertyIris.length; i++) {
+            String cur = "_:chain" + i;
+            String next = (i == chainPropertyIris.length - 1) ? "rdf:nil" : "_:chain" + (i + 1);
+            sb.append("  ").append(cur).append(" rdf:first <").append(chainPropertyIris[i].trim()).append("> ;\n");
+            sb.append("             rdf:rest ").append(next).append(" .\n");
+        }
+        sb.append("}\n");
+        return sb.toString();
+    }
+
+    /**
+     * Build SPARQL DELETE to remove a specific owl:propertyChainAxiom whose members
+     * match the given ordered sequence.
+     */
+    private String buildDeletePropertyChainSparql(String propertyIri, String[] chainPropertyIris) {
+        log.info("[MUTATION] buildDeletePropertyChainSparql: property={}, chain={}", propertyIri, String.join(" o ", chainPropertyIris));
+        int n = chainPropertyIris.length;
+        StringBuilder where = new StringBuilder();
+        where.append("  <").append(propertyIri).append("> owl:propertyChainAxiom ?head .\n");
+        // Match exact sequence to identify the right chain list
+        for (int i = 0; i < n; i++) {
+            String nodeVar = (i == 0) ? "?head" : "?cn" + i;
+            String nextVar = (i == n - 1) ? "rdf:nil" : "?cn" + (i + 1);
+            where.append("  ").append(nodeVar).append(" rdf:first <").append(chainPropertyIris[i].trim()).append("> .\n");
+            where.append("  ").append(nodeVar).append(" rdf:rest ").append(nextVar).append(" .\n");
+        }
+        // Collect all list nodes for deletion
+        where.append("  ?head rdf:rest* ?delNode .\n");
+        where.append("  ?delNode rdf:first ?delFirst .\n");
+        where.append("  ?delNode rdf:rest ?delRest .\n");
+        return "DELETE {\n"
+            + "  <" + propertyIri + "> owl:propertyChainAxiom ?head .\n"
+            + "  ?delNode rdf:first ?delFirst .\n"
+            + "  ?delNode rdf:rest ?delRest .\n"
+            + "}\nWHERE {\n"
+            + where.toString()
+            + "}";
+    }
+
     /**
      * Build SPARQL INSERT to add an owl:intersectionOf class expression
      * Format: :Class rdfs:subClassOf/:equivalentClass [ owl:intersectionOf (:A :B :C) ]
@@ -1028,7 +1482,7 @@ public class OntologyMutationService {
         
         // Build an RDF list for the intersection members
         StringBuilder insertBuilder = new StringBuilder();
-        insertBuilder.append("INSERT {\n");
+        insertBuilder.append("INSERT DATA {\n");
         insertBuilder.append("  <").append(classIri).append("> ").append(axiomPredicate).append(" _:intersection .\n");
         insertBuilder.append("  _:intersection owl:intersectionOf _:list0 .\n");
         
@@ -1040,7 +1494,7 @@ public class OntologyMutationService {
             insertBuilder.append("             rdf:rest ").append(nextList).append(" .\n");
         }
         
-        insertBuilder.append("} WHERE { }");
+        insertBuilder.append("}\n");
         
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated intersection SPARQL: {}", sparql);
@@ -1061,7 +1515,7 @@ public class OntologyMutationService {
         
         // Build an RDF list for the union members
         StringBuilder insertBuilder = new StringBuilder();
-        insertBuilder.append("INSERT {\n");
+        insertBuilder.append("INSERT DATA {\n");
         insertBuilder.append("  <").append(classIri).append("> ").append(axiomPredicate).append(" _:union .\n");
         insertBuilder.append("  _:union owl:unionOf _:list0 .\n");
         
@@ -1073,13 +1527,52 @@ public class OntologyMutationService {
             insertBuilder.append("             rdf:rest ").append(nextList).append(" .\n");
         }
         
-        insertBuilder.append("} WHERE { }");
-        
+        insertBuilder.append("}\n");
+
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated union SPARQL: {}", sparql);
         return sparql;
     }
-    
+
+    /**
+     * Build SPARQL for a General Class Axiom (GCA) where the subject is an anonymous intersection.
+     * Produces: (A and B) rdfs:subClassOf <classIri>
+     */
+    private String buildGCAIntersectionSparql(String classIri, String[] memberIris) {
+        log.info("[MUTATION] buildGCAIntersectionSparql: classIri={}, members={}", classIri, String.join(", ", memberIris));
+        StringBuilder sb = new StringBuilder("INSERT DATA {\n");
+        sb.append("  _:gcaIntersection owl:intersectionOf _:gcaList0 .\n");
+        sb.append("  _:gcaIntersection rdfs:subClassOf <").append(classIri).append("> .\n");
+        for (int i = 0; i < memberIris.length; i++) {
+            String cur = "_:gcaList" + i;
+            String next = (i == memberIris.length - 1) ? "rdf:nil" : "_:gcaList" + (i + 1);
+            sb.append("  ").append(cur).append(" rdf:first <").append(memberIris[i].trim()).append("> ;\n");
+            sb.append("             rdf:rest ").append(next).append(" .\n");
+        }
+        sb.append("}\n");
+        return sb.toString();
+    }
+
+    /**
+     * Build SPARQL for a General Class Axiom (GCA) where the subject is an anonymous union.
+     * Produces: (A or B) rdfs:subClassOf <classIri>
+     */
+    private String buildGCAUnionSparql(String classIri, String[] memberIris) {
+        log.info("[MUTATION] buildGCAUnionSparql: classIri={}, members={}", classIri, String.join(", ", memberIris));
+        StringBuilder sb = new StringBuilder("INSERT DATA {\n");
+        sb.append("  _:gcaUnion owl:unionOf _:gcaList0 .\n");
+        sb.append("  _:gcaUnion rdfs:subClassOf <").append(classIri).append("> .\n");
+        for (int i = 0; i < memberIris.length; i++) {
+            String cur = "_:gcaList" + i;
+            String next = (i == memberIris.length - 1) ? "rdf:nil" : "_:gcaList" + (i + 1);
+            sb.append("  ").append(cur).append(" rdf:first <").append(memberIris[i].trim()).append("> ;\n");
+            sb.append("             rdf:rest ").append(next).append(" .\n");
+        }
+        sb.append("}\n");
+        return sb.toString();
+    }
+
+
     /**
      * Build SPARQL INSERT to add an owl:complementOf class expression
      * Format: :Class rdfs:subClassOf/:equivalentClass [ owl:complementOf :A ]
@@ -1093,11 +1586,11 @@ public class OntologyMutationService {
         String axiomPredicate = getAxiomPredicate(axiomType);
         
         String sparql = """
-            INSERT {
+            INSERT DATA {
               <%s> %s [
                 owl:complementOf <%s>
               ] .
-            } WHERE { }
+            }
             """.formatted(classIri, axiomPredicate, complementIri);
         
         log.info("[MUTATION]   Generated complement SPARQL: {}", sparql);
@@ -1118,7 +1611,7 @@ public class OntologyMutationService {
         
         // Build an RDF list for the oneOf individuals
         StringBuilder insertBuilder = new StringBuilder();
-        insertBuilder.append("INSERT {\n");
+        insertBuilder.append("INSERT DATA {\n");
         insertBuilder.append("  <").append(classIri).append("> ").append(axiomPredicate).append(" _:oneOf .\n");
         insertBuilder.append("  _:oneOf owl:oneOf _:list0 .\n");
         
@@ -1130,13 +1623,219 @@ public class OntologyMutationService {
             insertBuilder.append("             rdf:rest ").append(nextList).append(" .\n");
         }
         
-        insertBuilder.append("} WHERE { }");
+        insertBuilder.append("}\n");
         
         String sparql = insertBuilder.toString();
         log.info("[MUTATION]   Generated oneOf SPARQL: {}", sparql);
         return sparql;
     }
     
+    /**
+     * Delete a blank-node axiom (GCA, anonymous restriction, etc.) by its blank-node ID.
+     * The ID is the STR() representation returned from SPARQL queries.
+     */
+    private static final Pattern DATATYPE_RESTRICTION_EXPR = Pattern.compile("^(.+?)\\[(.+)]$");
+    private static final Pattern FACET_PATTERN = Pattern.compile("(>=|<=|>|<|=)\\s*(.+)");
+
+    private String resolvePrefixedIri(String prefixed) {
+        if (prefixed == null) return null;
+        String trimmed = prefixed.trim();
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("urn:")) {
+            return trimmed;
+        }
+        int colon = trimmed.indexOf(':');
+        if (colon <= 0) return trimmed;
+        String prefix = trimmed.substring(0, colon);
+        String local = trimmed.substring(colon + 1);
+        return switch (prefix) {
+            case "xsd" -> "http://www.w3.org/2001/XMLSchema#" + local;
+            case "rdf" -> "http://www.w3.org/1999/02/22-rdf-syntax-ns#" + local;
+            case "rdfs" -> "http://www.w3.org/2000/01/rdf-schema#" + local;
+            case "owl" -> "http://www.w3.org/2002/07/owl#" + local;
+            default -> trimmed;
+        };
+    }
+
+    private record DatatypeFacet(String predicate, String literalValue, String literalDatatype) {}
+
+    private String buildDatatypeDefinitionSparql(String datatypeIri, String expression) {
+        if (datatypeIri == null || datatypeIri.isBlank() || expression == null || expression.isBlank()) {
+            return "";
+        }
+        String trimmed = expression.trim();
+        if (!trimmed.contains("[")) {
+            String baseIri = resolvePrefixedIri(trimmed);
+            return PREFIXES + "INSERT DATA {\n"
+                + "<" + datatypeIri + "> a rdfs:Datatype ;\n"
+                + "  owl:equivalentClass <" + baseIri + "> .\n"
+                + "}";
+        }
+        return buildDatatypeRestrictionSparql(datatypeIri, trimmed, "owl:equivalentClass");
+    }
+
+    private String buildDeleteDatatypeDefinitionSparql(String datatypeIri) {
+        if (datatypeIri == null || datatypeIri.isBlank()) return "";
+        return PREFIXES + """
+            DELETE {
+              <%s> owl:equivalentClass ?dr .
+              ?dr ?p ?o .
+              ?list ?lp ?lo .
+              ?facet ?fp ?fo .
+            }
+            WHERE {
+              <%s> owl:equivalentClass ?dr .
+              OPTIONAL { ?dr ?p ?o . FILTER(?p != owl:equivalentClass) }
+              OPTIONAL {
+                ?dr owl:withRestrictions ?list .
+                ?list (rdf:rest*)/rdf:first ?facet .
+                ?facet ?fp ?fo .
+                ?list ?lp ?lo .
+              }
+            }
+            """.formatted(datatypeIri, datatypeIri);
+    }
+
+    private String buildDatatypeRestrictionSparql(String subjectIri, String expression, String predicate) {
+        Matcher matcher = DATATYPE_RESTRICTION_EXPR.matcher(expression.trim());
+        if (!matcher.matches()) {
+            return "";
+        }
+        String datatypeIri = resolvePrefixedIri(matcher.group(1).trim());
+        String facetsRaw = matcher.group(2).trim();
+        List<DatatypeFacet> facets = parseDatatypeFacets(facetsRaw, datatypeIri);
+
+        StringBuilder insert = new StringBuilder();
+        insert.append(PREFIXES).append("INSERT DATA {\n");
+        insert.append("  <").append(subjectIri).append("> ").append(predicate).append(" _:dr .\n");
+        insert.append("  _:dr a rdfs:Datatype ;\n");
+        insert.append("       owl:onDatatype <").append(datatypeIri).append(">");
+
+        if (facets.isEmpty()) {
+            insert.append(" .\n}\n");
+            return insert.toString();
+        }
+
+        insert.append(" ;\n       owl:withRestrictions _:list0 .\n");
+        for (int i = 0; i < facets.size(); i++) {
+            DatatypeFacet facet = facets.get(i);
+            String facetNode = "_:facet" + i;
+            String currentList = "_:list" + i;
+            String nextList = (i == facets.size() - 1) ? "rdf:nil" : "_:list" + (i + 1);
+            insert.append("  ").append(currentList).append(" rdf:first ").append(facetNode).append(" ;\n");
+            insert.append("             rdf:rest ").append(nextList).append(" .\n");
+            insert.append("  ").append(facetNode).append(" <").append(facet.predicate()).append("> ");
+            insert.append("\"").append(escapeSparqlString(facet.literalValue())).append("\"");
+            if (facet.literalDatatype() != null) {
+                insert.append("^^<").append(facet.literalDatatype()).append(">");
+            }
+            insert.append(" .\n");
+        }
+        insert.append("}\n");
+        return insert.toString();
+    }
+
+    private List<DatatypeFacet> parseDatatypeFacets(String facetsRaw, String baseDatatypeIri) {
+        List<DatatypeFacet> facets = new ArrayList<>();
+        for (String part : facetsRaw.split(",")) {
+            String facetText = part.trim();
+            if (facetText.isEmpty()) continue;
+            Matcher m = FACET_PATTERN.matcher(facetText);
+            if (!m.matches()) continue;
+            String op = m.group(1);
+            String value = m.group(2).trim();
+            String predicate = switch (op) {
+                case ">=" -> "http://www.w3.org/2001/XMLSchema#minInclusive";
+                case ">" -> "http://www.w3.org/2001/XMLSchema#minExclusive";
+                case "<=" -> "http://www.w3.org/2001/XMLSchema#maxInclusive";
+                case "<" -> "http://www.w3.org/2001/XMLSchema#maxExclusive";
+                case "=" -> "http://www.w3.org/2001/XMLSchema#minInclusive";
+                default -> null;
+            };
+            if (predicate == null) continue;
+            facets.add(new DatatypeFacet(predicate, stripQuotes(value), baseDatatypeIri));
+            if ("=".equals(op)) {
+                facets.add(new DatatypeFacet(
+                        "http://www.w3.org/2001/XMLSchema#maxInclusive",
+                        stripQuotes(value),
+                        baseDatatypeIri));
+            }
+        }
+        return facets;
+    }
+
+    private String stripQuotes(String value) {
+        if (value == null) return "";
+        String v = value.trim();
+        if ((v.startsWith("\"") && v.endsWith("\"")) || (v.startsWith("'") && v.endsWith("'"))) {
+            return v.substring(1, v.length() - 1);
+        }
+        return v;
+    }
+
+    private String escapeSparqlString(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private String buildDeleteDatatypeRestrictionSparql(String propertyIri, String predicate) {
+        return PREFIXES + """
+            DELETE {
+              <%s> %s ?dr .
+              ?dr ?p ?o .
+              ?list ?lp ?lo .
+              ?facet ?fp ?fo .
+            }
+            WHERE {
+              <%s> %s ?dr .
+              ?dr a rdfs:Datatype ; owl:onDatatype ?dt .
+              OPTIONAL { ?dr ?p ?o . FILTER(?p NOT IN (rdf:type, owl:onDatatype, owl:withRestrictions)) }
+              OPTIONAL {
+                ?dr owl:withRestrictions ?list .
+                ?list (rdf:rest*)/rdf:first ?facet .
+                ?facet ?fp ?fo .
+                ?list ?lp ?lo .
+              }
+            }
+            """.formatted(propertyIri, predicate, propertyIri, predicate);
+    }
+
+    private String buildDeleteBlankNodeAxiomSparql(String blankNodeId, String ancestorIri) {
+        if (blankNodeId == null || blankNodeId.isBlank()) {
+            log.warn("[MUTATION] deleteAxiom requires a blank node ID");
+            return "";
+        }
+        // RDF4J BNode.stringValue() returns the bare internal ID (e.g. "b0"), so
+        // SPARQL STR(?bnode) also returns "b0" — not "_:b0". Strip the "_:" prefix.
+        String rawId = blankNodeId.startsWith("_:") ? blankNodeId.substring(2) : blankNodeId;
+        String escapedRawId = rawId.replace("\\", "\\\\").replace("\"", "\\\"");
+
+        // If we know the subject class, anchor the query on that triple and delete it too.
+        String subClassOfDelete = ancestorIri != null && !ancestorIri.isBlank()
+                ? "  <" + ancestorIri + "> rdfs:subClassOf ?axiom .\n"
+                : "";
+        String subClassOfWhere = ancestorIri != null && !ancestorIri.isBlank()
+                ? "  <" + ancestorIri + "> rdfs:subClassOf ?axiom .\n"
+                : "";
+
+        String sparql = """
+            DELETE {
+            %s  ?axiom ?p ?o .
+              ?listNode rdf:first ?first .
+              ?listNode rdf:rest ?rest .
+            }
+            WHERE {
+              FILTER(isBlank(?axiom) && STR(?axiom) = "%s")
+            %s  ?axiom ?p ?o .
+              OPTIONAL {
+                ?axiom (owl:intersectionOf|owl:unionOf|owl:oneOf|rdf:first|rdf:rest)* ?listNode .
+                ?listNode rdf:first ?first .
+                ?listNode rdf:rest ?rest .
+              }
+            }
+            """.formatted(subClassOfDelete, escapedRawId, subClassOfWhere);
+        log.info("[MUTATION] deleteAxiom SPARQL for blank node {} (ancestorIri={}): {}", blankNodeId, ancestorIri, sparql);
+        return sparql;
+    }
+
     /**
      * Build SPARQL DELETE to remove a complex class expression (intersection, union, complement, oneOf)
      * This deletes the blank node and all its contents including RDF lists
@@ -1250,11 +1949,17 @@ public class OntologyMutationService {
         };
     }
 
+    private void requireDraftCopyReady(String projectId, String userId) {
+        if (draftCopyService == null || !draftCopyService.isReady(projectId, userId)) {
+            throw new DraftNotReadyException();
+        }
+    }
+
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     public record MutationOp(
-        String type, 
-        String iri, 
-        String label, 
+        String type,
+        String iri,
+        String label,
         String parent,
         String property,
         String value,
@@ -1264,6 +1969,9 @@ public class OntologyMutationService {
         String restrictionType, // some, only, min, max, exactly, value
         Integer cardinality,    // For min, max, exactly restrictions
         String axiomType,       // EquivalentTo, SubClassOf
-        String oldValue         // For tracking the old value in updates
+        String oldValue,        // For tracking the old value in updates
+        String language,        // Language tag for annotation literals (e.g. "en", "fr")
+        String datatype,        // Datatype IRI for annotation literals (e.g. xsd:boolean)
+        String ancestorIri      // Subject class for anonymous ancestor deletes (rdfs:subClassOf subject)
     ) {}
 }

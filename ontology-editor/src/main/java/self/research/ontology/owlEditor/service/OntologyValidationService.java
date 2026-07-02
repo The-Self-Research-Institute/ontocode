@@ -14,9 +14,9 @@ import java.util.Map;
 @Service
 public class OntologyValidationService {
 
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
 
-    public OntologyValidationService(GraphDBDatasetService datasetService) {
+    public OntologyValidationService(SparqlDatasetService datasetService) {
         this.datasetService = datasetService;
     }
 

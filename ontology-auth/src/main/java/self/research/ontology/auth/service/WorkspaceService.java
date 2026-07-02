@@ -16,9 +16,13 @@ import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import self.research.ontology.auth.model.PlanFeatureConfig;
 
 @Service
 public class WorkspaceService {
@@ -29,15 +33,21 @@ public class WorkspaceService {
     private final UserRepository userRepository;
     private final ProjectRepository projectRepository;
     private final FileMetadataRepository fileMetadataRepository;
+    private final PlanFeatureConfigService planFeatureConfigService;
+    private final SystemSettingsService systemSettingsService;
 
-    public WorkspaceService(WorkspaceRepository workspaceRepository, 
+    public WorkspaceService(WorkspaceRepository workspaceRepository,
                            UserRepository userRepository,
                            ProjectRepository projectRepository,
-                           FileMetadataRepository fileMetadataRepository) {
+                           FileMetadataRepository fileMetadataRepository,
+                           PlanFeatureConfigService planFeatureConfigService,
+                           SystemSettingsService systemSettingsService) {
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
         this.projectRepository = projectRepository;
         this.fileMetadataRepository = fileMetadataRepository;
+        this.planFeatureConfigService = planFeatureConfigService;
+        this.systemSettingsService = systemSettingsService;
     }
 
     /**
@@ -92,21 +102,182 @@ public class WorkspaceService {
         // Add owner as first member
         workspace.addMember(userId, user.getUsername(), user.getEmail(), WorkspaceRole.OWNER);
 
-        // Set default plan
-        workspace.setSubscriptionPlan("FREE");
-        workspace.setMaxWorkspaces(3);
-        workspace.setMaxMembers(10);
-        workspace.setCollaborationEnabled(false);
+        // Resolve owner's current plan and standing (Model C: Inherit from account)
+        String ownerPlan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName().toUpperCase() : "FREE";
+        // Enterprise domain bypass overrides FREE — the user's DB plan may not yet reflect the bypass
+        if ("FREE".equals(ownerPlan) && systemSettingsService.isEnterpriseBypass(user.getEmail())) {
+            ownerPlan = "ENTERPRISE";
+            log.info("Enterprise domain bypass: creating workspace as ENTERPRISE for {}", user.getEmail());
+        }
+        String status = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus().toLowerCase() : "active";
+        
+        boolean isPaidPlan = "PRO".equals(ownerPlan) || "ENTERPRISE".equals(ownerPlan);
+        boolean isStatusGood = "active".equals(status) || "trialing".equals(status);
+        boolean collaborationEnabled = isPaidPlan && isStatusGood;
+        
+        workspace.setSubscriptionPlan(ownerPlan);
+        workspace.setBillingStatus(status.toUpperCase());
+        workspace.setBillingInterval(user.getBillingInterval() != null ? user.getBillingInterval() : "monthly");
+        workspace.setStripeSubscriptionId(user.getStripeSubscriptionId());
+        workspace.setSubscriptionCurrentPeriodEnd(user.getSubscriptionCurrentPeriodEnd());
+        
+        // Limits based on plan
+        if ("PRO".equals(ownerPlan)) {
+            workspace.setMaxMembers(10);
+        } else if ("ENTERPRISE".equals(ownerPlan)) {
+            workspace.setMaxMembers(Integer.MAX_VALUE);
+        } else {
+            workspace.setMaxMembers(3);
+        }
+        workspace.setCollaborationEnabled(collaborationEnabled);
         workspace.setSubscriptionStartDate(LocalDateTime.now());
 
         return workspaceRepository.save(workspace);
     }
 
     /**
+     * Synchronize all workspaces owned by a user with their current account plan details.
+     * This follows "Model B" (Account-Level Billing) where the user's account status is the 
+     * source of truth and workspaces dynamically inherit premium features.
+     */
+    public void syncWorkspacesToOwnerPlan(User owner) {
+        if (owner == null) return;
+
+        String planName;
+        String status;
+        boolean collaborationEnabled;
+        int maxMembers;
+
+        if (systemSettingsService.isEnterpriseBypass(owner.getEmail())) {
+            // Enterprise domain bypass: treat as ENTERPRISE/active regardless of DB record
+            planName = "ENTERPRISE";
+            status = "active";
+            collaborationEnabled = true;
+            maxMembers = Integer.MAX_VALUE;
+        } else {
+            planName = owner.getSubscriptionPlanName() != null ? owner.getSubscriptionPlanName().toUpperCase() : "FREE";
+            status = owner.getSubscriptionStatus() != null ? owner.getSubscriptionStatus().toLowerCase() : "active";
+            // Collaboration is only enabled for paid plans that are in good standing
+            boolean isPaidPlan = "PRO".equals(planName) || "ENTERPRISE".equals(planName);
+            boolean isStatusGood = "active".equals(status) || "trialing".equals(status);
+            collaborationEnabled = isPaidPlan && isStatusGood;
+            Map<String, PlanFeatureConfig> configs = planFeatureConfigService.getAllByPlanId();
+            PlanFeatureConfig currentPlanConfig = configs.get(planName);
+            maxMembers = currentPlanConfig != null ? currentPlanConfig.getMaxMembers() : 3;
+        }
+        
+        workspaceRepository.findByOwnerId(owner.getId()).forEach(workspace -> {
+            boolean dirty = false;
+            
+            if (!planName.equals(workspace.getSubscriptionPlan())) { 
+                workspace.setSubscriptionPlan(planName); dirty = true; 
+            }
+            if (!status.equalsIgnoreCase(workspace.getBillingStatus())) { 
+                workspace.setBillingStatus(status.toUpperCase()); dirty = true; 
+            }
+            if (!Objects.equals(owner.getBillingInterval(), workspace.getBillingInterval())) { 
+                workspace.setBillingInterval(owner.getBillingInterval()); dirty = true; 
+            }
+            if (!Objects.equals(owner.getStripeSubscriptionId(), workspace.getStripeSubscriptionId())) { 
+                workspace.setStripeSubscriptionId(owner.getStripeSubscriptionId()); dirty = true; 
+            }
+            if (!Objects.equals(owner.getSubscriptionCurrentPeriodEnd(), workspace.getSubscriptionCurrentPeriodEnd())) { 
+                workspace.setSubscriptionCurrentPeriodEnd(owner.getSubscriptionCurrentPeriodEnd()); dirty = true; 
+            }
+            if (collaborationEnabled != workspace.isCollaborationEnabled()) { 
+                workspace.setCollaborationEnabled(collaborationEnabled); dirty = true; 
+            }
+            if (workspace.getMaxMembers() == null || workspace.getMaxMembers() != maxMembers) { 
+                workspace.setMaxMembers(maxMembers); dirty = true; 
+            }
+            
+            if (dirty) {
+                workspaceRepository.save(workspace);
+                log.info("Workspace {} was out of sync — updated to match owner plan {} ({})", 
+                    workspace.getWorkspaceId(), planName, status);
+            }
+        });
+    }
+
+    /**
      * Get all active workspaces for a user (owned or member) - excludes soft-deleted ones
      */
     public List<Workspace> getUserWorkspaces(String userId) {
-        return workspaceRepository.findAllActiveUserWorkspaces(userId);
+        // Primary path: workspaces where this user is already linked by member.userId
+        List<Workspace> workspaces = new ArrayList<>(workspaceRepository.findAllActiveUserWorkspaces(userId));
+
+        // Self-heal: some legacy/broken rows may have members.email populated but missing members.userId,
+        // which prevents the workspace from showing up for the member. We attempt to link the userId.
+        Optional<User> userOpt = userRepository.findById(userId);
+        if (userOpt.isEmpty()) {
+            return workspaces;
+        }
+
+        User user = userOpt.get();
+        String email = user.getEmail();
+        if (email == null || email.isBlank()) {
+            return workspaces;
+        }
+
+        List<Workspace> byEmail = workspaceRepository.findActiveByMemberEmail(email);
+        for (Workspace ws : byEmail) {
+            boolean changed = linkMemberIdentityIfSafe(ws, email, user.getId(), user.getUsername());
+            if (changed) {
+                workspaceRepository.save(ws);
+            }
+
+            boolean alreadyIncluded = workspaces.stream().anyMatch(w -> Objects.equals(w.getWorkspaceId(), ws.getWorkspaceId()));
+            if (!alreadyIncluded) {
+                workspaces.add(ws);
+            }
+        }
+
+        return workspaces;
+    }
+
+    /**
+     * Link a member entry that matches the user's email to a concrete userId.
+     *
+     * Safety rules:
+     * - Only link when the workspace member row has no userId yet, AND
+     *   - it is already ACTIVE, OR
+     *   - it has no invitationToken (meaning it's not an outstanding pending invite).
+     *
+     * This prevents granting access for truly pending invitations.
+     */
+    private boolean linkMemberIdentityIfSafe(Workspace ws, String email, String userId, String username) {
+        if (ws == null || email == null || userId == null) return false;
+        WorkspaceMember member = ws.getMemberByEmail(email);
+        if (member == null) return false;
+
+        if (member.getUserId() != null && !member.getUserId().isBlank()) {
+            return false;
+        }
+
+        boolean isActive = member.getStatus() == Workspace.MemberStatus.ACTIVE;
+        boolean hasNoInviteToken = member.getInvitationToken() == null || member.getInvitationToken().isBlank();
+        if (!isActive && !hasNoInviteToken) {
+            // Still pending with a token; do not auto-link.
+            return false;
+        }
+
+        member.setUserId(userId);
+        if (username != null && !username.isBlank()) {
+            member.setUsername(username);
+        }
+        member.setStatus(Workspace.MemberStatus.ACTIVE);
+        member.setInvitationToken(null);
+        member.setJoinedAt(LocalDateTime.now());
+        ws.setUpdatedAt(LocalDateTime.now());
+        return true;
+    }
+
+    /**
+     * Get workspaces owned by this user (excludes workspaces they are just members of).
+     * Used for workspace creation limit checks — members-of do not count against the owner's quota.
+     */
+    public List<Workspace> getOwnedWorkspaces(String userId) {
+        return workspaceRepository.findActiveByOwnerId(userId);
     }
     
     /**
@@ -164,7 +335,22 @@ public class WorkspaceService {
     }
 
     /**
-     * Remove a member from workspace (by userId or email)
+     * Leave a workspace voluntarily (non-owner members and admins).
+     */
+    @Transactional
+    public void leaveWorkspace(String workspaceId, String userId) {
+        Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found"));
+        if (workspace.getOwnerId().equals(userId)) {
+            throw new IllegalArgumentException("Workspace owner cannot leave. Transfer ownership or delete the workspace.");
+        }
+        removeMember(workspaceId, userId);
+    }
+
+    /**
+     * Remove a member from workspace (by userId or email).
+     * Also removes any WS_EDITOR_LINK_ADMIN project entries for the removed user
+     * so they don't retain project access after being removed from the workspace.
      */
     @Transactional
     public void removeMember(String workspaceId, String memberIdentifier) {
@@ -176,13 +362,121 @@ public class WorkspaceService {
             throw new IllegalArgumentException("Cannot remove workspace owner");
         }
 
+        // Capture userId before removal so we can clean up project editor links.
+        String removedUserId = null;
+        WorkspaceMember memberToRemove = workspace.getMember(memberIdentifier);
+        if (memberToRemove != null) {
+            removedUserId = memberToRemove.getUserId();
+        } else {
+            WorkspaceMember memberByEmail = workspace.getMemberByEmail(memberIdentifier);
+            if (memberByEmail != null) {
+                removedUserId = memberByEmail.getUserId();
+            }
+        }
+
         // Try to remove by userId first, then by email
         boolean removed = workspace.removeMemberByIdOrEmail(memberIdentifier);
         if (!removed) {
             throw new IllegalArgumentException("Member not found in workspace");
         }
-        
+
         workspaceRepository.save(workspace);
+
+        // Remove the user from ALL projects in this workspace — both admin-link entries
+        // and regular member entries added on invite acceptance.
+        if (removedUserId != null) {
+            final String finalUserId = removedUserId;
+            projectRepository.findByWorkspaceId(workspaceId).forEach(project -> {
+                Project.ProjectMember pm = project.getMember(finalUserId);
+                if (pm != null) {
+                    project.removeMember(finalUserId);
+                    projectRepository.save(project);
+                    log.info("Removed user {} from project {} after workspace member removal",
+                            finalUserId, project.getProjectId());
+                }
+            });
+        }
+    }
+
+    /**
+     * Syncs project memberships when a workspace member's role changes to or from ADMIN.
+     *
+     * - Promotion to ADMIN: backfills WS_EDITOR_LINK_ADMIN on all existing shared (non-private)
+     *   projects so the newly promoted admin immediately has editor access everywhere they should.
+     * - Demotion from ADMIN: removes WS_EDITOR_LINK_ADMIN entries from all projects so the
+     *   former admin no longer has implicit project access.
+     *
+     * Private projects (single-member) are left untouched in both directions.
+     */
+    @Transactional
+    public void syncAdminRoleChangeToProjects(Workspace workspace, String targetUserId,
+                                              WorkspaceRole previousRole, WorkspaceRole newRole) {
+        boolean promotedToAdmin  = newRole == WorkspaceRole.ADMIN && previousRole != WorkspaceRole.ADMIN;
+        boolean demotedFromAdmin = previousRole == WorkspaceRole.ADMIN && newRole != WorkspaceRole.ADMIN;
+        if (!promotedToAdmin && !demotedFromAdmin) return;
+
+        List<Project> projects = projectRepository.findByWorkspaceId(workspace.getWorkspaceId());
+
+        if (demotedFromAdmin) {
+            projects.forEach(project -> {
+                Project.ProjectMember pm = project.getMember(targetUserId);
+                if (pm != null && Project.WS_EDITOR_LINK_ADMIN.equals(pm.getWorkspaceEditorLink())) {
+                    project.removeMember(targetUserId);
+                    projectRepository.save(project);
+                    log.info("Removed WS_EDITOR_LINK_ADMIN for user {} from project {} after admin demotion",
+                            targetUserId, project.getProjectId());
+                }
+            });
+            return;
+        }
+
+        // Promoted to ADMIN — resolve display info for the new admin member record
+        WorkspaceMember wm = workspace.getMember(targetUserId);
+        String username = wm != null ? wm.getUsername() : null;
+        String email    = wm != null ? wm.getEmail()    : null;
+        if (username == null || email == null) {
+            Optional<User> u = userRepository.findById(targetUserId);
+            if (u.isPresent()) {
+                if (username == null) username = u.get().getUsername();
+                if (email    == null) email    = u.get().getEmail();
+            }
+        }
+        if (username == null) username = "";
+        if (email    == null) email    = "";
+
+        final String finalUsername = username;
+        final String finalEmail    = email;
+
+        projects.stream()
+                .filter(p -> p.getMembers().size() > 1 && !targetUserId.equals(p.getOwnerId()))
+                .forEach(project -> {
+                    Project.ProjectMember pm = project.getMember(targetUserId);
+                    boolean dirty = false;
+                    if (pm == null) {
+                        project.addMember(targetUserId, finalUsername, finalEmail,
+                                "EDITOR", Project.WS_EDITOR_LINK_ADMIN);
+                        dirty = true;
+                    } else {
+                        // Only set link if not already protected by a higher-level link (OWNER)
+                        if (pm.getWorkspaceEditorLink() == null
+                                || Project.WS_EDITOR_LINK_ADMIN.equals(pm.getWorkspaceEditorLink())) {
+                            if (!Project.WS_EDITOR_LINK_ADMIN.equals(pm.getWorkspaceEditorLink())) {
+                                pm.setWorkspaceEditorLink(Project.WS_EDITOR_LINK_ADMIN);
+                                dirty = true;
+                            }
+                        }
+                        if ("VIEWER".equals(pm.getRole())) {
+                            pm.setRole("EDITOR");
+                            dirty = true;
+                        }
+                    }
+                    if (dirty) {
+                        project.setUpdatedAt(LocalDateTime.now());
+                        projectRepository.save(project);
+                        log.info("Applied WS_EDITOR_LINK_ADMIN for user {} on project {} after admin promotion",
+                                targetUserId, project.getProjectId());
+                    }
+                });
     }
 
     /**
@@ -234,8 +528,36 @@ public class WorkspaceService {
      * Check if user has access to workspace
      */
     public boolean hasAccess(String workspaceId, String userId) {
-        Optional<Workspace> workspace = workspaceRepository.findByWorkspaceId(workspaceId);
-        return workspace.map(w -> w.isMember(userId)).orElse(false);
+        Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
+        if (workspaceOpt.isEmpty()) return false;
+        Workspace workspace = workspaceOpt.get();
+
+        // Primary check: match by userId
+        if (workspace.isMember(userId)) return true;
+
+        // Fallback: match by email.
+        // This covers cases where multiple users share the same display-name ("Soundhar")
+        // causing findByUsername() to return the wrong User object. The member record may
+        // have the correct email but the wrong userId stamped (a data-integrity issue
+        // created during invitation acceptance). We also self-heal the record.
+        Optional<User> userOpt = userRepository.findById(userId);
+        if (userOpt.isPresent()) {
+            String email = userOpt.get().getEmail();
+            if (email != null && workspace.isMemberByEmail(email)) {
+                // Self-heal: fix the corrupted userId on the member record
+                WorkspaceMember member = workspace.getMemberByEmail(email);
+                if (member != null && !userId.equals(member.getUserId())) {
+                    log.warn("[hasAccess] Self-healing member userId for email={} in workspace={}: {} -> {}",
+                            email, workspaceId, member.getUserId(), userId);
+                    member.setUserId(userId);
+                    member.setUsername(userOpt.get().getUsername());
+                    workspaceRepository.save(workspace);
+                }
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -268,7 +590,27 @@ public class WorkspaceService {
 
         Workspace workspace = workspaceOpt.get();
         WorkspaceMember member = workspace.getMember(userId);
-        return member != null ? member.getRole() : null;
+        if (member != null) {
+            return member.getRole();
+        }
+
+        // Fallback: try matching by email (handles corrupted userId from shared-username bug)
+        Optional<User> userOpt = userRepository.findById(userId);
+        if (userOpt.isPresent()) {
+            String email = userOpt.get().getEmail();
+            if (email != null) {
+                WorkspaceMember emailMember = workspace.getMemberByEmail(email);
+                if (emailMember != null) {
+                    return emailMember.getRole();
+                }
+            }
+        }
+
+        // Legacy workspaces may have the owner tracked only via ownerId, not in the members set
+        if (userId != null && userId.equals(workspace.getOwnerId())) {
+            return Workspace.WorkspaceRole.OWNER;
+        }
+        return null;
     }
 
     /**

@@ -32,11 +32,19 @@ public class Workspace {
 
     // Subscription plan information
     private String subscriptionPlan;
+    private String billingStatus = "ACTIVE";
+    private String billingInterval = "monthly"; // monthly or annual
     private LocalDateTime subscriptionStartDate;
     private LocalDateTime subscriptionEndDate;
+    private LocalDateTime subscriptionCurrentPeriodEnd; // For tracking renewal date
     private Integer maxWorkspaces;
     private Integer maxMembers;
     private Boolean collaborationEnabled = false;
+
+    // Per-workspace Stripe subscription (one subscription per workspace)
+    private String stripeSubscriptionId;
+    private String pendingCheckoutSessionId;
+    private LocalDateTime pendingCheckoutCreatedAt;
 
     // Audit fields
     private LocalDateTime createdAt;
@@ -184,11 +192,9 @@ public class Workspace {
     
     // Add a pending member (when invitation is sent)
     public void addPendingMember(String email, WorkspaceRole role, String invitationToken) {
-        // Remove any existing pending invitation for this email
-        members.removeIf(m -> m.getEmail() != null && 
-                              m.getEmail().equalsIgnoreCase(email) && 
+        members.removeIf(m -> m.getEmail() != null &&
+                              m.getEmail().equalsIgnoreCase(email) &&
                               m.getStatus() == MemberStatus.PENDING);
-        
         members.add(new WorkspaceMember(email, role, invitationToken));
         this.updatedAt = java.time.LocalDateTime.now();
     }
@@ -279,6 +285,12 @@ public class Workspace {
     public String getSubscriptionPlan() { return subscriptionPlan; }
     public void setSubscriptionPlan(String subscriptionPlan) { this.subscriptionPlan = subscriptionPlan; }
 
+    public String getBillingStatus() { return billingStatus; }
+    public void setBillingStatus(String billingStatus) { this.billingStatus = billingStatus; }
+
+    public String getBillingInterval() { return billingInterval; }
+    public void setBillingInterval(String billingInterval) { this.billingInterval = billingInterval; }
+
     public LocalDateTime getSubscriptionStartDate() { return subscriptionStartDate; }
     public void setSubscriptionStartDate(LocalDateTime subscriptionStartDate) { 
         this.subscriptionStartDate = subscriptionStartDate; 
@@ -287,6 +299,11 @@ public class Workspace {
     public LocalDateTime getSubscriptionEndDate() { return subscriptionEndDate; }
     public void setSubscriptionEndDate(LocalDateTime subscriptionEndDate) { 
         this.subscriptionEndDate = subscriptionEndDate; 
+    }
+
+    public LocalDateTime getSubscriptionCurrentPeriodEnd() { return subscriptionCurrentPeriodEnd; }
+    public void setSubscriptionCurrentPeriodEnd(LocalDateTime subscriptionCurrentPeriodEnd) {
+        this.subscriptionCurrentPeriodEnd = subscriptionCurrentPeriodEnd;
     }
 
     public Integer getMaxWorkspaces() { return maxWorkspaces; }
@@ -298,6 +315,10 @@ public class Workspace {
     public Boolean getCollaborationEnabled() { return collaborationEnabled; }
     public void setCollaborationEnabled(Boolean collaborationEnabled) { 
         this.collaborationEnabled = collaborationEnabled; 
+    }
+    
+    public boolean isCollaborationEnabled() {
+        return collaborationEnabled != null && collaborationEnabled;
     }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
@@ -314,4 +335,13 @@ public class Workspace {
     
     public String getDeletedBy() { return deletedBy; }
     public void setDeletedBy(String deletedBy) { this.deletedBy = deletedBy; }
+
+    public String getStripeSubscriptionId() { return stripeSubscriptionId; }
+    public void setStripeSubscriptionId(String stripeSubscriptionId) { this.stripeSubscriptionId = stripeSubscriptionId; }
+
+    public String getPendingCheckoutSessionId() { return pendingCheckoutSessionId; }
+    public void setPendingCheckoutSessionId(String pendingCheckoutSessionId) { this.pendingCheckoutSessionId = pendingCheckoutSessionId; }
+
+    public LocalDateTime getPendingCheckoutCreatedAt() { return pendingCheckoutCreatedAt; }
+    public void setPendingCheckoutCreatedAt(LocalDateTime pendingCheckoutCreatedAt) { this.pendingCheckoutCreatedAt = pendingCheckoutCreatedAt; }
 }

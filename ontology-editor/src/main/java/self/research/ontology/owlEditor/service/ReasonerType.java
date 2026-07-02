@@ -8,7 +8,7 @@ public enum ReasonerType {
     PELLET("Pellet"),
     OPENLLET("Openllet"),
     FACTPLUSPLUS("FaCT++"),
-    // ELK("ELK"), // Temporarily disabled
+    ELK("ELK"),
     STRUCTURAL("Structural");
 
     private final String displayName;

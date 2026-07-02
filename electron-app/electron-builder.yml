@@ -1,0 +1,138 @@
+# electron-builder configuration for OntoCode Desktop
+# Run: npm run dist  (builds for current platform)
+#      npm run dist:win / dist:mac / dist:linux
+
+appId: com.ontocode.desktop
+productName: OntoCode
+copyright: "Copyright © 2026 OntoCode / Coretopia"
+
+# ── Directories ────────────────────────────────────────────────────────────────
+directories:
+  output: dist-electron
+  buildResources: build-assets
+
+# ── Files included in the app bundle ──────────────────────────────────────────
+files:
+  - main.js
+  - preload.js
+  - splash.html
+  - splash-logo.png
+  - splash-preload.js
+  - services/**
+  - scripts/**
+  - "!scripts/prepare-resources.js"
+  # The built React SPA (produced by webview-src npm run build)
+  - from: ../ontology-vscode-extension/webview-src/dist
+    to: renderer/dist
+    filter:
+      - "**/*"
+
+# ── Extra resources (backend binaries, JARs) ─────────────────────────────────
+# These go into  <resources>/backend/  inside the packaged app.
+# Populate resources/backend/ before building with:  npm run prepare-resources
+extraResources:
+  - from: resources/backend
+    to: backend
+    filter:
+      - "**/*"
+      - "!mongo-tmp/**"
+      - "!mongo-bits.zip"
+      - "!mongo-win32.zip"
+      - "!temurin-jre.zip"
+      - "!temurin-jre.tar.gz"
+      - "!fuseki-6.1.0.tar.gz"
+      - "!**/*.gitkeep"
+
+# ── Windows ────────────────────────────────────────────────────────────────────
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+  icon: build-assets/icon.ico
+  # Code signing (set CSC_LINK + CSC_KEY_PASSWORD env vars in CI)
+  # certificateFile: ${CSC_LINK}
+  # certificatePassword: ${CSC_KEY_PASSWORD}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  uninstallDisplayName: OntoCode
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
+  installerIcon: build-assets/icon.ico
+  uninstallerIcon: build-assets/icon.ico
+  installerHeaderIcon: build-assets/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: OntoCode
+
+# Open .owl / RDF files in the existing app instance (second launch focuses window).
+fileAssociations:
+  - ext: owl
+    name: OWL Ontology
+    description: Web Ontology Language file
+    role: Editor
+  - ext: ttl
+    name: Turtle Ontology
+    description: Turtle RDF ontology
+    role: Editor
+  - ext: rdf
+    name: RDF Ontology
+    description: RDF/XML ontology
+    role: Editor
+
+# ── macOS ──────────────────────────────────────────────────────────────────────
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: build-assets/icon.icns
+  category: public.app-category.developer-tools
+  # Notarisation (set APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD in CI)
+  # notarize:
+  #   teamId: YOUR_TEAM_ID
+
+dmg:
+  window:
+    width: 540
+    height: 380
+  contents:
+    - x: 130
+      y: 190
+    - x: 410
+      y: 190
+      type: link
+      path: /Applications
+
+# ── Linux ─────────────────────────────────────────────────────────────────────
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+  icon: build-assets/icon.png
+  category: Development
+  description: "OntoCode — OWL Ontology Editor for Desktop"
+  desktop:
+    Name: OntoCode
+    Comment: OWL Ontology Editor
+    Categories: Development;Science;
+
+# ── Auto-update (electron-updater generic provider) ─────────────────────────────
+publish:
+  provider: generic
+  url: https://ontocodeapi.selfresearch.org/api/downloads/updates/win
+
+# ── Build meta ────────────────────────────────────────────────────────────────
+electronVersion: "29.0.0"
+compression: maximum

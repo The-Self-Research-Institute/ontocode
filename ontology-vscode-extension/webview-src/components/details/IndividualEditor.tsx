@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Loader2, Search } from 'lucide-react';
-import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
-import type { Individual, PropertyAssertion, TreeNode } from '../../types';
+import { Panel, AnnotationsDisplay, MultiSelectSection, CollaboratorPresenceBar } from './common';
+import type { Individual, Property, PropertyAssertion, TreeNode } from '../../types';
 import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDialog, ClassExpressionDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
 
 interface UsageItem {
@@ -135,7 +136,17 @@ const IndividualEditor: React.FC<{
   username?: string;
   objectPropertyHierarchy?: TreeNode[];
   dataPropertyHierarchy?: TreeNode[];
-}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy, dataPropertyHierarchy }) => {
+  classHierarchy?: TreeNode[];
+  objectProperties?: Property[];
+  dataProperties?: Property[];
+  expandedNodes?: string[];
+  onToggleNode?: (nodeId: string) => Promise<void> | void;
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+  onNavigate?: (iri: string, type: string) => void;
+  isReasonerRunning?: boolean;
+  selectedReasoner?: string;
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy = [], dataPropertyHierarchy = [], classHierarchy = [], objectProperties = [], dataProperties = [], expandedNodes, onToggleNode, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT' }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [isNegativeAssertion, setIsNegativeAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
@@ -143,10 +154,59 @@ const IndividualEditor: React.FC<{
   const [detailsFetched, setDetailsFetched] = useState<string | null>(null);
   const [propertySuggestions, setPropertySuggestions] = useState<{ label: string; value: string }[]>([]);
   const [individualSuggestions, setIndividualSuggestions] = useState<{ label: string; value: string }[]>([]);
-  const [sameDiffDialog, setSameDiffDialog] = useState<null | { mode: 'same' | 'different' }>(null);
+  const [sameDiffDialog, setSameDiffDialog] = useState<null | { mode: 'same' | 'different'; editingIri?: string }>(null);
   const [allIndividuals, setAllIndividuals] = useState<Individual[]>([]);
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
-  const [typeClassHierarchy, setTypeClassHierarchy] = useState<TreeNode[]>([]);
+  const [deletingId, setDeletingId] = useState<Set<string>>(new Set());
+  const [deletingTypeIri, setDeletingTypeIri] = useState<string | null>(null);
+  const [inferredTypes, setInferredTypes] = useState<Array<{ iri: string; label: string }>>([]);
+
+  const loadIndividualDetails = async () => {
+    if (!projectId || !item.id) return;
+    setIsLoading(true);
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(item.id)}`);
+      const details = response?.data || response;
+      if (details) {
+        onUpdate({
+          ...item,
+          types: details.types || item.types,
+          annotations: details.annotations || item.annotations,
+          propertyAssertions: details.propertyAssertions || [],
+          sameIndividualAs: details.sameIndividualAs || item.sameIndividualAs,
+          differentIndividualFrom: details.differentIndividualFrom || item.differentIndividualFrom,
+        });
+        setDetailsFetched(item.id);
+      }
+    } catch (error) {
+      console.error('[IndividualEditor] Failed to fetch individual details:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!projectId || !item.id || !isReasonerRunning) {
+      setInferredTypes([]);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const response = await apiClient.get<any>(
+          `/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-individual-types?individualIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(selectedReasoner)}`,
+        );
+        const payload = response?.data ?? response;
+        const types = payload?.inferredTypes ?? payload?.data?.inferredTypes ?? [];
+        if (alive) {
+          setInferredTypes(Array.isArray(types) ? types : []);
+        }
+      } catch {
+        if (alive) setInferredTypes([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, [projectId, item.id, isReasonerRunning, selectedReasoner]);
 
   // Fetch individual details when component mounts or item changes.
   // Uses an "alive" flag so stale responses from a previously selected
@@ -196,9 +256,29 @@ const IndividualEditor: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, projectId]);
 
+  // Auto-reload when a collaborator modifies this individual
+  useEffect(() => {
+    const handleRemoteEdit = (e: Event) => {
+      const edit = (e as CustomEvent).detail;
+      if (!edit || edit.nodeId !== item.id) return;
+      const INDIVIDUAL_CHANGE_TYPES = new Set([
+        "INDIVIDUAL_MODIFIED", "INDIVIDUAL_ADDED",
+        "ANNOTATION_ADDED", "ANNOTATION_MODIFIED", "ANNOTATION_DELETED",
+      ]);
+      if (INDIVIDUAL_CHANGE_TYPES.has(edit.type)) {
+        loadIndividualDetails();
+      }
+    };
+    window.addEventListener("remoteEditReceived", handleRemoteEdit);
+    return () => window.removeEventListener("remoteEditReceived", handleRemoteEdit);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
+
   // Separate positive/negative property assertions
-  const positiveObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && !a.isNegative) || [];
-  const positiveDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && !a.isNegative) || [];
+  const positiveObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && !a.isNegative && !a.isInferred) || [];
+  const positiveDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && !a.isNegative && !a.isInferred) || [];
+  const inferredObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && !a.isNegative && a.isInferred) || [];
+  const inferredDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && !a.isNegative && a.isInferred) || [];
   const negativeObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && a.isNegative) || [];
   const negativeDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && a.isNegative) || [];
   
@@ -217,11 +297,8 @@ const IndividualEditor: React.FC<{
     const propLabel = data?.propertyLabel || newAssertion.propertyLabel;
     const targetLabel = data?.targetLabel || newAssertion.targetLabel;
     const isObjProp = data ? data.isObjectProperty : newAssertion.isObjectProperty;
-    // Note: language and datatype are available in 'data' but backend support might be pending.
-    // We will pass them if the service supports it.
-
     if (!propLabel || !targetLabel) {
-        alert("Property and value cannot be empty.");
+        notificationService.warning("Validation Error", "Property and value cannot be empty.");
         return;
     }
     
@@ -255,7 +332,8 @@ const IndividualEditor: React.FC<{
           );
         } else {
           await ontologyMutationService.addDataPropertyAssertion(
-            projectId, item.id, propertyIri, targetLabel, userId, username
+            projectId, item.id, propertyIri, targetLabel, userId, username,
+            data?.language, data?.datatype,
           );
         }
       }
@@ -265,7 +343,7 @@ const IndividualEditor: React.FC<{
           id: `assertion-${Date.now()}`,
           propertyIri: propertyIri,
           propertyLabel: newAssertion.propertyLabel,
-          [newAssertion.isObjectProperty ? 'targetIri' : 'targetLiteral']: newAssertion.isObjectProperty ? targetIri : `"${newAssertion.targetLabel}"`,
+          [newAssertion.isObjectProperty ? 'targetIri' : 'targetLiteral']: newAssertion.isObjectProperty ? targetIri : newAssertion.targetLabel,
           [newAssertion.isObjectProperty ? 'targetLabel' : '']: newAssertion.targetLabel,
           isObjectProperty: newAssertion.isObjectProperty,
           isNegative: isNegativeAssertion,
@@ -276,7 +354,7 @@ const IndividualEditor: React.FC<{
       setIsNegativeAssertion(false);
     } catch (error) {
       console.error('Failed to add property assertion:', error);
-      alert('Failed to add property assertion. See console for details.');
+      notificationService.error("Add Failed", "Failed to add property assertion. See console for details.");
     }
   };
 
@@ -316,17 +394,8 @@ const IndividualEditor: React.FC<{
     }
   };
 
-  const openTypeDialog = async () => {
+  const openTypeDialog = () => {
     setTypeDialogOpen(true);
-    try {
-      if (!projectId) return;
-      const res = await apiClient.get<any>(`/api/ontology/classes/top-level/${projectId}`);
-      const classes = Array.isArray(res?.data) ? res.data : res?.data?.classes || res?.classes || [];
-      setTypeClassHierarchy(classes);
-    } catch (e) {
-      console.error('[IndividualEditor] Failed to load top-level classes for type dialog:', e);
-      setTypeClassHierarchy([]);
-    }
   };
 
   const handleAddType = async (expression: string) => {
@@ -336,8 +405,8 @@ const IndividualEditor: React.FC<{
       } catch (e) { console.error(e); }
   };
 
-  const openSameDifferentDialog = async (mode: 'same' | 'different') => {
-    setSameDiffDialog({ mode });
+  const openSameDifferentDialog = async (mode: 'same' | 'different', editingIri?: string) => {
+    setSameDiffDialog({ mode, editingIri });
     try {
       const res = await apiClient.get<any>(`/api/ontology/individuals/${projectId}`);
       const inds = Array.isArray(res?.data) ? res.data : res?.data?.individuals || [];
@@ -349,6 +418,7 @@ const IndividualEditor: React.FC<{
   };
 
   const handleDeleteAssertion = async (assertion: PropertyAssertion) => {
+    setDeletingId(prev => new Set(prev).add(assertion.id));
     try {
       // Call mutation service to persist deletion
       if (assertion.isNegative) {
@@ -356,7 +426,7 @@ const IndividualEditor: React.FC<{
           await ontologyMutationService.deleteNegativeObjectPropertyAssertion(
             projectId, item.id, assertion.propertyIri, assertion.targetIri, userId, username
           );
-        } else if (assertion.targetLiteral) {
+        } else if (assertion.targetLiteral != null) {
           const literalValue = assertion.targetLiteral.replace(/^"|"$/g, '');
           await ontologyMutationService.deleteNegativeDataPropertyAssertion(
             projectId, item.id, assertion.propertyIri, literalValue, userId, username
@@ -367,8 +437,7 @@ const IndividualEditor: React.FC<{
           await ontologyMutationService.deleteObjectPropertyAssertion(
             projectId, item.id, assertion.propertyIri, assertion.targetIri, userId, username
           );
-        } else if (assertion.targetLiteral) {
-          // Remove quotes from literal value if present
+        } else if (assertion.targetLiteral != null) {
           const literalValue = assertion.targetLiteral.replace(/^"|"$/g, '');
           await ontologyMutationService.deleteDataPropertyAssertion(
             projectId, item.id, assertion.propertyIri, literalValue, userId, username
@@ -380,7 +449,9 @@ const IndividualEditor: React.FC<{
       onUpdate({ ...item, propertyAssertions: item.propertyAssertions?.filter(a => a.id !== assertion.id) });
     } catch (error) {
       console.error('Failed to delete property assertion:', error);
-      alert('Failed to delete property assertion. See console for details.');
+      notificationService.error("Delete Failed", "Failed to delete property assertion. See console for details.");
+    } finally {
+      setDeletingId(prev => { const next = new Set(prev); next.delete(assertion.id); return next; });
     }
   };
 
@@ -432,6 +503,7 @@ const IndividualEditor: React.FC<{
           </div>
         </div>
       </div>
+      <CollaboratorPresenceBar entityId={item.id} />
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 bg-gray-50">
@@ -463,13 +535,13 @@ const IndividualEditor: React.FC<{
         {/* Annotations Section */}
         <Panel title="Annotations" defaultOpen={true} themeColor="bg-gradient-to-b from-gray-50 to-gray-100 text-gray-800 border-gray-200"
           actions={
-            <button onClick={onAddAnnotation} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600" title="Add annotation">
+            <button onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600" title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}>
               <Plus size={14} />
             </button>
           }
         >
           <div className="p-2">
-            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
+            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} isViewOnly={isViewOnly} onViewOnlyAction={onViewOnlyAction} />
           </div>
         </Panel>
 
@@ -480,18 +552,53 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Types</h4>
-                <button onClick={openTypeDialog} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add type">
+                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : openTypeDialog} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add type"}>
                   <Plus size={14} />
                 </button>
               </div>
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm p-1.5 space-y-1">
                 {item.types?.map(type => (
-                    <div key={type} className="text-xs p-1 bg-gray-50 rounded border border-gray-100 flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
-                        <span>{type.split('#').pop()}</span>
+                    <div key={type} className={`group text-xs p-1 bg-gray-50 rounded border border-gray-100 flex items-center justify-between gap-2 transition-opacity duration-300 ${deletingTypeIri === type ? 'opacity-40' : ''}`}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
+                          <span className="truncate">{type.split('#').pop()?.split('/').pop()}</span>
+                        </div>
+                        <button
+                          onClick={isViewOnly ? () => onViewOnlyAction?.() : async () => {
+                            setDeletingTypeIri(type);
+                            try {
+                              await ontologyMutationService.removeClassAssertion(projectId, item.id, type);
+                              await loadIndividualDetails();
+                            } catch (error) {
+                              console.error('[IndividualEditor] Failed to remove type:', error);
+                              notificationService.error('Remove Failed', 'Failed to remove type assertion.');
+                            } finally {
+                              setDeletingTypeIri(null);
+                            }
+                          }}
+                          className="p-0.5 rounded hover:bg-red-200 flex-shrink-0 text-gray-400 hover:text-red-600"
+                          title={isViewOnly ? 'View-only: upgrade to edit' : 'Remove type'}
+                          disabled={deletingTypeIri === type}
+                        >
+                          {deletingTypeIri === type ? <Loader2 size={12} className="text-red-600 animate-spin" /> : <Trash2 size={12} className="text-red-600" />}
+                        </button>
                     </div>
                 ))}
-                {(!item.types || item.types.length === 0) && (
+                {inferredTypes.map((type) => (
+                    <div
+                      key={type.iri}
+                      className="text-xs p-1 bg-blue-50 rounded border border-blue-100 flex items-center justify-between gap-2 cursor-pointer hover:bg-blue-100"
+                      onClick={() => onNavigate?.(type.iri, 'class')}
+                      title={type.iri}
+                    >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"></div>
+                          <span className="truncate text-blue-900">{type.label || type.iri.split('#').pop()?.split('/').pop()}</span>
+                          <span className="text-[9px] uppercase text-blue-600 font-semibold flex-shrink-0">inferred</span>
+                        </div>
+                    </div>
+                ))}
+                {(!item.types || item.types.length === 0) && inferredTypes.length === 0 && (
                     <div className="text-xs text-gray-400 italic p-1">No types defined</div>
                 )}
               </div>
@@ -501,7 +608,7 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Object property assertions</h4>
-                <button onClick={() => openPropertyAssertionDialog(true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add object property assertion">
+                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => openPropertyAssertionDialog(true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add object property assertion"}>
                   <Plus size={14} />
                 </button>
               </div>
@@ -515,18 +622,28 @@ const IndividualEditor: React.FC<{
                     ) : (
                       <>
                         {positiveObjectPropertyAssertions.map(assertion => (
-                          <div key={assertion.id} className="group flex items-center justify-between text-xs bg-blue-50 p-1.5 rounded-sm border border-blue-100">
+                          <div key={assertion.id} className={`group flex items-center justify-between text-xs bg-blue-50 p-1.5 rounded-sm border border-blue-100 transition-opacity duration-300 ${deletingId.has(assertion.id) ? 'opacity-40' : ''}`}>
                               <div>
                                   <span className="font-semibold text-blue-700">{assertion.propertyLabel}</span>
                                   <span className="mx-1.5 text-gray-400">→</span>
                                   <span className="text-blue-600">{assertion.targetLabel || assertion.targetIri?.split('#').pop()}</span>
                               </div>
-                              <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
-                                  <Trash2 size={12} className="text-red-600"/>
+                              <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200" disabled={deletingId.has(assertion.id)}>
+                                  {deletingId.has(assertion.id) ? <Loader2 size={12} className="text-red-600 animate-spin" /> : <Trash2 size={12} className="text-red-600"/>}
                               </button>
                           </div>
                         ))}
-                        {positiveObjectPropertyAssertions.length === 0 && (
+                        {inferredObjectPropertyAssertions.map(assertion => (
+                          <div key={assertion.id} className="flex items-center justify-between text-xs bg-amber-50 p-1.5 rounded-sm border border-amber-200" title="Inferred by reasoner (read-only)">
+                              <div>
+                                  <span className="font-semibold text-amber-800">{assertion.propertyLabel}</span>
+                                  <span className="mx-1.5 text-gray-400">→</span>
+                                  <span className="text-amber-900">{assertion.targetLabel || assertion.targetIri?.split('#').pop()}</span>
+                                  <span className="ml-1.5 text-[9px] uppercase text-amber-700 font-semibold">inferred</span>
+                              </div>
+                          </div>
+                        ))}
+                        {positiveObjectPropertyAssertions.length === 0 && inferredObjectPropertyAssertions.length === 0 && (
                           <div className="text-xs text-gray-400 italic p-1">No object property assertions</div>
                         )}
                       </>
@@ -539,7 +656,7 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Data property assertions</h4>
-                <button onClick={() => openPropertyAssertionDialog(false)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-green-600 transition-colors" title="Add data property assertion">
+                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => openPropertyAssertionDialog(false)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-green-600 transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add data property assertion"}>
                   <Plus size={14} />
                 </button>
               </div>
@@ -553,18 +670,28 @@ const IndividualEditor: React.FC<{
                     ) : (
                       <>
                         {positiveDataPropertyAssertions.map(assertion => (
-                          <div key={assertion.id} className="group flex items-center justify-between text-xs bg-green-50 p-1.5 rounded-sm border border-green-100">
+                          <div key={assertion.id} className={`group flex items-center justify-between text-xs bg-green-50 p-1.5 rounded-sm border border-green-100 transition-opacity duration-300 ${deletingId.has(assertion.id) ? 'opacity-40' : ''}`}>
                               <div>
                                   <span className="font-semibold text-green-700">{assertion.propertyLabel}</span>
                                   <span className="mx-1.5 text-gray-400">=</span>
                                   <span className="text-green-600">{assertion.targetLiteral}</span>
                               </div>
-                              <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
-                                  <Trash2 size={12} className="text-red-600"/>
+                              <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200" disabled={deletingId.has(assertion.id)}>
+                                  {deletingId.has(assertion.id) ? <Loader2 size={12} className="text-red-600 animate-spin" /> : <Trash2 size={12} className="text-red-600"/>}
                               </button>
                           </div>
                         ))}
-                        {positiveDataPropertyAssertions.length === 0 && (
+                        {inferredDataPropertyAssertions.map(assertion => (
+                          <div key={assertion.id} className="flex items-center justify-between text-xs bg-amber-50 p-1.5 rounded-sm border border-amber-200" title="Inferred by reasoner (read-only)">
+                              <div>
+                                  <span className="font-semibold text-amber-800">{assertion.propertyLabel}</span>
+                                  <span className="mx-1.5 text-gray-400">=</span>
+                                  <span className="text-amber-900">{assertion.targetLiteral}</span>
+                                  <span className="ml-1.5 text-[9px] uppercase text-amber-700 font-semibold">inferred</span>
+                              </div>
+                          </div>
+                        ))}
+                        {positiveDataPropertyAssertions.length === 0 && inferredDataPropertyAssertions.length === 0 && (
                           <div className="text-xs text-gray-400 italic p-1">No data property assertions</div>
                         )}
                       </>
@@ -577,14 +704,14 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Negative object property assertions</h4>
-                <button onClick={() => openPropertyAssertionDialog(true, true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-600 transition-colors" title="Add negative object property assertion">
+                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => openPropertyAssertionDialog(true, true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-600 transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add negative object property assertion"}>
                   <Plus size={14} />
                 </button>
               </div>
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
                 <div className="p-1.5 space-y-1">
                   {negativeObjectPropertyAssertions.map(assertion => (
-                    <div key={assertion.id} className="group flex items-center justify-between text-xs bg-red-50 p-1.5 rounded-sm border border-red-100">
+                    <div key={assertion.id} className={`group flex items-center justify-between text-xs bg-red-50 p-1.5 rounded-sm border border-red-100 transition-opacity duration-300 ${deletingId.has(assertion.id) ? 'opacity-40' : ''}`}>
                       <div>
                         <span className="font-semibold text-red-700">NOT</span>
                         <span className="mx-2 text-gray-400" />
@@ -592,8 +719,8 @@ const IndividualEditor: React.FC<{
                         <span className="mx-1.5 text-gray-400">→</span>
                         <span className="text-red-600">{assertion.targetLabel || assertion.targetIri?.split('#').pop()}</span>
                       </div>
-                      <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
-                        <Trash2 size={12} className="text-red-600" />
+                      <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200" disabled={deletingId.has(assertion.id)}>
+                        {deletingId.has(assertion.id) ? <Loader2 size={12} className="text-red-600 animate-spin" /> : <Trash2 size={12} className="text-red-600" />}
                       </button>
                     </div>
                   ))}
@@ -608,14 +735,14 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Negative data property assertions</h4>
-                <button onClick={() => openPropertyAssertionDialog(false, true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-600 transition-colors" title="Add negative data property assertion">
+                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => openPropertyAssertionDialog(false, true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-600 transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add negative data property assertion"}>
                   <Plus size={14} />
                 </button>
               </div>
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
                 <div className="p-1.5 space-y-1">
                   {negativeDataPropertyAssertions.map(assertion => (
-                    <div key={assertion.id} className="group flex items-center justify-between text-xs bg-red-50 p-1.5 rounded-sm border border-red-100">
+                    <div key={assertion.id} className={`group flex items-center justify-between text-xs bg-red-50 p-1.5 rounded-sm border border-red-100 transition-opacity duration-300 ${deletingId.has(assertion.id) ? 'opacity-40' : ''}`}>
                       <div>
                         <span className="font-semibold text-red-700">NOT</span>
                         <span className="mx-2 text-gray-400" />
@@ -623,8 +750,8 @@ const IndividualEditor: React.FC<{
                         <span className="mx-1.5 text-gray-400">=</span>
                         <span className="text-red-600">{assertion.targetLiteral}</span>
                       </div>
-                      <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
-                        <Trash2 size={12} className="text-red-600" />
+                      <button onClick={isViewOnly ? () => onViewOnlyAction?.() : () => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200" disabled={deletingId.has(assertion.id)}>
+                        {deletingId.has(assertion.id) ? <Loader2 size={12} className="text-red-600 animate-spin" /> : <Trash2 size={12} className="text-red-600" />}
                       </button>
                     </div>
                   ))}
@@ -673,20 +800,30 @@ const IndividualEditor: React.FC<{
                 <MultiSelectSection
                     title="Same Individual As"
                     items={item.sameIndividualAs}
-                    onAddClick={() => openSameDifferentDialog('same')}
+                    onAddClick={(editingItem) => openSameDifferentDialog('same', editingItem)}
                     onDelete={handleDeleteSameAs}
                     themeColor="purple"
                     itemEntityType="individual"
+                    isViewOnly={isViewOnly}
+                    onViewOnlyAction={onViewOnlyAction}
+                    onNavigate={onNavigate}
+                    projectId={projectId}
+                    parentEntityIri={item.id}
                 />
 
                 {/* Different Individual From */}
                 <MultiSelectSection
                     title="Different Individual From"
                     items={item.differentIndividualFrom}
-                    onAddClick={() => openSameDifferentDialog('different')}
+                    onAddClick={(editingItem) => openSameDifferentDialog('different', editingItem)}
                     onDelete={handleDeleteDifferentFrom}
                     themeColor="purple"
                     itemEntityType="individual"
+                    isViewOnly={isViewOnly}
+                    onViewOnlyAction={onViewOnlyAction}
+                    onNavigate={onNavigate}
+                    projectId={projectId}
+                    parentEntityIri={item.id}
                 />
               </div>
             </div>
@@ -725,14 +862,18 @@ const IndividualEditor: React.FC<{
           isOpen={true}
           onClose={() => setTypeDialogOpen(false)}
           title={`Types: ${item.label}`}
-          classHierarchy={typeClassHierarchy}
+          classHierarchy={classHierarchy}
           projectId={projectId}
           onConfirm={(expression) => {
             handleAddType(expression);
             setTypeDialogOpen(false);
           }}
-          objectProperties={[]} // We can pass these if needed for restrictions
-          dataProperties={[]}
+          objectProperties={objectProperties}
+          dataProperties={dataProperties}
+          objectPropertiesTree={objectPropertyHierarchy}
+          dataPropertiesTree={dataPropertyHierarchy}
+          expandedNodes={expandedNodes}
+          onToggleNode={onToggleNode}
           allowedTabs={['hierarchy', 'classExpression', 'objectRestriction', 'dataRestriction']}
         />
       )}
@@ -750,10 +891,27 @@ const IndividualEditor: React.FC<{
           ]}
           minSelection={1}
           onConfirm={async (inds) => {
-            if (sameDiffDialog.mode === 'same') {
-              for (const ind of inds) await handleAddSameAs(ind.id);
+            const editingIri = sameDiffDialog.editingIri;
+            if (editingIri) {
+              // Replace: single API call per selection (usually 1 when editing)
+              for (const ind of inds) {
+                try {
+                  await ontologyMutationService.replaceIndividualRelation(
+                    projectId, item.id, sameDiffDialog.mode, editingIri, ind.id, userId, username
+                  );
+                  if (sameDiffDialog.mode === 'same') {
+                    onUpdate({ ...item, sameIndividualAs: (item.sameIndividualAs || []).map(i => i === editingIri ? ind.id : i) });
+                  } else {
+                    onUpdate({ ...item, differentIndividualFrom: (item.differentIndividualFrom || []).map(i => i === editingIri ? ind.id : i) });
+                  }
+                } catch (e) { console.error(e); }
+              }
             } else {
-              for (const ind of inds) await handleAddDifferentFrom(ind.id);
+              if (sameDiffDialog.mode === 'same') {
+                for (const ind of inds) await handleAddSameAs(ind.id);
+              } else {
+                for (const ind of inds) await handleAddDifferentFrom(ind.id);
+              }
             }
             setSameDiffDialog(null);
           }}

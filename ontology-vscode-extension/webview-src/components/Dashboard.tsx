@@ -1,5 +1,5 @@
 // src/Dashboard.tsx
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   ChevronRight,
   ChevronDown,
@@ -38,6 +38,7 @@ import {
   Brain,
   Network,
   GitMerge,
+  GitPullRequest,
   Palette,
   Edit2,
   Plus,
@@ -52,10 +53,15 @@ import {
   Bug,
   FolderOpen,
   LayoutDashboard,
+  AlertTriangle,
+  Monitor,
 } from "lucide-react";
-import apiClient, { getBaseUrl } from "../services/apiClient";
+import apiClient, { ApiError, getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
+import expressionService, { isManchesterClassExpression, isSimpleOntologyIri } from "../services/expressionService";
+import undoRedoService from "../services/undoRedoService";
 import { draftTrackingService } from "../services/draftTrackingService";
+import { userPreferencesService } from "../services/userPreferencesService";
 import { notificationService } from "../services/notificationService";
 import { syncService } from "../services/syncService";
 import type {
@@ -68,6 +74,12 @@ import type {
   Datatype,
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
+import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry } from "../utils/desktop";
+import { resolveMutationActor } from "../utils/mutationActor";
+import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
+import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
+import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
+import { normalizeRole, parseWorkspaceRole, isWorkspaceViewerRole } from "../utils/roles";
 import { useCollaboration } from "../contexts/CollaborationContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useSubscription } from "../hooks/useSubscription";
@@ -99,6 +111,7 @@ import {
   AddObjectPropertyDialog,
   ClassExpressionDialog,
   PropertyExpressionDialog,
+  IndividualSelectorDialog,
   ObjectPropertyExpressionDialog,
   AddDatatypeDialog,
   PropertyAssertionDialog,
@@ -112,9 +125,12 @@ import {
   GCIEditorDialog,
   AddImportDialog,
   EditOntologyIRIDialog,
+  EditEntityIRIDialog,
   PrefixDialog,
 } from "./dialogs";
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from "../hooks/useKeyboardShortcuts";
+import { useDebouncedVisible } from "../hooks/useDebouncedVisible";
+import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter } from "./CodeHighlighter";
 import { PluginMarketplace } from "./PluginMarketplace";
@@ -123,696 +139,41 @@ import { checkForPluginUpdates, clearPluginUpdateCache } from "../services/plugi
 import DLQueryPanel from "./DLQueryPanel";
 import CitationPickerDialog from "./CitationPickerDialog";
 import ManualCitationDialog from "./ManualCitationDialog";
-
-type TopLevelClass = TreeNode & { hasChildren: boolean };
-
-type FileInfo = {
-  id: string;
-  filename: string;
-  contentType?: string | null;
-  length: number;
-  uploadDate: string; // ISO
-  projectId?: string | null;
-  size?: number;
-  permission?: "view" | "edit";
-  sharedBy?: string;
-  ownerEmail?: string;
-};
-
-const findParentNode = (nodes: any[], targetId: string, parent: any | null = null): any | null => {
-  for (const node of nodes) {
-    if (node.id === targetId) return parent;
-    if (node.children && node.children.length) {
-      const found = findParentNode(node.children, targetId, node);
-      if (found) return found;
-    }
-  }
-  return null;
-};
-
-const DATATYPE_IRI_MAP: Record<string, string> = {
-  "xsd:string": "http://www.w3.org/2001/XMLSchema#string",
-  "xsd:boolean": "http://www.w3.org/2001/XMLSchema#boolean",
-  "xsd:integer": "http://www.w3.org/2001/XMLSchema#integer",
-  "xsd:decimal": "http://www.w3.org/2001/XMLSchema#decimal",
-  "xsd:dateTime": "http://www.w3.org/2001/XMLSchema#dateTime",
-  "xsd:anyURI": "http://www.w3.org/2001/XMLSchema#anyURI",
-};
-
-const REASONER_ID_MAP: Record<string, string> = {
-  HermiT: "HERMIT",
-  ELK: "ELK",
-  Pellet: "PELLET",
-  Openllet: "OPENLLET",
-  Structural: "STRUCTURAL",
-};
-
-const REASONER_OPTIONS = Object.keys(REASONER_ID_MAP);
-
-const normalizeReasonerType = (label: string): string => REASONER_ID_MAP[label] || "HERMIT";
-
-// Convert the flat depth-annotated classification list from the backend into a nested tree
-const buildHierarchyTree = (nodes: any[]): any[] => {
-  if (!Array.isArray(nodes)) return [];
-
-  const stack: any[] = [];
-  const roots: any[] = [];
-
-  nodes.forEach((node) => {
-    const depth = Number((node && (node as any).depth) ?? 0);
-    const copy = { ...node, children: [] as any[] };
-
-    while (stack.length > 0 && (stack[stack.length - 1]?.depth ?? 0) >= depth) {
-      stack.pop();
-    }
-
-    if (stack.length === 0) {
-      roots.push(copy);
-    } else {
-      stack[stack.length - 1].children.push(copy);
-    }
-
-    stack.push(copy);
-  });
-
-  return roots;
-};
-
-const extractResponseData = (payload: any) => {
-  if (payload && typeof payload === "object" && "data" in payload) {
-    return (payload as any).data ?? {};
-  }
-  return payload ?? {};
-};
-
-const combineReasonerResults = (classificationPayload: any, statsPayload?: any) => {
-  // Add validation to handle error responses
-  if (!classificationPayload || (classificationPayload.error && !classificationPayload.data)) {
-    console.error("[Dashboard] Invalid classification response:", classificationPayload);
-    return {
-      classHierarchy: [],
-      classHierarchyTree: [],
-      objectPropertyHierarchy: [],
-      dataPropertyHierarchy: [],
-      equivalentClasses: [],
-      unsatisfiableClasses: [],
-      totalClasses: 0,
-      stats: {
-        classHierarchyNodes: 0,
-        objectPropertyNodes: 0,
-        dataPropertyNodes: 0,
-        individuals: 0,
-        satisfiableClasses: 0,
-        unsatisfiableClasses: 0,
-        isConsistent: true,
-      },
-    };
-  }
-
-  const classificationData = extractResponseData(classificationPayload);
-  const statsData = statsPayload ? extractResponseData(statsPayload) : null;
-  const existingStats = (classificationData as any)?.stats || {};
-
-  // Fix: Ensure classHierarchy is an array before building tree
-  const rawClassHierarchy = (classificationData as any)?.classHierarchy;
-  const classHierarchyArray = Array.isArray(rawClassHierarchy) ? rawClassHierarchy : [];
-  const classHierarchyTree = buildHierarchyTree(classHierarchyArray);
-
-  if (!statsData) {
-    return {
-      ...classificationData,
-      classHierarchyTree,
-    };
-  }
-
-  const unsatRaw = statsData.unsatisfiableClasses;
-  const unsatCount = unsatRaw === -1 ? 0 : statsData.unsatisfiableClasses || 0;
-  const isConsistent = statsData.isConsistent === false || unsatRaw === -1 ? false : true;
-
-  return {
-    ...classificationData,
-    classHierarchyTree,
-    stats: {
-      ...existingStats,
-      unsatisfiableClassesRaw: unsatRaw,
-      classHierarchyNodes: statsData.classCount ?? existingStats.classHierarchyNodes ?? 0,
-      objectPropertyNodes: statsData.propertyCount ?? existingStats.objectPropertyNodes ?? 0,
-      dataPropertyNodes: statsData.dataPropertyCount ?? existingStats.dataPropertyNodes ?? 0,
-      individuals: statsData.individualCount ?? existingStats.individuals ?? 0,
-      satisfiableClasses: statsData.satisfiableClasses ?? existingStats.satisfiableClasses ?? 0,
-      unsatisfiableClasses: unsatCount,
-      isConsistent,
-    },
-  };
-};
-// #region Helper Components
-
-const LoadingDialog = ({
-  isOpen,
-  message,
-  projectName,
-  loadingStatusMessage,
-  progress,
-  queuePosition,
-  totalInQueue,
-  estimatedWaitTimeMs,
-}: {
-  isOpen: boolean;
-  message?: string;
-  projectName?: string;
-  loadingStatusMessage?: string;
-  progress?: number;
-  queuePosition?: number;
-  totalInQueue?: number;
-  estimatedWaitTimeMs?: number;
-}) => {
-  if (!isOpen) return null;
-
-  const formatWaitTime = (ms: number): string => {
-    const minutes = Math.ceil(ms / 60000);
-    if (minutes < 1) return "Less than a minute";
-    if (minutes === 1) return "~1 minute";
-    return `~${minutes} minutes`;
-  };
-
-  const hasProgress = progress !== undefined && progress > 0;
-  const hasQueue = queuePosition !== undefined && queuePosition > 0;
-
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60]">
-      <div
-        className="rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden border"
-        style={{
-          backgroundColor: "var(--color-surface, #fff)",
-          borderColor: "var(--color-border, #e5e7eb)",
-        }}
-      >
-        {/* Header gradient bar */}
-        <div className="h-1.5 bg-gradient-to-r from-purple-500 via-indigo-500 to-purple-600">
-          {hasProgress && (
-            <div
-              className="h-full bg-white/30 transition-all duration-500 ease-out"
-              style={{ width: `${100 - progress}%`, marginLeft: "auto" }}
-            />
-          )}
-        </div>
-
-        <div className="p-6">
-          {/* Top section: Icon + title */}
-          <div className="flex flex-col items-center text-center mb-4">
-            <div className="relative mb-3">
-              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-100 to-indigo-100 flex items-center justify-center">
-                <Loader2 size={22} className="text-purple-600 animate-spin" />
-              </div>
-              {hasProgress && (
-                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-purple-600 text-white text-[9px] font-bold flex items-center justify-center shadow-sm">
-                  {Math.round(progress)}
-                </div>
-              )}
-            </div>
-            <h3 className="text-base font-semibold truncate w-full" style={{ color: "var(--color-text)" }}>
-              {message || "Loading Ontology"}
-            </h3>
-            {projectName ? (
-              <p className="text-sm truncate w-full mt-0.5" style={{ color: "var(--color-text-secondary)" }}>
-                {projectName}
-              </p>
-            ) : (
-              <p className="text-sm mt-0.5" style={{ color: "var(--color-text-secondary)" }}>
-                Processing your ontology data…
-              </p>
-            )}
-          </div>
-
-          {/* Progress bar */}
-          {hasProgress && (
-            <div className="mb-4">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs font-medium" style={{ color: "var(--color-text-secondary)" }}>
-                  Progress
-                </span>
-                <span className="text-xs font-bold text-purple-600">{Math.round(progress)}%</span>
-              </div>
-              <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 transition-all duration-500 ease-out"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Status message */}
-          {loadingStatusMessage && (
-            <div
-              className="flex items-center justify-center gap-2 text-xs font-medium px-3 py-2 rounded-lg mb-4 text-center"
-              style={{ backgroundColor: "rgba(99,102,241,0.08)", color: "rgb(79,70,229)" }}
-            >
-              <Sparkles size={13} className="flex-shrink-0 opacity-70" />
-              <span>{loadingStatusMessage}</span>
-            </div>
-          )}
-
-          {/* Queue / Wait list */}
-          {hasQueue && (
-            <div
-              className="rounded-lg px-3.5 py-3 mb-4 border"
-              style={{
-                backgroundColor: "rgba(147,51,234,0.05)",
-                borderColor: "rgba(147,51,234,0.15)",
-              }}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-700">
-                  <Clock size={12} />
-                  <span>Queue Position #{queuePosition}</span>
-                </div>
-                {totalInQueue !== undefined && totalInQueue > 0 && (
-                  <span className="text-[10px] font-medium text-purple-500 bg-purple-100 px-1.5 py-0.5 rounded-full">
-                    {totalInQueue} in queue
-                  </span>
-                )}
-              </div>
-              <div className="text-xs text-purple-600 space-y-1">
-                {queuePosition > 1 && (
-                  <div className="flex items-center gap-1.5">
-                    <Users size={11} className="opacity-70" />
-                    <span>
-                      {queuePosition - 1} file{queuePosition - 1 !== 1 ? "s" : ""} ahead of you
-                    </span>
-                  </div>
-                )}
-                {estimatedWaitTimeMs !== undefined && estimatedWaitTimeMs > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <Clock size={11} className="opacity-70" />
-                    <span>Estimated wait: {formatWaitTime(estimatedWaitTimeMs)}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Waiting indicator */}
-          <div className="flex items-center justify-center py-2 text-xs font-medium text-purple-600">
-            <span>{hasQueue ? "Waiting in queue…" : hasProgress ? "Importing…" : ""}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const ReasonerExplanationModal = ({
-  isOpen,
-  onClose,
-  data,
-  loading,
-  error,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  data: any;
-  loading: boolean;
-  error: string | null;
-}) => {
-  if (!isOpen) return null;
-
-  const causes = data?.causes || [];
-  const isConsistent = data?.isConsistent ?? data?.consistent;
-  const heading =
-    isConsistent === false
-      ? "Ontology is inconsistent"
-      : isConsistent === true
-        ? "Ontology is consistent"
-        : "Explanation";
-
-  return (
-    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center">
-      <div
-        className="bg-white rounded-xl shadow-2xl max-w-3xl w-full mx-4 overflow-hidden border"
-        style={{ borderColor: "var(--color-border)" }}
-      >
-        <div className="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
-          <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
-            <AlertCircle size={16} className="text-red-500" />
-            Inconsistency explanation
-          </div>
-          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">
-            Close
-          </button>
-        </div>
-
-        <div className="p-5 max-h-[70vh] overflow-y-auto text-sm text-gray-700">
-          {loading ? (
-            <div className="flex items-center gap-2 text-gray-600">
-              <Loader2 size={18} className="animate-spin" />
-              Computing explanation…
-            </div>
-          ) : error ? (
-            <div className="flex items-center gap-2 text-red-600">
-              <AlertCircle size={16} />
-              {error}
-            </div>
-          ) : data ? (
-            <>
-              <div className="mb-4">
-                <div className="text-xs uppercase text-gray-500 font-semibold mb-1">Summary</div>
-                <div className="text-gray-800 font-medium">{data.message || heading}</div>
-                {typeof data.totalIssues === "number" && (
-                  <div className="text-[11px] text-gray-500">Issues detected: {data.totalIssues}</div>
-                )}
-                {isConsistent === false && (
-                  <div className="mt-1 text-[11px] text-red-600">
-                    The ontology failed consistency checks. See causes below.
-                  </div>
-                )}
-                {isConsistent === true && (
-                  <div className="mt-1 text-[11px] text-green-600">
-                    The ontology is consistent; no inconsistency causes detected.
-                  </div>
-                )}
-              </div>
-
-              {causes.length === 0 ? (
-                <div className="text-gray-600">No detailed causes returned by the backend.</div>
-              ) : (
-                <div className="space-y-3">
-                  {causes.map((cause: any, idx: number) => (
-                    <div key={idx} className="border rounded-lg p-3 bg-gray-50">
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="text-sm font-semibold text-gray-800">{cause.title || cause.type}</div>
-                        {cause.severity && (
-                          <span className="text-[11px] uppercase text-red-600 font-semibold">{cause.severity}</span>
-                        )}
-                      </div>
-                      {cause.description && <div className="text-xs text-gray-600 mb-2">{cause.description}</div>}
-                      {cause.classes && Array.isArray(cause.classes) && (
-                        <div className="text-[11px] text-gray-700 space-y-1">
-                          {cause.classes.map((cls: any, i: number) => (
-                            <div key={i} className="bg-white border rounded px-2 py-1">
-                              <div className="font-semibold">{cls.label || cls.iri || "Class"}</div>
-                              {cls.reason && <div className="text-gray-600">{cls.reason}</div>}
-                              {cls.iri && <div className="text-gray-500">{cls.iri}</div>}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {cause.violations && Array.isArray(cause.violations) && (
-                        <div className="text-[11px] text-gray-700 space-y-1">
-                          {cause.violations.map((violation: any, i: number) => {
-                            const isPropertyViolation = violation.property || violation.propertyIri;
-                            return (
-                              <div key={i} className="bg-white border rounded px-2 py-1">
-                                {violation.individual && <div className="font-semibold">{violation.individual}</div>}
-                                {violation.disjointClasses && (
-                                  <div className="text-gray-600">
-                                    Classes: {(violation.disjointClasses as string[]).join(", ")}
-                                  </div>
-                                )}
-                                {violation.individualIri && (
-                                  <div className="text-gray-500">{violation.individualIri}</div>
-                                )}
-
-                                {isPropertyViolation && (
-                                  <div className="space-y-1">
-                                    <div className="font-semibold text-gray-800">
-                                      {violation.property || "Property"}
-                                    </div>
-                                    {violation.propertyIri && (
-                                      <div className="text-gray-500">{violation.propertyIri}</div>
-                                    )}
-                                    <div className="text-gray-600">
-                                      Domain constraints: {violation.hasDomainConstraints ? "present" : "none"}; Range
-                                      constraints: {violation.hasRangeConstraints ? "present" : "none"}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {!violation.individual && !isPropertyViolation && (
-                                  <pre className="text-[10px] text-gray-600 overflow-x-auto">
-                                    {JSON.stringify(violation, null, 2)}
-                                  </pre>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                      {cause.tips && Array.isArray(cause.tips) && (
-                        <ul className="list-disc list-inside text-[11px] text-gray-700 space-y-1">
-                          {cause.tips.map((tip: string, i: number) => (
-                            <li key={i}>{tip}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="text-gray-600">No explanation available.</div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const ReasonerSettingsDialog = ({
-  isOpen,
-  selectedReasoner,
-  isSynced,
-  onSelectReasoner,
-  onToggleSync,
-  onClose,
-}: {
-  isOpen: boolean;
-  selectedReasoner: string;
-  isSynced: boolean;
-  onSelectReasoner: (reasoner: string) => void;
-  onToggleSync: () => void;
-  onClose: () => void;
-}) => {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-[65] bg-black/40 flex items-center justify-center">
-      <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 border"
-        style={{ borderColor: "var(--color-border)" }}
-      >
-        <div className="px-5 py-3 border-b bg-gray-50 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
-            <Settings size={16} />
-            Reasoner settings
-          </div>
-          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">
-            Close
-          </button>
-        </div>
-        <div className="p-5 space-y-4 text-sm text-gray-800">
-          <div>
-            <div className="text-xs uppercase text-gray-500 font-semibold mb-1">Active reasoner</div>
-            <select
-              value={selectedReasoner}
-              onChange={(event) => onSelectReasoner(event.target.value)}
-              className="w-full border rounded px-3 py-2 text-sm"
-            >
-              {REASONER_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </div>
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" checked={isSynced} onChange={onToggleSync} className="rounded border-gray-300" />
-            Synchronize reasoner after edits
-          </label>
-          <p className="text-xs text-gray-500">Keep the reasoner in sync with edits, or run manually when needed.</p>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Plugin Placeholder Component - Beautiful UI for plugin loading states
-interface PluginPlaceholderProps {
-  pluginId: string;
-  pluginName: string;
-  description: string;
-  icon: React.ReactNode;
-  features: string[];
-  accentColor: string;
-  onInstall: () => void;
-  onRetryLoad: () => void;
-  isInstalled: boolean;
-  isLoading: boolean;
-  error?: string | null;
-}
-
-const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
-  pluginId,
-  pluginName,
-  description,
-  icon,
-  features,
-  accentColor,
-  onInstall,
-  onRetryLoad,
-  isInstalled,
-  isLoading,
-  error,
-}) => {
-  return (
-    <div
-      className="h-full flex items-center justify-center p-8"
-      style={{ backgroundColor: "var(--bg)", color: "var(--text-primary)" }}
-    >
-      <div className="max-w-2xl w-full">
-        {/* Main Card */}
-        <div
-          className="rounded-2xl shadow-xl overflow-hidden"
-          style={{ backgroundColor: "var(--surface-1)", border: "1px solid var(--border)" }}
-        >
-          {/* Header with gradient */}
-          <div className={`bg-gradient-to-r ${accentColor} p-8 text-white relative overflow-hidden`}>
-            {/* Background pattern */}
-            <div className="absolute inset-0 opacity-10">
-              <div className="absolute -right-10 -top-10 w-40 h-40 border-2 border-white rounded-full" />
-              <div className="absolute -right-5 -bottom-5 w-32 h-32 border-2 border-white rounded-full" />
-              <div className="absolute left-1/4 top-1/2 w-20 h-20 border border-white rounded-full" />
-            </div>
-
-            <div className="relative flex items-start gap-5">
-              <div className="flex-shrink-0 w-16 h-16 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center shadow-lg">
-                {icon}
-              </div>
-              <div className="flex-1">
-                <h2 className="text-2xl font-bold mb-2">{pluginName}</h2>
-                <p className="text-white/90 text-sm leading-relaxed">{description}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Content */}
-          <div className="p-8">
-            {/* Features Grid */}
-            <div className="mb-8">
-              <h3 className="text-sm font-semibold uppercase tracking-wider mb-4 flex items-center gap-2 text-secondary">
-                <Sparkles size={16} className="text-accent" />
-                Key Features
-              </h3>
-              <div className="grid grid-cols-2 gap-3">
-                {features?.map((feature, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center gap-3 p-3 rounded-lg transition-all hover-overlay"
-                    style={{ backgroundColor: "var(--surface-2)", border: "1px solid var(--border)" }}
-                  >
-                    <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
-                      <Check size={12} className="text-white" />
-                    </div>
-                    <span className="text-sm font-medium text-primary">{feature}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Status & Action */}
-            <div className="pt-6" style={{ borderTop: "1px solid var(--divider)" }}>
-              {error ? (
-                <div
-                  className="mb-4 p-4 rounded-xl flex items-start gap-3"
-                  style={{ backgroundColor: "var(--error-tint)", border: "1px solid var(--error)" }}
-                >
-                  <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: "var(--error)" }} />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-red-800">Failed to load plugin</p>
-                    <p className="text-xs text-red-600 mt-1">{error}</p>
-                  </div>
-                </div>
-              ) : isLoading ? (
-                <div
-                  className="mb-4 p-4 rounded-xl flex items-center gap-3"
-                  style={{ backgroundColor: "var(--info-tint)", border: "1px solid var(--info)" }}
-                >
-                  <Loader2 size={20} className="animate-spin" style={{ color: "var(--info)" }} />
-                  <div>
-                    <p className="text-sm font-medium text-blue-800">Loading plugin...</p>
-                    <p className="text-xs text-blue-600 mt-0.5">Downloading and initializing components</p>
-                  </div>
-                </div>
-              ) : isInstalled ? (
-                <div
-                  className="mb-4 p-4 rounded-xl flex items-start gap-3"
-                  style={{ backgroundColor: "var(--warning-tint)", border: "1px solid var(--warning)" }}
-                >
-                  <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: "var(--warning)" }} />
-                  <div>
-                    <p className="text-sm font-medium text-amber-800">Plugin installed but not loaded</p>
-                    <p className="text-xs text-amber-600 mt-1">Click the button below to load the plugin</p>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  className="mb-4 p-4 rounded-xl flex items-start gap-3"
-                  style={{ backgroundColor: "var(--surface-2)", border: "1px solid var(--border)" }}
-                >
-                  <Package size={20} className="flex-shrink-0 mt-0.5 text-tertiary" />
-                  <div>
-                    <p className="text-sm font-medium text-gray-700">Plugin not installed</p>
-                    <p className="text-xs text-gray-500 mt-1">Install from the marketplace to unlock these features</p>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                {isInstalled ? (
-                  <button
-                    onClick={onRetryLoad}
-                    disabled={isLoading}
-                    className={`flex-1 px-6 py-3 rounded-xl font-semibold text-white shadow-lg transition-all flex items-center justify-center gap-2 ${
-                      isLoading
-                        ? "bg-gray-400 cursor-not-allowed"
-                        : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 hover:shadow-xl hover:-translate-y-0.5"
-                    }`}
-                  >
-                    {isLoading ? (
-                      <>
-                        <Loader2 size={18} className="animate-spin" />
-                        Loading...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw size={18} />
-                        Load Plugin
-                      </>
-                    )}
-                  </button>
-                ) : (
-                  <button
-                    onClick={onInstall}
-                    className="flex-1 px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5 flex items-center justify-center gap-2"
-                  >
-                    <Download size={18} />
-                    Install from Marketplace
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer tip */}
-        <p className="text-center text-xs text-gray-700 mt-4">
-          Tip: Access all plugins from the <span className="font-medium">Settings → Plugin Marketplace</span>
-        </p>
-      </div>
-    </div>
-  );
-};
+import {
+  LoadingDialog,
+  SectionLoadingBar,
+  ReasonerExplanationModal,
+  ReasonerSettingsDialog,
+  PluginPlaceholder,
+  ConfirmDialog,
+  DuplicateFileDialog,
+  DetailsPanel,
+  type TopLevelClass,
+  type FileInfo,
+  findParentNode,
+  DATATYPE_IRI_MAP,
+  REASONER_ID_MAP,
+  REASONER_OPTIONS,
+  normalizeReasonerType,
+  buildHierarchyTree,
+  extractResponseData,
+  normalizePrefixMappings,
+  normalizeOntologyAnnotation,
+  normalizeOntologyAnnotations,
+  mapAnnotationProperty,
+  buildAnnotationPropertyHierarchy,
+  STANDARD_ANNOTATION_PROPERTIES,
+  mergeAnnotationProperties,
+  combineReasonerResults,
+  showNotification,
+} from "./dashboard-parts";
+import { OntoCodeLogo } from "./OntoCodeLogo";
+import ReleaseNotesModal from "./ReleaseNotesModal";
+import DraftCopyModal from "./dialogs/DraftCopyModal";
+import PullFromPublicDialog from "./PullFromPublicDialog";
+import PRsModal from "./PRsModal";
+import DraftPRPanel from "./DraftPRPanel";
+import PullPreviewDialog from "./PullPreviewDialog";
 
 const TopMenuBar = ({
   fileList,
@@ -825,15 +186,23 @@ const TopMenuBar = ({
   hasUnsavedChanges,
   isSaving,
   draftCount,
+  conflictStatus,
   onOpenDialog,
   onOpenPluginMarketplace,
   hasPluginUpdates,
   onOpenHistory,
   onReportIssue,
   onOpenUserGuide,
+  onOpenReleaseNotes,
   onOpenMergeWizard,
   syncMode,
   onToggleSyncMode,
+  requireDraftForMembers,
+  isProjectOwner,
+  isDraftEditorRole,
+  autoDraftStatus,
+  onToggleRequireDraftForMembers,
+  onSwitchToDraftMode,
   isReasonerRunning,
   isReasonerLoading,
   isReasonerSynced,
@@ -848,6 +217,19 @@ const TopMenuBar = ({
   isConsistencyLoading,
   onGoToProjectDashboard,
   onGoToWorkspace,
+  onOpenThemeSettings,
+  subscription,
+  onExportProAction,
+  isViewOnly,
+  hierarchyDisplayMode,
+  onHierarchyDisplayModeChange,
+  hierarchyImportsScope,
+  onHierarchyImportsScopeChange,
+  hierarchyAnnotationProperties,
+  hierarchyAnnotationPropIri,
+  onHierarchyAnnotationPropChange,
+  hierarchyCustomTemplate,
+  onHierarchyCustomTemplateChange,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -859,15 +241,23 @@ const TopMenuBar = ({
   hasUnsavedChanges: boolean;
   isSaving: boolean;
   draftCount?: number;
+  conflictStatus?: 'idle' | 'checking' | 'clean' | 'conflict';
   onOpenDialog: () => void;
   onOpenPluginMarketplace: () => void;
   hasPluginUpdates?: boolean;
   onOpenHistory: () => void;
   onReportIssue: () => void;
   onOpenUserGuide: () => void;
+  onOpenReleaseNotes: () => void;
   onOpenMergeWizard: () => void;
   syncMode: "private" | "public";
   onToggleSyncMode: () => void;
+  requireDraftForMembers?: boolean;
+  isProjectOwner?: boolean;
+  isDraftEditorRole?: boolean;
+  autoDraftStatus?: 'idle' | 'copying' | 'ready';
+  onToggleRequireDraftForMembers?: () => void;
+  onSwitchToDraftMode?: () => void;
   isReasonerRunning?: boolean;
   isReasonerLoading?: boolean;
   isReasonerSynced?: boolean;
@@ -882,14 +272,47 @@ const TopMenuBar = ({
   isConsistencyLoading?: boolean;
   onGoToProjectDashboard?: () => void;
   onGoToWorkspace?: () => void;
+  onOpenThemeSettings?: () => void;
+  subscription?: any;
+  onExportProAction?: () => void;
+  isViewOnly?: boolean;
+  hierarchyDisplayMode?: "label" | "id" | "annotation" | "custom";
+  onHierarchyDisplayModeChange?: (mode: "label" | "id" | "annotation" | "custom") => void;
+  hierarchyImportsScope?: "active" | "closure";
+  onHierarchyImportsScopeChange?: (scope: "active" | "closure") => void;
+  hierarchyAnnotationProperties?: Array<{ id: string; label: string }>;
+  hierarchyAnnotationPropIri?: string;
+  onHierarchyAnnotationPropChange?: (iri: string) => void;
+  hierarchyCustomTemplate?: string;
+  onHierarchyCustomTemplateChange?: (tpl: string) => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [annotationSubmenuOpen, setAnnotationSubmenuOpen] = useState(false);
+  const [customTemplateEditing, setCustomTemplateEditing] = useState(false);
+  const [customTemplateDraft, setCustomTemplateDraft] = useState(hierarchyCustomTemplate ?? "{label} ({id})");
   const [searchFile, setSearchFile] = useState("");
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [showExportFormats, setShowExportFormats] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState("");
 
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    import("../utils/appVersion").then(({ getAppVersion }) => {
+      getAppVersion().then((v) => {
+        setAppVersion(v || "");
+        if (!v) return;
+        const seenKey = "ontocode_release_notes_seen";
+        const lastSeen = localStorage.getItem(seenKey) || "";
+        if (lastSeen !== v) {
+          setIsReleaseNotesOpen(true);
+        }
+      }).catch(() => setAppVersion(""));
+    });
+  }, []);
 
   const onSearchFileChange = (value: string) => {
     setSearchFile(value);
@@ -920,6 +343,7 @@ const TopMenuBar = ({
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setOpenMenu(null);
+        setShowExportFormats(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -932,27 +356,29 @@ const TopMenuBar = ({
   return (
     <header
       ref={menuRef}
-      className="ontocode-top-menu text-xs flex items-center px-2 relative border-b h-8 flex-shrink-0"
+      className="ontocode-top-menu text-xs flex items-center px-1 sm:px-2 relative border-b h-8 flex-shrink-0 min-w-0"
       style={{
         backgroundColor: "var(--color-background)",
         color: "var(--color-text)",
         borderBottomColor: "var(--color-border)",
       }}
     >
-      <div className="flex items-center gap-1 p-2 mr-2">
-        <Package size={16} className="text-purple-600" />
+      <div className="flex items-center gap-1 p-1 sm:p-2 mr-1 sm:mr-2 flex-shrink-0">
+        <OntoCodeLogo size={20} />
       </div>
       <div className="flex items-center">
         {menuItems.map((item) => (
-          <div key={item} className="relative">
+          <div key={item} className="relative flex-shrink-0">
             <button
               onClick={() => {
-                setOpenMenu(openMenu === item ? null : item);
+                const next = openMenu === item ? null : item;
+                setOpenMenu(next);
+                if (!next || next !== "View") { setAnnotationSubmenuOpen(false); setCustomTemplateEditing(false); }
               }}
-              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors relative ${openMenu === item ? "is-open" : ""}`}
+              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-2 sm:px-3 py-1 rounded-sm transition-colors relative whitespace-nowrap ${openMenu === item ? "is-open" : ""}`}
             >
               {item}
-              {item === "View" && hasPluginUpdates && (
+              {item === "Tools" && hasPluginUpdates && (
                 <span
                   className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"
                   title="Plugin updates available"
@@ -967,10 +393,10 @@ const TopMenuBar = ({
             </button>
             {openMenu === item && (
               <div
-                className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === "File" ? "w-[360px]" : "w-48"} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`}
+                className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === "File" ? "w-[min(360px,calc(100vw-1rem))]" : "w-48 max-w-[calc(100vw-1rem)]"} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`}
                 style={{ borderColor: "var(--color-border)" }}
               >
-                {item === "View" ? (
+                {item === "Tools" ? (
                   <div className="py-1">
                     <button
                       onClick={() => {
@@ -989,6 +415,113 @@ const TopMenuBar = ({
                       )}
                     </button>
                   </div>
+                ) : item === "View" ? (
+                  <div className="py-1">
+                    <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide opacity-50">Rendering</div>
+                    <button
+                      onClick={() => { onHierarchyDisplayModeChange?.("label"); setOpenMenu(null); }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "label" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Render by label
+                      <span className="ml-1 opacity-40 text-[10px]">(rdfs:label)</span>
+                    </button>
+                    <button
+                      onClick={() => { onHierarchyDisplayModeChange?.("id"); setOpenMenu(null); }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "id" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Render by ID
+                      <span className="ml-1 opacity-40 text-[10px]">(local name from IRI)</span>
+                    </button>
+                    <button
+                      onClick={() => setAnnotationSubmenuOpen(v => !v)}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "annotation" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Render by annotation property
+                      <span className="ml-auto opacity-50 text-[10px]">{annotationSubmenuOpen ? "▾" : "▸"}</span>
+                    </button>
+                    {annotationSubmenuOpen && (
+                      <div className="mx-2 mb-1 border rounded overflow-hidden" style={{ borderColor: "var(--color-border)" }}>
+                        {(hierarchyAnnotationProperties ?? []).length === 0 ? (
+                          <div className="px-3 py-2 text-[10px] opacity-50 italic">No annotation properties found</div>
+                        ) : (
+                          (hierarchyAnnotationProperties ?? []).map(ap => (
+                            <button
+                              key={ap.id}
+                              onClick={() => {
+                                onHierarchyDisplayModeChange?.("annotation");
+                                onHierarchyAnnotationPropChange?.(ap.id);
+                                setAnnotationSubmenuOpen(false);
+                                setOpenMenu(null);
+                              }}
+                              className={`ontocode-top-menu-item cursor-pointer w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 ${hierarchyDisplayMode === "annotation" && hierarchyAnnotationPropIri === ap.id ? "font-semibold" : ""}`}
+                            >
+                              <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "annotation" && hierarchyAnnotationPropIri === ap.id ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                              <span className="truncate">{ap.label || ap.id.split(/[#/]/).pop()}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => { onHierarchyDisplayModeChange?.("custom"); setCustomTemplateEditing(true); setCustomTemplateDraft(hierarchyCustomTemplate ?? "{label} ({id})"); }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyDisplayMode === "custom" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Custom rendering...
+                    </button>
+                    {customTemplateEditing && (
+                      <div className="mx-2 mb-2 p-2 border rounded" style={{ borderColor: "var(--color-border)" }}>
+                        <div className="text-[10px] opacity-60 mb-1">Template — use <code>{"{label}"}</code> <code>{"{id}"}</code> <code>{"{iri}"}</code></div>
+                        <div className="flex gap-1">
+                          <input
+                            autoFocus
+                            value={customTemplateDraft}
+                            onChange={e => setCustomTemplateDraft(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter" && customTemplateDraft.trim()) {
+                                onHierarchyCustomTemplateChange?.(customTemplateDraft);
+                                setCustomTemplateEditing(false);
+                                setOpenMenu(null);
+                              }
+                              if (e.key === "Escape") setCustomTemplateEditing(false);
+                            }}
+                            className="flex-1 text-[10px] border rounded px-1.5 py-1 bg-theme-surface"
+                            style={{ borderColor: "var(--color-border)" }}
+                            placeholder="{label} ({id})"
+                          />
+                          <button
+                            onClick={() => {
+                              if (customTemplateDraft.trim()) {
+                                onHierarchyCustomTemplateChange?.(customTemplateDraft);
+                                setCustomTemplateEditing(false);
+                                setOpenMenu(null);
+                              }
+                            }}
+                            className="px-2 py-1 text-[10px] bg-purple-600 text-white rounded"
+                          >Apply</button>
+                        </div>
+                      </div>
+                    )}
+                    <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                    <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide opacity-50">Ontology Scope</div>
+                    <button
+                      onClick={() => { onHierarchyImportsScopeChange?.("closure"); setOpenMenu(null); }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyImportsScope === "closure" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Show imports closure
+                    </button>
+                    <button
+                      onClick={() => { onHierarchyImportsScopeChange?.("active"); setOpenMenu(null); }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <span className={`w-3 h-3 rounded-full border flex-shrink-0 ${hierarchyImportsScope === "active" ? "bg-purple-600 border-purple-600" : "border-gray-400"}`} />
+                      Show only active ontology
+                    </button>
+                  </div>
                 ) : item === "Window" ? (
                   <div className="py-1">
                     {onGoToProjectDashboard && (
@@ -1003,7 +536,7 @@ const TopMenuBar = ({
                         Project Dashboard
                       </button>
                     )}
-                    {onGoToWorkspace && (
+                    {onGoToWorkspace ? (
                       <button
                         onClick={() => {
                           onGoToWorkspace();
@@ -1014,11 +547,41 @@ const TopMenuBar = ({
                         <LayoutDashboard size={14} />
                         Workspace Selection
                       </button>
-                    )}
-                    {(onGoToProjectDashboard || onGoToWorkspace) && (
+                    ) : isDesktop() ? (
+                      <div className="w-full text-left px-4 py-2 text-xs flex items-center gap-2 opacity-40 cursor-not-allowed select-none">
+                        <LayoutDashboard size={14} />
+                        <span>Workspace Selection</span>
+                        <span className="ml-auto text-[10px] italic">webapp only</span>
+                      </div>
+                    ) : null}
+                    {(onGoToProjectDashboard || onGoToWorkspace || isDesktop()) && (
                       <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
                     )}
-                    <div className="px-3 py-1 text-gray-400 text-xs">Appearance</div>
+                    {isDesktop() && (
+                      <>
+                        <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                        <button
+                          onClick={() => {
+                            window.vscode?.postMessage({ type: 'toggleDevTools' });
+                            setOpenMenu(null);
+                          }}
+                          className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                        >
+                          <Code size={14} />
+                          Toggle Developer Tools
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => {
+                        onOpenThemeSettings?.();
+                        setOpenMenu(null);
+                      }}
+                      className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                    >
+                      <Palette size={14} />
+                      Appearance
+                    </button>
                   </div>
                 ) : // : item === "Reasoner" ? (
                 // <div className="py-1">
@@ -1172,6 +735,18 @@ const TopMenuBar = ({
                       <Bug size={14} />
                       Report Issue
                     </button>
+                    <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                    <button
+                      onClick={() => {
+                        onOpenReleaseNotes();
+                        setOpenMenu(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      title="View release notes"
+                    >
+                      <Info size={14} />
+                      Version {appVersion || "…"}
+                    </button>
                   </div>
                 ) : item === "File" ? (
                   <div className="flex flex-col py-1">
@@ -1198,31 +773,103 @@ const TopMenuBar = ({
                     >
                       Save {draftCount && draftCount > 0 ? `(${draftCount})` : ""}
                       {hasUnsavedChanges && <span className="text-orange-600 text-lg leading-none">•</span>}
+                      {hasUnsavedChanges && conflictStatus === 'checking' && (
+                        <span className="ml-auto text-[10px] text-gray-400 italic">checking…</span>
+                      )}
+                      {hasUnsavedChanges && conflictStatus === 'clean' && (
+                        <span className="ml-auto text-[10px] text-green-600 font-medium">✓ No conflicts</span>
+                      )}
+                      {hasUnsavedChanges && conflictStatus === 'conflict' && (
+                        <span className="ml-auto text-[10px] text-red-600 font-medium">⚠ Conflicts</span>
+                      )}
                     </button>
+                    {/* Export As submenu */}
                     <button
                       onClick={(e) => {
                         e.preventDefault();
-                        if (window.vscode && currentProjectId) {
-                          window.vscode.postMessage({
-                            type: "downloadOntology",
-                            url: `/api/ontology/export/${currentProjectId}`,
-                            filename: `${currentProjectId}.owl`,
-                          });
-                        } else if (window.vscode) {
-                          window.vscode.postMessage({
-                            type: "error",
-                            value: "No ontology loaded. Please open a file first.",
-                          });
-                        }
-                        setOpenMenu(null);
+                        if (currentProjectId && !isViewOnly) setShowExportFormats((v) => !v);
+                        if (isViewOnly) onExportProAction?.();
                       }}
                       disabled={!currentProjectId}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={isViewOnly ? "Viewers cannot export files" : undefined}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
                     >
-                      Download
+                      <span className="flex items-center gap-2">
+                        <Download size={14} />
+                        Export As…
+                      </span>
+                      {showExportFormats ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                     </button>
+                    {showExportFormats && currentProjectId && (
+                      <div className="pl-4 pb-1">
+                        {([
+                          { label: "RDF/XML (.owl)", format: "rdfxml", ext: "owl" },
+                          { label: "Turtle (.ttl)", format: "turtle", ext: "ttl" },
+                          { label: "JSON-LD (.jsonld)", format: "jsonld", ext: "jsonld" },
+                          { label: "OWL/XML (.owlxml)", format: "owlxml", ext: "owlxml" },
+                          { label: "Manchester (.omn)", format: "manchester", ext: "omn" },
+                          { label: "Functional (.ofn)", format: "functional", ext: "ofn" },
+                          { label: "OBO Flatfile (.obo)", format: "obo", ext: "obo" },
+                        ] as { label: string; format: string; ext: string }[]).map(({ label, format, ext }) => (
+                          <button
+                            key={format}
+                            disabled={exportingFormat === format}
+                            onClick={async (e) => {
+                              e.preventDefault();
+                              if (!currentProjectId) return;
+                              // Gate at the master export key first; multi-format
+                              // is implied by hasExport on paid tiers but we
+                              // keep both keys explicit so future tiers can
+                              // diverge (e.g. a Starter plan with TTL-only).
+                              if (isViewOnly || !subscription.canAccessFeature('hasExport')
+                                  || !subscription.canAccessFeature('hasMultipleExportFormats')) {
+                                onExportProAction?.();
+                                return;
+                              }
+                              setExportingFormat(format);
+                              const filename = `${currentProjectId}.${ext}`;
+                              const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(currentProjectId)}?format=${format}`;
+                              try {
+                                if (window.vscode) {
+                                  window.vscode.postMessage({ type: "downloadOntology", url, filename });
+                                  notificationService.success("Export Started", `Downloading ${filename}`);
+                                } else {
+                                  const res = await fetch(url, {
+                                    headers: { Authorization: `Bearer ${localStorage.getItem("authToken") ?? ""}` },
+                                  });
+                                  if (!res.ok) throw new Error(`Export failed: HTTP ${res.status}`);
+                                  const blob = await res.blob();
+                                  const blobUrl = URL.createObjectURL(blob);
+                                  const a = document.createElement("a");
+                                  a.href = blobUrl;
+                                  a.download = filename;
+                                  a.click();
+                                  URL.revokeObjectURL(blobUrl);
+                                  notificationService.success("Export Complete", `${filename} downloaded`);
+                                }
+                              } catch (err: any) {
+                                console.error("Export failed:", err);
+                                notificationService.error("Export Failed", err.message || "Could not export ontology");
+                              } finally {
+                                setExportingFormat(null);
+                                setShowExportFormats(false);
+                                setOpenMenu(null);
+                              }
+                            }}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 disabled:opacity-50 flex items-center gap-2"
+                          >
+                            {exportingFormat === format ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <FileCode size={12} />
+                            )}
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div className="border-t border-gray-100 my-1" />
-                    <button
+                    {/* <button
                       onClick={(e) => {
                         e.preventDefault();
                         if (currentProjectId) {
@@ -1239,11 +886,13 @@ const TopMenuBar = ({
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Share
-                    </button>
+                    </button> */}
                     <button
                       onClick={(e) => {
                         e.preventDefault();
-                        if (currentProjectId) {
+                        if (isViewOnly) {
+                          onExportProAction?.();
+                        } else if (currentProjectId) {
                           onOpenMergeWizard();
                         } else if (window.vscode) {
                           window.vscode.postMessage({
@@ -1288,23 +937,83 @@ const TopMenuBar = ({
         ))}
       </div>
 
-      <div className="flex items-center ml-auto mr-4 gap-2">
-        <span className={`text-xs font-medium ${syncMode === "public" ? "text-green-600" : "text-gray-500"}`}>
-          {syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
+      <div className="flex items-center ml-auto mr-1 sm:mr-4 gap-1 sm:gap-2 flex-shrink-0 pl-1">
+        {isDesktop() ? (
+          <span className="hidden sm:inline text-xs font-medium text-gray-500" title="Edits are kept in your private draft until you click Save">
+            Private (Draft)
+          </span>
+        ) : (
+          <>
+        {autoDraftStatus === 'copying' && (
+          <span className="hidden sm:inline text-xs text-blue-500 italic animate-pulse" title="Setting up your private draft workspace…">
+            Setting up draft…
+          </span>
+        )}
+        {autoDraftStatus === 'ready' && (
+          <span className="hidden sm:inline text-xs text-green-600 font-medium">
+            Draft ready
+          </span>
+        )}
+        <span className={`hidden sm:inline text-xs font-medium ${
+          (requireDraftForMembers && !isProjectOwner || isDraftEditorRole) && syncMode === 'public'
+            ? "text-amber-600"
+            : syncMode === "public" ? "text-green-600" : "text-gray-500"
+        }`}>
+          {(requireDraftForMembers && !isProjectOwner) || isDraftEditorRole
+            ? (syncMode === 'public' ? "Public (View Only)" : "Draft Mode")
+            : syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
         </span>
-        <button
-          onClick={onToggleSyncMode}
-          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
-            syncMode === "public" ? "bg-green-500" : "bg-gray-300"
-          }`}
-          title={syncMode === "public" ? "Switch to Private Draft Mode" : "Switch to Public Live Mode"}
-        >
-          <span
-            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-              syncMode === "public" ? "translate-x-5" : "translate-x-1"
+        {((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'public' ? (
+          // Draft-only member in view-only mode: offer explicit switch to draft
+          <button
+            onClick={onSwitchToDraftMode}
+            className="ml-1 flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
+            title="Start your private draft copy to make edits"
+          >
+            Switch to Draft Mode
+          </button>
+        ) : ((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'private' ? (
+          // Draft-only member in draft mode: allow switching back to view-only public
+          <button
+            onClick={onToggleSyncMode}
+            className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 bg-gray-300"
+            title="Switch back to Public view-only mode"
+          >
+            <span className="inline-block h-3 w-3 transform rounded-full bg-white transition-transform translate-x-1" />
+          </button>
+        ) : (
+          // Owner or non-requireDraft project: show the normal toggle
+          <button
+            onClick={onToggleSyncMode}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
+              syncMode === "public" ? "bg-green-500" : "bg-gray-300"
             }`}
-          />
-        </button>
+            title={syncMode === "public" ? "Switch to Draft Mode" : "View Public (draft preserved)"}
+          >
+            <span
+              className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                syncMode === "public" ? "translate-x-5" : "translate-x-1"
+              }`}
+            />
+          </button>
+        )}
+        {isProjectOwner && onToggleRequireDraftForMembers && (
+          <button
+            onClick={onToggleRequireDraftForMembers}
+            className={`ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors ${
+              requireDraftForMembers
+                ? 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
+                : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+            }`}
+            title={requireDraftForMembers
+              ? 'Members are locked to Draft Mode — click to allow public editing'
+              : 'Allow members to edit publicly — click to require Draft Mode for members'}
+          >
+            {requireDraftForMembers ? '🔒 Draft required' : 'Allow public'}
+          </button>
+        )}
+          </>
+        )}
       </div>
     </header>
   );
@@ -1329,6 +1038,8 @@ const OpenFileDialog = ({
   onPartitionStrategyChange,
   isWorkspaceMode,
   onRefresh,
+  onCreateNewFile,
+  isPlanExpired,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -1348,6 +1059,8 @@ const OpenFileDialog = ({
   onPartitionStrategyChange: (strategy: "none" | "namespace") => void;
   isWorkspaceMode?: boolean;
   onRefresh?: () => void;
+  onCreateNewFile?: () => void;
+  isPlanExpired?: boolean;
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const canOpenLocalFile = typeof window !== "undefined" && !!(window as any).vscode;
@@ -1380,19 +1093,80 @@ const OpenFileDialog = ({
     onClose();
   };
 
-  const handleCreateNewFile = () => {
+  const handleCreateNewFile = async () => {
+    if (isDesktop() && parentProjectId) {
+      const fileName = window.prompt("Enter filename for new ontology:", "my-ontology.owl");
+      if (!fileName?.trim()) return;
+      const trimmed = fileName.trim();
+      const validExtensions = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
+      if (!validExtensions.some((ext) => trimmed.toLowerCase().endsWith(ext))) {
+        alert("File must have a valid extension: .owl, .rdf, .ttl, .n3, .nt, or .jsonld");
+        return;
+      }
+      const ontologyIRI = `http://example.org/ontologies/${trimmed.replace(/\.[^/.]+$/, "")}`;
+      const content = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+      const file = new File([content], trimmed, { type: "application/rdf+xml" });
+      const formData = new FormData();
+      formData.append("file", file, trimmed);
+      formData.append("fileName", trimmed);
+      formData.append("fileType", "application/rdf+xml");
+      await apiClient.post(`/api/projects/${parentProjectId}/files`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      onCreateNewFile?.();
+      onClose();
+      return;
+    }
+    if (isDesktop()) {
+      // Desktop without a project — use native save dialog to pick location
+      const baseName = "my-ontology.owl";
+      const ontologyIRI = `http://example.org/ontologies/my-ontology`;
+      const content = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+      const api = (window as any).electronAPI;
+      if (!api?.saveAs) return;
+      const savedPath = await api.saveAs(content, baseName);
+      if (!savedPath) return;
+      const fileName = savedPath.split(/[\\/]/).pop() || baseName;
+      const fileContent = content;
+      window.dispatchEvent(new CustomEvent("electron:file-opened", {
+        detail: { fileName, fileContent, filePath: savedPath, fileSize: fileContent.length }
+      }));
+      onCreateNewFile?.();
+      onClose();
+      return;
+    }
     if (!canOpenLocalFile || !window.vscode) {
       return;
     }
 
+    onCreateNewFile?.();
     window.vscode.postMessage({
       type: "createNewFile",
       projectId: parentProjectId || undefined,
       importMode,
       partition: partitionStrategy,
     });
-    // Don't close dialog - let it stay open so user can see the new file appear
-    // onClose();
+    onClose();
   };
 
   // console.log('[OpenFileDialog] Rendered with myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length, 'isOpen:', isOpen);
@@ -1456,6 +1230,12 @@ const OpenFileDialog = ({
             )}
           </div>
         </div>
+        {isPlanExpired && (
+          <div className="mx-3 mt-3 px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 flex items-center gap-2 text-xs text-red-400">
+            <AlertTriangle size={13} className="flex-shrink-0" />
+            <span>Plan validity has ended. Please renew your subscription to open files.</span>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto">
           {filteredFiles.length > 0 ? (
             <div className="p-3">
@@ -1475,6 +1255,7 @@ const OpenFileDialog = ({
                     <div
                       key={file.id}
                       onClick={() => {
+                        if (isPlanExpired) return;
                         if (!isActive) {
                           if (parentProjectId && onLoadProjectFile) {
                             onLoadProjectFile(file.id, file.filename);
@@ -1484,8 +1265,12 @@ const OpenFileDialog = ({
                         }
                         onClose();
                       }}
-                      className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${
-                        isActive ? "selected" : "hover-overlay border border-transparent"
+                      className={`flex items-center gap-3 p-2 px-3 rounded-md transition-all ${
+                        isPlanExpired
+                          ? "opacity-50 cursor-not-allowed"
+                          : isActive
+                            ? "selected cursor-pointer"
+                            : "hover-overlay border border-transparent cursor-pointer"
                       }`}
                     >
                       <FileText size={18} className={isSharedFile ? "text-blue-500" : "text-accent"} />
@@ -1531,7 +1316,7 @@ const OpenFileDialog = ({
         <div className="p-3 border-t space-y-2" style={{ borderColor: "var(--color-border)" }}>
           <button
             onClick={handleCreateNewFile}
-            disabled={!canOpenLocalFile}
+            disabled={!canOpenLocalFile || isPlanExpired}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               borderColor: "var(--color-border)",
@@ -1543,7 +1328,7 @@ const OpenFileDialog = ({
           </button>
           <button
             onClick={handleOpenLocalFile}
-            disabled={!canOpenLocalFile}
+            disabled={!canOpenLocalFile || isPlanExpired}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               borderColor: "var(--color-border)",
@@ -1559,395 +1344,7 @@ const OpenFileDialog = ({
   );
 };
 
-const ConfirmDialog = ({
-  isOpen,
-  onClose,
-  onConfirm,
-  onCancel,
-  title,
-  message,
-  confirmLabel,
-  cancelLabel,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-  onCancel?: () => void;
-  title: string;
-  message: string;
-  confirmLabel?: string;
-  cancelLabel?: string;
-}) => {
-  if (!isOpen) return null;
 
-  const cancelText = cancelLabel ?? (onCancel ? "Discard" : "Cancel");
-  const confirmText = confirmLabel ?? (onCancel ? "Save" : "Confirm");
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
-      <div
-        className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-lg font-semibold mb-4" style={{ color: "var(--color-text)" }}>
-          {title}
-        </h3>
-        <p className="text-sm mb-6" style={{ color: "var(--color-text-secondary)" }}>
-          {message}
-        </p>
-        <div className="flex justify-end gap-3">
-          <button
-            onClick={() => {
-              if (onCancel) {
-                onCancel();
-              }
-              onClose();
-            }}
-            className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
-          >
-            {cancelText}
-          </button>
-          <button
-            onClick={() => {
-              onConfirm();
-              onClose();
-            }}
-            className="px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700"
-          >
-            {confirmText}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const DuplicateFileDialog = ({
-  isOpen,
-  fileName,
-  detail,
-  copyName,
-  onCopyNameChange,
-  onOpenExisting,
-  onReplace,
-  onCreateCopy,
-  onCancel,
-  allowOpenExisting,
-  error,
-  isSubmitting,
-}: {
-  isOpen: boolean;
-  fileName: string;
-  detail?: string;
-  copyName: string;
-  onCopyNameChange: (value: string) => void;
-  onOpenExisting: () => void;
-  onReplace: () => void;
-  onCreateCopy: () => void;
-  onCancel: () => void;
-  allowOpenExisting?: boolean;
-  error?: string | null;
-  isSubmitting?: boolean;
-}) => {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onCancel}>
-      <div
-        className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-lg w-full mx-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-lg font-semibold mb-2" style={{ color: "var(--color-text)" }}>
-          Duplicate File
-        </h3>
-        <p className="text-sm mb-3" style={{ color: "var(--color-text-secondary)" }}>
-          A file named "<span className="font-semibold">{fileName}</span>" already exists.
-        </p>
-        {detail && (
-          <pre
-            className="text-xs whitespace-pre-wrap rounded-md p-3 mb-3"
-            style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text-secondary)" }}
-          >
-            {detail}
-          </pre>
-        )}
-        <div className="mb-3">
-          <label className="block text-xs font-medium mb-1" style={{ color: "var(--color-text-secondary)" }}>
-            Copy name
-          </label>
-          <input
-            type="text"
-            value={copyName}
-            onChange={(e) => onCopyNameChange(e.target.value)}
-            className="w-full px-3 py-2 text-sm border rounded-md focus:ring-2"
-            style={
-              {
-                borderColor: "var(--color-border)",
-                backgroundColor: "var(--color-surface)",
-                color: "var(--color-text)",
-                "--tw-ring-color": "var(--color-primary)",
-              } as React.CSSProperties
-            }
-            placeholder="Enter copy name"
-          />
-        </div>
-        {error && <div className="text-xs text-red-600 mb-3">{error}</div>}
-        <div className="flex flex-wrap justify-end gap-2">
-          {allowOpenExisting && (
-            <button
-              onClick={onOpenExisting}
-              className="px-3 py-2 text-xs bg-gray-200 text-black rounded-md hover:bg-gray-300"
-            >
-              Open Existing
-            </button>
-          )}
-          <button
-            onClick={onReplace}
-            className="px-3 py-2 text-xs bg-yellow-500 text-white rounded-md hover:bg-yellow-600"
-          >
-            Replace
-          </button>
-          <button
-            onClick={onCreateCopy}
-            disabled={isSubmitting}
-            className="px-3 py-2 text-xs bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
-          >
-            {isSubmitting ? "Checking..." : "Create Copy"}
-          </button>
-          <button
-            onClick={onCancel}
-            className="px-3 py-2 text-xs bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Dialog components moved to separate files
-
-// #endregion
-
-// #region Details Panel
-const DetailsPanel = ({
-  selectedItem,
-  entitiesTab,
-  activeTheme,
-  projectId,
-  onUpdate,
-  onAddAnnotation,
-  onEditAnnotation,
-  onDeleteAnnotation,
-  onAddDomainClick,
-  onAddRangeClick,
-  onAddSubPropertyClick,
-  onAddInverseClick,
-  onAddDisjointClick,
-  onAddEquivalentClick,
-  // Annotation property specific handlers (Protégé-style)
-  onAddAnnotationDomainClick,
-  onAddAnnotationRangeClick,
-  onAddAnnotationSuperpropertyClick,
-  classHierarchy,
-  objectProperties,
-  expandedNodes,
-  onToggleNode,
-  onAddClass,
-  onAddClassInline,
-  onDeleteClass,
-  onRefreshClasses,
-  onAddObjectProperty,
-  onAddDataProperty,
-  dataPropertyHierarchy,
-  objectPropertyHierarchy,
-  dataProperties,
-  metadata,
-  individuals,
-  setIndividuals,
-  markAsUnsaved,
-  viewMode = "asserted",
-}: {
-  selectedItem: SelectableItem | null;
-  entitiesTab: string;
-  activeTheme?: string;
-  projectId: string | null;
-  onUpdate: (item: SelectableItem) => void;
-  onAddAnnotation: () => void;
-  onEditAnnotation: (propertyIri: string, currentValue: string) => void;
-  onDeleteAnnotation: (key: string) => void;
-  onAddDomainClick?: () => void;
-  onAddRangeClick?: () => void;
-  onAddSubPropertyClick?: () => void;
-  onAddInverseClick?: () => void;
-  onAddDisjointClick?: () => void;
-  onAddEquivalentClick?: () => void;
-  // Annotation property specific handlers (Protégé-style)
-  onAddAnnotationDomainClick?: () => void;
-  onAddAnnotationRangeClick?: () => void;
-  onAddAnnotationSuperpropertyClick?: () => void;
-  classHierarchy: TreeNode[];
-  objectProperties: Property[];
-  expandedNodes?: string[];
-  onToggleNode?: (nodeId: string) => Promise<void> | void;
-  onAddClass?: (type: "subclass" | "sibling") => void;
-  onAddClassInline?: (type: "subclass" | "sibling", parentId?: string, name?: string) => Promise<void>;
-  onDeleteClass?: () => void;
-  onRefreshClasses?: () => Promise<void>;
-  onAddObjectProperty?: (type: "subclass" | "sibling", parentId?: string, name?: string) => Promise<void>;
-  onAddDataProperty?: (type: "subclass" | "sibling", parentId?: string, name?: string) => Promise<void>;
-  dataPropertyHierarchy: TreeNode[];
-  objectPropertyHierarchy: TreeNode[];
-  dataProperties: Property[];
-  metadata?: { ontologyIRI?: string } | null;
-  individuals: Individual[];
-  setIndividuals: React.Dispatch<React.SetStateAction<Individual[]>>;
-  markAsUnsaved: () => void;
-  viewMode?: "asserted" | "inferred";
-}) => {
-  if (!selectedItem) {
-    return (
-      <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 p-4">
-        <Package size={48} className="mb-4 text-gray-300" />
-        <h3 className="text-lg font-semibold text-gray-600">Ontology Editor</h3>
-        <p className="text-sm">
-          Select an entity from the hierarchy panel on the left to view its details and make edits.
-        </p>
-      </div>
-    );
-  }
-
-  const sharedProps = {
-    onAddAnnotation,
-    onEditAnnotation,
-    onDeleteAnnotation,
-    activeTheme,
-    projectId: projectId || "",
-    // userId: user?.email || 'anonymous',
-    // username: user?.username || 'Anonymous'
-  };
-
-  switch (entitiesTab) {
-    case "Classes":
-      return (
-        <ClassEditor
-          item={selectedItem as TreeNode}
-          onUpdate={onUpdate}
-          classHierarchy={classHierarchy}
-          expandedNodes={expandedNodes}
-          onToggleNode={onToggleNode}
-          onAddClass={onAddClass}
-          onAddClassInline={onAddClassInline}
-          onDeleteClass={onDeleteClass}
-          onRefreshClasses={onRefreshClasses}
-          onAddObjectProperty={onAddObjectProperty}
-          onAddDataProperty={onAddDataProperty}
-          onDeleteProperty={() => {}}
-          metadata={metadata ?? undefined}
-          objectPropertyHierarchy={objectPropertyHierarchy}
-          dataPropertyHierarchy={dataPropertyHierarchy}
-          objectProperties={objectProperties}
-          dataProperties={dataProperties}
-          viewMode={viewMode}
-          individuals={individuals}
-          onAddIndividual={async (name: string, classIri: string) => {
-            const id = `${metadata?.ontologyIRI || "http://example.org/ontology"}#${name.replace(/\s+/g, "_")}`;
-            await ontologyMutationService.createIndividual(projectId || "", id, name, classIri);
-            const newIndividual: Individual = {
-              id,
-              iri: id,
-              label: name,
-              annotations: { "rdfs:label": name },
-              types: [classIri],
-            };
-            setIndividuals((prev) => [...prev, newIndividual]);
-            markAsUnsaved();
-          }}
-          onDeleteIndividual={async (id: string) => {
-            await ontologyMutationService.deleteIndividual(projectId || "", id);
-            setIndividuals((prev) => prev.filter((ind) => ind.id !== id));
-            markAsUnsaved();
-          }}
-          onRefreshIndividuals={() => {
-            // Reload individuals from backend
-            if (projectId) {
-              apiClient
-                .get<any>(`/api/ontology/individuals/${encodeURIComponent(projectId)}`)
-                .then((res) => {
-                  setIndividuals(
-                    Array.isArray(res?.data) ? res.data : Array.isArray(res?.individuals) ? res.individuals : [],
-                  );
-                })
-                .catch((err) => console.error("Failed to refresh individuals:", err));
-            }
-          }}
-          {...sharedProps}
-        />
-      );
-    case "ObjectProperties":
-    case "DataProperties":
-      return (
-        <PropertyEditor
-          item={selectedItem as Property}
-          onUpdate={onUpdate}
-          {...sharedProps}
-          onAddDomainClick={onAddDomainClick}
-          onAddRangeClick={onAddRangeClick}
-          onAddSubPropertyClick={onAddSubPropertyClick}
-          onAddInverseClick={onAddInverseClick}
-          onAddDisjointClick={onAddDisjointClick}
-          onAddEquivalentClick={onAddEquivalentClick}
-          objectProperties={objectProperties}
-          viewMode={viewMode}
-        />
-      );
-    case "Individuals":
-      return <IndividualEditor item={selectedItem as Individual} onUpdate={onUpdate} {...sharedProps} />;
-    case "AnnotationProperties": {
-      const apItem = selectedItem as AnnotationProperty;
-      return (
-        <AnnotationPropertyEditor
-          item={apItem}
-          onUpdate={onUpdate}
-          onAddAnnotation={onAddAnnotation}
-          onEditAnnotation={onEditAnnotation}
-          onDeleteAnnotation={onDeleteAnnotation}
-          activeTheme={activeTheme}
-          projectId={projectId || ""}
-          onAddSubPropertyClick={onAddAnnotationSuperpropertyClick}
-          onAddDomainClick={onAddAnnotationDomainClick}
-          onAddRangeClick={onAddAnnotationRangeClick}
-        />
-      );
-    }
-    case "Datatypes":
-      return <DatatypeEditor item={selectedItem as Datatype} onUpdate={onUpdate} {...sharedProps} />;
-    default:
-      return (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-          <AnnotationsDisplay
-            annotations={selectedItem.annotations}
-            onDelete={onDeleteAnnotation}
-            onEdit={onEditAnnotation}
-          />
-        </div>
-      );
-  }
-};
-// #endregion
-
-// Helper function to show notifications
-const showNotification = (message: string, type: "info" | "error" | "warning" = "info") => {
-  console.log(`[${type.toUpperCase()}]`, message);
-  if (window.vscode) {
-    window.vscode.postMessage({
-      type: "notification",
-      level: type,
-      message: message,
-    });
-  }
-};
 
 interface DashboardProps {
   onBackToProjects?: () => void;
@@ -1974,24 +1371,78 @@ const Dashboard: React.FC<DashboardProps> = ({
   const { actualMode } = useTheme();
   const subscription = useSubscription();
   const readonlyMode = false; // Allow editing by default
+  // FREE plan members (non-owners inside a workspace) are view-only.
+  // PRO plan allows members and admins to edit.
+  const workspaceRoleParsed = parseWorkspaceRole(user?.workspaceRole, undefined);
+  const [userProjectRole, setUserProjectRole] = useState<string | null>(null);
+  const isProjectViewerRole = userProjectRole === 'VIEWER';
+  const isProjectDraftEditorRole = userProjectRole === 'DRAFT_EDITOR';
+  const isViewOnlyMember =
+    !isDesktop() && (
+      (subscription.isFree && user?.workspaceRole != null && normalizeRole(user.workspaceRole) !== "OWNER") ||
+      isWorkspaceViewerRole(workspaceRoleParsed) ||
+      isProjectViewerRole
+    );
+  const viewOnlyMessage = isProjectViewerRole
+    ? "You have view-only access to this project. Contact the project owner to request edit permissions."
+    : "You have view-only access. Upgrade your plan to edit.";
+  const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | 'viewer' | 'draftRequired' | null>(null);
+  const handleViewOnlyAction = () => setShowProPromptType(isProjectViewerRole ? 'viewer' : 'edit');
+  const handleExportProAction = () => setShowProPromptType('export');
   const [showThemeSettings, setShowThemeSettings] = useState(false);
+  const [isPlanExpired, setIsPlanExpired] = useState(false);
+  const isCurrentWorkspaceOwner = user?.workspaceRole == null || normalizeRole(user?.workspaceRole ?? "") === "OWNER";
+  const openFileIsPlanExpired = isPlanExpired && isCurrentWorkspaceOwner;
   const deploymentType = localStorage.getItem("deploymentType") as "self-hosted" | "cloud" | null;
   const isCloudDeployment = deploymentType === "cloud";
 
+  useEffect(() => {
+    // Desktop has no billing — plan/expiry is governed by the license file.
+    if (isDesktop()) return;
+    apiClient.get("/api/billing/subscription")
+      .then((res: any) => {
+        const d = res?.data || res;
+        const status = d.status || "";
+        const planName = (d.planName || "FREE").toUpperCase();
+        setIsPlanExpired(
+          planName !== "FREE" &&
+          status !== "" &&
+          status !== "active" &&
+          status !== "trialing"
+        );
+      })
+      .catch(() => {});
+  }, []);
+
+  // If the workspace owner's paid plan expired, redirect owners back to workspace selection.
+  // Members are not blocked — they may still view until the owner renews.
+  useEffect(() => {
+    if (isDesktop()) return;
+    const wid = user?.workspaceId;
+    if (!wid) return;
+    const isOwner = !user?.workspaceRole || normalizeRole(user.workspaceRole) === "OWNER";
+    if (!isOwner) return;
+    apiClient.get(`/api/billing/workspace-owner-status/${wid}`)
+      .then((res: any) => {
+        const d = res?.data || res;
+        if (d.isExpired && !d.enterpriseDomainBypass) {
+          onGoToWorkspace?.();
+        }
+      })
+      .catch(() => {});
+  }, [user?.workspaceId, user?.workspaceRole]);
+
   const applyInstanceCountsToTree = useCallback(
     (nodes: TreeNode[], counts: Record<string, { direct?: number; inferred?: number; total?: number }>): TreeNode[] => {
-      if (!Array.isArray(nodes)) {
-        console.warn("[Dashboard] applyInstanceCountsToTree received non-array:", nodes);
-        return [];
-      }
+      if (!Array.isArray(nodes)) return [];
+      // Skip tree walk entirely when no counts are loaded yet
+      if (!counts || Object.keys(counts).length === 0) return nodes;
 
       return nodes.map((node) => {
         const countEntry = counts[node.id];
         const direct = countEntry?.direct;
         const inferred = countEntry?.inferred;
         const total = countEntry ? (countEntry.total ?? (direct ?? 0) + (inferred ?? 0)) : undefined;
-
-        // Ensure children is always an array
         const children = Array.isArray(node.children) ? node.children : [];
 
         return {
@@ -2000,7 +1451,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           inferredInstanceCount: inferred,
           totalInstanceCount: total,
           children: children.length > 0 ? applyInstanceCountsToTree(children, counts) : [],
-          // Preserve hasChildren from backend (for lazy loading) or fallback to children.length > 0
           hasChildren: node.hasChildren !== undefined ? node.hasChildren : children.length > 0,
         };
       });
@@ -2053,32 +1503,41 @@ const Dashboard: React.FC<DashboardProps> = ({
     [user?.email, user?.username], // collaboration.addNotification is stable, no need to include
   );
   const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
+  // Desktop always has a workspace id but opens files directly via localStorage (no project library).
+  // Honor explicit editor deep-links/tests that set suppress_workspace_auto_open + lastProjectId.
+  const suppressWorkspaceAutoOpen =
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem("ontocode_suppress_workspace_auto_open") === "true";
+  const shouldRestoreLastOpenedFile = isDesktop() || isNonWorkspaceMode || suppressWorkspaceAutoOpen;
+  const storedProjectId = shouldRestoreLastOpenedFile ? localStorage.getItem("ontocode_lastProjectId") : null;
 
-  // In non-workspace mode, restore the last opened file from localStorage
-  const storedProjectId = isNonWorkspaceMode
-    ? typeof localStorage !== "undefined"
-      ? localStorage.getItem("ontocode_lastProjectId")
-      : null
-    : null;
+  const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || null);
+  const prevProjectIdRef = useRef<string | null>(null);
 
-  const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || storedProjectId || null);
+  // Switching ontology files: keep the previous tree visible (dimmed) until new data arrives.
+  useEffect(() => {
+    if (!projectId || projectId === prevProjectIdRef.current) return;
+    prevProjectIdRef.current = projectId;
+    fetchDataGenerationRef.current += 1;
+    if (fetchAbortControllerRef.current) {
+      fetchAbortControllerRef.current.abort();
+    }
+    setSelectedItem(null);
+    setMetadata(null);
+    setIsHierarchyLoading(true);
+    setIsMetadataLoading(true);
+    setIsPropertiesLoading(true);
+    setIsIndividualsLoading(true);
+    setIsAnnotationPropertiesLoading(true);
+    setIsDatatypesLoading(true);
+    setLoadingStatusMessage("Loading ontology…");
+  }, [projectId]);
 
-  // Wrapper to persist projectId to localStorage in non-workspace mode
   const setProjectId = useCallback(
     (value: string | null | ((prev: string | null) => string | null)) => {
-      setProjectIdInternal((prev) => {
-        const newValue = typeof value === "function" ? value(prev) : value;
-        if (isNonWorkspaceMode && typeof localStorage !== "undefined") {
-          if (newValue) {
-            localStorage.setItem("ontocode_lastProjectId", newValue);
-          } else {
-            localStorage.removeItem("ontocode_lastProjectId");
-          }
-        }
-        return newValue;
-      });
+      setProjectIdInternal((prev) => (typeof value === "function" ? value(prev) : value));
     },
-    [isNonWorkspaceMode],
+    [],
   );
 
   // Helper function to encode project ID for use in URL paths
@@ -2151,10 +1610,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>(["http://www.w3.org/2002/07/owl#Thing"]); // Pre-expand owl:Thing
   const expandedNodesRef = useRef<string[]>(["http://www.w3.org/2002/07/owl#Thing"]);
-  useEffect(() => {
-    expandedNodesRef.current = expandedNodes;
-    console.log("[Dashboard] 🔍 expandedNodes updated:", expandedNodes.length, "nodes", expandedNodes.slice(0, 5));
-  }, [expandedNodes]);
+  useEffect(() => { expandedNodesRef.current = expandedNodes; }, [expandedNodes]);
+
+  // Tracks which tree nodes are currently fetching children (shows per-node spinner)
+  const [loadingNodes, setLoadingNodes] = useState<Set<string>>(new Set());
 
   // Fetch files for the currently selected project
   const fetchProjectFiles = useCallback(async (currentProjectId: string): Promise<FileInfo[]> => {
@@ -2162,7 +1621,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       console.log("[Dashboard] 📂 Fetching files for project:", currentProjectId);
-      const filesResponse = await apiClient.get<{ files: any[]; count: number }>(
+      const filesResponse = await apiClient.get<{ files: any[]; count: number; userProjectRole?: string }>(
         `/api/projects/${currentProjectId}/files`,
       );
 
@@ -2199,6 +1658,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         console.log("[Dashboard] ✅ File menu updated with project files (listOfFiles only)");
         console.log("[Dashboard] ✅ projectFiles state updated with", projectFiles.length, "files");
+
+        // Capture the user's role in this project so isViewOnlyMember is correct in the editor
+        if (filesResponse.userProjectRole) {
+          setUserProjectRole(filesResponse.userProjectRole);
+        }
 
         return projectFiles; // Return the files for verification
       } else if (filesResponse && filesResponse.files === undefined) {
@@ -2256,23 +1720,174 @@ const Dashboard: React.FC<DashboardProps> = ({
   const webviewReadySentRef = useRef(false); // Track if we've sent webviewReady
   const [isExpectingFileReady, setIsExpectingFileReady] = useState(false); // Don't auto-load if expecting upload
   const pendingImportProjectIdRef = useRef<string | null>(null); // Track which project is being imported (using ref for persistence)
+  const [pendingImportProjectId, setPendingImportProjectId] = useState<string | null>(null);
   const [showLoadingChoice, setShowLoadingChoice] = useState(false);
   const [loadingProjectName, setLoadingProjectName] = useState("");
   const [loadingStatusMessage, setLoadingStatusMessage] = useState<string>(""); // Track import progress message
   const loadingPromiseRef = useRef<Promise<void> | null>(null);
   const userLoadingChoice = useRef<"wait" | "continue" | null>(null);
+  // Stable ref so async callbacks always call the latest navigation function.
+  const onGoToProjectDashboardRef = useRef(onGoToProjectDashboard);
+  useEffect(() => { onGoToProjectDashboardRef.current = onGoToProjectDashboard; }, [onGoToProjectDashboard]);
+  const autoLoadNewFileRef = useRef(false); // Set when user clicks "Create New File" — skip loading dialog on fileReady
+  const codeViewDirtyRef = useRef(false);
+  const metadataRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
-  const [syncMode, setSyncMode] = useState<"private" | "public">("private");
+  const [syncMode, setSyncMode] = useState<"private" | "public">("public");
+  const [publishConflictStatus, setPublishConflictStatus] = useState<'idle' | 'checking' | 'clean' | 'conflict'>('idle');
+  const [draftCopyPhase, setDraftCopyPhase] = useState<'idle' | 'import-blocked' | 'copying' | 'ready' | 'failed'>('idle');
+  const [draftCopyTripleCount, setDraftCopyTripleCount] = useState<number | undefined>(undefined);
+  const [requireDraftForMembers, setRequireDraftForMembers] = useState(false);
+  const [isProjectOwner, setIsProjectOwner] = useState(false);
+  const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
+  const [showPullFromPublic, setShowPullFromPublic] = useState(false);
+  const [showPRsModal, setShowPRsModal] = useState(false);
+  const [pendingPRCount, setPendingPRCount] = useState(0);
+  const isWorkspaceAdminRole = normalizeRole(user?.workspaceRole ?? "") === "ADMIN";
+  const canReviewPR = isProjectOwner
+    || userProjectRole === 'OWNER'
+    || userProjectRole === 'ADMIN'
+    || userProjectRole === 'EDITOR'
+    || ((isCurrentWorkspaceOwner || isWorkspaceAdminRole) && !isProjectDraftEditorRole);
+  const canRaisePR = !isDesktop() && (
+    isProjectDraftEditorRole ||
+    (syncMode === 'private' && !isViewOnlyMember)
+  );
+  const showPRButton = !isDesktop() && !!projectId && (
+    canRaisePR || canReviewPR ||
+    ((isCurrentWorkspaceOwner || isWorkspaceAdminRole) && !isProjectDraftEditorRole)
+  );
+  const autoDraftPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const conflictCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
+  const [showPullPreview, setShowPullPreview] = useState(false);
+  const [openPRCount, setOpenPRCount] = useState(0);
+
+  const startDraftCopySession = useCallback((
+    targetProjectId: string,
+    userId: string,
+    options?: { showModal?: boolean; onReady?: () => void }
+  ) => {
+    if (!targetProjectId || !userId) return;
+
+    const pollUntilReady = () => {
+      const pollRef = options?.showModal ? draftCopyPollRef : autoDraftPollRef;
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
+        try {
+          const status = await draftTrackingService.getDraftCopyStatus(targetProjectId, userId);
+          if (status === 'READY') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            options?.onReady?.();
+            if (options?.showModal) {
+              setDraftCopyPhase('ready');
+              setTimeout(() => setDraftCopyPhase('idle'), 2000);
+            } else {
+              setAutoDraftStatus('ready');
+              setTimeout(() => setAutoDraftStatus('idle'), 3000);
+            }
+          } else if (status === 'FAILED') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            if (options?.showModal) setDraftCopyPhase('failed');
+            else setAutoDraftStatus('idle');
+          }
+        } catch {
+          if (pollRef.current) clearInterval(pollRef.current);
+          if (options?.showModal) setDraftCopyPhase('failed');
+        }
+      }, 2000);
+    };
+
+    draftTrackingService.getDraftCopyStatus(targetProjectId, userId).then((status) => {
+      if (status === 'READY') {
+        options?.onReady?.();
+        return;
+      }
+      if (options?.showModal) setDraftCopyPhase('copying');
+      else setAutoDraftStatus('copying');
+
+      const beginCopy = () => {
+        draftTrackingService.initiateDraftCopy(targetProjectId, userId)
+          .then(({ tripleCount }) => {
+            if (options?.showModal) setDraftCopyTripleCount(tripleCount);
+            pollUntilReady();
+          })
+          .catch((err: any) => {
+            if (options?.showModal) {
+              if (err?.response?.status === 409 || (err?.message || '').includes('import')) {
+                setDraftCopyPhase('import-blocked');
+              } else {
+                setDraftCopyPhase('failed');
+              }
+            } else {
+              setAutoDraftStatus('idle');
+            }
+          });
+      };
+
+      if (status === 'COPYING') {
+        pollUntilReady();
+      } else {
+        beginCopy();
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Callback shared by the "Switch to Draft Mode" toolbar button and the draftRequired dialog button.
+  const handleSwitchToDraftMode = useCallback(() => {
+    setShowProPromptType(null);
+    if (!projectId) return;
+    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+    // Unblock mutations — they will now target the draft graph (realTimeSync=false after copy is ready).
+    ontologyMutationService.setDraftRequired(false);
+    startDraftCopySession(projectId, effectiveUserId, {
+      showModal: true,
+      onReady: () => {
+        setSyncMode('private');
+        ontologyMutationService.setRealTimeSync(false);
+        localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'private');
+        userPreferencesService.saveSyncMode(projectId, 'private');
+        notificationService.info("Draft Mode Active", "Editing your private draft — changes won't affect others until you publish.");
+      },
+    });
+  }, [projectId, user, startDraftCopySession]);
+
+  const handlePullFromPublic = useCallback(() => {
+    if (!projectId) return;
+    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+    startDraftCopySession(projectId, effectiveUserId, {
+      showModal: true,
+      onReady: () => {
+        notificationService.info("Draft Synced", "Your draft has been refreshed from the latest public version.");
+      },
+    });
+  }, [projectId, user, startDraftCopySession]);
+
+  const refreshOpenPRCount = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/draft-prs?status=OPEN`);
+      const data = res?.data || res;
+      setOpenPRCount(Number(data.openCount ?? (data.prs?.length ?? 0)));
+    } catch {
+      // non-blocking
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (projectId && (canReviewPR || canRaisePR)) refreshOpenPRCount();
+  }, [projectId, canReviewPR, canRaisePR]);
 
   // Track background import progress (visible after user clicks "Continue Working")
   const [backgroundImportActive, setBackgroundImportActive] = useState(false);
   const [backgroundImportProgress, setBackgroundImportProgress] = useState<number | undefined>(undefined);
   // Track import status for all projects (for ProjectSelector)
   const [projectImportStatuses, setProjectImportStatuses] = useState<{
-    [projectId: string]: { type: string; status: string; progress?: number };
+    [projectId: string]: { type: string; status: string; progress?: number; metadata?: Record<string, unknown> };
   }>({});
   // Queue status visibility
   const [showQueueStatus, setShowQueueStatus] = useState(false);
@@ -2280,15 +1895,21 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [queuePosition, setQueuePosition] = useState<number | undefined>(undefined);
   const [totalInQueue, setTotalInQueue] = useState<number | undefined>(undefined);
   const [estimatedWaitTimeMs, setEstimatedWaitTimeMs] = useState<number | undefined>(undefined);
+  const [inImportQueue, setInImportQueue] = useState(false);
+  const [importReadyToBrowse, setImportReadyToBrowse] = useState(false);
+  const [loadFailure, setLoadFailure] = useState<{ message: string; projectId?: string } | null>(null);
   const collaborationPanelRef = useRef<CollaborationPanelRef>(null);
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState("prefixes");
   const [importMode, setImportMode] = useState<"full" | "incremental" | "diff">("full");
   const [partitionStrategy, setPartitionStrategy] = useState<"none" | "namespace">("none");
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
+  const [isCreateIndividualForClassOpen, setCreateIndividualForClassOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
   const [isEditOntologyIRIDialogOpen, setEditOntologyIRIDialogOpen] = useState(false);
+  const [isEditEntityIRIDialogOpen, setEditEntityIRIDialogOpen] = useState(false);
+  const [editEntityIRITarget, setEditEntityIRITarget] = useState<SelectableItem | null>(null);
   const [isGCIEditorDialogOpen, setGCIEditorDialogOpen] = useState(false);
   const [editGCIData, setEditGCIData] = useState<{
     subClass: string;
@@ -2331,6 +1952,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectorTarget, setSelectorTarget] = useState<
     "domain" | "range" | "subProperty" | "inverse" | "disjoint" | "equivalent" | null
   >(null);
+  const [selectorEditingItem, setSelectorEditingItem] = useState<string | null>(null);
+  const [selectorAllowedTabs, setSelectorAllowedTabs] = useState<TabType[]>(['hierarchy', 'objectRestriction', 'classExpression']);
+  const [selectorInitialTab, setSelectorInitialTab] = useState<TabType>('hierarchy');
 
   // Annotation Property Description Dialogs (Protégé-style)
   const [isAnnotationDomainDialogOpen, setIsAnnotationDomainDialogOpen] = useState(false);
@@ -2339,6 +1963,29 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Data Property Range Dialog (Protégé-style - shows datatypes)
   const [isDataPropertyRangeDialogOpen, setIsDataPropertyRangeDialogOpen] = useState(false);
+
+  // Publish conflict dialog (three-way merge vs force publish)
+  const [publishConflictDialog, setPublishConflictDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    conflicts: Array<{
+      entityIRI: string;
+      entityLabel?: string;
+      changedBy?: string;
+      yourAxioms?: string;
+      mainAxioms?: string;
+    }>;
+    onForce: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    conflicts: [],
+    onForce: () => {},
+  });
+  // Per-conflict resolution choices: entityIRI → action ("KEEP_SOURCE" | "KEEP_TARGET" | "MERGE")
+  const [conflictResolutions, setConflictResolutions] = useState<Record<string, string>>({});
 
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -2358,6 +2005,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     confirmLabel: undefined,
     cancelLabel: undefined,
   });
+
+  // Prevents concurrent mutations (delete, rename, etc.) that would fire multiple simultaneous
+  // SPARQL UPDATEs against GraphDB Free (2-connection cap) and trigger 504s.
+  const isMutatingRef = useRef(false);
 
   // Dedicated unsaved-changes warning dialog (separate from generic confirmDialog)
   const [unsavedChangesDialog, setUnsavedChangesDialog] = useState<{
@@ -2404,6 +2055,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedClassIndividual, setSelectedClassIndividual] = useState<Individual | null>(null);
   const [selectedClassIndividualDetails, setSelectedClassIndividualDetails] = useState<Individual | null>(null);
   const [selectedClassIndividualLoading, setSelectedClassIndividualLoading] = useState(false);
+  const [classIndividualInfoTab, setClassIndividualInfoTab] = useState<"annotations" | "usage">("annotations");
+  const [classIndividualUsages, setClassIndividualUsages] = useState<any[]>([]);
+  const [classIndividualUsageLoading, setClassIndividualUsageLoading] = useState(false);
   const [classInstanceCounts, setClassInstanceCounts] = useState<
     Record<string, { direct?: number; inferred?: number; total?: number }>
   >({});
@@ -2415,15 +2069,45 @@ const Dashboard: React.FC<DashboardProps> = ({
     Individuals: "asserted",
     Datatypes: "asserted",
   });
+  const [hierarchyDisplayMode, setHierarchyDisplayMode] = useState<"label" | "id" | "annotation" | "custom">(
+    () => userPreferencesService.getDisplayMode()
+  );
+  const [hierarchyAnnotationPropIri, setHierarchyAnnotationPropIri] = useState<string>(
+    () => userPreferencesService.getAnnotationPropIri()
+  );
+  const [hierarchyCustomTemplate, setHierarchyCustomTemplate] = useState<string>(
+    () => userPreferencesService.getCustomTemplate()
+  );
+  const [hierarchyAnnotationProperties, setHierarchyAnnotationProperties] = useState<Array<{ id: string; label: string }>>([]);
+  const [hierarchyAnnotationValues, setHierarchyAnnotationValues] = useState<Map<string, string>>(new Map());
+  const [hierarchyImportsScope, setHierarchyImportsScope] = useState<"active" | "closure">("active");
+  const fetchedAnnotationIrisRef = useRef<Set<string>>(new Set());
+
+  // Persist display mode preferences across sessions
+  useEffect(() => {
+    userPreferencesService.saveDisplayPreferences(hierarchyDisplayMode, hierarchyAnnotationPropIri, hierarchyCustomTemplate);
+  }, [hierarchyDisplayMode, hierarchyAnnotationPropIri, hierarchyCustomTemplate]);
   const [isClassIndividualAnnotationDialogOpen, setClassIndividualAnnotationDialogOpen] = useState(false);
   const [isClassIndividualTypeDialogOpen, setClassIndividualTypeDialogOpen] = useState(false);
   const [isClassIndividualPropertyDialogOpen, setClassIndividualPropertyDialogOpen] = useState(false);
   const [classIndividualPropertyIsObject, setClassIndividualPropertyIsObject] = useState(true);
+  const [classIndividualSameDiffDialog, setClassIndividualSameDiffDialog] = useState<null | { mode: "same" | "different" }>(null);
+  const [classIndividualCandidateIndividuals, setClassIndividualCandidateIndividuals] = useState<Individual[]>([]);
   const [dlQuery, setDlQuery] = useState("Pizza and hasTopping some MozzarellaTopping");
   const [dlQueryResults, setDlQueryResults] = useState<string[] | null>(null);
   const [isDlQueryLoading, setIsDlQueryLoading] = useState(false);
 
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
+  const [topLevelTruncated, setTopLevelTruncated] = useState(false);
+  const [topLevelTotal, setTopLevelTotal] = useState(0);
+  const [isLoadingMoreTopLevel, setIsLoadingMoreTopLevel] = useState(false);
+  const [isHierarchyLoading, setIsHierarchyLoading] = useState(false);
+  // Per-section loaders — classes can appear while metadata/properties/etc. still load.
+  const [isMetadataLoading, setIsMetadataLoading] = useState(false);
+  const [isPropertiesLoading, setIsPropertiesLoading] = useState(false);
+  const [isIndividualsLoading, setIsIndividualsLoading] = useState(false);
+  const [isAnnotationPropertiesLoading, setIsAnnotationPropertiesLoading] = useState(false);
+  const [isDatatypesLoading, setIsDatatypesLoading] = useState(false);
   const [inferredClassHierarchy, setInferredClassHierarchy] = useState<TreeNode[]>([]);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
@@ -2432,7 +2116,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
   const [inferredDataPropertyHierarchy, setInferredDataPropertyHierarchy] = useState<TreeNode[]>([]);
   const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
+  const [annotationPropertyHierarchy, setAnnotationPropertyHierarchy] = useState<TreeNode[]>([]);
   const [inferredAnnotationPropertyHierarchy, setInferredAnnotationPropertyHierarchy] = useState<TreeNode[]>([]);
+  const [importClosureMap, setImportClosureMap] = useState<Record<string, Array<{ iri: string; children?: any[] }>>>({});
   const [individuals, setIndividuals] = useState<Individual[]>([]);
   const [inferredIndividuals, setInferredIndividuals] = useState<Individual[]>([]);
   const [datatypes, setDatatypes] = useState<Datatype[]>([]);
@@ -2455,14 +2141,26 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isMergeWizardOpen, setMergeWizardOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
   const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
+
+  // Auto-close collaboration panel if permissions are lost (downgrade/expiration)
+  useEffect(() => {
+    if (showCollaborationPanel && isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')) {
+      console.log("[Dashboard] 🛡️ Closing collaboration panel due to permission change");
+      setShowCollaborationPanel(false);
+      showToast("Collaboration is no longer available on your current plan. Upgrade to resume.", "info");
+    }
+  }, [subscription, isCloudDeployment, showCollaborationPanel]);
 
   const [visibleMainTabs, setVisibleMainTabs] = useState([
     "ActiveOntology",
     "Entities",
     "IndividualsByClass",
     "DLQuery",
+    "SPARQL",
+    "Reasoner",
     "CodeView",
   ]);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
@@ -2473,11 +2171,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   >({});
 
   const [codeViewFormat, setCodeViewFormat] = useState<
-    "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional"
+    "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld"
   >("rdfxml");
   const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
-  const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false); // Track if user has made local modifications
+  const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false);
+  const [codeViewSyntaxError, setCodeViewSyntaxError] = useState<string | null>(null);
   const [citationJustInserted, setCitationJustInserted] = useState(false); // Track recent citation insertion for format refresh
   const [showCitationPicker, setShowCitationPicker] = useState(false);
   const [showManualCitationDialog, setShowManualCitationDialog] = useState(false);
@@ -2504,23 +2203,87 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || "asserted";
 
+  const isEntitiesSectionLoading = useMemo(() => {
+    switch (entitiesTab) {
+      case "Classes":
+        return isHierarchyLoading;
+      case "ObjectProperties":
+      case "DataProperties":
+        return isPropertiesLoading;
+      case "Individuals":
+        return isIndividualsLoading;
+      case "AnnotationProperties":
+        return isAnnotationPropertiesLoading;
+      case "Datatypes":
+        return isDatatypesLoading;
+      default:
+        return false;
+    }
+  }, [
+    entitiesTab,
+    isHierarchyLoading,
+    isPropertiesLoading,
+    isIndividualsLoading,
+    isAnnotationPropertiesLoading,
+    isDatatypesLoading,
+  ]);
+
+  const backgroundLoadingSections = useMemo(() => {
+    const parts: string[] = [];
+    if (isHierarchyLoading) parts.push("classes");
+    if (isMetadataLoading) parts.push("ontology metadata");
+    if (isPropertiesLoading) parts.push("properties");
+    if (isIndividualsLoading) parts.push("individuals");
+    if (isAnnotationPropertiesLoading) parts.push("annotation properties");
+    if (isDatatypesLoading) parts.push("datatypes");
+    return parts;
+  }, [
+    isHierarchyLoading,
+    isMetadataLoading,
+    isPropertiesLoading,
+    isIndividualsLoading,
+    isAnnotationPropertiesLoading,
+    isDatatypesLoading,
+  ]);
+
+  const sectionBarSections = useMemo(() => {
+    if (isInitialLoading || showLoadingChoice) return [];
+    const list =
+      mainTab === "Entities"
+        ? backgroundLoadingSections.filter((s) => s !== "ontology metadata")
+        : backgroundLoadingSections;
+    return list;
+  }, [isInitialLoading, showLoadingChoice, mainTab, backgroundLoadingSections]);
+
+  const showSectionLoadingBar = useDebouncedVisible(sectionBarSections.length > 0, {
+    showDelayMs: 180,
+    minVisibleMs: 400,
+  });
+
+  const lastSectionBarLabelsRef = useRef<string[]>([]);
+  if (sectionBarSections.length > 0) {
+    lastSectionBarLabelsRef.current = sectionBarSections;
+  }
+  const sectionBarLabels =
+    sectionBarSections.length > 0 ? sectionBarSections : lastSectionBarLabelsRef.current;
+  const [sectionBarMounted, setSectionBarMounted] = useState(false);
+  useEffect(() => {
+    if (showSectionLoadingBar && sectionBarLabels.length > 0) {
+      setSectionBarMounted(true);
+      return;
+    }
+    if (!showSectionLoadingBar) {
+      const t = setTimeout(() => setSectionBarMounted(false), 320);
+      return () => clearTimeout(t);
+    }
+  }, [showSectionLoadingBar, sectionBarLabels.length]);
+
   const entitiesTabs = [
     {
       id: "Classes",
       label: "Classes",
       icon: Package,
-      count:
-        hierarchyViewModes.Classes === "inferred"
-          ? countNodes(
-              inferredClassHierarchy.length > 0
-                ? inferredClassHierarchy
-                : Array.isArray(reasonerResults?.classHierarchyTree)
-                  ? reasonerResults.classHierarchyTree
-                  : Array.isArray(reasonerResults?.classHierarchy)
-                    ? reasonerResults.classHierarchy
-                    : [],
-            )
-          : (metadata as any)?.classCount || 0,
+      count: Number((metadata as any)?.classCount) || 0,
       theme: "bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]",
     },
     {
@@ -2536,7 +2299,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                   ? reasonerResults.objectPropertyHierarchy
                   : [],
             )
-          : (metadata as any)?.objectPropertyCount || 0,
+          : (() => {
+              const metaCount = Number((metadata as any)?.objectPropertyCount) || 0;
+              const treeCount =
+                !isPropertiesLoading && objectPropertyHierarchy.length > 0
+                  ? countNodes(objectPropertyHierarchy)
+                  : 0;
+              return Math.max(metaCount, treeCount);
+            })(),
       theme: "bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600",
     },
     {
@@ -2552,28 +2322,44 @@ const Dashboard: React.FC<DashboardProps> = ({
                   ? reasonerResults.dataPropertyHierarchy
                   : [],
             )
-          : (metadata as any)?.dataPropertyCount || 0,
+          : (() => {
+              const metaCount = Number((metadata as any)?.dataPropertyCount) || 0;
+              const treeCount =
+                !isPropertiesLoading && dataPropertyHierarchy.length > 0
+                  ? countNodes(dataPropertyHierarchy)
+                  : 0;
+              return Math.max(metaCount, treeCount);
+            })(),
       theme: "bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600",
     },
     {
       id: "AnnotationProperties",
       label: "Annotation properties",
       icon: Tag,
-      count: annotationProperties.length,
+      count: !isAnnotationPropertiesLoading
+        ? annotationProperties.length ||
+          (annotationPropertyHierarchy.length > 0 ? countNodes(annotationPropertyHierarchy) : 0) ||
+          (metadata as any)?.annotationPropertyCount ||
+          0
+        : (metadata as any)?.annotationPropertyCount ?? undefined,
       theme: "bg-gradient-to-b from-orange-300 to-orange-500 text-white border-orange-600",
     },
     {
       id: "Datatypes",
       label: "Datatypes",
       icon: Settings,
-      count: datatypes.length || 0,
+      count: !isDatatypesLoading
+        ? datatypes.length || (metadata as any)?.datatypeCount || 0
+        : (metadata as any)?.datatypeCount || 0,
       theme: "bg-gradient-to-b from-red-300 to-red-500 text-white border-red-600",
     },
     {
       id: "Individuals",
       label: "Individuals",
       icon: Eye,
-      count: (metadata as any)?.individualCount || 0,
+      count: !isIndividualsLoading
+        ? individuals.length || (metadata as any)?.individualCount || 0
+        : (metadata as any)?.individualCount ?? undefined,
       theme: "bg-gradient-to-b from-purple-300 to-purple-500 text-white border-purple-600",
     },
   ];
@@ -2633,12 +2419,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                 : []
             : dataPropertyHierarchy;
         return Array.isArray(dataPropData) ? dataPropData : [];
-      case "AnnotationProperties":
-        return hierarchyViewModes.AnnotationProperties === "inferred"
-          ? inferredAnnotationPropertyHierarchy.length > 0
-            ? inferredAnnotationPropertyHierarchy
-            : annotationProperties
-          : annotationProperties;
+      case "AnnotationProperties": {
+        const base =
+          hierarchyViewModes.AnnotationProperties === "inferred"
+            ? inferredAnnotationPropertyHierarchy.length > 0
+              ? inferredAnnotationPropertyHierarchy
+              : annotationPropertyHierarchy.length > 0
+                ? annotationPropertyHierarchy
+                : annotationProperties
+            : annotationPropertyHierarchy.length > 0
+              ? annotationPropertyHierarchy
+              : annotationProperties;
+        return Array.isArray(base) ? base : [];
+      }
       case "Individuals":
         return hierarchyViewModes.Individuals === "inferred"
           ? inferredIndividuals.length > 0
@@ -2662,6 +2455,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     dataPropertyHierarchy,
     inferredObjectPropertyHierarchy,
     inferredDataPropertyHierarchy,
+    annotationPropertyHierarchy,
     inferredAnnotationPropertyHierarchy,
     inferredIndividuals,
     inferredDatatypes,
@@ -2821,7 +2615,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (startData?.taskId) {
         const taskId = startData.taskId;
         const POLL_INTERVAL = 3000; // 3 seconds
-        const MAX_POLL_TIME = 600_000; // 10 minutes
+        const MAX_POLL_TIME = 1_800_000; // 30 minutes — large ontologies (e.g. Mondo 3.1M triples) need time to load
 
         const pollForResult = async (): Promise<any> => {
           const deadline = Date.now() + MAX_POLL_TIME;
@@ -2839,13 +2633,13 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
             // still RUNNING — continue polling
           }
-          throw new Error("Classification timed out after 10 minutes");
+          throw new Error("Classification timed out after 30 minutes");
         };
 
         const [classificationResponse, statsResponse] = await Promise.all([
           pollForResult(),
           apiClient
-            .get(`/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`)
+            .get(`/api/ontology/${encodedProjectId}/reasoner/stats?reasonerType=${reasonerType}`)
             .catch((error) => {
               console.warn("[Dashboard] Reasoner stats request failed:", error);
               return null;
@@ -2858,7 +2652,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Fallback: backend returned a synchronous result (older API)
       const [statsResponse] = await Promise.all([
         apiClient
-          .get(`/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`)
+          .get(`/api/ontology/${encodedProjectId}/reasoner/stats?reasonerType=${reasonerType}`)
           .catch((error) => {
             console.warn("[Dashboard] Reasoner stats request failed:", error);
             return null;
@@ -2870,91 +2664,104 @@ const Dashboard: React.FC<DashboardProps> = ({
     [projectId],
   );
 
+  const normalizeHierarchyNode = useCallback((node: any): any => {
+    const id = node.id || node.iri;
+    const children = Array.isArray(node.children) ? node.children.map(normalizeHierarchyNode) : [];
+    const hasChildren = node.hasChildren !== undefined ? node.hasChildren : children.length > 0;
+    let label = node.label;
+    if (!label && id === "http://www.w3.org/2002/07/owl#Nothing") label = "owl:Nothing";
+    if (!label && id === "http://www.w3.org/2002/07/owl#Thing") label = "owl:Thing";
+    const isUnsatisfiable =
+      node.isUnsatisfiable === true || id === "http://www.w3.org/2002/07/owl#Nothing";
+    return { ...node, id, label, children, hasChildren, isUnsatisfiable };
+  }, []);
+
   const loadInferredHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log("[Dashboard] Loading full inferred class hierarchy...");
-    try {
+
+    // HermiT/Pellet cannot handle large ontologies — auto-downgrade to ELK above 500K triples.
+    // The editor service also enforces this server-side, but doing it here avoids a wasted round-trip.
+    const HEAVY_REASONER_TRIPLE_LIMIT = 500_000;
+    const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
+    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
+    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > HEAVY_REASONER_TRIPLE_LIMIT)
+      ? 'ELK'
+      : selectedReasoner;
+
+    const fetchWithReasoner = async (reasoner: string) => {
       const response = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=${reasoner}`,
       );
-      const payload = response?.data || response;
-      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      return response?.data || response;
+    };
 
-      if (!Array.isArray(hierarchy) || hierarchy.length === 0) {
-        console.warn("[Dashboard] No inferred classes found. Reasoner may not have been run yet.");
+    const applyPayload = (payload: any, timedOut = false) => {
+      const hierarchy = payload?.hierarchy || [];
+      if (timedOut || !Array.isArray(hierarchy) || hierarchy.length === 0) {
         setInferredClassHierarchy([]);
-        return;
+        return false;
       }
+      setInferredClassHierarchy(applyInstanceCountsToTree(hierarchy.map(normalizeHierarchyNode), classInstanceCounts));
+      return true;
+    };
 
-      // Ensure each node has a children array
-      const normalizedHierarchy = hierarchy.map((node: any) => ({
-        ...node,
-        children: Array.isArray(node.children) ? node.children : [],
-        hasChildren: Array.isArray(node.children) && node.children.length > 0,
-      }));
+    try {
+      const payload = await fetchWithReasoner(effectiveReasoner);
 
-      console.log("[Dashboard] Full inferred hierarchy loaded with", normalizedHierarchy.length, "root nodes");
-      console.log("[Dashboard] First root node:", normalizedHierarchy[0]);
-      console.log("[Dashboard] First root node children count:", normalizedHierarchy[0]?.children?.length || 0);
-      if (normalizedHierarchy[0]?.children?.length > 0) {
-        console.log("[Dashboard] First few children:", normalizedHierarchy[0].children.slice(0, 3));
+      // Backend signals ontology is too large — retry with STRUCTURAL (no inference, always fast)
+      if (payload?.tooLargeForReasoner && effectiveReasoner !== 'STRUCTURAL') {
+        const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
+        applyPayload(fallbackPayload);
+      // Backend signals timeout — auto-retry with STRUCTURAL
+      } else if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
+        const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
+        applyPayload(fallbackPayload);
+      } else {
+        applyPayload(payload);
       }
-
-      const hierarchyWithCounts = applyInstanceCountsToTree(normalizedHierarchy, classInstanceCounts);
-      console.log(
-        "[Dashboard] After applying counts, hierarchy structure preserved:",
-        hierarchyWithCounts[0]?.children?.length || 0,
-        "children",
-      );
-      setInferredClassHierarchy(hierarchyWithCounts);
     } catch (error) {
-      console.error("[Dashboard] Failed to load full inferred class hierarchy:", error);
+      console.error("[Dashboard] Failed to load inferred class hierarchy:", error);
       setInferredClassHierarchy([]);
     }
-  }, [projectId, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner]);
+  }, [projectId, metadata, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner, normalizeHierarchyNode]);
 
   const loadInferredObjectPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log("[Dashboard] Loading inferred object property hierarchy...");
+    const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
+    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
+    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-object-property-hierarchy?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-object-property-hierarchy?reasonerType=${effectiveReasoner}`,
       );
       const payload = res?.data || res;
+      if (payload?.tooLargeForReasoner) { setInferredObjectPropertyHierarchy([]); return; }
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      console.log(
-        "[Dashboard] Inferred object properties loaded:",
-        Array.isArray(hierarchy) ? hierarchy.length : 0,
-        "items",
-      );
       setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred object property hierarchy:", error);
       setInferredObjectPropertyHierarchy([]);
     }
-  }, [projectId, selectedReasoner]);
+  }, [projectId, metadata, selectedReasoner]);
 
   const loadInferredDataPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log("[Dashboard] Loading inferred data property hierarchy...");
+    const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
+    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
+    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-data-property-hierarchy?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-data-property-hierarchy?reasonerType=${effectiveReasoner}`,
       );
       const payload = res?.data || res;
+      if (payload?.tooLargeForReasoner) { setInferredDataPropertyHierarchy([]); return; }
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      console.log("[Dashboard] Inferred data properties response:", payload);
-      console.log(
-        "[Dashboard] Inferred data properties loaded:",
-        Array.isArray(hierarchy) ? hierarchy.length : 0,
-        "items",
-      );
       setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred data property hierarchy:", error);
       setInferredDataPropertyHierarchy([]);
     }
-  }, [projectId, selectedReasoner]);
+  }, [projectId, metadata, selectedReasoner]);
 
   const loadInferredAnnotationPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
@@ -3015,6 +2822,44 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [projectId, selectedReasoner]);
 
+  const loadClassInstances = useCallback(async () => {
+    if (!projectId || !selectedClassForIndividuals) {
+      setClassInstances([]);
+      return;
+    }
+    setClassInstancesLoading(true);
+    try {
+      const response = await apiClient.get<any>(
+        `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`,
+      );
+      const payload = response?.data || response;
+      const instances = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+      setClassInstances(instances);
+    } catch (error) {
+      console.error("[Dashboard] Failed to load class instances:", error);
+      setClassInstances([]);
+    } finally {
+      setClassInstancesLoading(false);
+    }
+  }, [projectId, selectedClassForIndividuals]);
+
+  useEffect(() => {
+    setClassInstancesQuery("");
+    setClassInstancesView("direct");
+    setSelectedClassIndividual(null);
+    setSelectedClassIndividualDetails(null);
+    loadClassInstances();
+  }, [loadClassInstances]);
+
+  // Refresh instances whenever the IndividualsByClass tab becomes active (handles stale data
+  // after individuals are created in the Entities tab while this tab was in the background)
+  useEffect(() => {
+    if (mainTab === "IndividualsByClass" && selectedClassForIndividuals) {
+      loadClassInstances();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainTab]);
+
   const startReasoner = useCallback(async () => {
     if (!projectId) {
       notificationService.error("No Ontology Loaded", "Please load an ontology first");
@@ -3033,6 +2878,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       const results = await fetchReasonerBundle(reasonerType);
       setReasonerResults(results);
 
+      // Realize individuals (inferred types) after classification
+      try {
+        await apiClient.post(`/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/realize`, {
+          reasonerType,
+        });
+      } catch (realizeError) {
+        console.warn("[Dashboard] Realization step failed (non-fatal):", realizeError);
+      }
+
       // After successful classification, load full recursive hierarchies from the main API
       // This ensures we have the full depth like Desktop Protégé, not just the bundle's view
       console.log("[Dashboard] Reasoner completed, loading full recursive hierarchies...");
@@ -3046,6 +2900,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       await loadInferredIndividuals();
 
       console.log("[Dashboard] ✅ All inferred hierarchies processed");
+
+      // Refresh class instances if user is viewing Individuals by Class
+      if (selectedClassForIndividuals) {
+        await loadClassInstances();
+      }
 
       // Automatically switch Classes tab to inferred mode to show the inferred hierarchy
       setHierarchyViewModes((prev) => ({ ...prev, Classes: "inferred" }));
@@ -3076,14 +2935,24 @@ const Dashboard: React.FC<DashboardProps> = ({
     loadInferredAnnotationPropertyHierarchy,
     loadInferredDatatypes,
     loadInferredIndividuals,
+    loadClassInstances,
+    selectedClassForIndividuals,
   ]);
 
-  const stopReasoner = useCallback(() => {
+  const stopReasoner = useCallback(async () => {
+    if (projectId) {
+      try {
+        await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/reasoner/stop`, {});
+        await apiClient.post(`/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/stop`, {});
+      } catch (error) {
+        console.warn("[Dashboard] Stop reasoner API failed (local state cleared):", error);
+      }
+    }
     setIsReasonerRunning(false);
     setIsReasonerLoading(false);
     setReasonerResults(null);
-    notificationService.success("Reasoner Stopped", "Reasoner has been stopped");
-  }, []);
+    notificationService.success("Reasoner Stopped", "Reasoner session has been disposed");
+  }, [projectId]);
 
   const toggleReasonerSync = useCallback(() => {
     const newSyncState = !isReasonerSynced;
@@ -3348,38 +3217,73 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, []);
 
-  // Check status once (no polling - rely on WebSocket notifications)
   const waitForProcessingComplete = useCallback(
     async (currentProjectId: string): Promise<{ ready: boolean; error?: string; status?: string }> => {
-      try {
-        const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(currentProjectId)}`);
-        const status = statusRes?.data?.status || statusRes?.status;
+      const POLL_INTERVAL_MS = 3000;
+      const deadline = Date.now() + 15 * 60 * 1000; // 15-minute hard timeout
 
-        console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
+      while (true) {
+        try {
+          const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(currentProjectId)}`);
+          const status = statusRes?.data?.status || statusRes?.status;
 
-        if (status === "COMPLETED") {
+          console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
+
+          if (status === "COMPLETED") {
+            setLoadingStatusMessage("");
+            const topLevel = Number(statusRes?.data?.topLevelClasses ?? 0);
+            const hierarchyReady = statusRes?.data?.hierarchyReady ?? topLevel > 0;
+            const graphReady = statusRes?.data?.graphReady ?? (Number(statusRes?.data?.graphSize ?? 0) > 0);
+            if (hierarchyReady || topLevel > 0) {
+              return { ready: true, status };
+            }
+            if (graphReady) {
+              return {
+                ready: false,
+                status: "HIERARCHY_WARMING",
+                error: sanitizeImportMessage(statusRes?.data?.statusMessage) || "Loading class hierarchy…",
+              };
+            }
+            return { ready: true, status };
+          }
+
+          if (status === "ERROR") {
+            console.error("[Dashboard] Project processing failed");
+            const errorMessage = statusRes?.data?.errorMessage || statusRes?.data?.error || "Import failed";
+            return { ready: false, error: errorMessage, status };
+          }
+
+          if (status === "PROCESSING") {
+            const stage = statusRes?.data?.stage;
+            const progress = statusRes?.data?.progress;
+            const label = importStageLabel(stage, statusRes?.data?.statusMessage);
+            const progressText = progress != null ? ` (${progress}%)` : "";
+            setLoadingStatusMessage(`${label}${progressText}`);
+            setIsInitialLoading(true);
+
+            if (Date.now() >= deadline) {
+              return {
+                ready: false,
+                error: "Processing is taking longer than expected. The file is large — please check back in a few minutes.",
+                status,
+              };
+            }
+            await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+            continue;
+          }
+
+          // Unknown status — allow loading attempt
+          console.warn("[Dashboard] Unknown status, allowing load attempt:", status);
           return { ready: true, status };
+        } catch (error: any) {
+          // 404 = editor has no import record yet (file only in auth/GridFS until first open).
+          if (error?.status === 404) {
+            console.log("[Dashboard] No editor status record yet for", currentProjectId);
+            return { ready: true, status: "NOT_REGISTERED" };
+          }
+          console.error("[Dashboard] Error checking project status:", error);
+          return { ready: true };
         }
-
-        if (status === "ERROR") {
-          console.error("[Dashboard] Project processing failed");
-          const errorMessage = statusRes?.data?.errorMessage || statusRes?.data?.error || "Import failed";
-          return { ready: false, error: errorMessage, status };
-        }
-
-        // If PROCESSING, WebSocket will notify when complete
-        if (status === "PROCESSING") {
-          console.log("[Dashboard] File is processing, waiting for WebSocket notification...");
-          return { ready: false, error: "File is still processing. Please wait a moment and try again.", status };
-        }
-
-        // Unknown status - allow loading attempt
-        console.warn("[Dashboard] Unknown status, allowing load attempt:", status);
-        return { ready: true, status };
-      } catch (error) {
-        console.error("[Dashboard] Error checking project status:", error);
-        // Don't block on error - let the load attempt happen
-        return { ready: true };
       }
     },
     [],
@@ -3393,10 +3297,18 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const fetchData = useCallback(
     async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string, forceRefresh = false) => {
+      setLoadFailure(null);
       // Skip re-fetching if this project is already loaded and no force refresh requested
       if (!forceRefresh && currentProjectId === projectId && classHierarchy.length > 0 && metadata) {
         console.log("[Dashboard] ⚡ Project already loaded, skipping re-fetch:", currentProjectId);
         setIsInitialLoading(false);
+        setIsHierarchyLoading(false);
+        setIsMetadataLoading(false);
+        setIsPropertiesLoading(false);
+        setIsIndividualsLoading(false);
+        setIsAnnotationPropertiesLoading(false);
+        setIsDatatypesLoading(false);
+        setLoadingStatusMessage("");
         return null;
       }
 
@@ -3428,6 +3340,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         window.vscode.postMessage({ type: "requestCollaborationStatus" });
       }
 
+      let loadGeneration = 0;
+      let keepInitialLoadingForHierarchy = false;
+
       try {
         // Skip status check for files being reopened (not fresh uploads)
         // Only check status if this is a fresh import (isExpectingFileReady = true)
@@ -3440,14 +3355,19 @@ const Dashboard: React.FC<DashboardProps> = ({
           const result = await waitForProcessingComplete(currentProjectId);
 
           if (!result.ready) {
-            const errorTitle = result.status === "ERROR" ? "Import Failed" : "Loading Failed";
-            const errorMessage = result.error || "Unable to load ontology";
+            if (result.status === "HIERARCHY_WARMING") {
+              console.log("[Dashboard] Graph ready, hierarchy still warming — proceeding with retry loop");
+              setIsHierarchyLoading(true);
+              setLoadingStatusMessage(result.error || "Loading class tree…");
+            } else {
+              const errorTitle = result.status === "ERROR" ? "Import Failed" : "Loading Failed";
+              const errorMessage = result.error || "Unable to load ontology";
 
-            console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
-            notificationService.error(errorTitle, errorMessage);
-            setIsInitialLoading(false);
-            return null;
-            return;
+              console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
+              notificationService.error(errorTitle, errorMessage);
+              setIsInitialLoading(false);
+              return null;
+            }
           }
         } else {
           console.log("[Dashboard] ⚡ Force refresh mode - skipping processing status check");
@@ -3463,334 +3383,704 @@ const Dashboard: React.FC<DashboardProps> = ({
         const cacheBuster = forceRefresh ? `?_t=${Date.now()}` : "";
 
         // Abort any previous in-flight fetch and create a fresh controller for this load
+        loadGeneration = ++fetchDataGenerationRef.current;
         if (fetchAbortControllerRef.current) {
           fetchAbortControllerRef.current.abort();
         }
+        if (isDesktop()) {
+          desktopDeferredSectionsLoadedRef.current.clear();
+        }
+        setIsHierarchyLoading(true);
+        setIsMetadataLoading(true);
+        setIsPropertiesLoading(true);
+        setIsIndividualsLoading(true);
+        setIsAnnotationPropertiesLoading(true);
+        setIsDatatypesLoading(true);
+        setLoadingStatusMessage(
+          isDesktop() ? "Loading ontology into memory…" : "Loading classes...",
+        );
         const abortController = new AbortController();
         fetchAbortControllerRef.current = abortController;
         const signal = abortController.signal;
+        const isStaleLoad = () => signal.aborted || fetchDataGenerationRef.current !== loadGeneration;
 
-        // Fetch data in parallel to improve performance (GraphDB can handle concurrent queries)
-        // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
-        // Top-level classes are loaded eagerly now for instant display
-        // Instance counts are loaded in background (non-blocking) to not delay initial render
-        const dataFetchPromise = Promise.all([
-          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient
-            .get<any>(
-              `/api/ontology/classes/top-level/${encodedProjectId}?limit=200${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
-              undefined,
-              { signal },
-            )
-            .catch((e: any) => {
-              if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") throw e;
-              return null;
-            }),
-          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, {
-            signal,
-          }),
-          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-        ]);
-
-        // Load instance counts in background - don't block the main data fetch
-        const instanceCountsPromise = apiClient
-          .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
-          .catch((e: any) => {
-            console.warn("[Dashboard] Instance counts fetch failed (non-blocking):", e?.message);
-            return null;
-          });
-
-        // Allow UI to be responsive immediately if not waiting
-        if (!waitForCompletion) {
-          setTimeout(() => {
-            setIsInitialLoading(false);
-          }, 500);
-        }
-
-        // Continue loading in background
-        const [metadataRes, topLevelClassesRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] =
-          await dataFetchPromise;
-
-        console.log("[Dashboard] ✅ Data loaded from GraphDB database successfully!");
-        console.log("[Dashboard] 📊 This data includes all saved changes from the database");
-
-        // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
-        console.log("Metadata response:", metadataRes);
-
-        const metadataData = metadataRes?.data || metadataRes;
-        const annotationsData = metadataData?.annotations || [];
-        const imports = metadataData?.imports || [];
-        const gciAxioms = metadataData?.axioms || [];
-
-        if (metadataData?.filename) {
-          setActiveFileName(metadataData.filename);
-        }
-
-        console.log("Extracted annotations data:", annotationsData);
-        console.log("Extracted imports:", imports);
-        console.log("Extracted GCI axioms:", gciAxioms);
-
-        // Keep all metadata fields from backend (axiom counts, ontologyIRI, etc.)
-        const transformedMetadata = {
-          ...metadataData,
-          annotations: annotationsData,
-          // Also add flat structure for backward compatibility
-          classCount: metadataData?.classCount || metadataData?.counts?.classes || 0,
-          objectPropertyCount: metadataData?.objectPropertyCount || metadataData?.counts?.objectProperties || 0,
-          dataPropertyCount: metadataData?.dataPropertyCount || metadataData?.counts?.dataProperties || 0,
-          individualCount: metadataData?.individualCount || metadataData?.counts?.individuals || 0,
-          annotationPropertyCount:
-            metadataData?.annotationPropertyCount || metadataData?.counts?.annotationProperties || 0,
-          prefixes: metadataData?.prefixes || [],
+        const applyDeclarationCounts = (countsRes: any) => {
+          const patch = extractDeclarationCountsPatch(countsRes);
+          if (!patch) return;
+          setMetadata((prev) => ({
+            ...(prev || {}),
+            ...patch,
+          }) as OntologyMetadata);
         };
-        console.log("Transformed metadata:", transformedMetadata);
-        setMetadata(transformedMetadata);
 
-        // Instance counts load in background - set empty initially, update when ready
+        const applyMetadataResponse = (metadataRes: any) => {
+          if (!metadataRes) return;
+          const metadataData = metadataRes?.data || metadataRes;
+          if (!metadataData || typeof metadataData !== "object") return;
+          const annotationsData = metadataData?.annotations || [];
+          const imports = metadataData?.imports || [];
+          const gciAxioms = metadataData?.axioms || [];
+          if (metadataData?.filename) setActiveFileName(metadataData.filename);
+          setMetadata((prev) => ({
+            ...metadataData,
+            annotations: annotationsData,
+            prefixes: metadataData?.prefixes || [],
+            // Preserve OWLAPI-sourced counts when the metadata API returns 0.
+            // Use a strict positive-number check so a genuine 0 from metadata doesn't
+            // erase a valid OWLAPI count already stored in prev.
+            classCount: (metadataData?.classCount > 0 ? metadataData.classCount : null)
+              ?? (metadataData?.counts?.classes > 0 ? metadataData.counts.classes : null)
+              ?? (prev as any)?.classCount
+              ?? 0,
+            objectPropertyCount: (metadataData?.objectPropertyCount > 0 ? metadataData.objectPropertyCount : null)
+              ?? (metadataData?.counts?.objectProperties > 0 ? metadataData.counts.objectProperties : null)
+              ?? (prev as any)?.objectPropertyCount
+              ?? 0,
+            dataPropertyCount: (metadataData?.dataPropertyCount > 0 ? metadataData.dataPropertyCount : null)
+              ?? (metadataData?.counts?.dataProperties > 0 ? metadataData.counts.dataProperties : null)
+              ?? (prev as any)?.dataPropertyCount
+              ?? 0,
+            individualCount: (metadataData?.individualCount > 0 ? metadataData.individualCount : null)
+              ?? (metadataData?.counts?.individuals > 0 ? metadataData.counts.individuals : null)
+              ?? (prev as any)?.individualCount
+              ?? 0,
+            annotationPropertyCount: (metadataData?.annotationPropertyCount > 0 ? metadataData.annotationPropertyCount : null)
+              ?? (metadataData?.counts?.annotationProperties > 0 ? metadataData.counts.annotationProperties : null)
+              ?? (prev as any)?.annotationPropertyCount
+              ?? 0,
+            gciCount: metadataData?.gciCount ?? (prev as any)?.gciCount,
+            hiddenGciCount: metadataData?.hiddenGciCount ?? (prev as any)?.hiddenGciCount,
+          }) as OntologyMetadata);
+          setOntologyImports(Array.isArray(imports) ? imports : []);
+          setGeneralClassAxioms(
+            Array.isArray(gciAxioms)
+              ? gciAxioms.map((axiom: any) => ({
+                  id: axiom.id,
+                  value: axiom.value,
+                  subClass: axiom.subClass || "",
+                  superClass: axiom.superClass || "",
+                  definition: axiom.subClass || axiom.definition || "",
+                  superClassIri: axiom.superClass || axiom.superClassIri || "",
+                  subExpression: axiom.subClass || axiom.subExpression || "",
+                }))
+              : [],
+          );
+          setOntologyAnnotations(normalizeOntologyAnnotations(annotationsData));
+          setPrefixMappings(normalizePrefixMappings(metadataData?.prefixes));
+          // NOTE: do NOT call applyDeclarationCounts(metadataData) here.
+          // The setMetadata above already handles all counts with prev fallback.
+          // A second setMetadata call would queue after and overwrite the preserved classCount.
+        };
+
+        const applyPropertiesResponse = (propertiesRes: any) => {
+          if (!propertiesRes) return;
+          const allProps = Array.isArray(propertiesRes?.data)
+            ? propertiesRes.data
+            : Array.isArray(propertiesRes?.properties)
+              ? propertiesRes.properties
+              : Array.isArray(propertiesRes)
+                ? propertiesRes
+                : [];
+          const opList = allProps.filter((p: Property) => p.type === "ObjectProperty");
+          setObjectProperties(opList);
+          const opMap = new Map<string, any>();
+          opList.forEach((p: Property) => opMap.set(p.id, { ...p, children: [], hasChildren: false }));
+          const topObjectProperty: any = {
+            id: "http://www.w3.org/2002/07/owl#topObjectProperty",
+            label: "owl:topObjectProperty",
+            type: "ObjectProperty" as const,
+            children: [] as any[],
+            hasChildren: false,
+            annotations: {},
+          };
+          opList.forEach((p: Property) => {
+            const node = opMap.get(p.id);
+            if (p.superProperties && p.superProperties.length > 0) {
+              let added = false;
+              p.superProperties.forEach((superId) => {
+                if (superId === topObjectProperty.id) {
+                  topObjectProperty.children.push(node);
+                  topObjectProperty.hasChildren = true;
+                  added = true;
+                } else if (opMap.has(superId)) {
+                  const parent = opMap.get(superId);
+                  parent.children.push(node);
+                  parent.hasChildren = true;
+                  added = true;
+                }
+              });
+              if (!added) {
+                topObjectProperty.children.push(node);
+                topObjectProperty.hasChildren = true;
+              }
+            } else {
+              topObjectProperty.children.push(node);
+              topObjectProperty.hasChildren = true;
+            }
+          });
+          setObjectPropertyHierarchy([topObjectProperty]);
+          const dpList = allProps.filter((p: Property) => p.type === "DatatypeProperty");
+          setDataProperties(dpList);
+          const dpMap = new Map<string, any>();
+          dpList.forEach((p: Property) => dpMap.set(p.id, { ...p, children: [], hasChildren: false }));
+          const topDataProperty: any = {
+            id: "http://www.w3.org/2002/07/owl#topDataProperty",
+            label: "owl:topDataProperty",
+            type: "DatatypeProperty",
+            children: [] as any[],
+            hasChildren: false,
+            annotations: {},
+          };
+          dpList.forEach((p: Property) => {
+            const node = dpMap.get(p.id);
+            if (p.superProperties && p.superProperties.length > 0) {
+              let added = false;
+              p.superProperties.forEach((superId) => {
+                if (superId === topDataProperty.id) {
+                  topDataProperty.children.push(node);
+                  topDataProperty.hasChildren = true;
+                  added = true;
+                } else if (dpMap.has(superId)) {
+                  const parent = dpMap.get(superId);
+                  parent.children.push(node);
+                  parent.hasChildren = true;
+                  added = true;
+                }
+              });
+              if (!added) {
+                topDataProperty.children.push(node);
+                topDataProperty.hasChildren = true;
+              }
+            } else {
+              topDataProperty.children.push(node);
+              topDataProperty.hasChildren = true;
+            }
+          });
+          setDataPropertyHierarchy([topDataProperty]);
+        };
+
+        let desktopOwlapiReady = false;
+        if (isDesktop()) {
+          const warm = await warmOntologyInMemory(currentProjectId, {
+            timeoutMs: 300_000,
+            onStatus: (msg) => {
+              if (!isStaleLoad()) setLoadingStatusMessage(msg);
+            },
+          });
+          if (isStaleLoad()) return null;
+          desktopOwlapiReady = warm.ready;
+          if (warm.ready) {
+            owlapiReadyHandledRef.current = currentProjectId;
+            desktopHierarchyDeferredForProject.current = null;
+            console.log("[Dashboard] OWLAPI fast-open ready — using in-memory hierarchy");
+            applyDeclarationCounts(warm);
+            setLoadingStatusMessage("Loading classes…");
+            desktopDeferredSectionsLoadedRef.current.clear();
+          } else if (warm.sparqlFallback) {
+            console.warn(
+              "[Dashboard] OWLAPI fast-open unavailable (no on-disk file or insufficient heap) — SPARQL/snapshot fallback",
+            );
+            if (isDesktop()) {
+              desktopHierarchyDeferredForProject.current = currentProjectId;
+              setIsHierarchyLoading(true);
+              setLoadingStatusMessage("Opening ontology (fast path)…");
+            }
+          } else {
+            console.log("[Dashboard] OWLAPI warm in progress — deferring hierarchy until fast-open completes");
+            desktopHierarchyDeferredForProject.current = currentProjectId;
+            setIsHierarchyLoading(true);
+            setLoadingStatusMessage("Opening ontology (fast path)…");
+          }
+        } else {
+          console.log("[Dashboard] Web mode — Fuseki/Mongo hierarchy (no auto OWLAPI warm)");
+        }
+
+        // Phase 1: classes first — unblock the editor immediately
+        // Instance-counts is a full-graph SPARQL GROUP BY scan. Firing it before top-level
+        // classes saturates Fuseki and can delay the class tree response enough to trigger
+        // the 2-minute retry loop. Defer it until after the class tree resolves.
         let instanceCountsData: any = {};
         setClassInstanceCounts({});
 
-        // When instance counts arrive (async), update state
-        instanceCountsPromise.then((instanceCountsRes: any) => {
-          if (instanceCountsRes) {
-            const payload = instanceCountsRes?.data || instanceCountsRes;
-            const data = payload?.data || payload || {};
-            if (data && typeof data === "object") {
-              setClassInstanceCounts(data);
-              instanceCountsData = data;
+        // On desktop: skip SPARQL hierarchy fetch when OWLAPI is still loading.
+        // We already have the hierarchy skeleton visible (isHierarchyLoading=true).
+        // The owlapiReadyHandledRef poller will call refreshClassHierarchy() once
+        // OWLAPI is confirmed ready, producing ONE clean render with the full count.
+        // Edge case: if OWLAPI never loads (OOM/corrupt file) the poller will NOT fire
+        // and the skeleton will stay until the user navigates away — acceptable because
+        // the fallback means OWLAPI genuinely cannot serve the ontology.
+        if (!desktopOwlapiReady && desktopHierarchyDeferredForProject.current === currentProjectId) {
+          console.log("[Dashboard] Deferring class hierarchy — awaiting OWLAPI fast-open");
+          setIsHierarchyLoading(true);
+          setLoadingStatusMessage("Opening ontology (fast path)…");
+        }
+
+        const topLevelClassesRes = (!desktopOwlapiReady && desktopHierarchyDeferredForProject.current === currentProjectId) ? null : await apiClient
+          .get<any>(
+            `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+            undefined,
+            { signal },
+          )
+          .catch((e: any) => {
+            if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") throw e;
+            const status = e?.status ?? e?.response?.status;
+            console.error("[Dashboard] Top-level class fetch failed:", e?.message || e);
+            if (status === 503) {
+              if (!isStaleLoad()) {
+                setIsHierarchyLoading(true);
+                setLoadingStatusMessage("Ontology editor is busy — still loading…");
+              }
+            } else {
+              setLoadingStatusMessage("Could not load the class hierarchy. Retrying may help.");
             }
-          }
-        });
+            return null;
+          });
 
-        // Use imports from metadata response (already extracted above)
-        const validImportsData = Array.isArray(imports) ? imports : [];
-        console.log("[Dashboard] 📥 Initial imports loaded:", validImportsData);
-        console.log(
-          "[Dashboard] Local imports found:",
-          validImportsData.filter((imp: string) => !imp.startsWith("http://") && !imp.startsWith("https://")),
-        );
-        setOntologyImports(validImportsData);
-
-        // Use GCI axioms from metadata response (already extracted above)
-        // Map backend fields to frontend expected structure
-        const mappedGciData = Array.isArray(gciAxioms)
-          ? gciAxioms.map((axiom: any) => ({
-              value: axiom.value,
-              subClass: axiom.subClass || "",
-              superClass: axiom.superClass || "",
-              // Keep legacy field names for compatibility
-              definition: axiom.subClass || axiom.definition || "",
-              superClassIri: axiom.superClass || axiom.superClassIri || "",
-              subExpression: axiom.subClass || axiom.subExpression || "",
-            }))
-          : [];
-        setGeneralClassAxioms(mappedGciData);
-
-        // Use annotations from metadata response (already extracted above as annotationsData)
-        // Filter out invalid annotations and ensure all have required fields
-        const validAnnotations = (Array.isArray(annotationsData) ? annotationsData : []).filter(
-          (ann) => ann && (ann.propertyIri || ann.property) && ann.value !== undefined,
-        );
-        setOntologyAnnotations(validAnnotations);
-
-        // Use prefixes from metadata response (already in metadataData.prefixes)
-        const prefixesData = metadataData?.prefixes || {};
-        const prefixList = Object.entries(prefixesData).map(([prefix, namespace]) => ({
-          // Ensure prefix has a colon for display if it's not empty
-          // If it's empty, it's the default namespace, show as ":"
-          prefix: prefix ? (prefix.endsWith(":") ? prefix : `${prefix}:`) : ":",
-          namespace: String(namespace),
-        }));
-        setPrefixMappings(prefixList);
-
-        // ⚡ Load top-level classes eagerly so the user sees classes immediately
-        console.log("[Dashboard] ⚡ Loading top-level classes for instant display");
+        const hierarchyBuilding =
+          topLevelClassesRes &&
+          (topLevelClassesRes?.hierarchyReady === false ||
+            topLevelClassesRes?.status === 202 ||
+            topLevelClassesRes?.success === false);
+        if (hierarchyBuilding && !isStaleLoad()) {
+          setLoadingStatusMessage(
+            topLevelClassesRes?.message ||
+              "Loading class tree…",
+          );
+          setIsHierarchyLoading(true);
+        }
 
         let topLevelClasses: any[] = [];
-        if (topLevelClassesRes) {
-          topLevelClasses = Array.isArray(topLevelClassesRes?.classes)
-            ? topLevelClassesRes.classes
-            : Array.isArray(topLevelClassesRes?.data?.classes)
-              ? topLevelClassesRes.data.classes
-              : Array.isArray(topLevelClassesRes?.data)
-                ? topLevelClassesRes.data
+        const tlRes = topLevelClassesRes?.data ?? topLevelClassesRes;
+        if (topLevelClassesRes && !hierarchyBuilding) {
+          topLevelClasses = Array.isArray(tlRes?.classes)
+            ? tlRes.classes
+            : Array.isArray(tlRes?.data?.classes)
+              ? tlRes.data.classes
+              : Array.isArray(tlRes?.data)
+                ? tlRes.data
                 : Array.isArray(topLevelClassesRes)
                   ? topLevelClassesRes
                   : [];
         }
-        console.log("[Dashboard] 📊 Got", topLevelClasses.length, "top-level classes");
-
+        const isTruncated = !!(tlRes?.truncated);
+        // Preserve undefined vs 0: undefined means server didn't confirm count;
+        // 0 means server confirmed the ontology has no top-level classes.
+        const tlTotal = tlRes?.topLevelTotal !== undefined ? Number(tlRes.topLevelTotal) : undefined;
+        if (!isStaleLoad()) {
+          setTopLevelTruncated(isTruncated);
+          setTopLevelTotal(tlTotal ?? 0);
+        }
         const topLevelNodes: TreeNode[] = topLevelClasses.map((c: TopLevelClass) => ({
           ...c,
+          label: c.label ?? c.id ?? "",
           children: [],
-          hasChildren: c.hasChildren !== false, // default true for lazy loading
+          hasChildren: c.hasChildren !== false,
           subClassOfAxioms: [
             { id: "http://www.w3.org/2002/07/owl#Thing", type: "SubClassOf", definition: "owl:Thing" },
           ],
         }));
-
         const resolvedCounts = instanceCountsData && typeof instanceCountsData === "object" ? instanceCountsData : {};
-
-        // Build hierarchy with owl:Thing as root and top-level classes as children
+        // Sentinel node — rendered as "Load more" button by EntityHierarchy when top-level is truncated.
+        const sentinelNode: TreeNode = {
+          id: "__load_more_top_level__",
+          label: `Load more classes…`,
+          children: [],
+          hasChildren: false,
+          annotations: {},
+        };
+        const owlThingChildren = applyInstanceCountsToTree(topLevelNodes, resolvedCounts);
+        if (isTruncated) owlThingChildren.push(sentinelNode);
         const owlThingNode: TreeNode = {
           id: "http://www.w3.org/2002/07/owl#Thing",
           label: "owl:Thing",
-          children: applyInstanceCountsToTree(topLevelNodes, resolvedCounts),
+          children: owlThingChildren,
           hasChildren: topLevelNodes.length > 0,
           annotations: {},
         };
-
-        const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
-        console.log("[Dashboard] 📊 Class hierarchy loaded with", topLevelNodes.length, "top-level classes");
-        setClassHierarchy(hierarchyWithCounts);
-
-        // Handle properties response
-        console.log("=== PROPERTIES RESPONSE DEBUG ===");
-        console.log("Properties response:", propertiesRes);
-        const allProps = Array.isArray(propertiesRes?.data)
-          ? propertiesRes.data
-          : Array.isArray(propertiesRes?.properties)
-            ? propertiesRes.properties
-            : Array.isArray(propertiesRes)
-              ? propertiesRes
-              : [];
-        console.log("All props after extraction:", allProps);
-        console.log("All props length:", allProps.length);
-        const opList = allProps.filter((p: Property) => p.type === "ObjectProperty");
-        console.log("Object Properties filtered (opList):", opList);
-        console.log("Object Properties count:", opList.length);
-        setObjectProperties(opList);
-        console.log("=== END PROPERTIES DEBUG ===");
-
-        // Build Object Property Hierarchy
-        const opMap = new Map<string, any>();
-        // Create nodes
-        opList.forEach((p: Property) => {
-          opMap.set(p.id, { ...p, children: [], hasChildren: false });
-        });
-
-        const topObjectProperty: any = {
-          id: "http://www.w3.org/2002/07/owl#topObjectProperty",
-          label: "owl:topObjectProperty",
-          type: "ObjectProperty" as const,
-          children: [] as any[],
-          hasChildren: false,
-          annotations: {},
+        const applyTopLevelToHierarchy = (classes: TopLevelClass[], truncated = false, total = 0) => {
+          const nodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
+            ...c,
+            label: c.label ?? c.id ?? "",
+            children: [],
+            hasChildren: c.hasChildren !== false,
+            subClassOfAxioms: [
+              { id: "http://www.w3.org/2002/07/owl#Thing", type: "SubClassOf", definition: "owl:Thing" },
+            ],
+          }));
+          const children = applyInstanceCountsToTree(nodes, resolvedCounts);
+          if (truncated) {
+            children.push({
+              id: "__load_more_top_level__",
+              label: "Load more classes…",
+              children: [],
+              hasChildren: false,
+              annotations: {},
+            });
+          }
+          setClassHierarchy(
+            applyInstanceCountsToTree(
+              [
+                {
+                  id: "http://www.w3.org/2002/07/owl#Thing",
+                  label: "owl:Thing",
+                  children,
+                  hasChildren: nodes.length > 0,
+                  annotations: {},
+                },
+              ],
+              resolvedCounts,
+            ),
+          );
+          if (!isStaleLoad()) {
+            setTopLevelTruncated(truncated);
+            setTopLevelTotal(total);
+          }
         };
 
-        // If topObjectProperty is not in the list (it usually isn't), we use our created one.
-        // If it IS in the list, we should use that one but ensure it's the root.
-        // Typically backend doesn't return built-in top properties in the list of user properties.
-
-        opList.forEach((p: Property) => {
-          const node = opMap.get(p.id);
-          if (p.superProperties && p.superProperties.length > 0) {
-            let added = false;
-            p.superProperties.forEach((superId) => {
-              if (superId === topObjectProperty.id) {
-                topObjectProperty.children.push(node);
-                topObjectProperty.hasChildren = true;
-                added = true;
-              } else if (opMap.has(superId)) {
-                const parent = opMap.get(superId);
-                parent.children.push(node);
-                parent.hasChildren = true;
-                added = true;
+        if (!hierarchyBuilding) {
+          const hierarchyDeferred =
+            isDesktop() && desktopHierarchyDeferredForProject.current === currentProjectId;
+          if (!hierarchyDeferred) {
+            applyTopLevelToHierarchy(topLevelClasses, isTruncated, tlTotal ?? 0);
+            if (!isStaleLoad()) {
+              if (topLevelClasses.length > 0) {
+                setLoadingStatusMessage("");
+                setIsHierarchyLoading(false);
+                notificationService.success("Ready", "Class tree is available.");
+              } else if (tlTotal === 0) {
+                // Server confirmed empty ontology — stop loading immediately
+                setLoadingStatusMessage("");
+                setIsHierarchyLoading(false);
               }
-            });
-            // If has super properties but none found in map (e.g. external), add to top?
-            // Or if it has super properties, it shouldn't be at top level unless explicitly under top.
-            // If we didn't add it to any parent, and it's not explicitly under top, what to do?
-            // For now, if not added to any known parent, add to topObjectProperty as fallback
-            if (!added) {
-              topObjectProperty.children.push(node);
-              topObjectProperty.hasChildren = true;
             }
-          } else {
-            // No super properties -> child of topObjectProperty
-            topObjectProperty.children.push(node);
-            topObjectProperty.hasChildren = true;
           }
-        });
+        }
+        applyDeclarationCounts(topLevelClassesRes);
 
-        setObjectPropertyHierarchy([topObjectProperty]);
+        // Fire instance-counts AFTER the class tree resolves — avoids Fuseki contention
+        // that could delay the top-level response and trigger the retry loop.
+        if (!desktopOwlapiReady && !isStaleLoad()) {
+          apiClient
+            .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
+            .then((instanceCountsRes: any) => {
+              if (isStaleLoad()) return;
+              const payload = instanceCountsRes?.data || instanceCountsRes;
+              const data = payload?.data || payload || {};
+              if (!data || typeof data !== "object") return;
+              setClassInstanceCounts(data);
+              setClassHierarchy((prev) => (prev.length > 0 ? applyInstanceCountsToTree(prev, data) : prev));
+            })
+            .catch((e: any) => {
+              console.warn("[Dashboard] Instance counts fetch failed (non-blocking):", e?.message);
+            });
+        }
 
-        const dpList = allProps.filter((p: Property) => p.type === "DatatypeProperty");
-        console.log("Data Properties filtered (dpList):", dpList);
-        console.log("Data Properties count:", dpList.length);
-        console.log(
-          "All property types:",
-          allProps.map((p: Property) => ({ id: p.id, type: p.type })),
-        );
-        setDataProperties(dpList);
-
-        // Build Data Property Hierarchy
-        const dpMap = new Map<string, any>();
-        dpList.forEach((p: Property) => {
-          dpMap.set(p.id, { ...p, children: [], hasChildren: false });
-        });
-
-        const topDataProperty: any = {
-          id: "http://www.w3.org/2002/07/owl#topDataProperty",
-          label: "owl:topDataProperty",
-          type: "DatatypeProperty",
-          children: [] as any[],
-          hasChildren: false,
-          annotations: {},
-        };
-
-        dpList.forEach((p: Property) => {
-          const node = dpMap.get(p.id);
-          if (p.superProperties && p.superProperties.length > 0) {
-            let added = false;
-            p.superProperties.forEach((superId) => {
-              if (superId === topDataProperty.id) {
-                topDataProperty.children.push(node);
-                topDataProperty.hasChildren = true;
-                added = true;
-              } else if (dpMap.has(superId)) {
-                const parent = dpMap.get(superId);
-                parent.children.push(node);
-                parent.hasChildren = true;
-                added = true;
+        // Only retry when the server response was non-null (we got a real response, not a timeout)
+        // AND the server did not explicitly confirm 0 top-level classes (tlTotal === 0 means
+        // the ontology is genuinely empty — no point polling for 120 seconds).
+        const needsHierarchyRetry =
+          topLevelClassesRes !== null && !hierarchyBuilding && topLevelClasses.length === 0 && (tlTotal ?? 0) > 0 && !isStaleLoad();
+        if (needsHierarchyRetry) {
+          setIsHierarchyLoading(true);
+          setLoadingStatusMessage("Loading class hierarchy…");
+          void (async () => {
+            for (let i = 0; i < 300 && !signal.aborted; i++) {
+              await new Promise((r) => setTimeout(r, 2000));
+              try {
+                const retry = await apiClient.get<any>(
+                  `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+                  undefined,
+                  { signal },
+                );
+                const classes = Array.isArray(retry?.classes)
+                  ? retry.classes
+                  : Array.isArray(retry?.data?.classes)
+                    ? retry.data.classes
+                    : [];
+                if (classes.length > 0) {
+                  applyTopLevelToHierarchy(classes, !!retry?.truncated, Number(retry?.topLevelTotal) || 0);
+                  applyDeclarationCounts(retry);
+                  setLoadingStatusMessage("");
+                  setIsHierarchyLoading(false);
+                  setIsInitialLoading(false);
+                  notificationService.success("Ready", "Class tree is available.");
+                  return;
+                }
+              } catch {
+                /* retry */
               }
-            });
-            if (!added) {
-              topDataProperty.children.push(node);
-              topDataProperty.hasChildren = true;
             }
-          } else {
-            topDataProperty.children.push(node);
-            topDataProperty.hasChildren = true;
+            setIsHierarchyLoading(false);
+            setIsInitialLoading(false);
+            showToast("Could not load the class hierarchy. The ontology may be too large or the server timed out.", "error");
+            onGoToProjectDashboardRef.current?.();
+          })();
+        } else if (hierarchyBuilding && !isStaleLoad()) {
+          void (async () => {
+            // Desktop: OWLAPI may still be loading the OWL file (top-level returned 202).
+            // Poll cache-status for owlapiReady; cloud: poll for hierarchyReady.
+            // Desktop gets a longer timeout (300 * 2s = 10 min) for large OWL files.
+            const maxIter = isDesktop() ? 300 : 120;
+            for (let i = 0; i < maxIter && !signal.aborted; i++) {
+              await new Promise((r) => setTimeout(r, 2000));
+              try {
+                const cs = await apiClient.get<any>(
+                  `/api/ontology/cache-status/${encodedProjectId}${cacheBuster}`,
+                  undefined,
+                  { signal },
+                );
+                applyDeclarationCounts(cs);
+                if (cs?.hierarchyReady ?? cs?.owlapiReady) {
+                  const retry = await apiClient.get<any>(
+                    `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+                    undefined,
+                    { signal },
+                  );
+                  const classes = Array.isArray(retry?.classes) ? retry.classes : [];
+                  if (classes.length > 0) {
+                    applyTopLevelToHierarchy(classes, !!retry?.truncated, Number(retry?.topLevelTotal) || 0);
+                    applyDeclarationCounts(retry);
+                    setLoadingStatusMessage("");
+                    setIsHierarchyLoading(false);
+                    setIsInitialLoading(false);
+                    return;
+                  }
+                }
+              } catch {
+                /* retry */
+              }
+            }
+            setIsHierarchyLoading(false);
+            setIsInitialLoading(false);
+            if (isDesktop()) {
+              setLoadFailure({
+                message: "Ontology index build timed out. The file may be too large for this machine.",
+                projectId: currentProjectId,
+              });
+            } else {
+              showToast("Ontology index build timed out. The file may be too large for the current configuration.", "error");
+              onGoToProjectDashboardRef.current?.();
+            }
+          })();
+        }
+        if (isDesktop() && !isStaleLoad()) {
+          try {
+            const cs = await apiClient.get<any>(
+              `/api/ontology/cache-status/${encodedProjectId}${cacheBuster}`,
+              undefined,
+              { signal },
+            );
+            if (cs?.owlapiReady ?? cs?.data?.owlapiReady) {
+              desktopOwlapiReady = true;
+            }
+            applyDeclarationCounts(cs);
+          } catch (e) {
+            console.debug("[Dashboard] cache-status after top-level:", e);
           }
-        });
+        }
+        const desktopDeferredHierarchy = isDesktop() && !desktopOwlapiReady;
+        const hierarchyVisible = topLevelClasses.length > 0 || tlTotal === 0;
+        // Do not block the full-screen modal on OWLAPI warm — entity tabs wait in the
+        // background (desktopOwlApiGate). Blocking here left users stuck with no error.
+        keepInitialLoadingForHierarchy =
+          !hierarchyVisible || hierarchyBuilding || needsHierarchyRetry;
+        if (!hierarchyBuilding && !needsHierarchyRetry && hierarchyVisible) {
+          setLoadingStatusMessage(desktopDeferredHierarchy ? "Loading ontology into memory…" : "");
+          setIsHierarchyLoading(false);
+          setIsInitialLoading(false);
+        } else if (!hierarchyVisible && !isStaleLoad()) {
+          setIsHierarchyLoading(true);
+          setLoadingStatusMessage((prev) => prev || "Loading class tree…");
+        }
 
-        setDataPropertyHierarchy([topDataProperty]);
+        // Desktop: if class tree is already visible but OWLAPI still warming, close the
+        // modal as soon as the in-memory model is ready (or show failure after timeout).
+        if (desktopDeferredHierarchy && hierarchyVisible && !isStaleLoad()) {
+          void (async () => {
+            for (let i = 0; i < 90 && !signal.aborted; i++) {
+              await new Promise((r) => setTimeout(r, 2000));
+              try {
+                const cs = await apiClient.get<any>(
+                  `/api/ontology/cache-status/${encodedProjectId}${cacheBuster}`,
+                  undefined,
+                  { signal },
+                );
+                applyDeclarationCounts(cs);
+                if (cs?.owlapiReady ?? cs?.data?.owlapiReady) {
+                  setLoadingStatusMessage("");
+                  setIsInitialLoading(false);
+                  return;
+                }
+                if (i === 2) {
+                  void warmOntologyInMemory(currentProjectId, {
+                    timeoutMs: 120_000,
+                    onStatus: (m) => setLoadingStatusMessage(m || "Opening ontology (fast path)…"),
+                  });
+                }
+              } catch {
+                /* retry */
+              }
+            }
+            setLoadingStatusMessage("");
+            setIsInitialLoading(false);
+          })();
+        }
 
-        // Handle other responses with fallbacks
-        setIndividuals(
-          Array.isArray(individualsRes?.data)
-            ? individualsRes.data
-            : Array.isArray(individualsRes?.individuals)
-              ? individualsRes.individuals
-              : [],
-        );
-        setAnnotationProperties(
-          Array.isArray(annotationPropsRes?.data)
-            ? annotationPropsRes.data
-            : Array.isArray(annotationPropsRes?.annotationProperties)
-              ? annotationPropsRes.annotationProperties
-              : [],
-        );
-        setDatatypes(
-          Array.isArray(datatypesRes?.data)
-            ? datatypesRes.data
-            : Array.isArray(datatypesRes?.datatypes)
-              ? datatypesRes.datatypes
-              : [],
-        );
+        // Phase 2: load other entity sections in background (tab spinners + bottom bar).
+        if (!isStaleLoad()) {
+          setIsMetadataLoading(true);
+          setIsPropertiesLoading(true);
+          setIsIndividualsLoading(true);
+          setIsAnnotationPropertiesLoading(true);
+          setIsDatatypesLoading(true);
+        }
+
+        // Desktop owlapi-first: Fuseki may not be synced yet — wait for OWLAPI before
+        // properties/individuals/etc. (otherwise they 503 on SPARQL fallback).
+        const desktopOwlApiGate: Promise<void> = (async () => {
+          if (!isDesktop() || signal.aborted) return;
+          setLoadingStatusMessage("Opening ontology (fast path)…");
+          const warm = await warmOntologyInMemory(currentProjectId, { timeoutMs: 300_000 });
+          if (!warm.ready && !signal.aborted) {
+            await waitForDesktopOwlApiReady(currentProjectId, {
+              timeoutMs: 300_000,
+              pollMs: 2000,
+              signal,
+            });
+          }
+          if (!isStaleLoad() && !warm.ready) {
+            console.warn("[Dashboard] OWLAPI warm still in progress — entity tabs will retry");
+          }
+          if (!isStaleLoad()) setLoadingStatusMessage("");
+        })();
+
+        void (async () => {
+          await desktopOwlApiGate;
+          if (isStaleLoad()) return;
+          try {
+            if (isDesktop()) {
+              try {
+                const cs = await apiClient.get<any>(
+                  `/api/ontology/cache-status/${encodedProjectId}${cacheBuster}`,
+                  undefined,
+                  { signal },
+                );
+                if (!isStaleLoad()) applyDeclarationCounts(cs);
+              } catch (e) {
+                console.debug("[Dashboard] cache-status counts:", e);
+              }
+            }
+            const res = await apiClient.get<any>(
+              `/api/ontology/metadata/${encodedProjectId}${cacheBuster}`,
+              undefined,
+              { signal },
+            );
+            if (!isStaleLoad()) applyMetadataResponse(res);
+          } catch (e: any) {
+            if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
+              console.error("[Dashboard] Metadata/counts load failed:", e?.message || e);
+            }
+          } finally {
+            if (!isStaleLoad()) setIsMetadataLoading(false);
+          }
+        })();
+
+        void (async () => {
+          await desktopOwlApiGate;
+          if (isStaleLoad()) return;
+          try {
+            const fetchUrl = `/api/ontology/properties/${encodedProjectId}${cacheBuster}`;
+            const res = isDesktop()
+              ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
+              : await apiClient.get<any>(fetchUrl, undefined, { signal });
+            if (!isStaleLoad() && res) {
+              applyPropertiesResponse(res);
+            }
+          } catch (e: any) {
+            if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
+              console.error("[Dashboard] Properties load failed:", e?.message || e);
+            }
+          } finally {
+            if (!isStaleLoad()) setIsPropertiesLoading(false);
+          }
+        })();
+
+        void (async () => {
+          await desktopOwlApiGate;
+          if (isStaleLoad()) return;
+          try {
+            const fetchUrl = `/api/ontology/individuals/${encodedProjectId}${cacheBuster}`;
+            const res = isDesktop()
+              ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
+              : await apiClient.get<any>(fetchUrl, undefined, { signal });
+            if (!isStaleLoad() && res) {
+              setIndividuals(
+                Array.isArray(res?.data)
+                  ? res.data
+                  : Array.isArray(res?.individuals)
+                    ? res.individuals
+                    : [],
+              );
+            }
+          } catch (e: any) {
+            if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
+              console.error("[Dashboard] Individuals load failed:", e?.message || e);
+            }
+          } finally {
+            if (!isStaleLoad()) setIsIndividualsLoading(false);
+          }
+        })();
+
+        void (async () => {
+          await desktopOwlApiGate;
+          if (isStaleLoad()) return;
+          try {
+            const fetchUrl = `/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`;
+            const res = isDesktop()
+              ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
+              : await apiClient.get<any>(fetchUrl, undefined, { signal });
+            if (!isStaleLoad() && res) {
+              const merged = mergeAnnotationProperties(
+                (Array.isArray(res?.data)
+                  ? res.data
+                  : Array.isArray(res?.annotationProperties)
+                    ? res.annotationProperties
+                    : []
+                ).map(mapAnnotationProperty),
+              );
+              setAnnotationProperties(merged);
+              setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(merged));
+            }
+          } catch (e: any) {
+            if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
+              console.error("[Dashboard] Annotation properties load failed:", e?.message || e);
+            }
+          } finally {
+            if (!isStaleLoad()) setIsAnnotationPropertiesLoading(false);
+          }
+        })();
+
+        void (async () => {
+          await desktopOwlApiGate;
+          if (isStaleLoad()) return;
+          try {
+            const fetchUrl = `/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`;
+            const res = isDesktop()
+              ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
+              : await apiClient.get<any>(fetchUrl, undefined, { signal });
+            if (!isStaleLoad() && res) {
+              setDatatypes(
+                Array.isArray(res?.data) ? res.data : Array.isArray(res?.datatypes) ? res.datatypes : [],
+              );
+            }
+          } catch (e: any) {
+            if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
+              console.error("[Dashboard] Datatypes load failed:", e?.message || e);
+            }
+          } finally {
+            if (!isStaleLoad()) setIsDatatypesLoading(false);
+          }
+        })();
 
         // Fetch files list separately (not in parallel to avoid blocking main data load)
         // Admin flow will fetch project-specific files later, regular users fetch all their files here
@@ -3800,9 +4090,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           try {
             const lists = await fetchProjects();
 
-            // Non-workspace mode: always apply mutations directly to GraphDB
-            // (no collaboration, so draft mode causes data loss if user navigates away)
-            const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
+            // Non-workspace web: apply directly to avoid draft loss when navigating away.
+            // Desktop: always use Protege-style private draft until Save (local named graph).
+            const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId && !isDesktop();
 
             if (!lists) {
               console.warn("[Dashboard] ?? No project list available");
@@ -3852,12 +4142,67 @@ const Dashboard: React.FC<DashboardProps> = ({
               myProjectsList.map((f: any) => f.id),
             );
 
-            // Configure mutation service based on whether file is shared
-            // Non-workspace mode: always apply directly to GraphDB to prevent data loss
-            const shouldApplyDirectly = isShared || isNonWorkspaceMode;
+            // Configure mutation service: shared/live OR non-workspace web direct-write.
+            // Desktop and private web projects use per-user draft graphs until Save.
+            // localStorage is the immediate source (written on every explicit toggle, so it is
+            // always up-to-date on the same device). On first visit to a project on a new
+            // device (no localStorage entry), we await the DB once to pick up a cross-device
+            // preference. That await only blocks on genuine first-visit; all other loads are instant.
+            const syncModeKey = projectId ? `ontocode_sync_mode_${projectId}` : null;
+            const savedSyncMode = syncModeKey ? localStorage.getItem(syncModeKey) : null;
+            let shouldApplyDirectly: boolean;
+            if (isNonWorkspaceMode || isShared) {
+              shouldApplyDirectly = true;
+            } else if (savedSyncMode !== null) {
+              // Trust localStorage — it is written on every mode change, so it reflects the
+              // most recent choice made on any device that also had a copy of this browser storage.
+              shouldApplyDirectly = savedSyncMode === "public";
+            } else if (projectId) {
+              // First visit on this device: fetch from DB (one-time cost) for cross-device restore.
+              const dbSyncMode = await userPreferencesService.getSyncMode(projectId);
+              if (dbSyncMode !== null) {
+                shouldApplyDirectly = dbSyncMode === "public";
+                if (syncModeKey) localStorage.setItem(syncModeKey, dbSyncMode);
+              } else {
+                shouldApplyDirectly = true;
+              }
+            } else {
+              shouldApplyDirectly = true;
+            }
             ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
+            ontologyMutationService.setDraftRequired(false); // Clear any stale block from a prior project.
             setSyncMode(shouldApplyDirectly ? "public" : "private");
-            if (isNonWorkspaceMode && !isShared) {
+
+            if (!shouldApplyDirectly && projectId && !isShared && !isNonWorkspaceMode) {
+              const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+              startDraftCopySession(projectId, effectiveUserId, { showModal: true });
+            }
+
+            // Check requireDraftForMembers — members stay in public view-only until they
+            // explicitly choose "Switch to Draft Mode"; no auto-copy on project open.
+            if (projectId && !isNonWorkspaceMode && !isShared) {
+              const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+              draftTrackingService.getDraftSettings(projectId, effectiveUserId)
+                .then(({ requireDraftForMembers: rdm, isOwner }) => {
+                  setRequireDraftForMembers(rdm);
+                  setIsProjectOwner(isOwner);
+                  refreshOpenPRCount();
+                  if ((rdm || isProjectDraftEditorRole) && !isOwner && !isProjectViewerRole) {
+                    if (shouldApplyDirectly) {
+                      // Member has no saved draft preference (public view) — block direct mutations
+                      // so they must explicitly switch to Draft Mode before editing.
+                      ontologyMutationService.setDraftRequired(true, () => setShowProPromptType('draftRequired'));
+                    }
+                    // When !shouldApplyDirectly: preference restore already started the copy above;
+                    // mutations are already going to the draft graph — no block needed.
+                  }
+                })
+                .catch(() => { /* getDraftSettings failed — non-blocking */ });
+            }
+
+            if (isDesktop() && !isShared) {
+              console.log("[Dashboard] 📝 Desktop private draft mode (Protege-style — Save to publish)");
+            } else if (isNonWorkspaceMode && !isShared) {
               console.log("[Dashboard] 📝 Non-workspace mode - mutations apply directly to GraphDB");
             }
 
@@ -3925,24 +4270,44 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] ℹ️ Regular user flow - files already loaded from user email query");
         }
 
-        // Notify user that ontology is fully loaded
-        notificationService.success(
-          "Ontology Loaded",
-          `"${currentProjectId}" is ready! Found ${allProps.length} properties.`,
-        );
+        if (isDesktop() && !isStaleLoad()) {
+          scheduleSilentDesktopFusekiSync(currentProjectId);
+        }
+
+        // Class-tree notification fires when top-level classes are applied (see hierarchy block above).
       } catch (error: any) {
         // Ignore cancellations – these happen when the user switches files mid-load
         if (error?.name === "AbortError" || error?.code === "ERR_CANCELED" || error?.message?.includes("aborted")) {
           console.log("[Dashboard] fetchData cancelled (user switched files)");
-          setIsInitialLoading(false);
+          if (fetchDataGenerationRef.current === loadGeneration) {
+            setIsInitialLoading(false);
+            setIsHierarchyLoading(false);
+            setIsMetadataLoading(false);
+            setIsPropertiesLoading(false);
+            setIsIndividualsLoading(false);
+            setIsAnnotationPropertiesLoading(false);
+            setIsDatatypesLoading(false);
+            setLoadingStatusMessage("");
+          }
           return null;
         }
         console.error("Failed to fetch data:", error);
 
         // Notify user of the error
         notificationService.error("Loading Failed", `Failed to load ontology "${currentProjectId}". Please try again.`);
+        if (fetchDataGenerationRef.current === loadGeneration) {
+          setIsHierarchyLoading(false);
+          setIsMetadataLoading(false);
+          setIsPropertiesLoading(false);
+          setIsIndividualsLoading(false);
+          setIsAnnotationPropertiesLoading(false);
+          setIsDatatypesLoading(false);
+        }
       } finally {
-        setIsInitialLoading(false);
+        // Keep the modal spinner until top-level classes are visible (see keepInitialLoadingForHierarchy).
+        if (fetchDataGenerationRef.current === loadGeneration && !keepInitialLoadingForHierarchy) {
+          setIsInitialLoading(false);
+        }
       }
     },
     [waitForProcessingComplete, applyInstanceCountsToTree, user, fetchProjectFiles, resolveUserEmail],
@@ -3965,21 +4330,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       console.log("[Dashboard] 📥 Raw annotations data received:", data);
-      // Filter out invalid annotations - backend returns propertyIri
-      const validAnnotations = (Array.isArray(data) ? data : []).filter(
-        (ann) => ann && ann.propertyIri && ann.value !== undefined,
-      );
+      const validAnnotations = normalizeOntologyAnnotations(data);
       console.log("[Dashboard] ✅ Valid annotations after filtering:", validAnnotations);
 
-      // Only update if we got data, or if explicitly clearing (validAnnotations.length >= 0 always true, so always update)
-      // But if backend returns empty and we have optimistic updates, keep them for a bit
-      setOntologyAnnotations((prev) => {
-        if (validAnnotations.length === 0 && prev.length > 0) {
-          console.log("[Dashboard] ⚠️ Backend returned empty annotations, keeping optimistic updates");
-          return prev;
-        }
-        return validAnnotations;
-      });
+      setOntologyAnnotations(validAnnotations);
     } catch (error) {
       console.error("[Dashboard] Failed to refresh ontology annotations:", error);
     }
@@ -3998,14 +4352,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         validImports.filter((imp: string) => !imp.startsWith("http://") && !imp.startsWith("https://")),
       );
 
-      // Don't overwrite optimistic updates with empty backend response
-      setOntologyImports((prev) => {
-        if (validImports.length === 0 && prev.length > 0) {
-          console.log("[Dashboard] ⚠️ Backend returned empty imports, keeping optimistic updates");
-          return prev;
-        }
-        return validImports;
-      });
+      setOntologyImports(validImports);
     } catch (error) {
       console.error("[Dashboard] Failed to refresh ontology imports:", error);
     }
@@ -4017,13 +4364,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const response = await apiClient.get<any>(`/api/ontology/ontology/prefixes/${encodeProjectId(projectId)}`);
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
-      const list = Object.entries(data).map(([prefix, namespace]) => ({
-        // Ensure prefix has a colon for display if it's not empty
-        // If it's empty, it's the default namespace, show as ":"
-        prefix: prefix ? (prefix.endsWith(":") ? prefix : `${prefix}:`) : ":",
-        namespace: String(namespace),
-      }));
-      setPrefixMappings(list);
+      setPrefixMappings(normalizePrefixMappings(data));
     } catch (error) {
       console.error("[Dashboard] Failed to refresh prefixes:", error);
     }
@@ -4540,8 +4881,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     const axiom = generalClassAxioms[index];
     setEditingAxiomIndex(index);
     setAxiomDraft({
-      definition: axiom.subClass || axiom.definition || "",
-      superClassIri: axiom.superClass || axiom.superClassIri || "",
+      definition: axiom.subExpression || axiom.definition || "",
+      superClassIri: axiom.superClassIri || "",
     });
     setAxiomDialogOpen(true);
   };
@@ -4549,18 +4890,34 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleUpdateAxiom = async (newSubClass?: string, newSuperClass?: string) => {
     if (!projectId || editingAxiomIndex === null) return;
     try {
-      const oldAxiom = generalClassAxioms[editingAxiomIndex];
+      const oldAxiom = generalClassAxioms[editingAxiomIndex] as {
+        id?: string;
+        value?: string;
+        subClass?: string;
+        superClass?: string;
+        subExpression?: string;
+        definition?: string;
+      };
       const subClass = newSubClass !== undefined ? newSubClass : axiomDraft.definition;
       const superClass = newSuperClass !== undefined ? newSuperClass : axiomDraft.superClassIri;
+      const oldValue =
+        oldAxiom.id ||
+        oldAxiom.value ||
+        (oldAxiom.subClass && oldAxiom.superClass
+          ? `${oldAxiom.subClass} SubClassOf ${oldAxiom.superClass}`
+          : "") ||
+        oldAxiom.subExpression ||
+        oldAxiom.definition ||
+        "";
       console.log("[Dashboard] Updating general class axiom:", {
         projectId,
         oldAxiom,
+        oldValue,
         newAxiom: { subClass, superClass },
       });
 
-      // Use PUT endpoint to update - backend expects oldValue as the full value string
       await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`, {
-        oldValue: oldAxiom.value || oldAxiom.subClass || oldAxiom.definition || "",
+        oldValue,
         subClass,
         superClass: superClass || "",
       });
@@ -4568,9 +4925,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Immediately update UI
       const updatedAxioms = [...generalClassAxioms];
       updatedAxioms[editingAxiomIndex] = {
-        value: `${subClass} SubClassOf ${superClass}`,
-        subClass,
-        superClass: superClass || "",
         definition: subClass,
         superClassIri: superClass || "",
         subExpression: subClass,
@@ -4594,9 +4948,23 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleDeleteAxiom = async (index: number) => {
     if (!projectId) return;
     try {
-      const axiom = generalClassAxioms[index];
-      // Backend expects the 'value' field or construct it from subClass
-      const value = axiom.value || axiom.subClass || axiom.definition || axiom.subExpression || "";
+      const axiom = generalClassAxioms[index] as {
+        id?: string;
+        value?: string;
+        subClass?: string;
+        superClass?: string;
+        subExpression?: string;
+        definition?: string;
+      };
+      const value =
+        axiom.id ||
+        axiom.value ||
+        (axiom.subClass && axiom.superClass
+          ? `${axiom.subClass} SubClassOf ${axiom.superClass}`
+          : "") ||
+        axiom.subExpression ||
+        axiom.definition ||
+        "";
       console.log("[Dashboard] Deleting general class axiom:", { projectId, axiom, value });
 
       if (!value) {
@@ -4629,6 +4997,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Map backend fields to frontend expected structure
       const mappedData = Array.isArray(data)
         ? data.map((axiom: any) => ({
+            id: axiom.id || axiom.subClass || "",
             value: axiom.value,
             subClass: axiom.subClass || "",
             superClass: axiom.superClass || "",
@@ -4659,10 +5028,10 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Update real-time sync status based on collaboration state
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !user?.userId) return;
 
     const activeUsersInProject = Array.from(collaboration.state.activeUsers.values()).filter(
-      (u) => u.projectId === projectId && u.userId !== user?.id,
+      (u) => u.projectId === projectId && u.userId !== user?.userId,
     );
 
     if (activeUsersInProject.length > 0) {
@@ -4670,7 +5039,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       ontologyMutationService.setRealTimeSync(true);
       setSyncMode("public");
     }
-  }, [projectId, collaboration.state.activeUsers, user?.id]);
+  }, [projectId, collaboration.state.activeUsers, user?.userId]);
 
   // Collaborative cursor tracking - includes clicks and mouse movement
   useEffect(() => {
@@ -4685,7 +5054,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         window.vscode.postMessage({
           type: "broadcastCursor",
           projectId,
-          userId: user.id,
+          userId: user.userId,
           userName: user.username || user.email || "Anonymous",
           position: newCursor,
           timestamp: Date.now(),
@@ -4720,7 +5089,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
 
-      if (message.type === "cursorUpdate" && message.userId !== user?.id) {
+      if (message.type === "cursorUpdate" && message.userId !== user?.userId) {
         // Generate consistent color for each user
         const color = getUserColor(message.userId);
 
@@ -4797,35 +5166,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
   };
 
-  const loadClassInstances = useCallback(async () => {
-    if (!projectId || !selectedClassForIndividuals) {
-      setClassInstances([]);
-      return;
-    }
-    setClassInstancesLoading(true);
-    try {
-      const response = await apiClient.get<any>(
-        `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`,
-      );
-      const payload = response?.data || response;
-      const instances = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
-      setClassInstances(instances);
-    } catch (error) {
-      console.error("[Dashboard] Failed to load class instances:", error);
-      setClassInstances([]);
-    } finally {
-      setClassInstancesLoading(false);
-    }
-  }, [projectId, selectedClassForIndividuals]);
-
-  useEffect(() => {
-    setClassInstancesQuery("");
-    setClassInstancesView("direct");
-    setSelectedClassIndividual(null);
-    setSelectedClassIndividualDetails(null);
-    loadClassInstances();
-  }, [loadClassInstances]);
-
   const refreshSelectedClassIndividualDetails = useCallback(async () => {
     if (!projectId || !selectedClassIndividual?.id) {
       setSelectedClassIndividualDetails(null);
@@ -4843,6 +5183,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           types: details.types || selectedClassIndividual.types,
           annotations: details.annotations || selectedClassIndividual.annotations,
           propertyAssertions: details.propertyAssertions || [],
+          sameIndividualAs: details.sameIndividualAs || selectedClassIndividual.sameIndividualAs,
+          differentIndividualFrom: details.differentIndividualFrom || selectedClassIndividual.differentIndividualFrom,
         });
       }
     } catch (error) {
@@ -4856,6 +5198,71 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     refreshSelectedClassIndividualDetails();
   }, [refreshSelectedClassIndividualDetails]);
+
+  const openClassIndividualSameDiffDialog = useCallback(
+    async (mode: "same" | "different") => {
+      setClassIndividualSameDiffDialog({ mode });
+      try {
+        if (!projectId) return;
+        const response = await apiClient.get<any>(`/api/ontology/individuals/${projectId}`);
+        const loadedIndividuals = Array.isArray(response?.data)
+          ? response.data
+          : response?.data?.individuals || response?.individuals || [];
+        setClassIndividualCandidateIndividuals(loadedIndividuals);
+      } catch (error) {
+        console.error("[Dashboard] Failed to load individuals for same/different dialog:", error);
+        setClassIndividualCandidateIndividuals([]);
+      }
+    },
+    [projectId],
+  );
+
+  const deleteClassIndividualSameDifferent = useCallback(
+    async (mode: "same" | "different", targetIri: string) => {
+      if (!projectId || !selectedClassIndividualDetails) return;
+      try {
+        if (mode === "same") {
+          await ontologyMutationService.deleteSameIndividual(projectId, selectedClassIndividualDetails.id, targetIri);
+        } else {
+          await ontologyMutationService.deleteDifferentIndividual(projectId, selectedClassIndividualDetails.id, targetIri);
+        }
+        await refreshSelectedClassIndividualDetails();
+      } catch (error) {
+        console.error("[Dashboard] Failed to remove same/different individual assertion:", error);
+        notificationService.error("Remove Failed", "Could not remove same/different individual assertion.");
+      }
+    },
+    [projectId, selectedClassIndividualDetails, refreshSelectedClassIndividualDetails],
+  );
+
+  useEffect(() => {
+    if (!projectId || !selectedClassIndividual?.id) {
+      setClassIndividualUsages([]);
+      return;
+    }
+
+    let alive = true;
+    setClassIndividualUsageLoading(true);
+
+    (async () => {
+      try {
+        const response = await apiClient.get<any>(
+          `/api/ontology/individuals/usage/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`,
+        );
+        const usageData = response?.data?.data || response?.data || response || [];
+        if (alive) setClassIndividualUsages(Array.isArray(usageData) ? usageData : []);
+      } catch (error) {
+        console.error("[Dashboard] Failed to load individual usage:", error);
+        if (alive) setClassIndividualUsages([]);
+      } finally {
+        if (alive) setClassIndividualUsageLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [projectId, selectedClassIndividual?.id]);
 
   const decodeTokenEmail = (token?: string | null) => {
     if (!token) return null;
@@ -5036,6 +5443,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [user?.email, user?.workspaceId, resolveUserEmail]); // Track workspace mode changes + email fallback
 
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
+    // Webapp: don't navigate to editor while import is still in progress
+    const importState = projectImportStatuses[selectedProjectId];
+    if (!isDesktop() && importState &&
+        importState.type !== "IMPORT_COMPLETED" && importState.type !== "IMPORT_FAILED") {
+      return;
+    }
+
     setHasUserSelectedFile(true); // Mark that user has manually selected a file
     setProjectId(selectedProjectId);
     // In free mode, use projectId as the active file identifier
@@ -5047,7 +5461,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     setActiveFileName(null);
     setShowProjectSelector(false);
     fetchData(selectedProjectId);
-  }, []);
+  }, [projectImportStatuses]);
   // fetchData captured in closure, removed to prevent infinite loop
 
   const handleDeleteFile = useCallback((projectIdToDelete: string, fileName: string) => {
@@ -5098,11 +5512,56 @@ const Dashboard: React.FC<DashboardProps> = ({
     setShowProjectSelector(true);
   }, [fetchProjects]);
 
+  const handleLoadOpenAnother = useCallback(() => {
+    setLoadFailure(null);
+    setIsInitialLoading(false);
+    setShowLoadingChoice(false);
+    setIsExpectingFileReady(false);
+    loadingPromiseRef.current = null;
+    fetchProjects();
+    if (isDesktop()) {
+      setShowOpenDialog(true);
+    } else {
+      setShowProjectSelector(true);
+    }
+  }, [fetchProjects]);
+
+  const handleLoadRetry = useCallback(async () => {
+    const pid = loadFailure?.projectId || projectId;
+    if (!pid) return;
+    setLoadFailure(null);
+    setIsInitialLoading(true);
+    setIsExpectingFileReady(false);
+    setLoadingStatusMessage("Retrying…");
+    loadingPromiseRef.current = null;
+    try {
+      if (pid.includes("--")) {
+        await apiClient.post(`/api/ontology/reload/${encodeProjectId(pid)}`, {});
+        const poll = (window as any).electronAPI?.pollImportStatus;
+        if (isDesktop() && poll) poll(pid);
+      }
+      loadingPromiseRef.current = fetchData(pid, true, initialProjectId, true);
+      await loadingPromiseRef.current;
+    } catch (e: any) {
+      setLoadFailure({
+        message: e?.message || "Retry failed. Try opening the file again.",
+        projectId: pid,
+      });
+      setIsInitialLoading(false);
+    }
+  }, [loadFailure, projectId, fetchData, initialProjectId]);
+
   useEffect(() => {
     if (classHierarchy.length > 0 && classHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
       const owlThingId = classHierarchy[0].id;
       const childCount = classHierarchy[0].children?.length || 0;
       console.log("[Dashboard] Class hierarchy loaded, owl:Thing has", childCount, "top-level children");
+
+      // Classes are usable once the hierarchy fetch completes — close the import modal.
+      // Section loaders (tab spinners + SectionLoadingBar) cover metadata/properties/etc.
+      if (!isHierarchyLoading) {
+        setIsInitialLoading(false);
+      }
 
       // Auto-expand owl:Thing when it has children (preserve other expanded nodes)
       if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
@@ -5113,17 +5572,112 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [classHierarchy]);
 
+  // ── Bulletproof anti-hang watchdog ─────────────────────────────────────────
+  // The loading modal is opened by many code paths (file upload, fileReady
+  // WebSocket message, project switch, browser mode…). On desktop the WebSocket
+  // "completed" signal is unreliable, so any of those paths can leave the
+  // spinner stuck forever. This watchdog makes that impossible: while the modal
+  // is open it polls the backend import status and force-closes the spinner as
+  // soon as the backend reports the project is ready (or errored), and in any
+  // case after a hard time cap. It NEVER blocks legitimate work — it only ever
+  // closes a spinner, and the data continues loading via the normal effects.
   useEffect(() => {
-    if (inferredClassHierarchy.length > 0 && inferredClassHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
-      const owlThingId = inferredClassHierarchy[0].id;
-      const childCount = inferredClassHierarchy[0].children?.length || 0;
+    const open = isInitialLoading || showLoadingChoice;
+    // Only poll status for file-level project IDs (contain '--').
+    // Parent-only IDs (e.g. "proj-abc123") return 404 from the status endpoint.
+    if (!open || !projectId || !projectId.includes("--")) return;
 
-      if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
-        console.log("[Dashboard] Auto-expanding owl:Thing in inferred hierarchy");
-        setExpandedNodes((prev) => (prev.includes(owlThingId) ? prev : [...prev, owlThingId]));
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = Date.now();
+    const HARD_CAP_MS = isDesktop() ? 180_000 : 600_000;
+
+    const closeSpinner = (reason: string) => {
+      if (cancelled) return;
+      console.warn("[Dashboard] Loading watchdog closing modal spinner:", reason);
+      setIsInitialLoading(false);
+      setShowLoadingChoice(false);
+      setLoadingStatusMessage("");
+      // Release the in-flight load lock so a previous/stuck load can't make the
+      // next open silently skip with "Already loading, skipping duplicate".
+      loadingPromiseRef.current = null;
+    };
+
+    const failAndRedirect = (msg: string) => {
+      if (cancelled) return;
+      closeSpinner(msg);
+      if (isDesktop()) {
+        setLoadFailure({ message: msg, projectId: projectId || undefined });
+      } else {
+        showToast(msg, "error");
+        onGoToProjectDashboardRef.current?.();
       }
-    }
-  }, [inferredClassHierarchy]);
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
+      if (Date.now() - startedAt > HARD_CAP_MS) {
+        failAndRedirect(
+          isDesktop()
+            ? "Loading timed out. OWLAPI could not open this file in time. Try again or choose another file."
+            : "Loading timed out. The ontology may be too large or the server is busy. Please try again.",
+        );
+        return;
+      }
+      try {
+        if (isDesktop()) {
+          const cs = await apiClient.get<any>(`/api/ontology/cache-status/${encodeProjectId(projectId)}`);
+          if (cs?.owlapiReady ?? cs?.data?.owlapiReady) {
+            setImportReadyToBrowse(true);
+            setLoadingStatusMessage("OWLAPI ready — opening editor…");
+            closeSpinner("desktop owlapi ready");
+            return;
+          }
+        }
+        const res = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(projectId)}`);
+        const status = res?.data?.status || res?.status;
+        if (status === "ERROR") {
+          const errMsg = res?.data?.error || res?.error || "Failed to load ontology. Please check the file and try again.";
+          failAndRedirect(errMsg);
+          setImportReadyToBrowse(false);
+          return;
+        }
+        if (status === "COMPLETED") {
+          setImportReadyToBrowse(true);
+          setLoadingStatusMessage("Ready to browse — class tree and annotations available");
+          closeSpinner(`backend status=${status} — ready to browse`);
+          return;
+        }
+      } catch {
+        // Status endpoint unavailable — keep waiting until the hard cap.
+      }
+      if (!cancelled) timer = setTimeout(tick, 3000);
+    };
+
+    timer = setTimeout(tick, 3000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [isInitialLoading, showLoadingChoice, projectId, showToast]);
+
+  useEffect(() => {
+    if (!projectId || !showImportClosure) return;
+    const loadImportClosure = async () => {
+      try {
+        const res = await apiClient.get<any>(
+          `/api/ontology/metadata/${encodeProjectId(projectId)}/imports/closure`,
+        );
+        const payload = res?.data || res;
+        if (payload?.closure && typeof payload.closure === "object") {
+          setImportClosureMap(payload.closure);
+        }
+      } catch (error) {
+        console.warn("[Dashboard] Failed to load import closure:", error);
+      }
+    };
+    void loadImportClosure();
+  }, [projectId, showImportClosure, ontologyImports]);
 
   // Fetch projects list on mount (but don't auto-load a file)
   // This populates the file selector dropdown when user clicks it
@@ -5159,11 +5713,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] ✅ Fetching all projects for user email:", resolvedEmail || "(none)");
     fetchProjects();
 
-    // Non-workspace mode: auto-load the last opened file from localStorage
-    if (isNonWorkspaceMode && storedProjectId && !hasUserSelectedFileRef.current) {
-      console.log("[Dashboard] 🔄 Non-workspace mode - restoring last opened file:", storedProjectId);
+    // Desktop / non-workspace: auto-load the last opened ontology from localStorage
+    if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.current) {
+      console.log("[Dashboard] 🔄 Restoring last opened ontology:", storedProjectId);
       hasUserSelectedFileRef.current = true;
       setHasUserSelectedFile(true);
+      setProjectId(storedProjectId);
+      if (!initialProjectId) {
+        setActiveFileId(storedProjectId);
+      }
       setActiveFileName(storedProjectId);
       fetchData(storedProjectId, false)
         .then(() => {
@@ -5188,12 +5746,32 @@ const Dashboard: React.FC<DashboardProps> = ({
     setProjectFiles([]);
   }, [initialProjectId]);
 
+  // When editor opens with a project but no specific file (e.g. Editor button from Project Library),
+  // pre-fetch project files so the Open File dialog isn't empty.
+  useEffect(() => {
+    if (initialProjectId && (!selectedFileId || selectedFileId === "__editor__")) {
+      fetchProjectFiles(initialProjectId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialProjectId]);
+
   // Track if a file is currently being loaded to prevent duplicate loads
   const fileLoadingRef = useRef(false);
   const lastLoadedFileRef = useRef<string | null>(null);
 
+  /** Skip hierarchy/cache polls until file-scoped projectId is active (not parent-only). */
+  const shouldDeferHierarchyDuringFileOpen = useCallback(() => {
+    if (fileLoadingRef.current) return true;
+    if (initialProjectId && activeFileId && projectId === initialProjectId) return true;
+    return false;
+  }, [initialProjectId, activeFileId, projectId]);
+
   // AbortController for cancelling in-flight fetchData requests when the user switches files
   const fetchAbortControllerRef = useRef<AbortController | null>(null);
+  // Bumped on each fetchData call so stale finally/handlers cannot clear a newer load's spinners.
+  const fetchDataGenerationRef = useRef(0);
+  /** Desktop: Fuseki sections deferred until the user opens each Entities tab. */
+  const desktopDeferredSectionsLoadedRef = useRef<Set<string>>(new Set());
 
   // Auto-load selected file from Project Library (admin flow)
   useEffect(() => {
@@ -5252,6 +5830,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      if (autoDraftPollRef.current) clearInterval(autoDraftPollRef.current);
+      if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
+      if (conflictCheckTimerRef.current) clearTimeout(conflictCheckTimerRef.current);
     };
   }, []);
 
@@ -5262,6 +5843,24 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
     const parts = iri.split("/");
     return parts[parts.length - 1] || iri;
+  };
+
+  const getImportResolutionStatus = (iri: string): { label: string; tone: "success" | "warning" | "error" | "neutral"; detail: string } => {
+    const resolution = (metadata as any)?.importResolution || {};
+    const loaded = Array.isArray(resolution.loaded) ? resolution.loaded : [];
+    const declaredOnly = Array.isArray(resolution.declaredOnly) ? resolution.declaredOnly : [];
+    const failed = resolution.failed && typeof resolution.failed === "object" ? resolution.failed : {};
+
+    if (loaded.includes(iri)) {
+      return { label: "Loaded", tone: "success", detail: "Imported ontology content was resolved and loaded into this project graph." };
+    }
+    if (Object.prototype.hasOwnProperty.call(failed, iri)) {
+      return { label: "Failed", tone: "error", detail: String(failed[iri] || "Import could not be loaded.") };
+    }
+    if (declaredOnly.includes(iri)) {
+      return { label: "Declared only", tone: "warning", detail: "The owl:imports declaration exists, but content was not resolved on the server." };
+    }
+    return { label: "Declared", tone: "neutral", detail: "Declared by owl:imports. Load status is unknown until import resolution runs." };
   };
 
   const resolvePropertyIriByLabel = (labelOrIri: string, properties: Property[]) => {
@@ -5396,16 +5995,41 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.log(message, "message");
       // CRITICAL: Always handle showLoading even before mount - this is time-sensitive
       // The extension sends showLoading right after file selection, before the webview may be fully ready
+      if (message.type === "uploadProgress") {
+        const targetProject = message.projectId;
+        const isRelevant =
+          targetProject === projectId ||
+          targetProject === pendingImportProjectIdRef.current ||
+          hasUserSelectedFileRef.current;
+        if (isRelevant) {
+          setBackgroundImportProgress(message.percent);
+          setLoadingStatusMessage(message.message || `Uploading: ${message.percent}%`);
+        }
+        return;
+      }
+
       if (message.type === "showLoading") {
         console.log("[Dashboard] showLoading received - file upload starting for project:", message.projectId);
         setHasUserSelectedFile(true);
         hasUserSelectedFileRef.current = true;
         pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
+        setPendingImportProjectId(message.projectId);
         console.log("[Dashboard] Set pendingImportProjectIdRef.current to:", pendingImportProjectIdRef.current);
         setIsExpectingFileReady(true);
-        // Show loading dialog immediately
-        setShowLoadingChoice(true);
+        setImportReadyToBrowse(false);
         setLoadingProjectName(message.fileName || message.projectId || "Processing file upload...");
+        setBackgroundImportProgress(0);
+        setLoadingStatusMessage("Preparing upload...");
+        if (window.vscode && message.projectId) {
+          window.vscode.postMessage({ type: "getQueueStatus", projectId: message.projectId });
+        }
+        if (isDesktop()) {
+          // Desktop: block with Protégé-style loading dialog
+          setShowLoadingChoice(true);
+        } else {
+          // Webapp: stay in project library — import card shows live progress
+          setShowProjectSelector(true);
+        }
         // Don't fetch projects yet - wait for upload to complete
         return;
       }
@@ -5540,8 +6164,11 @@ const Dashboard: React.FC<DashboardProps> = ({
               );
               // Wait for the file list refresh to complete, then load the new file
               fetchProjects();
-              // Use a small delay to let the file list state update
+              // Use a small delay to let the file list state update.
+              // Guard with isMountedRef so navigation away before the timer fires
+              // does not re-set selectedFileId in App.tsx via onFileSelected.
               setTimeout(() => {
+                if (!isMountedRef.current) return;
                 handleLoadProjectFile(message.uploadedFileId, message.uploadedFileName);
               }, 200);
             } else {
@@ -5601,7 +6228,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           // Only update projectId if it's different (ignoring timestamp suffixes)
           const currentBaseId = projectId?.replace(/-\d+$/, "");
           const newBaseId = message.projectId?.replace(/-\d+$/, "");
-          if (currentBaseId !== newBaseId) {
+          const isSameFile = currentBaseId === newBaseId;
+          if (!isSameFile) {
             console.log("[Dashboard] Updating projectId from", projectId, "to", message.projectId);
             setProjectId(message.projectId);
           } else {
@@ -5621,7 +6249,29 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log(message, "message=====>", projId);
           setLoadingProjectName(message.uploadedFileName);
           userLoadingChoice.current = null; // Reset choice for new loading
-          setShowLoadingChoice(true);
+
+          // If the same file is already loaded, skip the blocking loading dialog — the data
+          // is already in state. A silent background refresh keeps counts up to date.
+          // Use ref (not state) to avoid stale closure capturing the wrong value.
+          if (isSameFile && hasUserSelectedFileRef.current) {
+            console.log("[Dashboard] Same file already loaded — skipping loading dialog, doing silent refresh");
+            setShowLoadingChoice(false);
+            setIsInitialLoading(false);
+            if (!loadingPromiseRef.current) {
+              loadingPromiseRef.current = fetchData(message.projectId, false)
+                .then(() => { loadingPromiseRef.current = null; })
+                .catch(() => { loadingPromiseRef.current = null; });
+            }
+            break;
+          }
+
+          // If triggered by "Create New File", skip the choice dialog and load immediately
+          if (autoLoadNewFileRef.current) {
+            autoLoadNewFileRef.current = false;
+          } else if (isDesktop()) {
+            // Webapp uses the import card in ProjectSelector, not this blocking dialog
+            setShowLoadingChoice(true);
+          }
 
           // Start loading in background and store the promise (only if not already loading)
           if (loadingPromiseRef.current) {
@@ -5683,22 +6333,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                 type: message.status.type,
                 status: message.status.status,
                 progress: message.status.progress,
+                metadata: message.status.metadata,
               },
             }));
 
             // Update loading status message for user feedback
             if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.message) {
-              setLoadingStatusMessage(message.status.metadata.message);
+              setLoadingStatusMessage(sanitizeImportMessage(message.status.metadata.message as string));
               if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
             } else if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.stage) {
-              const stage = message.status.metadata.stage;
-              const stageMessages: Record<string, string> = {
-                parsing: "Parsing ontology file...",
-                "graphdb-loading": "Loading data into GraphDB (this may take several minutes for large files)...",
-                "graphdb-load-complete": "GraphDB load complete, computing metadata...",
-                "computing-metadata": "Computing ontology statistics...",
-              };
-              setLoadingStatusMessage(stageMessages[stage] || "Processing...");
+              const stage = message.status.metadata.stage as string;
+              setLoadingStatusMessage(
+                importStageLabel(stage, message.status.metadata?.message as string | undefined),
+              );
               if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
             }
           }
@@ -5750,8 +6397,24 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               // Clear pending import tracking
               pendingImportProjectIdRef.current = null;
+              setPendingImportProjectId(null);
+              setInImportQueue(false);
+              setQueuePosition(undefined);
+              setTotalInQueue(undefined);
+              setEstimatedWaitTimeMs(undefined);
               console.log("[Dashboard] Cleared pendingImportProjectIdRef");
               setIsExpectingFileReady(false);
+
+              // Webapp: keep user in project library — the card turns green, user clicks to open
+              if (!isDesktop()) {
+                setShowLoadingChoice(false);
+                setBackgroundImportActive(false);
+                setBackgroundImportProgress(undefined);
+                setIsInitialLoading(false);
+                userLoadingChoice.current = null;
+                setTimeout(() => fetchProjects(), 500);
+                break;
+              }
 
               // Data loading is handled by the fileReady message (always sent before IMPORT_COMPLETED).
               // Here we only clean up UI state. If fetchData is already in progress, chain cleanup onto it;
@@ -5764,15 +6427,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                 setTotalInQueue(undefined);
                 setEstimatedWaitTimeMs(undefined);
                 setShowProjectSelector(false);
-                setIsInitialLoading(false);
                 setBackgroundImportActive(false);
                 setBackgroundImportProgress(undefined);
                 userLoadingChoice.current = null;
               };
 
-              // Show completion notification
-              const importedName = message.status.filename || message.status.projectId || "Ontology";
-              notificationService.success("Import Complete", `"${importedName}" has been loaded successfully.`);
+              setIsHierarchyLoading(true);
+              setLoadingStatusMessage(
+                message.status.metadata?.message || "Loading class tree…",
+              );
 
               if (loadingPromiseRef.current) {
                 console.log("[Dashboard] fetchData already in progress (from fileReady), chaining UI cleanup");
@@ -5780,8 +6443,32 @@ const Dashboard: React.FC<DashboardProps> = ({
                   cleanupUI();
                 });
               } else {
-                console.log("[Dashboard] No fetchData in progress, cleaning up UI directly");
-                cleanupUI();
+                const targetProjectId = message.status.projectId || projectId;
+                // Guard: skip if the project is already loaded.
+                // The background checker fires every 5s and re-dispatches IMPORT_COMPLETED
+                // after the first load completes (loadingPromiseRef is null at that point),
+                // which would cause infinite reload loops.
+                const owlThingChildren =
+                  classHierarchy.find((n) => n.id === "http://www.w3.org/2002/07/owl#Thing")?.children?.length ?? 0;
+                if (targetProjectId === projectId && owlThingChildren > 0 && metadata) {
+                  console.log("[Dashboard] IMPORT_COMPLETED: project already loaded, skipping redundant fetch");
+                  cleanupUI();
+                  setIsInitialLoading(false);
+                  setIsHierarchyLoading(false);
+                } else {
+                  // Server-side import (upload-by-file-ref) bypasses the VSCode bridge,
+                  // so no fileReady message is sent. Trigger fetchData here directly.
+                  console.log("[Dashboard] No fetchData in progress — server-side import flow, triggering fetchData now");
+                  loadingPromiseRef.current = fetchData(targetProjectId, false, initialProjectId)
+                    .then(() => {
+                      loadingPromiseRef.current = null;
+                      cleanupUI();
+                    })
+                    .catch(() => {
+                      loadingPromiseRef.current = null;
+                      cleanupUI();
+                    });
+                }
               }
 
               // Refresh projects list
@@ -5800,7 +6487,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               status: message.status.status,
             });
 
-            const errorMessage = message.status.statusMessage || message.status.metadata?.error || "Import failed";
+            const errorMessage =
+              sanitizeImportMessage(message.status.statusMessage) ||
+              sanitizeImportMessage(message.status.metadata?.error as string) ||
+              "Import failed";
             const projectName = message.status.projectId || "unknown";
 
             // Extract more user-friendly error message
@@ -5809,17 +6499,17 @@ const Dashboard: React.FC<DashboardProps> = ({
               errorMessage.includes("UnknownHostException: graphdb") ||
               errorMessage.includes("UnknownHostException")
             ) {
-              displayError = "Cannot connect to GraphDB. Please ensure GraphDB service is running and accessible.";
+              displayError = "Cannot connect to the ontology service. Please ensure backend services are running.";
               console.log("[Dashboard] 🔄 Translated error to user-friendly message (UnknownHost)");
             } else if (errorMessage.includes("Connection refused") || errorMessage.includes("ConnectException")) {
-              displayError = "GraphDB connection refused. Please verify GraphDB is running on the correct port.";
+              displayError = "Ontology service connection refused. Please verify backend services are running.";
               console.log("[Dashboard] 🔄 Translated error to user-friendly message (Connection refused)");
             } else if (errorMessage.includes("HTTP error code 404")) {
-              displayError = "Repository not found or not initialized. Please check GraphDB configuration.";
+              displayError = "Ontology data store not found or not initialized. Please check service configuration.";
               console.log("[Dashboard] 🔄 Translated error to user-friendly message (404)");
             } else if (errorMessage.includes("unable to start transaction")) {
               displayError =
-                "Unable to start database transaction. Please verify GraphDB is running and the repository exists.";
+                "Unable to start database transaction. Please verify backend services are running.";
               console.log("[Dashboard] 🔄 Translated error to user-friendly message (transaction)");
             }
 
@@ -5831,21 +6521,35 @@ const Dashboard: React.FC<DashboardProps> = ({
             // Close dialogs and clear background progress if this is the current project
             if (message.status.projectId === projectId) {
               console.log("[Dashboard] Closing dialogs for current project");
-              setTimeout(() => {
-                setShowLoadingChoice(false);
-                setShowQueueStatus(false);
-                setQueuePosition(undefined);
-                setTotalInQueue(undefined);
-                setEstimatedWaitTimeMs(undefined);
-                setBackgroundImportActive(false);
-                setBackgroundImportProgress(undefined);
-              }, 2000);
+              setLoadFailure({ message: displayError, projectId: message.status.projectId });
+              setShowLoadingChoice(false);
+              setShowQueueStatus(false);
+              setIsInitialLoading(false);
+              setIsExpectingFileReady(false);
+              setQueuePosition(undefined);
+              setTotalInQueue(undefined);
+              setEstimatedWaitTimeMs(undefined);
+              setBackgroundImportActive(false);
+              setBackgroundImportProgress(undefined);
+              loadingPromiseRef.current = null;
             }
           }
 
-          // Show queue status when import starts
+          // Show queue status when import starts.
+          // Also: if IMPORT_PROGRESS arrives for the current project with nothing showing,
+          // activate the background banner (not the modal) so the user sees progress without
+          // a dialog popping up again after they dismissed it.
           if (message.status.type === "IMPORT_STARTED" && message.status.projectId === projectId) {
             setShowQueueStatus(true);
+          }
+          if (
+            message.status.type === "IMPORT_PROGRESS" &&
+            message.status.projectId === projectId &&
+            !showLoadingChoice && !showQueueStatus && !backgroundImportActive
+          ) {
+            // Auto-activate the background progress banner so the user always has visibility
+            setBackgroundImportActive(true);
+            if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
           }
 
           // Clear project-specific status after completion/failure
@@ -5871,11 +6575,19 @@ const Dashboard: React.FC<DashboardProps> = ({
           setShowLoadingChoice(false);
           setShowQueueStatus(false);
           setIsInitialLoading(false);
+          setIsExpectingFileReady(false);
           setBackgroundImportActive(false);
           setBackgroundImportProgress(undefined);
           setQueuePosition(undefined);
           setTotalInQueue(undefined);
           setEstimatedWaitTimeMs(undefined);
+          loadingPromiseRef.current = null;
+          if (message.projectId === projectId || !projectId) {
+            setLoadFailure({
+              message: sanitizeImportMessage(message.error) || "Import failed",
+              projectId: message.projectId,
+            });
+          }
           notificationService.error("Import Failed", `Failed to import ontology: ${message.error || "Unknown error"}`);
           break;
 
@@ -5889,6 +6601,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           setQueuePosition(undefined);
           setTotalInQueue(undefined);
           setEstimatedWaitTimeMs(undefined);
+          setInImportQueue(false);
+          setPendingImportProjectId(null);
           notificationService.error(
             "Import Timeout",
             "The import operation took too long. Your ontology may still be processing. Please check back later.",
@@ -5904,18 +6618,34 @@ const Dashboard: React.FC<DashboardProps> = ({
           setLoadingStatusMessage(message.message);
           break;
 
-        case "queueStatusUpdate":
-          if (message.status?.projectId === projectId) {
-            setQueuePosition(message.status.queuePosition);
+        case "queueStatusUpdate": {
+          const qProjectId = message.status?.projectId;
+          const isQueueRelevant =
+            qProjectId === projectId ||
+            qProjectId === pendingImportProjectIdRef.current ||
+            isExpectingFileReady;
+          if (isQueueRelevant && message.status) {
+            const status = message.status.status;
+            const position = message.status.queuePosition ?? 0;
+            setQueuePosition(position);
             setTotalInQueue(message.status.totalInQueue);
             setEstimatedWaitTimeMs(message.status.estimatedWaitTimeMs);
-            if (message.status.status === "COMPLETED" || message.status.status === "FAILED") {
+            if (message.status.message) {
+              setLoadingStatusMessage(message.status.message);
+            }
+            if (status === "QUEUED" || status === "PROCESSING") {
+              setInImportQueue(true);
+              setShowQueueStatus(true);
+            }
+            if (status === "COMPLETED" || status === "FAILED") {
               setQueuePosition(undefined);
               setTotalInQueue(undefined);
               setEstimatedWaitTimeMs(undefined);
+              setInImportQueue(false);
             }
           }
           break;
+        }
 
         case "citationFormatted":
           // Handle formatted citation from extension (legacy path)
@@ -5949,6 +6679,44 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] 📢 Attaching message listener");
     window.addEventListener("message", handleMessage);
 
+    // CollaborationContext dispatches CustomEvent("importStatusUpdate") from WebSocket.
+    // The "message" listener above only catches VSCode postMessage — bridge the gap here.
+    const handleImportStatusCustomEvent = (e: Event) => {
+      const status = (e as CustomEvent).detail;
+      handleMessage({ data: { type: "importStatusUpdate", status } } as MessageEvent);
+    };
+    window.addEventListener("importStatusUpdate", handleImportStatusCustomEvent);
+
+    const handleQueueStatusCustomEvent = (e: Event) => {
+      const status = (e as CustomEvent).detail;
+      handleMessage({ data: { type: "queueStatusUpdate", status } } as MessageEvent);
+    };
+    window.addEventListener("queueStatusUpdate", handleQueueStatusCustomEvent);
+
+    const handleQueueStatsCustomEvent = (e: Event) => {
+      const stats = (e as CustomEvent).detail;
+      handleMessage({ data: { type: "queueStats", stats } } as MessageEvent);
+    };
+    window.addEventListener("queueStatsUpdate", handleQueueStatsCustomEvent);
+
+    // Force-close the loading dialog when the preload signals import is done
+    // but the normal condition (isCurrentProject || isPendingImport) didn't fire.
+    const handleForceClose = () => {
+      console.log("[Dashboard] forceCloseLoadingDialog received — clearing spinner");
+      setIsInitialLoading(false);
+      setShowLoadingChoice(false);
+      setShowQueueStatus(false);
+      setBackgroundImportActive(false);
+      setBackgroundImportProgress(undefined);
+      pendingImportProjectIdRef.current = null;
+      setPendingImportProjectId(null);
+      setInImportQueue(false);
+      setQueuePosition(undefined);
+      setTotalInQueue(undefined);
+      setEstimatedWaitTimeMs(undefined);
+    };
+    window.addEventListener("forceCloseLoadingDialog", handleForceClose);
+
     // CRITICAL: Send webviewReady AFTER listener is attached, but ONLY ONCE
     // This ensures we receive any immediate messages (like showLoading) from the extension
     if (window.vscode && !webviewReadySentRef.current) {
@@ -5960,8 +6728,44 @@ const Dashboard: React.FC<DashboardProps> = ({
     return () => {
       console.log("[Dashboard] 📢 Removing message listener");
       window.removeEventListener("message", handleMessage);
+      window.removeEventListener("importStatusUpdate", handleImportStatusCustomEvent);
+      window.removeEventListener("queueStatusUpdate", handleQueueStatusCustomEvent);
+      window.removeEventListener("queueStatsUpdate", handleQueueStatsCustomEvent);
+      window.removeEventListener("forceCloseLoadingDialog", handleForceClose);
     };
-  }, [projectId, initialProjectId, isExpectingFileReady]); // Remove fetchData to prevent infinite loop - it's captured in the closure
+  }, [projectId, initialProjectId, isExpectingFileReady, showLoadingChoice]); // Remove fetchData to prevent infinite loop - it's captured in the closure
+
+  // Poll import queue while a file upload/import is in progress (covers desktop/no-auth WS gaps)
+  useEffect(() => {
+    const activeProjectId = pendingImportProjectId || projectId;
+    if (!activeProjectId || (!showLoadingChoice && !isExpectingFileReady)) {
+      return;
+    }
+
+    const pollQueue = async () => {
+      try {
+        const positionData: any = await apiClient.get(`/api/import-queue/position/${activeProjectId}`);
+        if (!positionData?.inQueue) {
+          setInImportQueue(false);
+          return;
+        }
+        setInImportQueue(true);
+        setQueuePosition(positionData.position ?? 0);
+        setTotalInQueue(positionData.totalInQueue ?? 0);
+        setEstimatedWaitTimeMs(positionData.estimatedWaitMs ?? 0);
+        if (positionData.message) {
+          setLoadingStatusMessage(sanitizeImportMessage(positionData.message));
+        }
+        setShowQueueStatus(true);
+      } catch {
+        // Queue endpoint may be unavailable during startup
+      }
+    };
+
+    pollQueue();
+    const intervalId = setInterval(pollQueue, 3000);
+    return () => clearInterval(intervalId);
+  }, [showLoadingChoice, isExpectingFileReady, projectId, pendingImportProjectId]);
 
   const loadChildren = useCallback(
     async (nodeId: string) => {
@@ -6001,12 +6805,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         // OPTIMIZED: Use limit parameter for faster initial load (backend has caching)
         const isOwlThing = nodeId === "http://www.w3.org/2002/07/owl#Thing";
         const endpoint = isOwlThing
-          ? `/api/ontology/classes/top-level/${projectId}?limit=100`
-          : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`;
+          ? `/api/ontology/classes/top-level/${projectId}?limit=5000&scope=${hierarchyImportsScope}`
+          : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}&scope=${hierarchyImportsScope}`;
 
-        console.log(`[loadChildren] Using endpoint: ${endpoint}`);
         const response = await apiClient.get<any>(endpoint);
-        console.log("[loadChildren] Children response:", response);
 
         // Extract array from response - handle both direct array and wrapped responses
         const children = Array.isArray(response)
@@ -6016,26 +6818,21 @@ const Dashboard: React.FC<DashboardProps> = ({
             : Array.isArray(response?.classes)
               ? response.classes
               : [];
-        console.log("[loadChildren] Extracted children:", children);
 
         const updateTree = (nodes: TreeNode[]): TreeNode[] =>
           nodes.map((n: TreeNode) => {
             if (n.id === nodeId) {
-              console.log(`[loadChildren] Found target node:`, n);
               const mappedChildren = children.map((c: TopLevelClass) => ({
                 ...c,
                 children: c.hasChildren ? [] : undefined,
                 hasChildren: c.hasChildren,
                 subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: n.label }],
               }));
-              console.log("[loadChildren] Mapped children:", mappedChildren);
-              const updatedNode = {
+              return {
                 ...n,
                 children: applyInstanceCountsToTree(mappedChildren, classInstanceCounts),
                 hasChildren: mappedChildren.length > 0,
               };
-              console.log("[loadChildren] Updated node:", updatedNode);
-              return updatedNode;
             }
             if (n.children) {
               return { ...n, children: updateTree(n.children) };
@@ -6043,18 +6840,12 @@ const Dashboard: React.FC<DashboardProps> = ({
             return n;
           });
 
-        console.log("[loadChildren] Updating class hierarchy...");
-        setClassHierarchy((prevHierarchy) => {
-          const updated = updateTree(prevHierarchy);
-          console.log("[loadChildren] New hierarchy:", updated);
-          return updated;
-        });
-        console.log(`[loadChildren] ✅ Loaded ${children.length} children for node: ${nodeId}`);
+        setClassHierarchy((prevHierarchy) => updateTree(prevHierarchy));
       } catch (error) {
         console.error(`Failed to load children for ${nodeId}`, error);
       }
     },
-    [projectId, classInstanceCounts, applyInstanceCountsToTree],
+    [projectId, classInstanceCounts, applyInstanceCountsToTree, hierarchyImportsScope],
   );
 
   const fetchInferredChildren = useCallback(
@@ -6083,13 +6874,19 @@ const Dashboard: React.FC<DashboardProps> = ({
     async (nodeId: string) => {
       if (!projectId) return;
       const inferred = await fetchInferredChildren(nodeId);
+      const nothingIri = "http://www.w3.org/2002/07/owl#Nothing";
       const mappedChildren: TreeNode[] = inferred
-        .filter((item: any) => item?.iri && item.iri !== "http://www.w3.org/2002/07/owl#Nothing")
+        .filter((item: any) => {
+          if (!item?.iri) return false;
+          if (nodeId === nothingIri) return true;
+          return item.iri !== nothingIri;
+        })
         .map((item: any) => ({
           id: item.iri,
           label: item.label || getLocalName(item.iri),
           children: [],
-          hasChildren: true,
+          hasChildren: item.hasChildren !== undefined ? item.hasChildren : true,
+          isUnsatisfiable: nodeId === nothingIri || item.isUnsatisfiable === true,
           subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: getLocalName(nodeId) || "Thing" }],
         }));
 
@@ -6160,10 +6957,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           setClassHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
           break;
         case "ObjectProperties":
-          setObjectProperties((prev) => prev.map((p) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          setObjectProperties((prev: Property[]) => prev.map((p: Property) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          setObjectPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
           break;
         case "DataProperties":
-          setDataProperties((prev) => prev.map((p) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          setDataProperties((prev: Property[]) => prev.map((p: Property) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          setDataPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
           break;
         case "AnnotationProperties":
           setAnnotationProperties((prev) =>
@@ -6188,6 +6987,10 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const refreshClassHierarchy = useCallback(async () => {
     if (!projectId) return;
+    if (shouldDeferHierarchyDuringFileOpen()) {
+      console.log("[Dashboard] Deferring class hierarchy refresh during file open");
+      return;
+    }
     const now = Date.now();
     if (classHierarchyRefreshInFlight.current) {
       console.warn("[Dashboard] Skipping class hierarchy refresh: already in flight");
@@ -6200,7 +7003,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     classHierarchyRefreshInFlight.current = true;
     lastClassHierarchyRefreshAt.current = now;
     try {
-      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}`);
+      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}?scope=${hierarchyImportsScope}`);
 
       let classes: any[] = [];
       if (Array.isArray(topLevelRes?.classes)) {
@@ -6215,6 +7018,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const topLevelNodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
         ...c,
+        label: c.label ?? c.id ?? "",
         children: [],
         hasChildren: c.hasChildren,
         subClassOfAxioms: [{ id: "sub1", type: "SubClassOf", definition: "Thing" }],
@@ -6230,30 +7034,102 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], classInstanceCounts);
       setClassHierarchy(hierarchyWithCounts);
+      setIsHierarchyLoading(false);
       console.log("[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy");
 
-      // Re-load children for all previously expanded nodes to preserve tree state
-      // We need to reload children in order (parent before child) to maintain tree structure
+      // Re-load children for all previously expanded nodes to preserve tree state.
+      // Deduplicate — expandedNodes can contain the same ID multiple times when a class
+      // has multiple parents and was expanded from different parent contexts.
+      const owlThing = "http://www.w3.org/2002/07/owl#Thing";
+      const seenIds = new Set<string>();
       const currentExpandedNodes = expandedNodesRef.current.filter(
-        (id) => id !== "http://www.w3.org/2002/07/owl#Thing",
+        (id) => id !== owlThing && !seenIds.has(id) && seenIds.add(id),
       );
       for (const nodeId of currentExpandedNodes) {
         try {
           await loadChildren(nodeId);
         } catch (err) {
-          // Node might not exist anymore after refresh, ignore error
           console.log(`[Dashboard] Could not reload children for ${nodeId}:`, err);
         }
       }
-    } catch (error) {
-      console.error("[Dashboard] Failed to refresh class hierarchy:", error);
+    } catch (error: any) {
+      const status = error?.status ?? error?.response?.status;
+      if (status === 503) {
+        console.warn("[Dashboard] Editor busy (503) during hierarchy refresh — keeping loading state");
+        setIsHierarchyLoading(true);
+        setLoadingStatusMessage("Ontology editor is busy — still loading…");
+      } else {
+        console.error("[Dashboard] Failed to refresh class hierarchy:", error);
+        setIsHierarchyLoading(false);
+      }
     } finally {
       classHierarchyRefreshInFlight.current = false;
     }
-  }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree]);
+  }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree, shouldDeferHierarchyDuringFileOpen]);
+
+  // Keep hierarchyAnnotationProperties in sync with the existing annotation property list
+  useEffect(() => {
+    setHierarchyAnnotationProperties(
+      annotationProperties.map((p) => ({ id: p.id, label: p.label }))
+    );
+  }, [annotationProperties]);
+
+  // Batch-fetch annotation values for all current hierarchy nodes when annotation rendering is active
+  const loadHierarchyAnnotationValues = useCallback(async (iris: string[], propertyIri: string) => {
+    if (!projectId || !propertyIri || iris.length === 0) return;
+    try {
+      const res = await apiClient.post<any>(
+        `/api/ontology/annotations/batch/${encodeProjectId(projectId)}`,
+        { iris, propertyIri }
+      );
+      const data: Record<string, string> = res?.data ?? res ?? {};
+      setHierarchyAnnotationValues((prev) => {
+        const next = new Map(prev);
+        Object.entries(data).forEach(([iri, val]) => next.set(iri, val));
+        return next;
+      });
+    } catch {
+      // fail silently — hierarchy will fall back to labels
+    }
+  }, [projectId]);
+
+  // Reset annotation cache when property or mode changes
+  useEffect(() => {
+    fetchedAnnotationIrisRef.current = new Set();
+    if (hierarchyDisplayMode !== "annotation") setHierarchyAnnotationValues(new Map());
+  }, [hierarchyAnnotationPropIri, hierarchyDisplayMode]);
+
+  // Incrementally fetch annotation values for nodes not yet fetched (avoids full re-fetch on every expansion)
+  useEffect(() => {
+    if (hierarchyDisplayMode !== "annotation" || !hierarchyAnnotationPropIri) return;
+    const collectIris = (nodes: TreeNode[]): string[] =>
+      nodes.flatMap((n) => [n.id, ...collectIris((n.children as TreeNode[]) ?? [])]);
+    const newIris = [
+      ...collectIris(classHierarchy),
+      ...collectIris(objectPropertyHierarchy as TreeNode[]),
+      ...collectIris(dataPropertyHierarchy as TreeNode[]),
+      ...collectIris(annotationPropertyHierarchy),
+      ...individuals.map(i => i.id),
+      ...datatypes.map(d => d.id),
+    ]
+      .filter(Boolean)
+      .filter(iri => !fetchedAnnotationIrisRef.current.has(iri));
+    if (newIris.length === 0) return;
+    newIris.forEach(iri => fetchedAnnotationIrisRef.current.add(iri));
+    loadHierarchyAnnotationValues(newIris, hierarchyAnnotationPropIri);
+  }, [hierarchyDisplayMode, hierarchyAnnotationPropIri, classHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, annotationPropertyHierarchy, individuals, datatypes, loadHierarchyAnnotationValues]);
+
+  // Reload hierarchy when imports scope changes — bypass throttle since this is an explicit user action
+  useEffect(() => {
+    if (!projectId || mainTab !== "Entities" || entitiesTab !== "Classes") return;
+    lastClassHierarchyRefreshAt.current = 0;
+    refreshClassHierarchy();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hierarchyImportsScope]);
 
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "Classes") return;
+    if (shouldDeferHierarchyDuringFileOpen()) return;
 
     console.log("[Dashboard] Classes tab active, view mode:", currentHierarchyViewMode);
     if (currentHierarchyViewMode === "inferred") {
@@ -6267,6 +7143,115 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode]);
+
+  // Desktop: lazy Fuseki when user opens SPARQL or Graph (OWLAPI handles everything else).
+  useEffect(() => {
+    if (!isDesktop() || !projectId) return;
+    if (mainTab !== "SPARQL" && mainTab !== "Graph" && mainTab !== "WebVOWL") return;
+    void ensureDesktopFusekiSync(projectId).then((r) => {
+      if (!r.synced && r.error) {
+        notificationService.warning(
+          "Triple store preparing",
+          "SPARQL and graph views need a background index. Try again in a moment.",
+        );
+      }
+    });
+  }, [mainTab, projectId]);
+
+  // ── Desktop OWLAPI deferred-hierarchy resolver ────────────────────────────
+  // Single responsibility: when fetchData deferred the hierarchy render because
+  // warmOntologyInMemory returned ready=false, this effect polls cache-status
+  // until OWLAPI is confirmed ready, then renders the hierarchy ONCE cleanly.
+  //
+  // Design principles:
+  //   • Only active when fetchData set desktopHierarchyDeferredForProject.
+  //   • Polls every 5 s (not 1.5 s) — OWLAPI load takes tens of seconds.
+  //   • 5-minute hard timeout: falls back to SPARQL so the user is never stuck.
+  //   • fetchData marks owlapiReadyHandledRef when warm.ready=true, preventing
+  //     any redundant second render from this effect.
+  const owlapiReadyHandledRef = useRef<string | null>(null);
+  // Set by fetchData when OWLAPI wait was deferred (warm returned ready=false).
+  const desktopHierarchyDeferredForProject = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!isDesktop()) return;
+    if (!projectId) return;
+    // Only run when fetchData explicitly deferred the hierarchy for this project.
+    if (desktopHierarchyDeferredForProject.current !== projectId) return;
+    // Already handled (warm succeeded in fetchData or previous poll iteration).
+    if (owlapiReadyHandledRef.current === projectId) return;
+
+    let cancelled = false;
+    let elapsedMs = 0;
+    const POLL_INTERVAL_MS = 1_500;
+    const TIMEOUT_MS = 300_000; // 5 min — matches warmOntologyInMemory timeout
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const applyOwlapiReady = (res: any) => {
+      owlapiReadyHandledRef.current = projectId;
+      desktopHierarchyDeferredForProject.current = null;
+      const patch = extractDeclarationCountsPatch(res);
+      if (patch) setMetadata((prev) => ({ ...(prev || {}), ...patch }) as OntologyMetadata);
+      lastClassHierarchyRefreshAt.current = 0;
+      setIsHierarchyLoading(true); // briefly show skeleton during transition
+      refreshClassHierarchy();     // fetches from OWLAPI → single clean render
+    };
+
+    const fallbackToSparql = () => {
+      // Desktop owlapi-first: Fuseki is often not running on open — SPARQL hierarchy hangs forever.
+      console.warn("[Dashboard] Desktop: OWLAPI warm slow — retrying warm POST (no SPARQL fallback)");
+      void warmOntologyInMemory(projectId, { timeoutMs: 120_000 }).then((warm) => {
+        if (warm.ready) {
+          applyOwlapiReady(warm);
+          return;
+        }
+        if (!warm.sparqlFallback) {
+          setLoadingStatusMessage("Still opening ontology (fast path)…");
+          elapsedMs = 0;
+          timer = setTimeout(poll, POLL_INTERVAL_MS);
+          return;
+        }
+        console.warn("[Dashboard] Desktop: OWLAPI unavailable — last-resort SPARQL hierarchy");
+        owlapiReadyHandledRef.current = projectId;
+        desktopHierarchyDeferredForProject.current = null;
+        lastClassHierarchyRefreshAt.current = 0;
+        setIsHierarchyLoading(false);
+        setIsInitialLoading(false);
+        setLoadingStatusMessage("");
+        refreshClassHierarchy();
+      });
+    };
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await apiClient.get<any>(`/api/ontology/cache-status/${encodeProjectId(projectId)}`);
+        const ready = res?.owlapiReady ?? res?.data?.owlapiReady;
+        if (ready && !cancelled) {
+          console.log("[Dashboard] Desktop deferred hierarchy — OWLAPI now ready, rendering once");
+          applyOwlapiReady(res);
+          return;
+        }
+      } catch {
+        // cache-status unavailable — stop quietly, leave skeleton as-is
+        owlapiReadyHandledRef.current = projectId;
+        return;
+      }
+      elapsedMs += POLL_INTERVAL_MS;
+      if (!cancelled && elapsedMs < TIMEOUT_MS) {
+        timer = setTimeout(poll, POLL_INTERVAL_MS);
+      } else if (!cancelled) {
+        fallbackToSparql();
+      }
+    };
+
+    timer = setTimeout(poll, POLL_INTERVAL_MS); // first check after 5 s
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   // Load inferred object property hierarchy when switching to inferred mode
   useEffect(() => {
@@ -6295,10 +7280,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   // On-demand property detail loading: when a property is selected, fetch full details (domains, ranges, etc.)
   useEffect(() => {
     if (!projectId || !selectedItem) return;
-    const isProperty = (selectedItem as any).type === "ObjectProperty" || (selectedItem as any).type === "DataProperty";
+    const isProperty =
+      (selectedItem as any).type === "ObjectProperty" ||
+      (selectedItem as any).type === "DatatypeProperty" ||
+      (selectedItem as any).type === "AnnotationProperty";
     if (!isProperty) return;
-    // Skip if details already loaded (has domains array)
-    if (Array.isArray((selectedItem as any).domains) && (selectedItem as any).domains.length > 0) return;
+    // Skip if full details were already merged from the detail endpoint
+    if ((selectedItem as any)._propertyDetailsLoaded) return;
     // Also skip for built-in top properties
     if (
       selectedItem.id === "http://www.w3.org/2002/07/owl#topObjectProperty" ||
@@ -6311,12 +7299,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     apiClient
       .get<any>(`/api/ontology/properties/detail/${encodedProjectId}?iri=${encodedIri}`)
       .then((res: any) => {
-        const detail = res?.data || res;
+        const payload = res?.data ?? res;
+        const detail = payload?.data ?? payload;
         if (detail && detail.id) {
           // Merge detail fields into the selected item
           setSelectedItem((prev) => {
             if (prev?.id !== detail.id) return prev;
-            return { ...prev, ...detail };
+            return { ...prev, ...detail, _propertyDetailsLoaded: true };
           });
         }
       })
@@ -6338,12 +7327,20 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      // Check if this is an edit made by the current user - skip refresh since we already updated local state
-      const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
-      const currentUserId = user?.email || user?.id;
-      if (editUserId && currentUserId && editUserId === currentUserId) {
-        console.log("[Dashboard] ⏭️ Skipping refresh - edit was made by current user");
-        return;
+      // Metadata events must ALWAYS refresh — same user on two devices must stay in sync.
+      // Only skip for entity-mutation events where local optimistic state was already applied.
+      const METADATA_EVENTS = new Set([
+        "ONTOLOGY_ANNOTATION_ADDED", "ONTOLOGY_ANNOTATION_MODIFIED", "ONTOLOGY_ANNOTATION_DELETED",
+        "IMPORT_ADDED", "IMPORT_REMOVED",
+        "GCI_ADDED", "GCI_REMOVED",
+      ]);
+      if (!METADATA_EVENTS.has(edit.type)) {
+        const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
+        const currentUserId = user?.email || user?.userId;
+        if (editUserId && currentUserId && editUserId === currentUserId) {
+          console.log("[Dashboard] ⏭️ Skipping refresh - edit was made by current user");
+          return;
+        }
       }
 
       // Map edit type to which data needs refreshing
@@ -6362,15 +7359,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
 
         case "CLASS_DELETED":
-          console.log("[Dashboard] 🗑️ Class deleted, refreshing hierarchy");
-          if ((edit as any).parent) {
-            const parentId = (edit as any).parent;
-            console.log(`[Dashboard] Refreshing children of parent: ${parentId}`);
-            loadChildren(parentId);
-          } else {
-            // Fallback to full refresh
-            refreshClassHierarchy();
-          }
+          console.log("[Dashboard] 🗑️ Class deleted by remote user, refreshing hierarchy");
+          // Always do full refresh on deletion — partial refresh can leave orphaned subtrees
+          refreshClassHierarchy();
           break;
 
         case "CLASS_MODIFIED":
@@ -6378,21 +7369,28 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] ✏️ Class modified/renamed:", edit);
           // For modification, we can just fetch details and update state
           // This preserves the tree structure
-          const classId = (edit as any).iri || (edit as any).id;
+          const classId = (edit as any).nodeId || (edit as any).iri || (edit as any).id;
           if (classId) {
             console.log(`[Dashboard] Fetching details for modified class: ${classId}`);
+            const userId = user?.email || user?.userId;
+            const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
             // Add delay to ensure backend is ready
             setTimeout(() => {
               apiClient
-                .get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}`)
+                .get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}${userParam}&_=${Date.now()}`)
                 .then((response) => {
-                  const newData = response.data || response;
-                  // Ensure ID is present
-                  if (!newData.id && newData.iri) {
-                    newData.id = newData.iri;
+                  const details = response?.data?.data || response?.data || response;
+                  if (!details || typeof details !== "object" || details.success) {
+                    console.warn("[Dashboard] Unexpected class details response shape:", details);
+                    return;
                   }
-                  console.log("[Dashboard] Received updated class data:", newData);
-                  updateItemInState(newData);
+                  const merged = {
+                    ...selectedItem,
+                    ...details,
+                    id: details.id || details.iri || classId,
+                  };
+                  console.log("[Dashboard] Received updated class data:", merged);
+                  updateItemInState(merged);
                   console.log("[Dashboard] ✅ Class updated in state");
                 })
                 .catch((error) => console.error("[Dashboard] Failed to refresh class details:", error));
@@ -6413,7 +7411,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setTimeout(() => {
             // Trigger refresh of current selected item to show updated annotations
             if (selectedItem) {
-              const entityId = selectedItem.id || selectedItem.iri;
+              const entityId = selectedItem.id || (selectedItem as any).iri;
               // Check if the edit is relevant to the selected item (optional optimization, but good for correctness)
               // The edit object usually has 'subject' or 'iri'
               const editSubject = (edit as any).subject || (edit as any).iri || (edit as any).id;
@@ -6427,8 +7425,12 @@ const Dashboard: React.FC<DashboardProps> = ({
               console.log(`[Dashboard] Refreshing selected item: ${entityId}`);
 
               // Use the appropriate endpoint based on entity type to ensure we get full details (including annotations)
-              let url = `/api/ontology/class/${projectId}/${encodeURIComponent(entityId)}`;
-              if (entitiesTab === "Classes") {
+              let url: string;
+              if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties" || entitiesTab === "AnnotationProperties") {
+                url = `/api/ontology/properties/detail/${projectId}?iri=${encodeURIComponent(entityId)}`;
+              } else if (entitiesTab === "Individuals") {
+                url = `/api/ontology/individuals/${projectId}?iri=${encodeURIComponent(entityId)}`;
+              } else {
                 url = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(entityId)}`;
               }
 
@@ -6456,23 +7458,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "PROPERTY_ADDED":
         case "PROPERTY_MODIFIED":
         case "PROPERTY_DELETED":
-          console.log("[Dashboard] 🔗 Refreshing properties due to property edit");
-          // Trigger refresh of properties
-          apiClient
-            .get(`/api/ontology/properties/${encodeProjectId(projectId)}`)
-            .then((response) => {
-              const allProps = Array.isArray(response.data)
-                ? response.data
-                : Array.isArray(response.properties)
-                  ? response.properties
-                  : Array.isArray(response)
-                    ? response
-                    : [];
-              const opList = allProps.filter((p: any) => p.type === "ObjectProperty");
-              setObjectProperties(opList);
-              console.log("[Dashboard] ✅ Object properties refreshed");
-            })
-            .catch((error) => console.error("[Dashboard] Failed to refresh properties:", error));
+          console.log("[Dashboard] 🔗 Refreshing all properties due to property edit");
+          // Refresh object + data property hierarchies
+          refreshProperties();
+          // Refresh annotation properties (separate endpoint)
+          handleRefreshAnnotationProperties();
           break;
 
         case "INDIVIDUAL_ADDED":
@@ -6574,6 +7564,55 @@ const Dashboard: React.FC<DashboardProps> = ({
             // Still refresh hierarchy for subclass changes
             refreshClassHierarchy();
           }
+          break;
+
+        case "IMPORT_ADDED":
+        case "IMPORT_REMOVED":
+          console.log("[Dashboard] 📦 Import changed by remote user, refreshing imports");
+          refreshOntologyImports();
+          break;
+
+        case "ONTOLOGY_ANNOTATION_ADDED":
+        case "ONTOLOGY_ANNOTATION_MODIFIED":
+        case "ONTOLOGY_ANNOTATION_DELETED":
+          console.log("[Dashboard] 📝 Ontology annotation changed by remote user, refreshing");
+          refreshOntologyAnnotations();
+          break;
+
+        case "SWRL_RULE_ADDED":
+        case "SWRL_RULE_MODIFIED":
+        case "SWRL_RULE_DELETED":
+          console.log("[Dashboard] 📏 SWRL rule changed by remote user, notifying SWRL plugin");
+          showNotification(
+            `${(edit as any).username || "Someone"} ${
+              edit.type === "SWRL_RULE_ADDED" ? "added" : edit.type === "SWRL_RULE_MODIFIED" ? "modified" : "deleted"
+            } a SWRL rule`,
+            "info",
+          );
+          window.dispatchEvent(new CustomEvent("swrlRulesUpdated", { detail: { projectId, editType: edit.type } }));
+          break;
+
+        case "GCI_ADDED":
+        case "GCI_REMOVED":
+          console.log("[Dashboard] 🔢 GCI changed by remote user, refreshing GCIs");
+          apiClient
+            .get(`/api/ontology/metadata/${projectId}/gci`)
+            .then((response) => {
+              const raw = response?.data?.data || response?.data?.axioms || response?.axioms || response?.data || response;
+              const gcis = Array.isArray(raw)
+                ? raw.map((axiom: any) => ({
+                    value: axiom.value,
+                    subClass: axiom.subClass || axiom.definition || "",
+                    superClass: axiom.superClass || axiom.superClassIri || "",
+                    definition: axiom.subClass || axiom.definition || "",
+                    superClassIri: axiom.superClass || axiom.superClassIri || "",
+                    subExpression: axiom.subClass || axiom.subExpression || "",
+                  }))
+                : [];
+              setGeneralClassAxioms(gcis);
+              console.log("[Dashboard] ✅ GCIs refreshed");
+            })
+            .catch((error) => console.error("[Dashboard] Failed to refresh GCIs:", error));
           break;
 
         default:
@@ -6848,30 +7887,20 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [projectId]); // Removed fetchData, showNotification to prevent infinite loop
 
   useEffect(() => {
-    // Initialize notification service to show toasts via collaboration context
-    // This is a one-time setup that shouldn't re-run
-    notificationService.onToast((options) => {
-      collaboration.addNotification({
-        type: options.type,
-        message: `${options.title}: ${options.message}`,
-        userId: "system",
-        username: "System",
-        userColor: "#6366f1",
-        timestamp: Date.now(),
-      });
-    });
-
     // Request notification permission for web browsers
+    // (toast subscription is handled in useDashboardInit to avoid double-firing)
     if (typeof window !== "undefined" && !window.vscode) {
       notificationService.requestPermission();
     }
-  }, []); // Empty deps - collaboration.addNotification is stable
+  }, []);
 
   useEffect(() => {
     // Load previously installed plugins from localStorage
     const loadInstalledPlugins = async () => {
       try {
         pluginLoader.loadFromStorage();
+        // Protégé parity: ship SPARQL, Reasoner, Graph, SWRL, etc. as built-in tabs (not marketplace-only).
+        pluginLoader.ensureDefaultBuiltInPlugins();
         const installed = pluginLoader.getInstalledPlugins();
 
         // Update state with installed plugin IDs
@@ -6942,16 +7971,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const toggleNode = useCallback(
     async (nodeId: string) => {
-      console.log("[toggleNode] 🔄 Called for nodeId:", nodeId);
-      console.log("[toggleNode] Current expandedNodes:", expandedNodes);
-      console.log("[toggleNode] entitiesTab:", entitiesTab);
-      console.log("[toggleNode] currentHierarchyViewMode:", currentHierarchyViewMode);
-
       if (expandedNodes.includes(nodeId)) {
-        console.log("[toggleNode] ⬇️ Collapsing node:", nodeId);
         setExpandedNodes((prev) => prev.filter((id) => id !== nodeId));
       } else {
-        console.log("[toggleNode] ➡️ Expanding node:", nodeId);
         const findNode = (nodes: TreeNode[], id: string): TreeNode | null => {
           for (const node of nodes) {
             if (node.id === id) return node;
@@ -6962,10 +7984,26 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
           return null;
         };
+        // Mirror the inferred-class fallback used by the rendered tree (sourceData):
+        // while inferredClassHierarchy is still loading the UI shows reasonerResults,
+        // so toggleNode must search that same source or it can't find the node the
+        // user clicked during the initial-load window.
+        const inferredClasses: TreeNode[] =
+          inferredClassHierarchy.length > 0
+            ? inferredClassHierarchy
+            : Array.isArray(reasonerResults?.classHierarchyTree)
+              ? reasonerResults.classHierarchyTree
+              : Array.isArray(reasonerResults?.classHierarchy)
+                ? reasonerResults.classHierarchy
+                : [];
         const currentHierarchy =
-          entitiesTab === "Classes"
+          mainTab === "IndividualsByClass"
+            ? hierarchyViewModes.Classes === "inferred"
+              ? inferredClasses
+              : classHierarchy
+            : entitiesTab === "Classes"
             ? currentHierarchyViewMode === "inferred"
-              ? inferredClassHierarchy
+              ? inferredClasses
               : classHierarchy
             : entitiesTab === "ObjectProperties"
               ? hierarchyViewModes.ObjectProperties === "inferred"
@@ -6975,27 +8013,58 @@ const Dashboard: React.FC<DashboardProps> = ({
                 ? inferredDataPropertyHierarchy
                 : dataPropertyHierarchy;
 
-        const node = findNode(currentHierarchy as TreeNode[], nodeId);
+        // Primary search in the tab's own hierarchy; fall back to classHierarchy so
+        // that domain/range/types dialogs (open while on a non-Classes tab) can still
+        // expand class nodes.
+        let node = findNode(currentHierarchy as TreeNode[], nodeId);
+        const isClassNodeFromDialog = !node && currentHierarchy !== classHierarchy
+          ? findNode(classHierarchy, nodeId)
+          : null;
 
         setExpandedNodes((prev) => {
-          const updated = [...prev, nodeId];
-          return updated;
+          if (prev.includes(nodeId)) return prev; // prevent duplicates → stops repeated children fetches
+          return [...prev, nodeId];
         });
 
-        if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
-          console.log(`Node ${nodeId} needs children loaded`);
-          if (entitiesTab === "Classes") {
-            if (currentHierarchyViewMode === "inferred") {
-              await loadInferredChildren(nodeId);
-            } else {
+        // Load class children when a class node is expanded from a dialog on a non-Classes tab
+        if (isClassNodeFromDialog) {
+          const classNode = isClassNodeFromDialog;
+          if (classNode.hasChildren && (!classNode.children || classNode.children.length === 0)) {
+            setLoadingNodes((prev) => new Set([...prev, nodeId]));
+            try {
               await loadChildren(nodeId);
+            } catch (err: any) {
+              console.warn(`[toggleNode] Failed to load class children for ${nodeId}:`, err);
+            } finally {
+              setLoadingNodes((prev) => { const n = new Set(prev); n.delete(nodeId); return n; });
             }
-          } else if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties") {
-            // Properties usually don't have on-demand loading in this UI yet,
-            // but we could add it here if needed.
           }
-        } else {
-          console.log("[toggleNode] ℹ️ Node already has children or hasChildren is false");
+        } else if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
+          if (entitiesTab === "Classes" || mainTab === "IndividualsByClass") {
+            setLoadingNodes((prev) => new Set([...prev, nodeId]));
+            // Spinner timeout: stop the spinner after 30s but keep the node expanded.
+            // loadChildren continues in the background — children appear when the API
+            // responds (Spring @Cacheable makes retries fast after the first warm-up).
+            const spinnerTimeout = setTimeout(() => {
+              setLoadingNodes((prev) => { const n = new Set(prev); n.delete(nodeId); return n; });
+            }, 30000);
+            try {
+              const shouldLoadInferredClassChildren =
+                mainTab === "IndividualsByClass"
+                  ? hierarchyViewModes.Classes === "inferred"
+                  : currentHierarchyViewMode === "inferred";
+              if (shouldLoadInferredClassChildren) {
+                await loadInferredChildren(nodeId);
+              } else {
+                await loadChildren(nodeId);
+              }
+            } catch (err: any) {
+              console.warn(`[toggleNode] Failed to load children for ${nodeId}:`, err);
+            } finally {
+              clearTimeout(spinnerTimeout);
+              setLoadingNodes((prev) => { const n = new Set(prev); n.delete(nodeId); return n; });
+            }
+          }
         }
       }
     },
@@ -7003,6 +8072,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       expandedNodes,
       classHierarchy,
       inferredClassHierarchy,
+      reasonerResults,
       objectPropertyHierarchy,
       dataPropertyHierarchy,
       inferredObjectPropertyHierarchy,
@@ -7012,6 +8082,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       loadInferredChildren,
       entitiesTab,
       currentHierarchyViewMode,
+      mainTab,
     ],
   );
 
@@ -7025,12 +8096,56 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
   }, [toggleNode]);
 
+  // Load next batch of top-level classes when owl:Thing children are truncated
+  const handleLoadMoreTopLevel = useCallback(async () => {
+    if (isLoadingMoreTopLevel || !projectId) return;
+    setIsLoadingMoreTopLevel(true);
+    try {
+      const encoded = encodeURIComponent(projectId);
+      const currentLoaded = classHierarchy[0]?.children?.filter(
+        (c) => c.id !== "__load_more_top_level__"
+      ).length ?? 0;
+      const res: any = await apiClient.get(
+        `/api/ontology/classes/top-level/${encoded}?limit=5000&offset=${currentLoaded}`
+      );
+      const data = res?.data ?? res;
+      const newClasses: TreeNode[] = (Array.isArray(data?.classes) ? data.classes : []).map(
+        (c: any) => ({ ...c, children: [], hasChildren: c.hasChildren !== false, annotations: c.annotations || {} })
+      );
+      const stillTruncated = !!(data?.truncated);
+      setTopLevelTruncated(stillTruncated);
+      setClassHierarchy((prev) => {
+        if (!prev.length || prev[0].id !== "http://www.w3.org/2002/07/owl#Thing") return prev;
+        const owlThing = prev[0];
+        const existingChildren = (owlThing.children || []).filter(
+          (c) => c.id !== "__load_more_top_level__"
+        );
+        const merged = [...existingChildren, ...newClasses];
+        if (stillTruncated) {
+          merged.push({
+            id: "__load_more_top_level__",
+            label: "Load more classes…",
+            children: [],
+            hasChildren: false,
+            annotations: {},
+          });
+        }
+        return [{ ...owlThing, children: merged }];
+      });
+    } catch (e) {
+      console.error("[Dashboard] loadMoreTopLevel failed:", e);
+    } finally {
+      setIsLoadingMoreTopLevel(false);
+    }
+  }, [isLoadingMoreTopLevel, projectId, classHierarchy]);
+
   // Update draft count
   const updateDraftCount = useCallback(async () => {
     if (!projectId) return;
     try {
-      console.log("[Dashboard] Updating draft count for project:", projectId);
-      const stats = await draftTrackingService.getDraftStats(projectId);
+      const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      console.log("[Dashboard] Updating draft count for project:", projectId, "user:", effectiveUserId);
+      const stats = await draftTrackingService.getDraftStats(projectId, effectiveUserId);
       console.log("[Dashboard] Draft stats received:", stats);
       setDraftCount(stats.unappliedDrafts);
       setHasUnsavedChanges(stats.unappliedDrafts > 0);
@@ -7039,14 +8154,55 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Don't show error notification - just log it
       // The user can still work, we'll try again later
     }
+  }, [projectId, user?.userId, user?.email]);
+
+  // Silently refresh axiom/entity counts from backend after mutations
+  const silentRefreshMetadata = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}`);
+      const data = res?.data || res;
+      if (data) {
+        setMetadata((prev) => prev ? {
+          ...prev,
+          ...data,
+          // Flatten counts from nested structure if present
+          classCount: data.classCount || data.counts?.classes || prev.classCount,
+          objectPropertyCount: data.objectPropertyCount || data.counts?.objectProperties || prev.objectPropertyCount,
+          dataPropertyCount: data.dataPropertyCount || data.counts?.dataProperties || prev.dataPropertyCount,
+          individualCount: data.individualCount || data.counts?.individuals || prev.individualCount,
+          annotationPropertyCount: data.annotationPropertyCount || data.counts?.annotationProperties || prev.annotationPropertyCount,
+        } : prev);
+      }
+    } catch (err) {
+      console.debug("[Dashboard] Silent metadata refresh failed:", err);
+    }
   }, [projectId]);
 
   // Mark as unsaved (called after mutations)
   const markAsUnsaved = useCallback(() => {
     console.log("[DEBUG] markAsUnsaved called");
     setHasUnsavedChanges(true);
-    // Update draft count after a short delay
-    setTimeout(() => updateDraftCount(), 500);
+    codeViewDirtyRef.current = true;
+    // Wait 1.5 s before polling draft count — gives the backend time to persist the draft record
+    setTimeout(() => updateDraftCount(), 1500);
+    // Debounced silent stats refresh (1.5s after last mutation)
+    if (metadataRefreshTimerRef.current) clearTimeout(metadataRefreshTimerRef.current);
+    metadataRefreshTimerRef.current = setTimeout(() => silentRefreshMetadata(), 1500);
+    // Debounced conflict check (3s after last mutation, private mode only)
+    if (conflictCheckTimerRef.current) clearTimeout(conflictCheckTimerRef.current);
+    setPublishConflictStatus('checking');
+    conflictCheckTimerRef.current = setTimeout(async () => {
+      if (!projectId) { setPublishConflictStatus('idle'); return; }
+      const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      try {
+        const preview = await draftTrackingService.getPublishPreview(projectId, effectiveUserId);
+        const hasConflicts = Array.isArray((preview as any).conflicts) && (preview as any).conflicts.length > 0;
+        setPublishConflictStatus(hasConflicts ? 'conflict' : 'clean');
+      } catch {
+        setPublishConflictStatus('idle');
+      }
+    }, 3000);
 
     // Auto-sync reasoner if enabled
     if (isReasonerSynced && isReasonerRunning && projectId) {
@@ -7063,67 +8219,106 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       }, 2000); // Wait 2 seconds after last change
     }
-  }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, selectedReasoner, fetchReasonerBundle]);
+  }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, selectedReasoner, fetchReasonerBundle, user]);
 
-  // Save changes to backend (applies drafts to GraphDB)
-  const handleSave = useCallback(async () => {
-    console.log("[DEBUG] handleSave called");
+  // Save changes to backend (publishes only this user's draft to main graph)
+  const handleSave = useCallback(async (options?: {
+    force?: boolean;
+    merge?: boolean;
+    resolutions?: Record<string, { action: string }>;
+  }) => {
+    const forcePublish = options?.force ?? false;
+    const mergePublish = options?.merge ?? false;
+    const mergeResolutions = options?.resolutions;
+    console.log("[DEBUG] handleSave called", { forcePublish, mergePublish });
     if (!projectId || isSaving) return;
 
-    try {
+    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+
+    const performSave = async (force: boolean, merge: boolean, resolutions?: Record<string, { action: string }>) => {
       setIsSaving(true);
       console.log("[Dashboard] 💾 Saving changes to backend...");
 
-      // Notify sync service about local save to avoid triggering refresh for current user
       syncService.notifyLocalSave(projectId);
 
-      // Save will apply all drafts to GraphDB and export
       const startTime = Date.now();
-      const saveUrl = `/api/ontology/save/${projectId}?userId=${user?.id || "anonymous"}&username=${encodeURIComponent(user?.username || "Anonymous")}`;
+      const params = new URLSearchParams({
+        userId: effectiveUserId,
+        username: user?.username || "Anonymous",
+      });
+      if (force) params.set("force", "true");
+      if (merge) params.set("merge", "true");
+      const saveUrl = `/api/ontology/save/${projectId}?${params.toString()}`;
       console.log("[Dashboard] 📤 Save URL:", saveUrl);
-      const response = await apiClient.post(saveUrl);
+      const response = await apiClient.post(saveUrl, merge && resolutions ? resolutions : undefined);
       const duration = Date.now() - startTime;
 
       console.log(`[Dashboard] Save response received after ${duration}ms:`, response);
 
-      // Handle both direct response and response.data (VS Code proxy vs direct HTTP)
       const data = response.data || response;
 
       if (data && data.success) {
         setHasUnsavedChanges(false);
         setDraftCount(0);
-
-        console.log("[Dashboard] ✅ Changes saved to GraphDB database!");
-        console.log("[Dashboard] 📊 Applied drafts:", data.appliedDrafts || 0);
-        console.log("[Dashboard] 📝 History recorded in database");
+        setPublishConflictStatus('idle');
 
         notificationService.success(
           "Saved to Database",
-          `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? "s" : ""} saved to GraphDB and history recorded.`,
+          `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? "s" : ""} saved${merge ? " with three-way merge" : ""}.`,
         );
-        console.log("[Dashboard] Save complete:", data);
 
-        // Refresh the current file to show saved changes
-        console.log("[Dashboard] 🔄 Refreshing current file after save...");
         await fetchData(projectId, false, undefined, true);
-
-        // Monitoring is automatically restarted by fetchData
-
-        // Refresh collaboration panel to show recent changes
         collaborationPanelRef.current?.refreshChanges();
       } else {
         const errorMsg = (data && data.error) || "Save failed - no response from server";
-        console.error("[Dashboard] Save response was invalid:", response);
         throw new Error(errorMsg);
       }
+    };
+
+    try {
+      await performSave(forcePublish, mergePublish, mergeResolutions);
     } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && error.data) {
+        const conflictType = error.data.conflictType as string | undefined;
+        const conflicts = (error.data.conflicts as Array<Record<string, string>>) || [];
+        const mainChanged = Boolean(error.data.mainChangedSinceDraft);
+
+        let message = "";
+        if (conflictType === "IRI_OVERLAP" && conflicts.length > 0) {
+          message = `${conflicts.length} ${conflicts.length === 1 ? "entity was" : "entities were"} changed by someone else since you started your draft. Review each conflict below and choose how to resolve it.`;
+        } else if (conflictType === "MAIN_CHANGED" || mainChanged) {
+          message = "The shared ontology was updated while you were editing. Review the changes below and choose how to resolve each conflict.";
+        } else {
+          message = (error.data.message as string | undefined) || (error.data.error as string | undefined) || error.message || "Your draft conflicts with changes on the shared ontology.";
+        }
+
+        setConflictResolutions({});
+        setPublishConflictDialog({
+          isOpen: true,
+          title: conflictType === "IRI_OVERLAP" ? "Merge conflicts" : "Shared ontology changed",
+          message,
+          conflicts: conflicts.map((c) => ({
+            entityIRI: c.entityIRI || "",
+            entityLabel: c.entityLabel,
+            changedBy: c.changedBy,
+            yourAxioms: c.yourAxioms,
+            mainAxioms: c.mainAxioms,
+          })),
+          onForce: () => {
+            setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }));
+            void handleSave({ force: true });
+          },
+        });
+        return;
+      }
+
       console.error("[Dashboard] Save failed with error:", error);
       const errorMessage = error instanceof Error ? error.message : "Could not save changes. Please try again.";
       notificationService.error("Save Failed", errorMessage);
     } finally {
       setIsSaving(false);
     }
-  }, [projectId, isSaving, user?.id, user?.username]);
+  }, [projectId, isSaving, user?.userId, user?.username]);
 
   // Switch to a different file (with unsaved changes check)
   const handleSwitchFile = useCallback(
@@ -7268,7 +8463,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.log("[Dashboard] ✅ File already loaded, skipping re-fetch:", fileId);
         setActiveFileId(fileId);
         setActiveFileName(fileName);
-        if (onFileSelected) onFileSelected(fileId, fileName);
+        if (onFileSelected && isMountedRef.current) onFileSelected(fileId, fileName);
         return;
       }
 
@@ -7284,11 +8479,22 @@ const Dashboard: React.FC<DashboardProps> = ({
         lastLoadedFileRef.current = fileId;
         fileLoadingRef.current = true;
 
+        const ontologyProjectId = `${initialProjectId}--${fileId}`;
+
         setActiveFileId(fileId);
         setActiveFileName(fileName);
-        if (onFileSelected) onFileSelected(fileId, fileName);
+        if (onFileSelected && isMountedRef.current) onFileSelected(fileId, fileName);
 
-        const ontologyProjectId = `${initialProjectId}--${fileId}`;
+        // File-scoped id before slow graphdb/warm-up so effects never query parent-only projectId.
+        setProjectId(ontologyProjectId);
+        setLoadingProjectName(fileName);
+        setIsHierarchyLoading(true);
+        setIsMetadataLoading(true);
+        setIsPropertiesLoading(true);
+        setIsIndividualsLoading(true);
+        setIsAnnotationPropertiesLoading(true);
+        setIsDatatypesLoading(true);
+        setLoadingStatusMessage(`Loading ${fileName}…`);
 
         // ⚡ FAST PATH: Check if data already exists in GraphDB — skip MongoDB fetch + re-upload
         try {
@@ -7305,10 +8511,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               `[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (HIT: ${graphCheck.graphSize} triples)`,
             );
             console.log(`[Dashboard] ⚡ File already in GraphDB (${graphCheck.graphSize} triples), loading directly`);
-            setProjectId(ontologyProjectId);
-            setLoadingProjectName(fileName);
             notificationService.info("Loading", `Loading ${fileName} from cache...`);
-            await fetchData(ontologyProjectId, true, initialProjectId);
+            await fetchData(ontologyProjectId, false, initialProjectId, true);
             setShowLoadingChoice(false);
             setShowQueueStatus(false);
             setQueuePosition(undefined);
@@ -7321,6 +8525,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         } catch (checkErr) {
           console.warn("[Dashboard] GraphDB check failed, falling back to full upload:", checkErr);
           console.log(`[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (MISS/ERROR)`);
+        }
+
+        // Viewers can only read data already loaded by the project owner — never import.
+        if (isViewOnlyMember) {
+          notificationService.error("Not Available", "This file hasn't been loaded yet. Ask the project owner to open it first.");
+          setIsInitialLoading(false);
+          setIsHierarchyLoading(false);
+          setIsMetadataLoading(false);
+          setIsPropertiesLoading(false);
+          setIsIndividualsLoading(false);
+          setIsAnnotationPropertiesLoading(false);
+          setIsDatatypesLoading(false);
+          return;
         }
 
         notificationService.info("Loading File", `Loading ${fileName}...`);
@@ -7339,58 +8556,62 @@ const Dashboard: React.FC<DashboardProps> = ({
         setHasUnsavedChanges(false);
         setDraftCount(0);
 
-        // Fetch file content from auth service
-        const fileContent = await apiClient.get<{
-          id: string;
-          name: string;
-          content: string;
-          type: string;
-          size: number;
-        }>(`/api/projects/${initialProjectId}/files/${fileId}/content`);
+        // Server-side import: editor reads file directly from MongoDB GridFS.
+        // Eliminates the browser download+re-upload roundtrip that caused 10+ min
+        // timeouts for large files (e.g. 224 MB go-plus.owl).
+        const resolvedEmail = resolveUserEmail();
 
-        if (!fileContent || !fileContent.content) {
-          throw new Error("File content not found");
+        // Set project state before dispatching so IMPORT_COMPLETED targets the right project.
+        setProjectId(ontologyProjectId);
+        pendingImportProjectIdRef.current = ontologyProjectId;
+        setPendingImportProjectId(ontologyProjectId);
+
+        const importResult = await apiClient.post<{
+          success: boolean;
+          projectId: string;
+          filename: string;
+          message: string;
+        }>(
+          `/api/ontology/upload-by-file-ref/${encodeProjectId(ontologyProjectId)}`,
+          null,
+          {
+            params: {
+              fileId,
+              parentProjectId: initialProjectId,
+              ownerEmail: resolvedEmail || "",
+              workspaceId: user?.workspaceId || "",
+              importMode,
+              partition: partitionStrategy,
+              action: "replace",
+            },
+          },
+        );
+
+        if (!importResult?.success) {
+          throw new Error(importResult?.message || "Failed to trigger server-side import");
         }
 
         console.log(
-          `[Dashboard] [PERF] Fetch file content from MongoDB: ${Date.now() - loadFilePerfStart}ms (${((fileContent.content.length * 3) / 4 / (1024 * 1024)).toFixed(2)}MB raw)`,
+          `[Dashboard] [PERF] Server-side import dispatched: ${Date.now() - loadFilePerfStart}ms`,
         );
-        console.log("[Dashboard] 📥 File content retrieved, uploading to ontology editor...");
 
-        // Use hierarchical naming: project--fileId
-        // This organizes all files under their MongoDB project in GraphDB
-        // e.g., http://ontocode.org/project/project-123--file-456
-        // Note: Using -- instead of / to avoid URL encoding issues (%2F blocked by gateway)
+        // Desktop fast-path: backend skipped re-import (Fuseki already has data).
+        // No WebSocket IMPORT_COMPLETED will fire — fetch data directly instead.
+        if ((importResult as any)?.status === "ALREADY_LOADED") {
+          console.log("[Dashboard] ✅ Desktop cache hit (ALREADY_LOADED) — fetching data directly");
+          pendingImportProjectIdRef.current = null;
+          setPendingImportProjectId(null);
+          setInImportQueue(false);
+          setIsInitialLoading(false);
+          await fetchData(ontologyProjectId, false, initialProjectId, true);
+          return;
+        }
 
-        // Extract pure base64 data (remove data URL prefix if present)
-        const base64Data = fileContent.content.includes(",") ? fileContent.content.split(",")[1] : fileContent.content;
-
-        // Set the project ID first so IMPORT_COMPLETED knows which project to load
-        setProjectId(ontologyProjectId);
-        pendingImportProjectIdRef.current = ontologyProjectId;
-
-        // Upload to ontology editor service via VSCodeBridge (works in both VS Code and browser)
-        const resolvedEmail = resolveUserEmail();
-        // Workspace files use hierarchical IDs (proj--fileId). Skip duplicate check
-        // because the file is scoped to this project — a standalone file with the same
-        // name should NOT short-circuit the upload.
-        const isWorkspaceFile = ontologyProjectId.includes("--");
-        window.vscode.postMessage({
-          type: "uploadOntology",
-          projectId: ontologyProjectId,
-          fileName: fileName,
-          fileContent: base64Data,
-          ownerEmail: resolvedEmail || undefined,
-          skipDuplicateCheck: isWorkspaceFile,
-          forceUpload: true, // Dashboard already confirmed GraphDB is empty; skip status cache check
-          importMode,
-          partition: partitionStrategy,
-        });
+        console.log("[Dashboard] ✅ Server-side import triggered via uploadByFileRef");
+        console.log("[Dashboard] Pending import project:", ontologyProjectId);
 
         // The fileReady message will trigger fetchData via the message handler
         setIsExpectingFileReady(true);
-        console.log("[Dashboard] ✅ Upload request sent via VSCodeBridge");
-        console.log("[Dashboard] Pending import project:", ontologyProjectId);
         notificationService.info("Loading", `Loading ${fileName}...`);
       } catch (error: any) {
         console.error("[Dashboard] ❌ Failed to load project file:", error);
@@ -7404,7 +8625,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }, 1000);
       }
     },
-    [initialProjectId, resolveUserEmail, importMode, partitionStrategy, fetchData],
+    [initialProjectId, resolveUserEmail, user?.workspaceId, importMode, partitionStrategy, fetchData],
   );
 
   // Create Property from Class Expression Dialog
@@ -7446,9 +8667,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleAddAnnotation = useCallback(async () => {
     if (!projectId) return;
-    if (mainTab !== "ActiveOntology" && !selectedItem) return;
     setAddAnnotationDialogOpen(true);
-  }, [selectedItem, projectId, mainTab]);
+  }, [projectId]);
 
   const updateActiveOntologyAnnotations = useCallback((updater: (annotations: any[]) => any[]) => {
     setMetadata((prev) => {
@@ -7466,6 +8686,34 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
   }, []);
 
+  const handleRefreshAnnotationProperties = useCallback(async () => {
+    if (!projectId) return;
+    const res = await apiClient.get<any>(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`);
+    const rawProperties = Array.isArray(res?.data)
+      ? res.data
+      : Array.isArray(res?.annotationProperties)
+        ? res.annotationProperties
+        : [];
+    const merged = mergeAnnotationProperties(rawProperties.map(mapAnnotationProperty));
+    setAnnotationProperties(merged);
+    setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(merged));
+  }, [projectId]);
+
+  const handleDialogCreateAnnotationProperty = useCallback(
+    async (iri: string, label: string) => {
+      if (!projectId) return;
+      await ontologyMutationService.createAnnotationProperty(
+        projectId,
+        iri,
+        label,
+        user?.email,
+        user?.username,
+      );
+      await handleRefreshAnnotationProperties();
+    },
+    [projectId, user?.email, user?.username, handleRefreshAnnotationProperties],
+  );
+
   const handleAnnotationDialogAdd = useCallback(
     async (propertyIri: string, value: string, datatype?: string, lang?: string) => {
       if (!projectId) return;
@@ -7474,6 +8722,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       try {
         if (isEntityAnnotation && selectedItem) {
+          // Mark unsaved optimistically so the indicator appears immediately on confirm
+          markAsUnsaved();
+
           // Entity annotation
           await ontologyMutationService.addAnnotation(
             projectId,
@@ -7482,6 +8733,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             value,
             user?.email || "anonymous",
             user?.username || "Anonymous",
+            lang,
+            datatype,
           );
 
           // Update local state
@@ -7492,7 +8745,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             updatedItem.label = value;
           }
           updateItemInState(updatedItem);
-          markAsUnsaved();
         } else {
           // Ontology annotation
           updateActiveOntologyAnnotations((current) => [
@@ -7579,6 +8831,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             user?.email || "anonymous",
             user?.username || "Anonymous",
             oldValue,
+            lang,
+            datatype,
           );
 
           // Update local state
@@ -7658,17 +8912,46 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSaveOntologyIRIs = useCallback(
     async (ontologyIri: string, versionIri: string) => {
       if (!projectId) return;
-      try {
-        await apiClient.put(`/api/ontology/metadata/${projectId}/iri`, { ontologyIri, versionIri });
 
-        // Refresh metadata
+      const normalizedOntologyIri = ontologyIri.trim();
+      const normalizedVersionIri = versionIri.trim();
+      const absoluteIriPattern = /^https?:\/\/.+/i;
+
+      if (!absoluteIriPattern.test(normalizedOntologyIri)) {
+        showNotification("Ontology IRI must be an absolute http(s) URL.", "error");
+        throw new Error("Invalid ontology IRI");
+      }
+      if (normalizedVersionIri && !absoluteIriPattern.test(normalizedVersionIri)) {
+        showNotification("Version IRI must be an absolute http(s) URL when provided.", "error");
+        throw new Error("Invalid version IRI");
+      }
+
+      try {
+        const response = await apiClient.put<{ success?: boolean; error?: string }>(
+          `/api/ontology/metadata/${projectId}/iri`,
+          { ontologyIri: normalizedOntologyIri, versionIri: normalizedVersionIri },
+        );
+        if (response?.success === false) {
+          throw new Error(response.error || "Failed to update ontology IRIs.");
+        }
+
+        setMetadata((prev) => ({
+          ...(prev || {}),
+          ontologyIRI: normalizedOntologyIri,
+          versionIRI: normalizedVersionIri || undefined,
+        }));
+
         const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
-        setMetadata(metadataRes.data || metadataRes);
+        const metadataData = extractResponseData(metadataRes);
+        if (metadataData && typeof metadataData === "object") {
+          setMetadata((prev) => ({ ...(prev || {}), ...metadataData }));
+        }
 
         showNotification("Ontology IRIs updated successfully!", "info");
       } catch (error) {
         console.error("Failed to update ontology IRIs:", error);
         showNotification("Failed to update ontology IRIs.", "error");
+        throw error;
       }
     },
     [projectId],
@@ -7721,7 +9004,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         message: `Are you sure you want to delete this General Class Axiom?`,
         onConfirm: async () => {
           try {
-            await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, { value: axiom.value });
+            await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, { value: axiom.id || axiom.value });
 
             // Refresh GCIs
             const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
@@ -7746,18 +9029,19 @@ const Dashboard: React.FC<DashboardProps> = ({
   );
 
   const handleDeleteAnnotation = useCallback(
-    async (key: string) => {
+    async (key: string, explicitValue?: string) => {
       if (!selectedItem || !selectedItem.annotations || !projectId) return;
+
+      const raw = selectedItem.annotations[key];
+      const value = explicitValue ?? (Array.isArray(raw) ? raw[0] : raw);
 
       // Show confirm dialog instead of using confirm()
       setConfirmDialog({
         isOpen: true,
         title: "Delete Annotation",
-        message: `Are you sure you want to delete the annotation "${key}"?`,
+        message: `Are you sure you want to delete this annotation value?`,
         onConfirm: async () => {
           try {
-            const value = selectedItem.annotations[key];
-            // Call backend API
             await ontologyMutationService.deleteAnnotation(
               projectId,
               selectedItem.id,
@@ -7767,11 +9051,38 @@ const Dashboard: React.FC<DashboardProps> = ({
               user?.username || "Anonymous",
             );
 
-            // Update local state
-            const remainingAnnotations = { ...selectedItem.annotations };
-            delete remainingAnnotations[key];
-            const updatedItem = { ...selectedItem, annotations: remainingAnnotations };
+            const remainingAnnotations = { ...selectedItem.annotations } as Record<string, string | string[]>;
+            if (Array.isArray(raw)) {
+              const nextValues = raw.filter((v) => v !== value);
+              if (nextValues.length > 0) {
+                remainingAnnotations[key] = nextValues;
+              } else {
+                delete remainingAnnotations[key];
+              }
+            } else {
+              delete remainingAnnotations[key];
+            }
+            // If the deleted annotation was rdfs:label, sync the display label too
+            let updatedLabel = selectedItem.label;
+            if (key === "http://www.w3.org/2000/01/rdf-schema#label") {
+              const remaining = remainingAnnotations[key];
+              updatedLabel = Array.isArray(remaining) && remaining.length > 0
+                ? remaining[0]
+                : typeof remaining === "string"
+                  ? remaining
+                  : selectedItem.id.split(/[#/]/).pop() ?? selectedItem.id;
+            }
+            const updatedItem = { ...selectedItem, label: updatedLabel, annotations: remainingAnnotations };
             updateItemInState(updatedItem);
+            // Sync annotation-mode display cache for the renamed node
+            if (key === hierarchyAnnotationPropIri) {
+              setHierarchyAnnotationValues((prev) => {
+                const next = new Map(prev);
+                next.delete(selectedItem.id);
+                return next;
+              });
+              fetchedAnnotationIrisRef.current.delete(selectedItem.id);
+            }
             markAsUnsaved();
             showNotification("Annotation deleted successfully!", "info");
           } catch (error) {
@@ -7781,7 +9092,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         },
       });
     },
-    [selectedItem, updateItemInState, projectId],
+    [selectedItem, updateItemInState, projectId, hierarchyAnnotationPropIri],
   );
 
   // Function to refresh only properties (not classes) to avoid closing dialogs
@@ -7790,7 +9101,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       console.log("[refreshProperties] Starting property refresh...");
-      const propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
+      if (isDesktop()) {
+        await waitForDesktopOwlApiReady(projectId);
+      }
+      let propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
+      if (isOwlApiWarmingResponse(propertiesRes)) {
+        await waitForDesktopOwlApiReady(projectId);
+        propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
+      }
 
       const allProps = Array.isArray(propertiesRes?.data)
         ? propertiesRes.data
@@ -7804,7 +9122,18 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const opList = allProps.filter((p: any) => p.type === "ObjectProperty");
       console.log("[refreshProperties] Object properties:", opList.length);
-      setObjectProperties(opList);
+      setObjectProperties((prev: Property[]) => {
+        const prevMap = new Map(prev.map((p: Property) => [p.id, p]));
+        return opList.map((freshProp: Property) => {
+          const existing = prevMap.get(freshProp.id) as any;
+          // Preserve locally loaded details (incl. draft-mode annotations) so tab switches
+          // don't wipe optimistic updates that haven't been flushed to Fuseki yet.
+          if (existing?._propertyDetailsLoaded) {
+            return { ...existing, superProperties: freshProp.superProperties, label: freshProp.label || existing.label };
+          }
+          return freshProp;
+        });
+      });
 
       console.log("[Dashboard] ✅ Properties refreshed");
       // Build object property hierarchy
@@ -7859,7 +9188,16 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Build data property hierarchy
       const dpList = allProps.filter((p: any) => p.type === "DatatypeProperty");
       console.log("[refreshProperties] Data properties:", dpList.length);
-      setDataProperties(dpList);
+      setDataProperties((prev: Property[]) => {
+        const prevMap = new Map(prev.map((p: Property) => [p.id, p]));
+        return dpList.map((freshProp: Property) => {
+          const existing = prevMap.get(freshProp.id) as any;
+          if (existing?._propertyDetailsLoaded) {
+            return { ...existing, superProperties: freshProp.superProperties, label: freshProp.label || existing.label };
+          }
+          return freshProp;
+        });
+      });
 
       const dpMap = new Map<string, TreeNode>();
       dpList.forEach((p: any) => {
@@ -7946,10 +9284,101 @@ const Dashboard: React.FC<DashboardProps> = ({
     refreshProperties,
   ]);
 
+  // Desktop: Phase-2 Fuseki sections are skipped on open; load them when the user opens each tab.
+  useEffect(() => {
+    if (!isDesktop() || !projectId || mainTab !== "Entities") return;
+    const sectionKey = entitiesTab;
+    if (desktopDeferredSectionsLoadedRef.current.has(sectionKey)) return;
+
+    const encodedProjectId = encodeURIComponent(projectId);
+    const markLoaded = () => desktopDeferredSectionsLoadedRef.current.add(sectionKey);
+
+    if (sectionKey === "ObjectProperties" || sectionKey === "DataProperties") {
+      if (objectPropertyHierarchy.length > 0 || dataPropertyHierarchy.length > 0) {
+        markLoaded();
+        return;
+      }
+      setIsPropertiesLoading(true);
+      refreshProperties()
+        .finally(() => {
+          markLoaded();
+          setIsPropertiesLoading(false);
+        });
+      return;
+    }
+
+    if (sectionKey === "Individuals") {
+      if (individuals.length > 0) {
+        markLoaded();
+        return;
+      }
+      setIsIndividualsLoading(true);
+      apiClient
+        .get<any>(`/api/ontology/individuals/${encodedProjectId}`)
+        .then((res) => {
+          setIndividuals(
+            Array.isArray(res?.data) ? res.data : Array.isArray(res?.individuals) ? res.individuals : [],
+          );
+        })
+        .catch((e) => console.error("[Dashboard] Desktop individuals load failed:", e))
+        .finally(() => {
+          markLoaded();
+          setIsIndividualsLoading(false);
+        });
+      return;
+    }
+
+    if (sectionKey === "AnnotationProperties") {
+      if (annotationProperties.length > 0) {
+        markLoaded();
+        return;
+      }
+      setIsAnnotationPropertiesLoading(true);
+      handleRefreshAnnotationProperties().finally(() => {
+        markLoaded();
+        setIsAnnotationPropertiesLoading(false);
+      });
+      return;
+    }
+
+    if (sectionKey === "Datatypes") {
+      if (datatypes.length > 0) {
+        markLoaded();
+        return;
+      }
+      setIsDatatypesLoading(true);
+      apiClient
+        .get<any>(`/api/ontology/datatypes/${encodedProjectId}`)
+        .then((res) => {
+          setDatatypes(Array.isArray(res?.data) ? res.data : Array.isArray(res?.datatypes) ? res.datatypes : []);
+        })
+        .catch((e) => console.error("[Dashboard] Desktop datatypes load failed:", e))
+        .finally(() => {
+          markLoaded();
+          setIsDatatypesLoading(false);
+        });
+    }
+  }, [
+    projectId,
+    mainTab,
+    entitiesTab,
+    individuals.length,
+    annotationProperties.length,
+    datatypes.length,
+    objectPropertyHierarchy.length,
+    dataPropertyHierarchy.length,
+    refreshProperties,
+    handleRefreshAnnotationProperties,
+  ]);
+
   // Handler for creating object properties with name parameter
   const handleAddObjectProperty = useCallback(
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
       if (!projectId) return;
+      if (isViewOnlyMember) {
+        showNotification(viewOnlyMessage, "error");
+        return;
+      }
 
       try {
         console.log("[handleAddObjectProperty] Creating property:", name, "type:", type, "parentId:", parentId);
@@ -7997,6 +9426,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleAddDataProperty = useCallback(
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
       if (!projectId) return;
+      if (isViewOnlyMember) {
+        showNotification(viewOnlyMessage, "error");
+        return;
+      }
 
       try {
         console.log("[handleAddDataProperty] Creating property:", name, "type:", type, "parentId:", parentId);
@@ -8044,6 +9477,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleAddClassInline = useCallback(
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
       if (!projectId) return;
+      if (isViewOnlyMember) {
+        showNotification(viewOnlyMessage, "error");
+        return;
+      }
 
       try {
         console.log("[handleAddClassInline] Creating class:", name, "type:", type, "parentId:", parentId);
@@ -8109,16 +9546,27 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         markAsUnsaved();
 
-        console.log("[handleAddClassInline] Class created, refreshing from GraphDB...");
-        // Add a small delay to ensure backend has processed the class
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        // Ensure parent is expanded so the new child is visible
+        setExpandedNodes((prev) => (prev.includes(parentIri) ? prev : [...prev, parentIri]));
 
-        await refreshClassHierarchy();
+        // Targeted refresh: reload only the parent's children instead of the full hierarchy.
+        // For large ontologies (60k+ classes) a full refreshClassHierarchy() takes many seconds
+        // and wipes the optimistic update in the meantime. Clearing + reloading just the parent
+        // is one API call and keeps the rest of the tree stable.
+        await new Promise((resolve) => setTimeout(resolve, 300));
 
-        // Re-expand the parent node after refresh to ensure it stays open
-        if (parentIri && !expandedNodes.includes(parentIri)) {
-          setExpandedNodes((prev) => [...prev, parentIri]);
-        }
+        // Clear the parent's cached children so loadChildren makes a fresh API call
+        setClassHierarchy((prev) => {
+          const clearParentChildren = (nodes: TreeNode[]): TreeNode[] =>
+            nodes.map((n) => {
+              if (n.id === parentIri) return { ...n, children: [] };
+              if (n.children) return { ...n, children: clearParentChildren(n.children) };
+              return n;
+            });
+          return clearParentChildren(prev);
+        });
+
+        await loadChildren(parentIri);
 
         console.log("[handleAddClassInline] Refresh complete");
         showNotification(`Class "${name}" created successfully!`);
@@ -8128,43 +9576,70 @@ const Dashboard: React.FC<DashboardProps> = ({
         throw error;
       }
     },
-    [projectId, metadata, classHierarchy, user, refreshClassHierarchy, showNotification, expandedNodes, markAsUnsaved],
+    [projectId, metadata, classHierarchy, user, loadChildren, showNotification, expandedNodes, markAsUnsaved],
   );
 
   const handleAddItem = useCallback(
     async (type: "subclass" | "sibling" | "individual") => {
       if (!projectId) return;
 
+      if (isProjectDraftEditorRole && syncMode !== 'private') {
+        setShowProPromptType('draftRequired');
+        return;
+      }
+
       if (type === "individual") {
         setCreateIndividualModalOpen(true);
         return;
       }
 
-      if (entitiesTab === "ObjectProperties") {
-        if (!selectedItem) {
-          showNotification("Select an object property first.", "warning");
+      const activeEntitiesTab =
+        mainTab === "IndividualsByClass" ? "Classes" : entitiesTab;
+      const activeSelectedItem =
+        mainTab === "IndividualsByClass" ? selectedClassForIndividuals : selectedItem;
+
+      // Bug #46 / #45 — primary "Add" button is contextual:
+      //   • sibling + no selection  → create at top level (under
+      //     owl:Thing / owl:topObjectProperty / owl:topDataProperty / no
+      //     parent for annotation properties).
+      //   • sibling + selection     → create as sibling of selection.
+      //   • subclass + no selection → notify; subclass always needs a parent.
+      //   • subclass + selection    → create as child of selection.
+
+      if (activeEntitiesTab === "ObjectProperties") {
+        if (type === "subclass" && !activeSelectedItem) {
+          showNotification(
+            "Select an object property first to add a sub-property.",
+            "warning",
+          );
           return;
         }
 
-        // Prevent creating sibling of top-level object property
-        if (type === "sibling") {
-          const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
-          const isTopLevel =
-            !parent || selectedItem.id.includes("topObjectProperty") || selectedItem.label === "owl:topObjectProperty";
+        if (!activeSelectedItem) {
+          // Top-level object property under owl:topObjectProperty.
+          setAddPropertyType("root");
+          setPropertyParentLabel("owl:topObjectProperty");
+          setAddPropertyDialogOpen(true);
+          return;
+        }
 
+        // Sibling of an already top-level property is just another root.
+        if (type === "sibling") {
+          const parent = findParentNode(objectPropertyHierarchy, activeSelectedItem.id);
+          const isTopLevel =
+            !parent || activeSelectedItem.id.includes("topObjectProperty") || activeSelectedItem.label === "owl:topObjectProperty";
           if (isTopLevel) {
-            showNotification(
-              "Cannot create sibling of top-level object property. Please create a subproperty instead.",
-              "warning",
-            );
+            setAddPropertyType("root");
+            setPropertyParentLabel("owl:topObjectProperty");
+            setAddPropertyDialogOpen(true);
             return;
           }
         }
 
         const parentLabel =
           type === "subclass"
-            ? selectedItem.label
-            : findParentNode(objectPropertyHierarchy, selectedItem.id)?.label || "owl:topObjectProperty";
+            ? activeSelectedItem.label
+            : findParentNode(objectPropertyHierarchy, activeSelectedItem.id)?.label || "owl:topObjectProperty";
 
         setAddPropertyType(type === "subclass" ? "subproperty" : "sibling");
         setPropertyParentLabel(parentLabel);
@@ -8172,31 +9647,38 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      if (entitiesTab === "DataProperties") {
-        if (!selectedItem) {
-          showNotification("Select a data property first.", "warning");
+      if (activeEntitiesTab === "DataProperties") {
+        if (type === "subclass" && !activeSelectedItem) {
+          showNotification(
+            "Select a data property first to add a sub-property.",
+            "warning",
+          );
           return;
         }
 
-        // Prevent creating sibling of top-level data property
-        if (type === "sibling") {
-          const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
-          const isTopLevel =
-            !parent || selectedItem.id.includes("topDataProperty") || selectedItem.label === "owl:topDataProperty";
+        if (!activeSelectedItem) {
+          setAddPropertyType("root");
+          setPropertyParentLabel("owl:topDataProperty");
+          setAddPropertyDialogOpen(true);
+          return;
+        }
 
+        if (type === "sibling") {
+          const parent = findParentNode(dataPropertyHierarchy, activeSelectedItem.id);
+          const isTopLevel =
+            !parent || activeSelectedItem.id.includes("topDataProperty") || activeSelectedItem.label === "owl:topDataProperty";
           if (isTopLevel) {
-            showNotification(
-              "Cannot create sibling of top-level data property. Please create a subproperty instead.",
-              "warning",
-            );
+            setAddPropertyType("root");
+            setPropertyParentLabel("owl:topDataProperty");
+            setAddPropertyDialogOpen(true);
             return;
           }
         }
 
         const parentLabel =
           type === "subclass"
-            ? selectedItem.label
-            : findParentNode(dataPropertyHierarchy, selectedItem.id)?.label || "owl:topDataProperty";
+            ? activeSelectedItem.label
+            : findParentNode(dataPropertyHierarchy, activeSelectedItem.id)?.label || "owl:topDataProperty";
 
         setAddPropertyType(type === "subclass" ? "subproperty" : "sibling");
         setPropertyParentLabel(parentLabel);
@@ -8204,45 +9686,81 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      if (entitiesTab === "AnnotationProperties") {
-        setAddPropertyType("root");
-        setPropertyParentLabel("Annotation Property");
+      if (activeEntitiesTab === "AnnotationProperties") {
+        // Bug #45 — annotation properties were always created at root and
+        // had no toolbar add. Now matches the other property panes.
+        if (type === "subclass" && !activeSelectedItem) {
+          showNotification(
+            "Select an annotation property first to add a sub-property.",
+            "warning",
+          );
+          return;
+        }
+
+        if (!activeSelectedItem) {
+          setAddPropertyType("root");
+          setPropertyParentLabel("Annotation Property");
+          setAddPropertyDialogOpen(true);
+          return;
+        }
+
+        // Annotation properties currently render as a flat list in
+        // asserted mode (only inferredAnnotationPropertyHierarchy is built).
+        // "sibling" therefore means "another root-level annotation property"
+        // until the asserted hierarchy is wired through; "subclass" creates
+        // a sub-annotation-property under the selected one.
+        const parentLabel =
+          type === "subclass" ? activeSelectedItem.label : "Annotation Property";
+
+        setAddPropertyType(type === "subclass" ? "subproperty" : "root");
+        setPropertyParentLabel(parentLabel);
         setAddPropertyDialogOpen(true);
         return;
       }
 
-      if (entitiesTab === "Datatypes") {
+      if (activeEntitiesTab === "Datatypes") {
         setAddDatatypeDialogOpen(true);
         return;
       }
 
-      if ((type === "subclass" || type === "sibling") && !selectedItem) {
-        showNotification("Please select a class first.", "warning");
-        return;
-      }
-
-      if (entitiesTab !== "Classes") {
+      if (activeEntitiesTab !== "Classes") {
         showNotification("This action is available only for classes right now.", "warning");
         return;
       }
 
-      // Prevent creating sibling of top-level class
+      // Subclass without a selected class can't proceed — owl:Thing children
+      // ARE the top level, so use the contextual sibling button instead.
+      if (type === "subclass" && !activeSelectedItem) {
+        showNotification("Select a class first to add a subclass.", "warning");
+        return;
+      }
+
+      // Sibling without selection: create a top-level class under owl:Thing.
+      if (!activeSelectedItem) {
+        setAddClassType("subclass"); // creates as child of owl:Thing
+        setClassParentLabel("owl:Thing");
+        setAddClassDialogOpen(true);
+        return;
+      }
+
+      // Sibling of owl:Thing → top-level class (same effect, friendlier).
       if (type === "sibling") {
-        const parent = findParentNode(classHierarchy, selectedItem.id);
-        const isTopLevel = !parent || selectedItem.id.includes("Thing") || selectedItem.label === "owl:Thing";
+        const parent = findParentNode(classHierarchy, activeSelectedItem.id);
+        const isTopLevel = !parent || activeSelectedItem.id.includes("Thing") || activeSelectedItem.label === "owl:Thing";
 
         if (isTopLevel) {
-          showNotification("Cannot create sibling of owl:Thing. Please create a subclass instead.", "warning");
+          setAddClassType("subclass");
+          setClassParentLabel("owl:Thing");
+          setAddClassDialogOpen(true);
           return;
         }
       }
 
-      // For parent label, we'll compute it from state accessor
-      let parentLabel = selectedItem.label;
+      // For parent label, compute via functional state accessor.
+      let parentLabel = activeSelectedItem.label;
       if (type === "sibling") {
-        // Use functional update to get parent label without dependency
         setClassHierarchy((currentHierarchy) => {
-          const parent = findParentNode(currentHierarchy, selectedItem.id);
+          const parent = findParentNode(currentHierarchy, activeSelectedItem.id);
           parentLabel = parent?.label || "owl:Thing";
           return currentHierarchy; // No change
         });
@@ -8252,7 +9770,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       setClassParentLabel(parentLabel);
       setAddClassDialogOpen(true);
     },
-    [projectId, entitiesTab, selectedItem, showNotification],
+    [projectId, mainTab, entitiesTab, selectedItem, selectedClassForIndividuals, showNotification, objectPropertyHierarchy, dataPropertyHierarchy, classHierarchy, isProjectDraftEditorRole, syncMode],
   );
 
   const handleCreateClass = useCallback(
@@ -8592,6 +10110,26 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         await ontologyMutationService.createAnnotationProperty(projectId, newIri, name);
 
+        // Bug #45: support sub-annotation-properties. The backend's
+        // createAnnotationProperty mutation doesn't accept a parent IRI, but
+        // the generic addSubPropertyOf does (it just emits
+        // `<child> rdfs:subPropertyOf <parent>`, which is the correct
+        // assertion for annotation properties under OWL 2).
+        if (addPropertyType === "subproperty" && selectedItem?.id) {
+          try {
+            await ontologyMutationService.addSubPropertyOf(projectId, newIri, selectedItem.id);
+          } catch (linkErr) {
+            console.error(
+              "[Dashboard] Created annotation property but failed to link as sub-property:",
+              linkErr,
+            );
+            showNotification(
+              "Annotation property created, but the sub-property relationship could not be saved.",
+              "warning",
+            );
+          }
+        }
+
         const newProp: AnnotationProperty = {
           id: newIri,
           label: name,
@@ -8611,13 +10149,17 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create annotation property. See console for details.", "error");
       }
     },
-    [projectId, metadata, markAsUnsaved, showNotification],
+    [projectId, metadata, markAsUnsaved, showNotification, addPropertyType, selectedItem],
   );
 
   const handleAddIndividual = useCallback(
     async (name: string) => {
       if (!projectId) {
         showNotification("No project loaded.", "error");
+        return;
+      }
+      if (isViewOnlyMember) {
+        showNotification(viewOnlyMessage, "error");
         return;
       }
 
@@ -8655,7 +10197,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleMakeSiblingsDisjoint = useCallback(async () => {
     console.log("[DEBUG] handleMakeSiblingsDisjoint called");
-    if (!projectId || !selectedItem || entitiesTab !== "Classes") return;
+    const activeEntitiesTab =
+      mainTab === "IndividualsByClass" ? "Classes" : entitiesTab;
+    const activeSelectedItem =
+      mainTab === "IndividualsByClass" ? selectedClassForIndividuals : selectedItem;
+    if (!projectId || !activeSelectedItem || activeEntitiesTab !== "Classes") return;
 
     // Find siblings of selected class - use classHierarchy directly as a dependency
     const findSiblings = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode[] => {
@@ -8672,7 +10218,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       return [];
     };
 
-    const siblings = findSiblings(classHierarchy, selectedItem.id);
+    const siblings = findSiblings(classHierarchy, activeSelectedItem.id);
 
     if (siblings.length === 0) {
       showNotification("No siblings found for the selected class.", "info");
@@ -8687,7 +10233,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       onConfirm: async () => {
         try {
           // Include the selected class itself in the disjoint set
-          const allClasses = [selectedItem as TreeNode, ...siblings];
+          const allClasses = [activeSelectedItem as TreeNode, ...siblings];
           const classIds = allClasses.map((c) => c.id);
 
           // Call backend to create pairwise disjoint axioms
@@ -8699,19 +10245,18 @@ const Dashboard: React.FC<DashboardProps> = ({
           );
 
           showNotification(`Successfully made ${classIds.length} classes pairwise disjoint.`, "info");
+          console.log(`[MUTATION:disjoint] ✓ ${classIds.length} classes — refreshing hierarchy`);
 
-          // Optionally refresh the selected item to show updated axioms
-          if (selectedItem) {
-            const updated = { ...selectedItem, disjointClassesAxioms: [] };
-            updateItemInState(updated);
-          }
+          // Re-fetch the class hierarchy so all sibling nodes reflect the new disjoint axioms
+          lastClassHierarchyRefreshAt.current = 0;
+          refreshClassHierarchy();
         } catch (error) {
           console.error("Failed to make siblings disjoint:", error);
           showNotification("Failed to make siblings disjoint. See console for details.", "error");
         }
       },
     });
-  }, [projectId, selectedItem, entitiesTab, classHierarchy, updateItemInState]);
+  }, [projectId, mainTab, selectedItem, selectedClassForIndividuals, entitiesTab, classHierarchy, updateItemInState, showNotification, user, refreshClassHierarchy]);
 
   const handleDeleteItem = useCallback(
     async (itemOverride?: SelectableItem, tabOverride?: typeof entitiesTab) => {
@@ -8726,12 +10271,26 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      // Block concurrent deletes — multiple simultaneous DELETEs hit GraphDB Free's
+      // 2-connection cap, queue up, and trigger 504 gateway timeouts.
+      if (isMutatingRef.current) {
+        showNotification("Please wait for the current operation to finish before deleting another item.", "warning");
+        return;
+      }
+
+      // Prevent deletion of built-in annotation properties (rdfs:label, rdfs:comment, etc.)
+      if (activeTab === "AnnotationProperties" && STANDARD_ANNOTATION_PROPERTIES.some((p) => p.id === item.id)) {
+        showNotification(`"${item.label}" is a built-in annotation property and cannot be deleted.`, "error");
+        return;
+      }
+
       // Show confirm dialog instead of using confirm()
       setConfirmDialog({
         isOpen: true,
         title: "Delete Item",
         message: `Are you sure you want to delete "${item.label}"? This action cannot be undone.`,
         onConfirm: async () => {
+          isMutatingRef.current = true;
           try {
             console.log("[DELETE] Deleting item:", { id: item.id, label: item.label, tab: activeTab });
 
@@ -8797,6 +10356,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                       node.children ? { ...node, children: removeNodeRecursively(node.children, id) } : node,
                     );
                 setClassHierarchy((prev) => removeNodeRecursively(prev, item.id));
+                // Remove individuals whose only type was the deleted class
+                setIndividuals((prev) => prev.filter((ind) => !(ind as any).types?.includes(item.id)));
+                // Evict deleted class from annotation cache
+                setHierarchyAnnotationValues((prev) => { const m = new Map(prev); m.delete(item.id); return m; });
+                fetchedAnnotationIrisRef.current.delete(item.id);
                 break;
               }
               case "Individuals":
@@ -8845,10 +10409,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                 prev ? { ...prev, [countField]: Math.max(0, ((prev as any)[countField] || 0) - 1) } : prev,
               );
             }
+            console.log(`[MUTATION:delete] ✓ ${activeTab}:${item.id}`);
             showNotification(`"${item.label}" deleted successfully!`, "info");
           } catch (error) {
             console.error("Failed to delete item:", error);
             showNotification("Failed to delete item. See console for details.", "error");
+          } finally {
+            isMutatingRef.current = false;
           }
         },
       });
@@ -8856,8 +10423,35 @@ const Dashboard: React.FC<DashboardProps> = ({
     [selectedItem, entitiesTab, projectId],
   );
 
+  const handleChangeEntityIri = useCallback(
+    (item: SelectableItem) => {
+      if (isViewOnlyMember) { handleViewOnlyAction(); return; }
+      setEditEntityIRITarget(item);
+      setIsEditEntityIRIDialogOpen(true);
+    },
+    [isViewOnlyMember],
+  );
+
+  const handleSaveEntityIri = useCallback(
+    async (newIri: string) => {
+      if (!projectId || !editEntityIRITarget) return;
+      await ontologyMutationService.renameEntity(
+        projectId,
+        editEntityIRITarget.id,
+        newIri,
+        user?.email || "anonymous",
+        user?.username || "Anonymous",
+      );
+      showNotification("Entity IRI updated successfully", "info");
+      setEditEntityIRITarget(null);
+      await fetchData();
+    },
+    [projectId, editEntityIRITarget, user, fetchData],
+  );
+
   const handleRenameItem = useCallback(
     async (itemId: string, newLabel: string) => {
+      if (isViewOnlyMember) { handleViewOnlyAction(); return; }
       console.log("[DEBUG] handleRenameItem called for itemId:", itemId, "newLabel:", newLabel);
       if (!projectId || !newLabel.trim()) return;
 
@@ -8877,8 +10471,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           );
         } catch (classError) {
           // If class update fails, try annotation-based update (for other entity types)
-          // Note: We need to get the current label - we'll use selectedItem if it matches
-          const currentLabel = selectedItem?.id === itemId ? selectedItem.label : "Unknown";
+          const currentLabel = selectedItem?.id === itemId
+            ? selectedItem.label
+            : itemId.split(/[#/]/).pop() ?? itemId;
           await ontologyMutationService.deleteAnnotation(
             projectId,
             itemId,
@@ -8903,14 +10498,76 @@ const Dashboard: React.FC<DashboardProps> = ({
           label: newLabel,
         } as SelectableItem;
         updateItemInState(updatedItem);
-
+        // Sync annotation-mode display cache if showing rdfs:label
+        if (hierarchyAnnotationPropIri === "http://www.w3.org/2000/01/rdf-schema#label") {
+          setHierarchyAnnotationValues((prev) => {
+            const next = new Map(prev);
+            next.set(itemId, newLabel);
+            return next;
+          });
+        }
+        console.log(`[MUTATION:rename] ✓ ${itemId} → "${newLabel}", annotProp cache updated:`, hierarchyAnnotationPropIri === "http://www.w3.org/2000/01/rdf-schema#label");
         showNotification(`Renamed to "${newLabel}"`, "info");
       } catch (error) {
         console.error("Failed to rename item:", error);
         showNotification("Failed to rename item. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, updateItemInState],
+    [projectId, selectedItem, updateItemInState, hierarchyAnnotationPropIri],
+  );
+
+  const handleMoveClass = useCallback(
+    async (classId: string, newParentId: string) => {
+      if (isViewOnlyMember) {
+        handleViewOnlyAction();
+        return;
+      }
+      if (!projectId || !classId || !newParentId || classId === newParentId) return;
+
+      const owlThing = "http://www.w3.org/2002/07/owl#Thing";
+      if (classId === owlThing) {
+        showNotification("Cannot move owl:Thing", "warning");
+        return;
+      }
+
+      try {
+        const currentParent = findParentNode(classHierarchy, classId);
+        if (currentParent && currentParent.id !== newParentId) {
+          await ontologyMutationService.deleteSubClassOf(
+            projectId,
+            classId,
+            currentParent.id,
+            user?.email,
+            user?.username || user?.email,
+          );
+        }
+        if (newParentId !== owlThing) {
+          await ontologyMutationService.addSubClassOf(
+            projectId,
+            classId,
+            newParentId,
+            user?.email,
+            user?.username || user?.email,
+          );
+        }
+        await refreshClassHierarchy();
+        setExpandedNodes((prev) => (prev.includes(newParentId) ? prev : [...prev, newParentId]));
+        markAsUnsaved();
+      } catch (error) {
+        console.error("[Dashboard] Failed to move class:", error);
+        showNotification("Failed to move class in hierarchy", "error");
+      }
+    },
+    [
+      projectId,
+      classHierarchy,
+      isViewOnlyMember,
+      user,
+      refreshClassHierarchy,
+      showNotification,
+      handleViewOnlyAction,
+      markAsUnsaved,
+    ],
   );
 
   const handleGraphNodeClick = useCallback(
@@ -8954,6 +10611,65 @@ const Dashboard: React.FC<DashboardProps> = ({
     [classHierarchy],
   );
 
+  const flattenTree = useCallback((nodes: TreeNode[]): TreeNode[] => {
+    return nodes.flatMap((n) => [n, ...(n.children ? flattenTree(n.children) : [])]);
+  }, []);
+
+  useEffect(() => {
+    const handleCollaborationNavigate = (event: Event) => {
+      const detail = (event as CustomEvent<CollaborationNavigateDetail>).detail;
+      if (!detail?.entityIRI) return;
+      if (detail.projectId && projectId && detail.projectId !== projectId) return;
+
+      const tab = resolveEntitiesTab(detail.entityType, detail.changeType);
+      setMainTab("Entities");
+      setEntitiesTab(tab);
+
+      const label =
+        detail.entityLabel || detail.entityIRI.split(/[#/]/).pop() || detail.entityIRI;
+
+      let item: SelectableItem | null = null;
+      if (tab === "Classes") {
+        item = findClassNodeById(detail.entityIRI);
+      } else if (tab === "Individuals") {
+        item = individuals.find((i) => i.id === detail.entityIRI) || null;
+      } else if (tab === "ObjectProperties") {
+        item = flattenTree(objectPropertyHierarchy).find((n) => n.id === detail.entityIRI) || null;
+        if (!item) item = objectProperties.find((p) => p.id === detail.entityIRI) || null;
+      } else if (tab === "DataProperties") {
+        item = flattenTree(dataPropertyHierarchy).find((n) => n.id === detail.entityIRI) || null;
+        if (!item) item = dataProperties.find((p) => p.id === detail.entityIRI) || null;
+      } else if (tab === "AnnotationProperties") {
+        item = flattenTree(annotationPropertyHierarchy).find((n) => n.id === detail.entityIRI) || null;
+        if (!item) item = annotationProperties.find((p) => p.id === detail.entityIRI) || null;
+      } else if (tab === "Datatypes") {
+        item = datatypes.find((d) => d.id === detail.entityIRI) || null;
+      }
+
+      if (!item) {
+        item = { id: detail.entityIRI, label, children: [], hasChildren: false } as TreeNode;
+      }
+
+      setSelectedItem(item);
+      notificationService.info("Navigated", `Opened ${label} in ${tab}`);
+    };
+
+    window.addEventListener(COLLABORATION_NAVIGATE_EVENT, handleCollaborationNavigate as EventListener);
+    return () => window.removeEventListener(COLLABORATION_NAVIGATE_EVENT, handleCollaborationNavigate as EventListener);
+  }, [
+    projectId,
+    findClassNodeById,
+    flattenTree,
+    individuals,
+    objectPropertyHierarchy,
+    dataPropertyHierarchy,
+    annotationPropertyHierarchy,
+    objectProperties,
+    dataProperties,
+    annotationProperties,
+    datatypes,
+  ]);
+
   useEffect(() => {
     const handleGraphAddClass = (event: Event) => {
       const custom = event as CustomEvent<{
@@ -8968,6 +10684,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       const detail = custom.detail;
       if (!detail) return;
       if (detail.projectId && projectId && detail.projectId !== projectId) {
+        return;
+      }
+
+      if (isProjectDraftEditorRole && syncMode !== 'private') {
+        setShowProPromptType('draftRequired');
         return;
       }
 
@@ -8997,7 +10718,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     window.addEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
     return () => window.removeEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
-  }, [classHierarchy, findClassNodeById, projectId, showNotification]);
+  }, [classHierarchy, findClassNodeById, projectId, showNotification, isProjectDraftEditorRole, syncMode]);
 
   // Listen for classes created directly by the graph plugin (S6 fix)
   useEffect(() => {
@@ -9096,8 +10817,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Other shortcuts only for Classes tab
       if (entitiesTab !== "Classes") return;
 
-      // Ctrl+\ or Cmd+\ - Add Subclass
-      if ((e.ctrlKey || e.metaKey) && e.key === "\\") {
+      // Ctrl+E (tooltip) or Ctrl+\ - Add Subclass
+      if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E" || e.key === "\\")) {
         e.preventDefault();
         handleAddItem("subclass");
       }
@@ -9116,6 +10837,44 @@ const Dashboard: React.FC<DashboardProps> = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem, selectedItem]);
+
+  // Undo / Redo (Protégé-style) — rolls back via Change Assistant history API
+  useEffect(() => {
+    if (!projectId) return;
+
+    const handleUndoRedo = async (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+        return;
+      }
+      if (!(e.ctrlKey || e.metaKey)) return;
+
+      const userId = user?.email || "anonymous";
+      const username = user?.username || "Anonymous";
+      const isRedo = e.key === "y" || (e.key === "z" && e.shiftKey);
+
+      if (e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        const result = await undoRedoService.undo(projectId, userId, username);
+        if (result.success) {
+          notificationService.success("Undo", "Undid last change");
+        } else if (result.error) {
+          notificationService.info("Undo", result.error);
+        }
+      } else if (isRedo) {
+        e.preventDefault();
+        const result = await undoRedoService.redo(projectId, userId, username);
+        if (result.success) {
+          notificationService.success("Redo", "Redid change");
+        } else if (result.error) {
+          notificationService.info("Redo", result.error);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleUndoRedo);
+    return () => window.removeEventListener("keydown", handleUndoRedo);
+  }, [projectId, user]);
 
   const handleExecuteDlQuery = () => {
     setIsDlQueryLoading(true);
@@ -9137,23 +10896,25 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleAddDlToOntology = useCallback(async () => {
     if (!projectId || !dlQuery.trim()) return;
     try {
-      await apiClient.post(`/api/ontology/${projectId}/dl/add`, { expression: dlQuery });
+      await ontologyMutationService.addDlQueryClass(projectId, dlQuery, dlQuery, user?.email);
       console.log("DL expression submitted to backend.");
     } catch (e) {
-      // Keep app stable even if the endpoint doesn't exist.
-      console.warn("DL add endpoint not available; skipping.");
+      console.warn("DL add endpoint not available; skipping.", e);
     }
-  }, [projectId, dlQuery]);
+  }, [projectId, dlQuery, user?.email]);
   // #endregion
 
   // #region Render Methods
   const fetchCodeViewContent = useCallback(
     async (
-      format: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional",
+      format: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld",
       forceRefresh: boolean = false,
       forceReload: boolean = false,
     ) => {
       if (!projectId) return;
+
+      // Clear any previous syntax error when loading new content
+      setCodeViewSyntaxError(null);
 
       // If clicking same format without force refresh/reload, just return (prevents unnecessary reloads)
       if (format === codeViewFormat && !forceRefresh && !forceReload && codeViewContent) {
@@ -9185,6 +10946,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setCodeViewContent(response.content);
           setCodeViewFormat(format);
           setHasLocalCodeViewChanges(false);
+          codeViewDirtyRef.current = false;
           if (response.cached) {
             console.log("[Dashboard] Content loaded from cache (line positions preserved)");
           } else {
@@ -9214,6 +10976,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Citation insertion handlers
   const handleCitationSelection = useCallback((citation: any) => {
     if (citation === "manual") {
+      setPendingCitation(null);
+      setCitationInsertionMode(false);
       setShowCitationPicker(false);
       setShowManualCitationDialog(true);
       return;
@@ -9262,17 +11026,56 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleCodeContentChange = useCallback((newContent: string) => {
     setCodeViewContent(newContent);
     setHasLocalCodeViewChanges(true);
+    setCodeViewSyntaxError(null); // clear error as user edits
     console.log("[Dashboard] Code view content updated via editing");
   }, []);
 
   // Handle saving code content to backend
   const handleSaveCodeContent = useCallback(
     async (content: string) => {
+      // Free-plan non-owners cannot edit or save — show the Pro upgrade dialog
+      if (isViewOnlyMember) {
+        setShowProPromptType('edit');
+        return;
+      }
+
       if (!projectId) {
         console.error("[Dashboard] No projectId available for save");
         notificationService.error("Save Failed", "No project selected");
         return;
       }
+
+      // ── Client-side validation before sending to backend ─────────────────
+      // This catches common parse errors instantly without a round-trip.
+      if (codeViewFormat === 'rdfxml' || codeViewFormat === 'owlxml') {
+        // Use the browser's built-in XML parser
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(content, 'application/xml');
+        const parseErrorEl = doc.querySelector('parsererror');
+        if (parseErrorEl) {
+          // Extract the text — browsers include line/column info in the text
+          const rawErr = parseErrorEl.textContent || 'Invalid XML structure';
+          // Trim verbose Gecko/WebKit prefix so only the useful message shows
+          const cleanErr = rawErr
+            .replace(/^.*?error\s*:\s*/i, '')
+            .replace(/^This page contains the following errors:\s*/i, '')
+            .trim();
+          console.error('[Dashboard] Client-side XML validation failed:', cleanErr);
+          setCodeViewSyntaxError(cleanErr);
+          notificationService.error('XML Validation Error', 'Fix the highlighted error before saving.');
+          return;
+        }
+      } else if (codeViewFormat === 'turtle' || codeViewFormat === 'ntriples') {
+        // Heuristic: non-empty Turtle/N-Triples files must have at least one triple-terminating dot
+        const trimmed = content.trim();
+        if (trimmed && !trimmed.includes('.')) {
+          const msg = 'Turtle/N-Triples content appears malformed: no statement-terminating dot (.) found.';
+          setCodeViewSyntaxError(msg);
+          notificationService.error('Validation Error', msg);
+          return;
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────
 
       try {
         console.log(
@@ -9305,7 +11108,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             format: codeViewFormat,
           });
           // Also clear other format caches so they re-export fresh when switched to
-          const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional"] as const;
+          const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional", "jsonld"] as const;
           for (const fmt of allFormats) {
             if (fmt !== codeViewFormat) {
               try {
@@ -9318,22 +11121,34 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         if (response.success) {
-          console.log("[Dashboard] Code view content saved successfully, synced:", synced);
+          console.log(`[MUTATION:code-save] ✓ synced=${synced} — ${synced ? "refreshing hierarchy+properties" : "cache-only, no refresh"}`);
           notificationService.success(
             "Saved",
             synced ? "Code content saved and synced across all formats" : "Code content saved",
           );
           setHasLocalCodeViewChanges(false);
+          setCodeViewSyntaxError(null);
+          // The ontology file was rewritten — reload all entity views to reflect the new state
+          if (synced) {
+            lastClassHierarchyRefreshAt.current = 0;
+            refreshClassHierarchy();
+            refreshProperties();
+          }
         } else {
-          console.error("[Dashboard] Save failed:", response.error || "Unknown error");
-          notificationService.error("Save Failed", response.error || "Failed to save content");
+          const errMsg = response.error || "Failed to save content";
+          console.error("[Dashboard] Save failed:", errMsg);
+          // Show the error inline in the editor so the user can see what needs fixing
+          setCodeViewSyntaxError(errMsg.replace("Failed to save and sync code view: ", ""));
+          notificationService.error("Syntax/Parse Error", "Fix the highlighted error before saving.");
         }
       } catch (error: any) {
         console.error("[Dashboard] Error saving code content:", error);
-        notificationService.error("Save Failed", error.message || "Failed to save content to backend");
+        const errMsg = error.message || "Failed to save content to backend";
+        setCodeViewSyntaxError(errMsg);
+        notificationService.error("Save Failed", errMsg);
       }
     },
-    [projectId, codeViewFormat],
+    [projectId, codeViewFormat, isViewOnlyMember, setShowProPromptType, refreshClassHierarchy, refreshProperties],
   );
 
   // Handle insertion at selected location in code view
@@ -11274,8 +13089,13 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Load code view content when switching to CodeView tab
   useEffect(() => {
-    if (mainTab === "CodeView" && projectId && !codeViewContent) {
-      fetchCodeViewContent(codeViewFormat);
+    if (mainTab === "CodeView" && projectId) {
+      if (!codeViewContent) {
+        fetchCodeViewContent(codeViewFormat);
+      } else if (codeViewDirtyRef.current) {
+        // Ontology was mutated since last load — reload without clearing cache
+        fetchCodeViewContent(codeViewFormat, false, true);
+      }
     }
   }, [mainTab, projectId, codeViewContent, codeViewFormat, fetchCodeViewContent]);
 
@@ -11433,26 +13253,42 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </button>
                   <button
                     onClick={() => {
+                      fetchCodeViewContent("jsonld", false, citationJustInserted);
+                      setCitationJustInserted(false);
+                    }}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === "jsonld"
+                        ? "bg-purple-600 text-white hover:bg-purple-700"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
+                  >
+                    JSON-LD
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (isViewOnlyMember) { handleViewOnlyAction(); return; }
                       setShowCitationPicker(true);
                     }}
                     className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
-                    title="Insert citation from Zotero"
+                    title={isViewOnlyMember ? "Pro feature: Zotero citations require a Pro plan" : "Insert citation from Zotero"}
                   >
                     <BookOpen size={16} />
                     Zotero Citation
                   </button>
                   <button
                     onClick={() => {
+                      if (isViewOnlyMember) { handleViewOnlyAction(); return; }
                       setShowManualCitationDialog(true);
                     }}
                     className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-1"
-                    title="Add citation manually"
+                    title={isViewOnlyMember ? "Pro feature: manual citations require a Pro plan" : "Add citation manually"}
                   >
                     <Edit2 size={16} />
                     Manual Citation
                   </button>
                   <button
                     onClick={() => {
+                      if (isViewOnlyMember) { handleViewOnlyAction(); return; }
                       setCitationRemovalMode(!citationRemovalMode);
                       if (citationInsertionMode) {
                         setCitationInsertionMode(false);
@@ -11552,6 +13388,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                       onRequestZoteroCitation={() => setShowCitationPicker(true)}
                       onContentChange={handleCodeContentChange}
                       onSaveContent={handleSaveCodeContent}
+                      syntaxError={codeViewSyntaxError}
+                      readOnly={isViewOnlyMember}
+                      canExport={subscription.canAccessFeature('hasExport') && !isViewOnlyMember}
+                      onExportProAction={handleExportProAction}
                     />
                   )}
                 </div>
@@ -11799,11 +13639,20 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       case "ActiveOntology":
         return (
-          <div className="flex h-full" style={{ backgroundColor: "var(--surface-2)" }}>
+          <div className="flex flex-col lg:flex-row h-full min-h-0 overflow-hidden">
             <div
-              className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-hidden"
+              className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-hidden min-w-0 min-h-0"
               style={{ backgroundColor: "var(--bg)", borderColor: "var(--border)" }}
             >
+              {isMetadataLoading && (
+                <div
+                  className="flex items-center gap-2 px-4 py-2 text-xs border-b shrink-0"
+                  style={{ borderColor: "var(--border)", color: "var(--accent)" }}
+                >
+                  <Loader2 size={14} className="animate-spin flex-shrink-0" />
+                  <span>Loading ontology metadata (IRI, annotations, imports)…</span>
+                </div>
+              )}
               {/* Ontology Header Section */}
               <div
                 className="p-4 border-b"
@@ -11813,16 +13662,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-primary)" }}>
                     Ontology header
                   </h2>
-                  <button
-                    onClick={() => setEditOntologyIRIDialogOpen(true)}
-                    className="p-1 rounded transition-colors"
-                    style={{ color: "var(--accent)" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
-                    title="Edit Ontology IRIs"
-                  >
-                    <Edit2 size={14} />
-                  </button>
+                  {!isViewOnlyMember && (
+                    <button
+                      onClick={() => setEditOntologyIRIDialogOpen(true)}
+                      className="p-1 rounded transition-colors"
+                      style={{ color: "var(--accent)" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                      title="Edit Ontology IRIs"
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 gap-4">
@@ -11870,26 +13721,26 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <h3 className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
                     Annotations
                   </h3>
-                  <button
-                    onClick={() => {
-                      setOntologyAnnotationEditTarget(null);
-                      setIsOntologyAnnotationDialogOpen(true);
-                    }}
-                    className="px-2 py-1 text-xs rounded transition-colors"
-                    style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.9")}
-                    onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-                  >
-                    Add
-                  </button>
+                  {!isViewOnlyMember && (
+                    <button
+                      onClick={() => {
+                        setOntologyAnnotationEditTarget(null);
+                        setIsOntologyAnnotationDialogOpen(true);
+                      }}
+                      className="px-2 py-1 text-xs rounded transition-colors"
+                      style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.9")}
+                      onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                    >
+                      Add
+                    </button>
+                  )}
                 </div>
                 {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
-                    {ontologyAnnotations
-                      .filter((ann) => ann && ann.propertyIri)
-                      .map((annotation, idx) => {
-                        const key = `${annotation.property}-${annotation.value}-${idx}`;
-                        const propertyIri = annotation.property || "";
+                    {ontologyAnnotations.map((annotation, idx) => {
+                        const key = `${annotation.propertyIri}-${annotation.value}-${idx}`;
+                        const propertyIri = annotation.propertyIri || "";
                         const propertyLabel = propertyIri.includes("#")
                           ? propertyIri.split("#").pop()
                           : propertyIri.includes("/")
@@ -11919,39 +13770,41 @@ const Dashboard: React.FC<DashboardProps> = ({
                                   {annotation.propertyIri}
                                 </div>
                               </div>
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => {
-                                    setOntologyAnnotationEditTarget({
-                                      propertyIri: annotation.propertyIri,
-                                      value: annotation.value,
-                                      datatype: annotation.datatype,
-                                    });
-                                    setIsOntologyAnnotationDialogOpen(true);
-                                  }}
-                                  className="px-2 py-1 text-[10px] rounded transition-colors"
-                                  style={{ backgroundColor: "var(--surface-2)", color: "var(--text-primary)" }}
-                                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
-                                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-2)")}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    handleDeleteOntologyAnnotation(
-                                      annotation.propertyIri,
-                                      annotation.value,
-                                      annotation.datatype,
-                                    )
-                                  }
-                                  className="px-2 py-1 text-[10px] rounded transition-colors"
-                                  style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
-                                  onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
-                                  onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-                                >
-                                  Delete
-                                </button>
-                              </div>
+                              {!isViewOnlyMember && (
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => {
+                                      setOntologyAnnotationEditTarget({
+                                        propertyIri: annotation.propertyIri,
+                                        value: annotation.value,
+                                        datatype: annotation.datatype,
+                                      });
+                                      setIsOntologyAnnotationDialogOpen(true);
+                                    }}
+                                    className="px-2 py-1 text-[10px] rounded transition-colors"
+                                    style={{ backgroundColor: "var(--surface-2)", color: "var(--text-primary)" }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-2)")}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      handleDeleteOntologyAnnotation(
+                                        annotation.propertyIri,
+                                        annotation.value,
+                                        annotation.datatype,
+                                      )
+                                    }
+                                    className="px-2 py-1 text-[10px] rounded transition-colors"
+                                    style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
+                                    onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              )}
                             </div>
                             <div
                               className="px-3 py-2 text-xs"
@@ -12076,7 +13929,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                           Prefix mappings
                         </div>
                         <button
-                          onClick={handleAddPrefixDialog}
+                          onClick={isViewOnlyMember ? handleViewOnlyAction : handleAddPrefixDialog}
                           className="px-2 py-1 text-[10px] rounded flex items-center gap-1"
                           style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
                         >
@@ -12121,18 +13974,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                                   <td className="p-2">
                                     <div className="flex gap-1">
                                       <button
-                                        onClick={() => handleEditPrefixDialog(p.prefix, p.namespace)}
+                                        onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleEditPrefixDialog(p.prefix, p.namespace)}
                                         className="p-1 rounded text-[10px]"
                                         style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
-                                        title="Edit"
+                                        title={isViewOnlyMember ? "View-only: upgrade to edit" : "Edit"}
                                       >
                                         <Edit2 size={12} />
                                       </button>
                                       <button
-                                        onClick={() => handleDeletePrefix(p.prefix)}
+                                        onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleDeletePrefix(p.prefix)}
                                         className="p-1 rounded text-[10px]"
                                         style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
-                                        title="Delete"
+                                        title={isViewOnlyMember ? "View-only: upgrade to edit" : "Delete"}
                                       >
                                         <Trash2 size={12} />
                                       </button>
@@ -12182,7 +14035,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                             <span>Show import closure</span>
                           </label>
                           <button
-                            onClick={handleAddImportDialog}
+                            onClick={isViewOnlyMember ? handleViewOnlyAction : handleAddImportDialog}
                             className="px-2 py-1 text-[10px] rounded flex items-center gap-1"
                             style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
                           >
@@ -12211,6 +14064,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                                 iri.startsWith("file://") ||
                                 (!iri.startsWith("http://") && !iri.startsWith("https://"));
                               const isExpanded = expandedImports.has(iri);
+                              const resolutionStatus = getImportResolutionStatus(iri);
+                              const statusStyle =
+                                resolutionStatus.tone === "success"
+                                  ? { backgroundColor: "rgba(34,197,94,0.14)", color: "rgb(34,197,94)" }
+                                  : resolutionStatus.tone === "warning"
+                                    ? { backgroundColor: "rgba(245,158,11,0.14)", color: "rgb(245,158,11)" }
+                                    : resolutionStatus.tone === "error"
+                                      ? { backgroundColor: "var(--error-tint)", color: "var(--error)" }
+                                      : { backgroundColor: "var(--surface-3)", color: "var(--text-secondary)" };
 
                               return (
                                 <div
@@ -12271,32 +14133,50 @@ const Dashboard: React.FC<DashboardProps> = ({
                                           </span>
                                         </div>
                                       )}
+                                      <div className="flex items-center gap-1 mt-1">
+                                        <span
+                                          className="px-1.5 py-0.5 text-[9px] rounded"
+                                          style={statusStyle}
+                                          title={resolutionStatus.detail}
+                                        >
+                                          {resolutionStatus.label}
+                                        </span>
+                                      </div>
                                       {showImportClosure && isExpanded && (
                                         <div
-                                          className="mt-2 ml-4 pl-3 border-l-2 text-[10px]"
+                                          className="mt-2 ml-4 pl-3 border-l-2 text-[10px] space-y-1"
                                           style={{ borderColor: "var(--border)", color: "var(--text-tertiary)" }}
                                         >
-                                          <div className="italic">Transitive imports would appear here</div>
-                                          <div className="text-[9px] mt-1" style={{ color: "var(--text-quaternary)" }}>
-                                            (Feature requires backend support)
-                                          </div>
+                                          {(importClosureMap[iri] || []).length === 0 ? (
+                                            <div className="italic">No transitive imports declared</div>
+                                          ) : (
+                                            (importClosureMap[iri] || []).map((child, childIdx) => {
+                                              const renderClosure = (node: { iri: string; children?: any[] }, depth = 0): React.ReactNode => (
+                                                <div key={`${node.iri}-${depth}`} style={{ marginLeft: depth * 12 }}>
+                                                  <div className="font-mono break-all">{node.iri}</div>
+                                                  {(node.children || []).map((c) => renderClosure(c, depth + 1))}
+                                                </div>
+                                              );
+                                              return <div key={`${child.iri}-${childIdx}`}>{renderClosure(child)}</div>;
+                                            })
+                                          )}
                                         </div>
                                       )}
                                     </div>
                                     <div className="flex-shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                       <button
-                                        onClick={() => handleEditImportDialog(iri)}
+                                        onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleEditImportDialog(iri)}
                                         className="p-1.5 rounded"
                                         style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
-                                        title="Edit import"
+                                        title={isViewOnlyMember ? "View-only: upgrade to edit" : "Edit import"}
                                       >
                                         <Edit2 size={11} />
                                       </button>
                                       <button
-                                        onClick={() => handleRemoveImport(iri)}
+                                        onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleRemoveImport(iri)}
                                         className="p-1.5 rounded"
                                         style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
-                                        title="Remove import"
+                                        title={isViewOnlyMember ? "View-only: upgrade to edit" : "Remove import"}
                                       >
                                         <Trash2 size={11} />
                                       </button>
@@ -12319,7 +14199,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                         >
                           <div className="flex items-center gap-2">
                             <Info size={12} />
-                            <span>Direct imports only. Enable "Show import closure" to see transitive imports.</span>
+                            <span>
+                              Imports are owl:imports declarations. Loaded imports are included in the project graph;
+                              declared-only imports match Protégé declarations but were not resolved on this server.
+                            </span>
                           </div>
                         </div>
                       )}
@@ -12338,7 +14221,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                           General Class Axioms
                         </div>
                         <button
-                          onClick={() => {
+                          onClick={isViewOnlyMember ? handleViewOnlyAction : () => {
                             setEditingAxiomIndex(null);
                             setAxiomDraft({ definition: "", superClassIri: "" });
                             setAxiomDialogOpen(true);
@@ -12372,31 +14255,31 @@ const Dashboard: React.FC<DashboardProps> = ({
                                       Axiom #{idx + 1}
                                     </div>
                                     <div className="font-medium text-xs mb-1" style={{ color: "var(--text-primary)" }}>
-                                      {axiom.subClass || axiom.definition || "Anonymous class expression"}
+                                      {axiom.subExpression || axiom.definition || "Anonymous class expression"}
                                     </div>
-                                    {(axiom.superClass || axiom.superClassIri) && (
+                                    {axiom.superClassIri && (
                                       <div
                                         className="text-[10px] font-mono break-all"
                                         style={{ color: "var(--text-tertiary)" }}
                                       >
-                                        SubClassOf: {axiom.superClass || axiom.superClassIri}
+                                        SubClassOf: {axiom.superClassIri}
                                       </div>
                                     )}
                                   </div>
                                   <div className="flex gap-1 flex-shrink-0">
                                     <button
-                                      onClick={() => handleEditAxiom(idx)}
+                                      onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleEditAxiom(idx)}
                                       className="p-1 rounded"
                                       style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
-                                      title="Edit axiom"
+                                      title={isViewOnlyMember ? "View-only: upgrade to edit" : "Edit axiom"}
                                     >
                                       <Edit2 size={12} />
                                     </button>
                                     <button
-                                      onClick={() => handleDeleteAxiom(idx)}
+                                      onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleDeleteAxiom(idx)}
                                       className="p-1 rounded"
                                       style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
-                                      title="Delete axiom"
+                                      title={isViewOnlyMember ? "View-only: upgrade to edit" : "Delete axiom"}
                                     >
                                       <Trash2 size={12} />
                                     </button>
@@ -12412,7 +14295,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </div>
               </div>
             </div>
-            <div className="w-80 p-4 overflow-y-auto space-y-4" style={{ backgroundColor: "var(--bg)" }}>
+            <div className="w-full lg:w-80 flex-shrink-0 p-4 overflow-y-auto space-y-4 max-h-[40dvh] lg:max-h-none" style={{ backgroundColor: "var(--bg)" }}>
               {[
                 {
                   title: "Ontology metrics",
@@ -12506,8 +14389,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               : filteredInstances;
 
         return (
-          <div className="flex h-full">
-            <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
+          <div className="flex flex-col md:flex-row h-full min-h-0 overflow-hidden">
+            <aside className="w-full md:w-80 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col max-h-[42dvh] md:max-h-none">
               <div className="p-2 border-b text-sm font-semibold text-gray-700 flex items-center justify-between">
                 <span>Class hierarchy</span>
                 {selectedClassForIndividuals && (
@@ -12522,14 +14405,43 @@ const Dashboard: React.FC<DashboardProps> = ({
                   expandedNodes={expandedNodes}
                   searchQuery={classTreeSearchQuery}
                   onSearchQueryChange={setClassTreeSearchQuery}
-                  onSelectItem={(item) => setSelectedClassForIndividuals(item as TreeNode)}
+                  onSelectItem={(item) => {
+                    const node = item as TreeNode;
+                    setSelectedClassForIndividuals(node);
+                    setSelectedItem(node);
+                  }}
                   onToggleNode={toggleNode}
-                  onAddItem={() => {
-                    /* not used here */
-                  }}
-                  onDeleteItem={() => {
-                    /* not used here */
-                  }}
+                  onAddItem={handleAddItem}
+                  onDeleteItem={() =>
+                    handleDeleteItem(selectedClassForIndividuals ?? undefined, "Classes")
+                  }
+                  onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
+                  onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
+                  onRenameItem={handleRenameItem}
+                  onChangeEntityIri={handleChangeEntityIri}
+                  onMoveClass={handleMoveClass}
+                  viewMode={hierarchyViewModes.Classes || "asserted"}
+                  onViewModeChange={(mode) =>
+                    setHierarchyViewModes((prev) => ({ ...prev, Classes: mode }))
+                  }
+                  displayMode={hierarchyDisplayMode}
+                  onDisplayModeChange={setHierarchyDisplayMode}
+                  displayAnnotationPropIri={hierarchyAnnotationPropIri}
+                  onDisplayAnnotationPropChange={setHierarchyAnnotationPropIri}
+                  customTemplate={hierarchyCustomTemplate}
+                  onCustomTemplateChange={setHierarchyCustomTemplate}
+                  annotationProperties={hierarchyAnnotationProperties}
+                  annotationValues={hierarchyAnnotationValues}
+                  importsScope={hierarchyImportsScope}
+                  onImportsScopeChange={setHierarchyImportsScope}
+                  isReasonerRunning={isReasonerRunning}
+                  loadingNodes={loadingNodes}
+                  isViewOnly={isViewOnlyMember}
+                  onViewOnlyAction={handleViewOnlyAction}
+                  isLoading={isEntitiesSectionLoading}
+                  onLoadMoreTopLevel={topLevelTruncated ? handleLoadMoreTopLevel : undefined}
+                  isLoadingMoreTopLevel={isLoadingMoreTopLevel}
+                  topLevelTotal={topLevelTotal}
                 />
               </div>
             </aside>
@@ -12565,24 +14477,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                     />
                     {selectedClassForIndividuals && (
                       <button
-                        onClick={async () => {
-                          const name = window.prompt(`Create individual in ${selectedClassForIndividuals.label}`);
-                          if (!name || !projectId) return;
-                          try {
-                            await ontologyMutationService.addIndividual(
-                              projectId,
-                              name,
-                              selectedClassForIndividuals.id,
-                            );
-                            await loadClassInstances();
-                          } catch (error) {
-                            console.error("[Dashboard] Failed to create individual:", error);
-                            notificationService.error("Create Failed", "Could not create individual.");
-                          }
-                        }}
+                        onClick={() => setCreateIndividualForClassOpen(true)}
                         className="px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
                       >
-                        Add
+                        + Add Individual
                       </button>
                     )}
                   </div>
@@ -12621,6 +14519,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                       ind.id,
                                       selectedClassForIndividuals.id,
                                     );
+                                    markAsUnsaved();
                                     await loadClassInstances();
                                   } catch (error) {
                                     console.error("[Dashboard] Failed to remove class assertion:", error);
@@ -12653,6 +14552,68 @@ const Dashboard: React.FC<DashboardProps> = ({
                               {selectedClassIndividualDetails.id}
                             </div>
                           </div>
+                          <div className="bg-white border border-gray-200 rounded overflow-hidden">
+                            <div className="flex bg-purple-50 border-b border-purple-200">
+                              <button
+                                onClick={() => setClassIndividualInfoTab("annotations")}
+                                className={`px-3 py-1.5 text-[11px] font-semibold border-r border-purple-200 ${
+                                  classIndividualInfoTab === "annotations"
+                                    ? "bg-white text-purple-800"
+                                    : "text-purple-600 hover:bg-purple-100"
+                                }`}
+                              >
+                                Annotations
+                              </button>
+                              <button
+                                onClick={() => setClassIndividualInfoTab("usage")}
+                                className={`px-3 py-1.5 text-[11px] font-semibold ${
+                                  classIndividualInfoTab === "usage"
+                                    ? "bg-white text-purple-800"
+                                    : "text-purple-600 hover:bg-purple-100"
+                                }`}
+                              >
+                                Usage
+                              </button>
+                            </div>
+                            <div className="min-h-[110px] max-h-[180px] overflow-y-auto p-2">
+                              {classIndividualInfoTab === "annotations" ? (
+                                selectedClassIndividualDetails.annotations &&
+                                Object.keys(selectedClassIndividualDetails.annotations).length > 0 ? (
+                                  <div className="space-y-1">
+                                    {Object.entries(selectedClassIndividualDetails.annotations).map(([key, value]) => (
+                                      <div
+                                        key={key}
+                                        className="group flex items-center justify-between text-[11px] text-gray-600"
+                                      >
+                                        <span className="truncate">
+                                          <span className="font-mono">{getLocalName(key) || key}</span>: {String(value)}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px] text-gray-400">No annotations</div>
+                                )
+                              ) : classIndividualUsageLoading ? (
+                                <div className="text-[11px] text-gray-400">Loading usage...</div>
+                              ) : classIndividualUsages.length > 0 ? (
+                                <div className="space-y-1">
+                                  {classIndividualUsages.map((usage, index) => (
+                                    <div key={index} className="text-[11px] text-gray-600 bg-gray-50 rounded px-2 py-1">
+                                      <span className="font-semibold text-purple-700 uppercase mr-2">
+                                        {usage.type || "usage"}
+                                      </span>
+                                      <span className="font-mono">
+                                        {usage.subjectLabel || usage.subject || usage.context || JSON.stringify(usage)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-[11px] text-gray-400">No usage found</div>
+                              )}
+                            </div>
+                          </div>
                           <div className="bg-white border border-gray-200 rounded p-2">
                             <div className="flex items-center justify-between mb-1">
                               <div className="font-semibold text-gray-700">Types</div>
@@ -12680,6 +14641,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                             selectedClassIndividualDetails.id,
                                             type,
                                           );
+                                          markAsUnsaved();
                                           if (selectedClassForIndividuals?.id === type) {
                                             await loadClassInstances();
                                           }
@@ -12702,6 +14664,67 @@ const Dashboard: React.FC<DashboardProps> = ({
                             ) : (
                               <div className="text-[11px] text-gray-400">No types</div>
                             )}
+                          </div>
+                          <div className="bg-white border border-gray-200 rounded p-2">
+                            <div className="font-semibold text-gray-700 mb-1">Same / Different individuals</div>
+                            <div className="space-y-2">
+                              <div>
+                                <div className="flex items-center justify-between">
+                                  <div className="text-[10px] uppercase text-gray-500 font-semibold">Same Individual As</div>
+                                  <button
+                                    onClick={() => openClassIndividualSameDiffDialog("same")}
+                                    className="px-2 py-0.5 text-[10px] bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+                                  >
+                                    Add
+                                  </button>
+                                </div>
+                                {selectedClassIndividualDetails.sameIndividualAs?.length ? (
+                                  <div className="space-y-1">
+                                    {selectedClassIndividualDetails.sameIndividualAs.map((iri) => (
+                                      <div key={iri} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                        <span className="truncate">{getLocalName(iri) || iri}</span>
+                                        <button
+                                          onClick={() => deleteClassIndividualSameDifferent("same", iri)}
+                                          className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                        >
+                                          Remove
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px] text-gray-400">No same individual assertions</div>
+                                )}
+                              </div>
+                              <div>
+                                <div className="flex items-center justify-between">
+                                  <div className="text-[10px] uppercase text-gray-500 font-semibold">Different Individuals</div>
+                                  <button
+                                    onClick={() => openClassIndividualSameDiffDialog("different")}
+                                    className="px-2 py-0.5 text-[10px] bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+                                  >
+                                    Add
+                                  </button>
+                                </div>
+                                {selectedClassIndividualDetails.differentIndividualFrom?.length ? (
+                                  <div className="space-y-1">
+                                    {selectedClassIndividualDetails.differentIndividualFrom.map((iri) => (
+                                      <div key={iri} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                        <span className="truncate">{getLocalName(iri) || iri}</span>
+                                        <button
+                                          onClick={() => deleteClassIndividualSameDifferent("different", iri)}
+                                          className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                        >
+                                          Remove
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px] text-gray-400">No different individual assertions</div>
+                                )}
+                              </div>
+                            </div>
                           </div>
                           <div className="bg-white border border-gray-200 rounded p-2">
                             <div className="flex items-center justify-between mb-1">
@@ -12780,13 +14803,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                                 {selectedClassIndividualDetails.propertyAssertions.map((assertion) => (
                                   <div
                                     key={assertion.id}
-                                    className="group flex items-center justify-between text-[11px] text-gray-600"
+                                    className={`group flex items-center justify-between text-[11px] ${
+                                      assertion.isInferred ? "text-amber-800 bg-amber-50 border border-amber-100 rounded px-1" : "text-gray-600"
+                                    }`}
                                   >
                                     <span className="truncate">
                                       <span className="font-semibold">{assertion.propertyLabel}</span>
                                       {assertion.isNegative ? " (not)" : ""}:{" "}
                                       {assertion.targetLabel || assertion.targetIri || assertion.targetLiteral}
+                                      {assertion.isInferred && (
+                                        <span className="ml-1 text-[9px] uppercase font-semibold text-amber-700">inferred</span>
+                                      )}
                                     </span>
+                                    {!assertion.isInferred && (
                                     <button
                                       onClick={async () => {
                                         if (!projectId || !selectedClassIndividualDetails) return;
@@ -12841,6 +14870,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                     >
                                       Remove
                                     </button>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -12911,6 +14941,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         return (
           <DLQueryPanel
             projectId={projectId || ""}
+              classHierarchy={classHierarchy}
+              expandedClassNodeIds={expandedNodes}
+              onToggleClassNode={toggleNode}
             classes={flattenClassHierarchy(classHierarchy)}
             objectProperties={flattenPropertyHierarchy(objectPropertyHierarchy)}
             dataProperties={flattenPropertyHierarchy(dataPropertyHierarchy)}
@@ -12924,17 +14957,11 @@ const Dashboard: React.FC<DashboardProps> = ({
             apiClient={apiClient}
             onAddToOntology={async (expression, className) => {
               try {
-                await apiClient.post(`/api/ontology/${projectId}/dl/add`, {
-                  expression,
-                  className,
-                  userEmail: user?.email || "anonymous",
-                });
+                await ontologyMutationService.addDlQueryClass(projectId || "", expression, className, user?.email);
                 showToast(`Created class "${className}"`, "success");
-                // Refresh class hierarchy and metadata after successful class creation
                 await refreshClassHierarchy();
                 await fetchData(projectId, false);
               } catch (e) {
-                // Fallback for older backend versions: create via the existing mutations endpoint.
                 const status = (e as any)?.status ?? (e as any)?.response?.status ?? (e as any)?.data?.status;
                 if (status !== 404) {
                   console.warn("DL add failed:", e);
@@ -12942,7 +14969,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                   return;
                 }
 
-                // Resolve target IRI from known classes (supports simple expressions like "Course").
                 const normalizedExpr = (expression || "").trim();
                 const byIri = normalizedExpr.startsWith("http://") || normalizedExpr.startsWith("https://");
                 const target = byIri
@@ -12965,29 +14991,16 @@ const Dashboard: React.FC<DashboardProps> = ({
 
                 const newIri = base + normalizedClassName;
 
-                const mutationBody = {
-                  ops: [
-                    {
-                      type: "createClass",
-                      iri: newIri,
-                      label: className,
-                      parent: "http://www.w3.org/2002/07/owl#Thing",
-                    },
-                    {
-                      type: "addEquivalentClass",
-                      iri: newIri,
-                      target,
-                    },
-                  ],
-                  userId: user?.email || "anonymous",
-                  username: user?.username || user?.email || "Anonymous",
-                  sessionId: `dl-add-${Date.now()}`,
-                };
-
                 try {
-                  await apiClient.post(`/api/ontology/mutations/${projectId}?draft=false`, mutationBody);
+                  await ontologyMutationService.addDlQueryClassViaMutations(
+                    projectId || "",
+                    newIri,
+                    className,
+                    target,
+                    user?.email,
+                    user?.username || user?.email,
+                  );
                   showToast(`Created class "${className}"`, "success");
-                  // Refresh class hierarchy and metadata after successful class creation
                   await refreshClassHierarchy();
                   await fetchData(projectId, false);
                 } catch (e2) {
@@ -13006,15 +15019,33 @@ const Dashboard: React.FC<DashboardProps> = ({
   // #endregion
 
   // #region Selector Handlers
-  const handleOpenClassSelector = (target: "domain" | "range") => {
+  const handleOpenClassSelector = (target: "domain" | "range", editingItem?: string) => {
     setSelectorTarget(target);
+    setSelectorEditingItem(editingItem || null);
 
     // For Data Property ranges, show the datatype selector instead of class expression
-    if (target === "range" && selectedItem?.type === "DatatypeProperty") {
+    if (target === "range" && (selectedItem as any)?.type === "DatatypeProperty") {
       setIsDataPropertyRangeDialogOpen(true);
-    } else {
-      setIsClassExpressionDialogOpen(true);
+      return;
     }
+
+    // Restrict tabs based on what type of value is being edited
+    if (editingItem) {
+      const isPlainIri = editingItem.startsWith('http://') || editingItem.startsWith('https://') || editingItem.startsWith('urn:');
+      if (isPlainIri) {
+        setSelectorAllowedTabs(['hierarchy', 'dataRestriction', 'classExpression']);
+        setSelectorInitialTab('hierarchy');
+      } else {
+        // Restriction (blank node _: or Manchester expression)
+        setSelectorAllowedTabs(['objectRestriction', 'dataRestriction', 'classExpression']);
+        setSelectorInitialTab('objectRestriction');
+      }
+    } else {
+      setSelectorAllowedTabs(['hierarchy', 'objectRestriction', 'dataRestriction', 'classExpression']);
+      setSelectorInitialTab('hierarchy');
+    }
+
+    setIsClassExpressionDialogOpen(true);
   };
 
   // Handler for Data Property Range selection (datatypes)
@@ -13054,271 +15085,308 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  const handleOpenPropertySelector = (target: "subProperty" | "inverse" | "disjoint" | "equivalent") => {
+  const handleOpenPropertySelector = (target: "subProperty" | "inverse" | "disjoint" | "equivalent", editingItem?: string) => {
     setSelectorTarget(target);
-    // Use the new ObjectPropertyExpressionDialog for equivalent, inverse, subProperty, and disjoint
-    // This provides the Protégé-style property selection with inverse checkbox
+    setSelectorEditingItem(editingItem || null);
     setIsObjectPropertyExpressionDialogOpen(true);
   };
 
   const handleManchesterConfirm = async (expression: string, restrictionData?: any) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
+    const target = selectorTarget as "domain" | "range";
+    const editing = selectorEditingItem;
+    const isDataProperty = (selectedItem as any)?.type === "DatatypeProperty";
+    const relationType = target === "domain" ? "Domain" : "Range";
+    const userId = user?.email || "anonymous";
+    const username = user?.username || "Anonymous";
+    const useManchesterApi =
+      !restrictionData &&
+      (isManchesterClassExpression(expression) ||
+        (editing != null && isManchesterClassExpression(editing)));
 
     try {
-      switch (selectorTarget) {
-        case "domain":
-          await ontologyMutationService.addPropertyDomain(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-            restrictionData,
-          );
-          updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
-          break;
-        case "range":
-          await ontologyMutationService.addPropertyRange(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-            restrictionData,
-          );
-          updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
-          break;
+      if (useManchesterApi) {
+        if (editing) {
+          if (isManchesterClassExpression(editing)) {
+            await expressionService.deletePropertyExpressionAxiom(
+              projectId, selectedItem.id, relationType, editing, isDataProperty, userId, username,
+            );
+          } else if (isSimpleOntologyIri(editing)) {
+            if (target === "domain") {
+              await ontologyMutationService.deletePropertyDomain(projectId, selectedItem.id, editing, userId, username);
+            } else {
+              await ontologyMutationService.deletePropertyRange(projectId, selectedItem.id, editing, userId, username);
+            }
+          }
+        }
+        await expressionService.addPropertyExpressionAxiom(
+          projectId, selectedItem.id, relationType, expression, isDataProperty, userId, username,
+        );
+        const prop = selectedItem as Property;
+        if (editing) {
+          if (target === "domain") {
+            updateItemInState({ ...selectedItem, domains: (prop.domains || []).map((d) => (d === editing ? expression : d)) });
+          } else {
+            updateItemInState({ ...selectedItem, ranges: (prop.ranges || []).map((r) => (r === editing ? expression : r)) });
+          }
+        } else if (target === "domain") {
+          updateItemInState({ ...selectedItem, domains: [...(prop.domains || []), expression] });
+        } else {
+          updateItemInState({ ...selectedItem, ranges: [...(prop.ranges || []), expression] });
+        }
+      } else if (editing) {
+        await ontologyMutationService.editRelation(projectId, {
+          operation: 'edit',
+          entityIri: selectedItem.id,
+          relationshipType: target,
+          oldTargetIri: editing,
+          targetIri: expression,
+          userId,
+          username,
+        });
+        const prop = selectedItem as Property;
+        if (target === "domain") {
+          updateItemInState({ ...selectedItem, domains: (prop.domains || []).map((d) => (d === editing ? expression : d)) });
+        } else {
+          updateItemInState({ ...selectedItem, ranges: (prop.ranges || []).map((r) => (r === editing ? expression : r)) });
+        }
+      } else if (target === "domain") {
+        await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, userId, username, restrictionData);
+        updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
+      } else {
+        await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, userId, username, restrictionData);
+        updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
       }
     } catch (error) {
-      console.error(`Failed to add ${selectorTarget}`, error);
+      console.error(`Failed to ${editing ? 'replace' : 'add'} ${selectorTarget}`, error);
+      notificationService.error("Property axiom", `Failed to ${editing ? 'update' : 'add'} ${target}`);
     } finally {
-      setIsClassSelectorOpen(false);
+      setIsClassExpressionDialogOpen(false);
       setSelectorTarget(null);
+      setSelectorEditingItem(null);
     }
   };
 
-  // Handler for legacy PropertyExpressionDialog (if still needed)
+  // Handler for property selector (subProperty/inverse/disjoint/equivalent)
   const handlePropertySelected = async (expression: string) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
+    const target = selectorTarget as "subProperty" | "inverse" | "disjoint" | "equivalent";
+    const editing = selectorEditingItem;
+    const prop = selectedItem as Property;
 
     try {
-      switch (selectorTarget) {
-        case "subProperty":
-          await ontologyMutationService.addSubPropertyOf(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            superProperties: [...((selectedItem as Property).superProperties || []), expression],
-          });
-          break;
-        case "inverse":
-          await ontologyMutationService.addInverseProperty(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression],
-          });
-          break;
-        case "disjoint":
-          await ontologyMutationService.addDisjointProperty(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            disjointProperties: [...((selectedItem as Property).disjointProperties || []), expression],
-          });
-          break;
-        case "equivalent": {
-          const existing = (selectedItem as Property).equivalentProperties || [];
-          await ontologyMutationService.addEquivalentProperty(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({ ...selectedItem, equivalentProperties: [...existing, expression] });
-          break;
+      if (editing) {
+        // Replace: single server-side call — delete old + add new atomically
+        await ontologyMutationService.editRelation(projectId, {
+          operation: 'edit',
+          entityIri: selectedItem.id,
+          relationshipType: target,
+          oldTargetIri: editing,
+          targetIri: expression,
+          userId: user?.email || "anonymous",
+          username: user?.username || "Anonymous",
+        });
+        const replace = (arr: string[] | undefined) => (arr || []).map(v => v === editing ? expression : v);
+        if (target === "subProperty")  updateItemInState({ ...selectedItem, superProperties: replace(prop.superProperties) });
+        if (target === "inverse")      updateItemInState({ ...selectedItem, inverseProperties: replace(prop.inverseProperties) });
+        if (target === "disjoint")     updateItemInState({ ...selectedItem, disjointProperties: replace(prop.disjointProperties) });
+        if (target === "equivalent")   updateItemInState({ ...selectedItem, equivalentProperties: replace(prop.equivalentProperties as string[] | undefined) });
+      } else {
+        switch (target) {
+          case "subProperty":
+            await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous");
+            updateItemInState({ ...selectedItem, superProperties: [...(prop.superProperties || []), expression] });
+            break;
+          case "inverse":
+            await ontologyMutationService.addInverseProperty(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous");
+            updateItemInState({ ...selectedItem, inverseProperties: [...(prop.inverseProperties || []), expression] });
+            break;
+          case "disjoint":
+            await ontologyMutationService.addDisjointProperty(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous");
+            updateItemInState({ ...selectedItem, disjointProperties: [...(prop.disjointProperties || []), expression] });
+            break;
+          case "equivalent":
+            await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, expression, user?.email || "anonymous", user?.username || "Anonymous");
+            updateItemInState({ ...selectedItem, equivalentProperties: [...(prop.equivalentProperties as string[] || []), expression] });
+            break;
         }
       }
     } catch (error) {
-      console.error(`Failed to add ${selectorTarget}`, error);
+      console.error(`Failed to ${editing ? 'replace' : 'add'} ${selectorTarget}`, error);
     } finally {
+      setIsObjectPropertyExpressionDialogOpen(false);
       setIsPropertyExpressionDialogOpen(false);
       setSelectorTarget(null);
+      setSelectorEditingItem(null);
     }
   };
 
   // Handler for the new ObjectPropertyExpressionDialog with inverse support
   const handleObjectPropertySelected = async (expression: string, isInverse: boolean) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
+    const target = selectorTarget as "subProperty" | "inverse" | "disjoint" | "equivalent";
+    const editing = selectorEditingItem;
 
     try {
-      // Build the final expression - if inverse, wrap with inverse()
       const finalExpression = isInverse ? `inverse(${expression})` : expression;
 
-      switch (selectorTarget) {
-        case "subProperty":
-          await ontologyMutationService.addSubPropertyOf(
-            projectId,
-            selectedItem.id,
-            finalExpression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            superProperties: [...((selectedItem as Property).superProperties || []), finalExpression],
-          });
-          break;
-        case "inverse":
-          await ontologyMutationService.addInverseProperty(
-            projectId,
-            selectedItem.id,
-            expression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression],
-          });
-          break;
-        case "disjoint":
-          await ontologyMutationService.addDisjointProperty(
-            projectId,
-            selectedItem.id,
-            finalExpression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({
-            ...selectedItem,
-            disjointProperties: [...((selectedItem as Property).disjointProperties || []), finalExpression],
-          });
-          break;
-        case "equivalent": {
-          const existing = (selectedItem as Property).equivalentProperties || [];
-          await ontologyMutationService.addEquivalentProperty(
-            projectId,
-            selectedItem.id,
-            finalExpression,
-            user?.email || "anonymous",
-            user?.username || "Anonymous",
-          );
-          updateItemInState({ ...selectedItem, equivalentProperties: [...existing, finalExpression] });
-          break;
+      if (editing) {
+        // Replace: single server-side call — delete old + add new atomically
+        await ontologyMutationService.editRelation(projectId, {
+          operation: 'edit',
+          entityIri: selectedItem.id,
+          relationshipType: target,
+          oldTargetIri: editing,
+          targetIri: finalExpression,
+          userId: user?.email || "anonymous",
+          username: user?.username || "Anonymous",
+        });
+        const replace = (arr: string[] | undefined) =>
+          (arr || []).map(v => v === editing ? finalExpression : v);
+        const prop = selectedItem as Property;
+        if (target === "subProperty")  updateItemInState({ ...selectedItem, superProperties: replace(prop.superProperties) });
+        if (target === "inverse")      updateItemInState({ ...selectedItem, inverseProperties: replace(prop.inverseProperties) });
+        if (target === "disjoint")     updateItemInState({ ...selectedItem, disjointProperties: replace(prop.disjointProperties) });
+        if (target === "equivalent")   updateItemInState({ ...selectedItem, equivalentProperties: replace(prop.equivalentProperties as string[] | undefined) });
+      } else {
+        switch (target) {
+          case "subProperty":
+            await ontologyMutationService.addSubPropertyOf(
+              projectId, selectedItem.id, expression,
+              user?.email || "anonymous", user?.username || "Anonymous",
+            );
+            updateItemInState({
+              ...selectedItem,
+              superProperties: [...((selectedItem as Property).superProperties || []), expression],
+            });
+            break;
+          case "inverse":
+            await ontologyMutationService.addInverseProperty(
+              projectId, selectedItem.id, expression,
+              user?.email || "anonymous", user?.username || "Anonymous",
+            );
+            updateItemInState({
+              ...selectedItem,
+              inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression],
+            });
+            break;
+          case "disjoint":
+            await ontologyMutationService.addDisjointProperty(
+              projectId, selectedItem.id, finalExpression,
+              user?.email || "anonymous", user?.username || "Anonymous",
+            );
+            updateItemInState({
+              ...selectedItem,
+              disjointProperties: [...((selectedItem as Property).disjointProperties || []), finalExpression],
+            });
+            break;
+          case "equivalent": {
+            const existing = (selectedItem as Property).equivalentProperties || [];
+            await ontologyMutationService.addEquivalentProperty(
+              projectId, selectedItem.id, finalExpression,
+              user?.email || "anonymous", user?.username || "Anonymous",
+            );
+            updateItemInState({ ...selectedItem, equivalentProperties: [...existing as string[], finalExpression] });
+            break;
+          }
         }
       }
     } catch (error) {
-      console.error(`Failed to add ${selectorTarget}`, error);
+      console.error(`Failed to ${editing ? 'replace' : 'add'} ${target}`, error);
     } finally {
       setIsObjectPropertyExpressionDialogOpen(false);
       setSelectorTarget(null);
+      setSelectorEditingItem(null);
     }
   };
 
   // Handlers for Annotation Property Description Dialogs (Protégé-style)
-  const handleOpenAnnotationDomainDialog = () => {
+  const [annotationEditingItem, setAnnotationEditingItem] = useState<{ rel: 'domain'|'range'|'subProperty'; iri: string } | null>(null);
+
+  const handleOpenAnnotationDomainDialog = (editingItem?: string) => {
     if (entitiesTab === "AnnotationProperties") {
+      setAnnotationEditingItem(editingItem ? { rel: 'domain', iri: editingItem } : null);
       setIsAnnotationDomainDialogOpen(true);
     }
   };
 
-  const handleOpenAnnotationRangeDialog = () => {
+  const handleOpenAnnotationRangeDialog = (editingItem?: string) => {
     if (entitiesTab === "AnnotationProperties") {
+      setAnnotationEditingItem(editingItem ? { rel: 'range', iri: editingItem } : null);
       setIsAnnotationRangeDialogOpen(true);
     }
   };
 
-  const handleOpenAnnotationSuperpropertyDialog = () => {
+  const handleOpenAnnotationSuperpropertyDialog = (editingItem?: string) => {
     if (entitiesTab === "AnnotationProperties") {
+      setAnnotationEditingItem(editingItem ? { rel: 'subProperty', iri: editingItem } : null);
       setIsAnnotationSuperpropertyDialogOpen(true);
     }
   };
 
   const handleAnnotationDomainConfirm = async (domainIri: string) => {
     if (!selectedItem || !projectId) return;
-
+    const editing = annotationEditingItem?.rel === 'domain' ? annotationEditingItem.iri : null;
     try {
-      await ontologyMutationService.addPropertyDomain(
-        projectId,
-        selectedItem.id,
-        domainIri,
-        user?.email || "anonymous",
-        user?.username || "Anonymous",
-      );
-      const extendedItem = selectedItem as AnnotationProperty & { domains?: string[] };
-      updateItemInState({
-        ...selectedItem,
-        domains: [...(extendedItem.domains || []), domainIri],
-      });
+      if (editing) {
+        await ontologyMutationService.editRelation(projectId, { operation: 'edit', entityIri: selectedItem.id, relationshipType: 'domain', oldTargetIri: editing, targetIri: domainIri, userId: user?.email || "anonymous", username: user?.username || "Anonymous" });
+        const extendedItem = selectedItem as AnnotationProperty & { domains?: string[] };
+        updateItemInState({ ...selectedItem, domains: (extendedItem.domains || []).map(d => d === editing ? domainIri : d) });
+      } else {
+        await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, domainIri, user?.email || "anonymous", user?.username || "Anonymous");
+        const extendedItem = selectedItem as AnnotationProperty & { domains?: string[] };
+        updateItemInState({ ...selectedItem, domains: [...(extendedItem.domains || []), domainIri] });
+      }
     } catch (error) {
-      console.error("Failed to add annotation property domain", error);
+      console.error("Failed to add/replace annotation property domain", error);
     } finally {
       setIsAnnotationDomainDialogOpen(false);
+      setAnnotationEditingItem(null);
     }
   };
 
   const handleAnnotationRangeConfirm = async (rangeIri: string) => {
     if (!selectedItem || !projectId) return;
-
+    const editing = annotationEditingItem?.rel === 'range' ? annotationEditingItem.iri : null;
     try {
-      await ontologyMutationService.addPropertyRange(
-        projectId,
-        selectedItem.id,
-        rangeIri,
-        user?.email || "anonymous",
-        user?.username || "Anonymous",
-      );
-      const extendedItem = selectedItem as AnnotationProperty & { ranges?: string[] };
-      updateItemInState({
-        ...selectedItem,
-        ranges: [...(extendedItem.ranges || []), rangeIri],
-      });
+      if (editing) {
+        await ontologyMutationService.editRelation(projectId, { operation: 'edit', entityIri: selectedItem.id, relationshipType: 'range', oldTargetIri: editing, targetIri: rangeIri, userId: user?.email || "anonymous", username: user?.username || "Anonymous" });
+        const extendedItem = selectedItem as AnnotationProperty & { ranges?: string[] };
+        updateItemInState({ ...selectedItem, ranges: (extendedItem.ranges || []).map(r => r === editing ? rangeIri : r) });
+      } else {
+        await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, rangeIri, user?.email || "anonymous", user?.username || "Anonymous");
+        const extendedItem = selectedItem as AnnotationProperty & { ranges?: string[] };
+        updateItemInState({ ...selectedItem, ranges: [...(extendedItem.ranges || []), rangeIri] });
+      }
     } catch (error) {
-      console.error("Failed to add annotation property range", error);
+      console.error("Failed to add/replace annotation property range", error);
     } finally {
       setIsAnnotationRangeDialogOpen(false);
+      setAnnotationEditingItem(null);
     }
   };
 
   const handleAnnotationSuperpropertyConfirm = async (superpropertyIri: string) => {
     if (!selectedItem || !projectId) return;
-
+    const editing = annotationEditingItem?.rel === 'subProperty' ? annotationEditingItem.iri : null;
     try {
-      await ontologyMutationService.addSubPropertyOf(
-        projectId,
-        selectedItem.id,
-        superpropertyIri,
-        user?.email || "anonymous",
-        user?.username || "Anonymous",
-      );
-      const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
-      updateItemInState({
-        ...selectedItem,
-        superProperties: [...(extendedItem.superProperties || []), superpropertyIri],
-      });
+      if (editing) {
+        await ontologyMutationService.editRelation(projectId, { operation: 'edit', entityIri: selectedItem.id, relationshipType: 'subProperty', oldTargetIri: editing, targetIri: superpropertyIri, userId: user?.email || "anonymous", username: user?.username || "Anonymous" });
+        const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
+        updateItemInState({ ...selectedItem, superProperties: (extendedItem.superProperties || []).map(p => p === editing ? superpropertyIri : p) });
+      } else {
+        await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, superpropertyIri, user?.email || "anonymous", user?.username || "Anonymous");
+        const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
+        updateItemInState({ ...selectedItem, superProperties: [...(extendedItem.superProperties || []), superpropertyIri] });
+      }
     } catch (error) {
-      console.error("Failed to add annotation property superproperty", error);
+      console.error("Failed to add/replace annotation property superproperty", error);
     } finally {
       setIsAnnotationSuperpropertyDialogOpen(false);
+      setAnnotationEditingItem(null);
     }
   };
+
   // #endregion
 
   // #region Main Render
@@ -13346,18 +15414,51 @@ const Dashboard: React.FC<DashboardProps> = ({
   return (
     <>
       <LoadingDialog
-        isOpen={isInitialLoading || showLoadingChoice}
+        isOpen={isInitialLoading || showLoadingChoice || isExpectingFileReady || !!loadFailure}
         projectName={loadingProjectName || undefined}
         loadingStatusMessage={loadingStatusMessage || undefined}
         progress={backgroundImportProgress}
         queuePosition={queuePosition}
         totalInQueue={totalInQueue}
         estimatedWaitTimeMs={estimatedWaitTimeMs}
+        inImportQueue={inImportQueue}
+        readyToBrowse={importReadyToBrowse}
+        failed={!!loadFailure}
+        failureMessage={loadFailure?.message}
+        onRetry={handleLoadRetry}
+        onOpenAnotherFile={handleLoadOpenAnother}
+        onBrowseNow={() => {
+          setImportReadyToBrowse(false);
+          setLoadFailure(null);
+          setIsInitialLoading(false);
+          setShowLoadingChoice(false);
+          setIsExpectingFileReady(false);
+          setBackgroundImportActive(false);
+          setShowProjectSelector(false);
+          if (projectId) {
+            void fetchData(projectId);
+          }
+        }}
       />
       <CreateIndividualModal
         isOpen={isCreateIndividualModalOpen}
         onClose={() => setCreateIndividualModalOpen(false)}
         onCreate={handleAddIndividual}
+      />
+      <CreateIndividualModal
+        isOpen={isCreateIndividualForClassOpen}
+        onClose={() => setCreateIndividualForClassOpen(false)}
+        onCreate={async (name: string) => {
+          if (!projectId || !selectedClassForIndividuals) return;
+          try {
+            await ontologyMutationService.addIndividual(projectId, name, selectedClassForIndividuals.id);
+            await loadClassInstances();
+            setCreateIndividualForClassOpen(false);
+          } catch (error) {
+            console.error("[Dashboard] Failed to create individual:", error);
+            notificationService.error("Create Failed", "Could not create individual.");
+          }
+        }}
       />
       <AddClassDialog
         isOpen={isAddClassDialogOpen}
@@ -13365,6 +15466,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         onCreate={handleCreateClass}
         type={addClassType}
         parentLabel={classParentLabel}
+        syncMode={syncMode}
       />
       <AddObjectPropertyDialog
         isOpen={isAddPropertyDialogOpen}
@@ -13398,6 +15500,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           dataProperties: dataProperties,
           individuals: individuals,
         }}
+        onCreateProperty={handleDialogCreateAnnotationProperty}
+        onRefreshProperties={handleRefreshAnnotationProperties}
+        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
       />
       <AddAnnotationDialog
         isOpen={isEditAnnotationDialogOpen}
@@ -13433,6 +15538,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         initialValue={editAnnotationData?.currentValue || ""}
         initialLang={editAnnotationData?.language || ""}
         initialDatatype={editAnnotationData?.datatype || ""}
+        onCreateProperty={handleDialogCreateAnnotationProperty}
+        onRefreshProperties={handleRefreshAnnotationProperties}
+        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
       />
       <AddImportDialog
         isOpen={showImportDialog}
@@ -13440,14 +15548,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         onAdd={async (importIri) => {
           if (!projectId) return;
           await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri });
-          const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
-          const importsData = Array.isArray(importsRes?.data)
-            ? importsRes.data
-            : Array.isArray(importsRes?.imports)
-              ? importsRes.imports
-              : Array.isArray(importsRes)
-                ? importsRes
-                : [];
+          const importsRes = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/imports`);
+          const importsPayload = importsRes?.data?.data ?? importsRes?.data ?? importsRes;
+          const importsData = Array.isArray(importsPayload) ? importsPayload : [];
           setOntologyImports(importsData);
           showNotification("Import added successfully", "info");
         }}
@@ -13476,6 +15579,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           };
           return extractClasses(classHierarchy);
         })()}
+        projectId={projectId}
       />
       <EditOntologyIRIDialog
         isOpen={isEditOntologyIRIDialogOpen}
@@ -13483,6 +15587,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         onSave={handleSaveOntologyIRIs}
         initialOntologyIri={(metadata as any)?.ontologyIRI || ""}
         initialVersionIri={(metadata as any)?.versionIRI || ""}
+      />
+      <EditEntityIRIDialog
+        isOpen={isEditEntityIRIDialogOpen}
+        onClose={() => {
+          setIsEditEntityIRIDialogOpen(false);
+          setEditEntityIRITarget(null);
+        }}
+        onSave={handleSaveEntityIri}
+        currentIri={editEntityIRITarget?.id || ""}
+        entityLabel={editEntityIRITarget?.label}
       />
       <GCIEditorDialog
         isOpen={axiomDialogOpen}
@@ -13515,6 +15629,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           };
           return extractClasses(classHierarchy);
         })()}
+        projectId={projectId}
       />
       <AddAnnotationDialog
         isOpen={isOntologyAnnotationDialogOpen}
@@ -13543,6 +15658,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         initialProperty={ontologyAnnotationEditTarget?.propertyIri || ""}
         initialValue={ontologyAnnotationEditTarget?.value || ""}
         initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
+        onCreateProperty={handleDialogCreateAnnotationProperty}
+        onRefreshProperties={handleRefreshAnnotationProperties}
+        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
       />
       <AddAnnotationDialog
         isOpen={isQuickNoteDialogOpen}
@@ -13608,6 +15726,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               propertyIri,
               value,
             );
+            markAsUnsaved();
             await refreshSelectedClassIndividualDetails();
           } catch (error) {
             console.error("[Dashboard] Failed to add annotation:", error);
@@ -13623,6 +15742,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           if (!projectId || !selectedClassIndividualDetails) return;
           try {
             await ontologyMutationService.addClassAssertion(projectId, selectedClassIndividualDetails.id, node.id);
+            markAsUnsaved();
             if (selectedClassForIndividuals?.id === node.id) {
               await loadClassInstances();
             }
@@ -13643,176 +15763,52 @@ const Dashboard: React.FC<DashboardProps> = ({
         onDeleteClass={() => handleDeleteItem()}
         metadata={metadata}
       />
-      <PropertyAssertionDialog
-        isOpen={isClassIndividualPropertyDialogOpen}
-        title={classIndividualPropertyIsObject ? "Add object property assertion" : "Add data property assertion"}
-        isObjectProperty={classIndividualPropertyIsObject}
-        objectPropertiesTree={objectPropertyHierarchy}
-        dataPropertiesTree={dataPropertyHierarchy}
-        onConfirm={async (data) => {
-          if (!projectId || !selectedClassIndividualDetails) return;
-          try {
-            if (data.isObjectProperty) {
-              const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, objectProperties);
-              const targetIri = resolveIndividualIriByLabel(data.targetLabel);
-              if (!propertyIri || !targetIri) {
-                notificationService.error("Add Failed", "Property or target individual not found.");
-                return;
+      {classIndividualSameDiffDialog && (
+        <IndividualSelectorDialog
+          isOpen={true}
+          onClose={() => setClassIndividualSameDiffDialog(null)}
+          title={
+            classIndividualSameDiffDialog.mode === "same"
+              ? `Same Individual As: ${selectedClassIndividualDetails?.label || ""}`
+              : `Different Individuals: ${selectedClassIndividualDetails?.label || ""}`
+          }
+          individuals={classIndividualCandidateIndividuals}
+          projectId={projectId || undefined}
+          excludeIndividualIds={[
+            selectedClassIndividualDetails?.id || "",
+            ...(classIndividualSameDiffDialog.mode === "same"
+              ? selectedClassIndividualDetails?.sameIndividualAs || []
+              : selectedClassIndividualDetails?.differentIndividualFrom || []),
+          ].filter(Boolean)}
+          minSelection={1}
+          onConfirm={async (selectedIndividuals) => {
+            if (!projectId || !selectedClassIndividualDetails) return;
+            try {
+              for (const individual of selectedIndividuals) {
+                if (classIndividualSameDiffDialog.mode === "same") {
+                  await ontologyMutationService.addSameIndividual(
+                    projectId,
+                    selectedClassIndividualDetails.id,
+                    individual.id,
+                  );
+                } else {
+                  await ontologyMutationService.addDifferentIndividual(
+                    projectId,
+                    selectedClassIndividualDetails.id,
+                    individual.id,
+                  );
+                }
               }
-              await ontologyMutationService.addObjectPropertyAssertion(
-                projectId,
-                selectedClassIndividualDetails.id,
-                propertyIri,
-                targetIri,
-              );
-            } else {
-              const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, dataProperties);
-              if (!propertyIri) {
-                notificationService.error("Add Failed", "Data property not found.");
-                return;
-              }
-              await ontologyMutationService.addDataPropertyAssertion(
-                projectId,
-                selectedClassIndividualDetails.id,
-                propertyIri,
-                data.targetLabel,
-              );
+              await refreshSelectedClassIndividualDetails();
+            } catch (error) {
+              console.error("[Dashboard] Failed to add same/different individual assertion:", error);
+              notificationService.error("Add Failed", "Could not add same/different individual assertion.");
+            } finally {
+              setClassIndividualSameDiffDialog(null);
             }
-            await refreshSelectedClassIndividualDetails();
-          } catch (error) {
-            console.error("[Dashboard] Failed to add property assertion:", error);
-            notificationService.error("Add Failed", "Could not add property assertion.");
-          } finally {
-            setClassIndividualPropertyDialogOpen(false);
-          }
-        }}
-        onCancel={() => setClassIndividualPropertyDialogOpen(false)}
-      />
-      <AddAnnotationDialog
-        isOpen={isOntologyAnnotationDialogOpen}
-        onClose={() => {
-          setIsOntologyAnnotationDialogOpen(false);
-          setOntologyAnnotationEditTarget(null);
-        }}
-        onAdd={(propertyIri, value, datatype) => {
-          if (ontologyAnnotationEditTarget) {
-            handleUpdateOntologyAnnotation(
-              propertyIri,
-              ontologyAnnotationEditTarget.value,
-              value,
-              ontologyAnnotationEditTarget.datatype,
-            );
-          } else {
-            handleAddOntologyAnnotation(propertyIri, value, datatype);
-          }
-          setIsOntologyAnnotationDialogOpen(false);
-          setOntologyAnnotationEditTarget(null);
-        }}
-        availableProperties={annotationProperties}
-        editMode={!!ontologyAnnotationEditTarget}
-        initialProperty={ontologyAnnotationEditTarget?.propertyIri || ""}
-        initialValue={ontologyAnnotationEditTarget?.value || ""}
-        initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
-      />
-      <AddAnnotationDialog
-        isOpen={isQuickNoteDialogOpen}
-        onClose={() => {
-          setQuickNoteDialogOpen(false);
-          setQuickEditNoteItem(null);
-        }}
-        onAdd={async (propertyIri, value) => {
-          if (!projectId || !quickEditNoteItem) return;
-          try {
-            const annotations = (quickEditNoteItem as any).annotations || {};
-            const existingValue = annotations[propertyIri];
-            if (existingValue) {
-              await ontologyMutationService.updateAnnotation(
-                projectId,
-                quickEditNoteItem.id,
-                propertyIri,
-                value,
-                user?.email || "anonymous",
-                user?.username || "Anonymous",
-                String(existingValue),
-              );
-            } else {
-              await ontologyMutationService.addAnnotation(
-                projectId,
-                quickEditNoteItem.id,
-                propertyIri,
-                value,
-                user?.email || "anonymous",
-                user?.username || "Anonymous",
-              );
-            }
-            updateItemInState({
-              ...quickEditNoteItem,
-              annotations: { ...annotations, [propertyIri]: value },
-            } as SelectableItem);
-          } catch (error) {
-            console.error("[Dashboard] Failed to save quick note:", error);
-            notificationService.error("Quick Note Failed", "Could not save note.");
-          } finally {
-            setQuickNoteDialogOpen(false);
-            setQuickEditNoteItem(null);
-          }
-        }}
-        availableProperties={annotationProperties}
-        editMode={true}
-        initialProperty={"http://www.w3.org/2000/01/rdf-schema#comment"}
-        initialValue={
-          quickEditNoteItem && (quickEditNoteItem as any).annotations
-            ? String((quickEditNoteItem as any).annotations["http://www.w3.org/2000/01/rdf-schema#comment"] || "")
-            : ""
-        }
-      />
-      <AddAnnotationDialog
-        isOpen={isClassIndividualAnnotationDialogOpen}
-        onClose={() => setClassIndividualAnnotationDialogOpen(false)}
-        onAdd={async (propertyIri, value) => {
-          if (!projectId || !selectedClassIndividualDetails) return;
-          try {
-            await ontologyMutationService.addAnnotation(
-              projectId,
-              selectedClassIndividualDetails.id,
-              propertyIri,
-              value,
-            );
-            await refreshSelectedClassIndividualDetails();
-          } catch (error) {
-            console.error("[Dashboard] Failed to add annotation:", error);
-            notificationService.error("Annotation Failed", "Could not add annotation.");
-          }
-        }}
-        availableProperties={annotationProperties}
-      />
-      <ClassSelectorDialog
-        isOpen={isClassIndividualTypeDialogOpen}
-        onClose={() => setClassIndividualTypeDialogOpen(false)}
-        onSelect={async (node) => {
-          if (!projectId || !selectedClassIndividualDetails) return;
-          try {
-            await ontologyMutationService.addClassAssertion(projectId, selectedClassIndividualDetails.id, node.id);
-            if (selectedClassForIndividuals?.id === node.id) {
-              await loadClassInstances();
-            }
-            await refreshSelectedClassIndividualDetails();
-          } catch (error) {
-            console.error("[Dashboard] Failed to add type assertion:", error);
-            notificationService.error("Type Failed", "Could not add type assertion.");
-          } finally {
-            setClassIndividualTypeDialogOpen(false);
-          }
-        }}
-        classHierarchy={classHierarchy}
-        projectId={projectId || undefined}
-        onToggleNode={toggleNode}
-        externalExpandedNodes={expandedNodes}
-        title="Add type"
-        onAddClass={handleAddClassInline}
-        onDeleteClass={() => handleDeleteItem()}
-        metadata={metadata}
-      />
+          }}
+        />
+      )}
       <PropertyAssertionDialog
         isOpen={isClassIndividualPropertyDialogOpen}
         title={classIndividualPropertyIsObject ? "Add object property assertion" : "Add data property assertion"}
@@ -13894,6 +15890,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               }
             : undefined
         }
+        onCreateNewFile={() => { autoLoadNewFileRef.current = true; }}
+        isPlanExpired={openFileIsPlanExpired}
       />
       <DuplicateFileDialog
         isOpen={duplicatePrompt.isOpen}
@@ -13916,9 +15914,140 @@ const Dashboard: React.FC<DashboardProps> = ({
         onCancel={confirmDialog.onCancel}
         title={confirmDialog.title}
         message={confirmDialog.message}
-        confirmLabel={confirmDialog.confirmLabel}
-        cancelLabel={confirmDialog.cancelLabel}
+        confirmText={confirmDialog.confirmLabel}
+        cancelText={confirmDialog.cancelLabel}
       />
+      {publishConflictDialog.isOpen && (() => {
+        const conflicts = publishConflictDialog.conflicts;
+        const resolvedCount = conflicts.filter((c) => conflictResolutions[c.entityIRI]).length;
+        const allResolved = conflicts.length > 0 && resolvedCount === conflicts.length;
+        return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9999] p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200">
+              <div className="flex-shrink-0 w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-gray-900">{publishConflictDialog.title}</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{publishConflictDialog.message}</p>
+              </div>
+              {conflicts.length > 0 && (
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
+                  {resolvedCount}/{conflicts.length} resolved
+                </span>
+              )}
+            </div>
+
+            {/* Conflict list */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {conflicts.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-8">No per-entity conflicts detected. You can merge or force publish.</p>
+              ) : conflicts.map((c) => {
+                const label = c.entityLabel || c.entityIRI.split(/[#/]/).pop() || c.entityIRI;
+                const chosen = conflictResolutions[c.entityIRI];
+                return (
+                  <div key={c.entityIRI} className={`border rounded-lg overflow-hidden transition-colors ${chosen ? "border-green-300 bg-green-50/30" : "border-gray-200"}`}>
+                    {/* Entity header */}
+                    <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-200">
+                      <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                      </svg>
+                      <span className="text-sm font-medium text-gray-800 flex-1 truncate" title={c.entityIRI}>{label}</span>
+                      {c.changedBy && <span className="text-xs text-gray-400">changed by {c.changedBy}</span>}
+                      {chosen && (
+                        <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
+                          {chosen === "KEEP_TARGET" ? "Keeping theirs" : chosen === "KEEP_SOURCE" ? "Keeping mine" : "Keeping both"}
+                        </span>
+                      )}
+                    </div>
+                    {/* Left / Right axiom comparison */}
+                    <div className="grid grid-cols-2 divide-x divide-gray-200">
+                      <div className="p-3">
+                        <div className="text-xs font-semibold text-blue-700 mb-1.5 flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+                          Public (theirs)
+                        </div>
+                        <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono leading-relaxed min-h-[40px]">
+                          {c.mainAxioms || <span className="text-gray-400 italic">No axioms</span>}
+                        </pre>
+                      </div>
+                      <div className="p-3">
+                        <div className="text-xs font-semibold text-purple-700 mb-1.5 flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-purple-500 inline-block"></span>
+                          Your draft
+                        </div>
+                        <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono leading-relaxed min-h-[40px]">
+                          {c.yourAxioms || <span className="text-gray-400 italic">No axioms</span>}
+                        </pre>
+                      </div>
+                    </div>
+                    {/* Resolution buttons */}
+                    <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-t border-gray-200">
+                      <span className="text-xs text-gray-500 mr-1">Use:</span>
+                      {(["KEEP_TARGET", "KEEP_SOURCE", "MERGE"] as const).map((action) => {
+                        const labels: Record<string, string> = { KEEP_TARGET: "Keep Theirs", KEEP_SOURCE: "Keep Mine", MERGE: "Keep Both" };
+                        const colors: Record<string, string> = {
+                          KEEP_TARGET: chosen === action ? "bg-blue-600 text-white border-blue-600" : "bg-white text-blue-700 border-blue-300 hover:bg-blue-50",
+                          KEEP_SOURCE: chosen === action ? "bg-purple-600 text-white border-purple-600" : "bg-white text-purple-700 border-purple-300 hover:bg-purple-50",
+                          MERGE: chosen === action ? "bg-green-600 text-white border-green-600" : "bg-white text-green-700 border-green-300 hover:bg-green-50",
+                        };
+                        return (
+                          <button
+                            key={action}
+                            onClick={() => setConflictResolutions((prev) => ({ ...prev, [c.entityIRI]: action }))}
+                            className={`px-3 py-1 text-xs font-medium rounded border transition-colors ${colors[action]}`}
+                          >
+                            {labels[action]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
+              <button
+                onClick={publishConflictDialog.onForce}
+                className="px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100"
+              >
+                Overwrite (force publish)
+              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }))}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={conflicts.length > 0 && !allResolved}
+                  onClick={() => {
+                    setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }));
+                    const resolutions: Record<string, { action: string }> = {};
+                    Object.entries(conflictResolutions).forEach(([iri, action]) => { resolutions[iri] = { action }; });
+                    void handleSave({ merge: true, resolutions: Object.keys(resolutions).length > 0 ? resolutions : undefined });
+                  }}
+                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                    conflicts.length > 0 && !allResolved
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-purple-600 text-white hover:bg-purple-700"
+                  }`}
+                >
+                  {allResolved || conflicts.length === 0 ? "Apply & Publish" : `Resolve ${conflicts.length - resolvedCount} more…`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
       {/* Dedicated Unsaved Changes Warning Dialog */}
       {unsavedChangesDialog.isOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">
@@ -13992,14 +16121,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         onClose={() => setIsReasonerSettingsOpen(false)}
       />
 
-      <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
+      {/* Full-height flex column — children control their own scroll via overflow-y-auto */}
+      <div className="h-full bg-gray-50 flex flex-col text-sm overflow-hidden">
         {/* Persistent background import progress banner */}
         {backgroundImportActive && (
-          <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-blue-800 text-xs z-40 shrink-0">
-            <Loader2 size={14} className="animate-spin text-blue-600" />
-            <span className="font-medium">
+          <div className="flex flex-wrap items-center gap-2 px-3 sm:px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-blue-800 text-xs z-40 shrink-0 min-w-0">
+            <Loader2 size={14} className="animate-spin text-blue-600 flex-shrink-0" />
+            <span className="font-medium min-w-0 flex-1 truncate sm:whitespace-normal sm:overflow-visible">
               Loading "{loadingProjectName}" in the background
               {loadingStatusMessage ? ` — ${loadingStatusMessage}` : "..."}
+              {inImportQueue && queuePosition !== undefined && queuePosition > 0
+                ? ` (queue #${queuePosition}${totalInQueue ? `, ${totalInQueue} waiting` : ""}${estimatedWaitTimeMs ? `, est. ${formatQueueWait(estimatedWaitTimeMs)}` : ""})`
+                : ""}
             </span>
             {backgroundImportProgress !== undefined && backgroundImportProgress > 0 && (
               <>
@@ -14028,12 +16161,23 @@ const Dashboard: React.FC<DashboardProps> = ({
           hasUnsavedChanges={hasUnsavedChanges}
           isSaving={isSaving}
           draftCount={draftCount}
+          conflictStatus={publishConflictStatus}
           onOpenDialog={() => setShowOpenDialog(true)}
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
           hasPluginUpdates={hasPluginUpdates}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
           onReportIssue={() => setIsReportIssueModalOpen(true)}
           onOpenUserGuide={() => setIsUserGuideOpen(true)}
+          onOpenReleaseNotes={() => setIsReleaseNotesOpen(true)}
+          hierarchyDisplayMode={hierarchyDisplayMode}
+          onHierarchyDisplayModeChange={setHierarchyDisplayMode}
+          hierarchyImportsScope={hierarchyImportsScope}
+          onHierarchyImportsScopeChange={setHierarchyImportsScope}
+          hierarchyAnnotationProperties={hierarchyAnnotationProperties}
+          hierarchyAnnotationPropIri={hierarchyAnnotationPropIri}
+          onHierarchyAnnotationPropChange={setHierarchyAnnotationPropIri}
+          hierarchyCustomTemplate={hierarchyCustomTemplate}
+          onHierarchyCustomTemplateChange={setHierarchyCustomTemplate}
           onOpenMergeWizard={async () => {
             setMergeWizardOpen(true);
             // Fetch files from the current project to show in merge wizard
@@ -14048,14 +16192,63 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
           }}
           syncMode={syncMode}
+          requireDraftForMembers={requireDraftForMembers}
+          isProjectOwner={isProjectOwner}
+          isDraftEditorRole={isProjectDraftEditorRole}
+          autoDraftStatus={autoDraftStatus}
+          onSwitchToDraftMode={handleSwitchToDraftMode}
+          onToggleRequireDraftForMembers={() => {
+            if (!projectId || !isProjectOwner) return;
+            const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+            const newValue = !requireDraftForMembers;
+            draftTrackingService.setRequireDraftForMembers(projectId, effectiveUserId, newValue)
+              .then(() => {
+                setRequireDraftForMembers(newValue);
+                notificationService.success(
+                  newValue ? "Draft Mode Required" : "Public Editing Allowed",
+                  newValue
+                    ? "Members must now use Draft Mode before editing."
+                    : "Members can now edit in Public (Live) mode."
+                );
+              })
+              .catch(() => {
+                notificationService.error("Settings Error", "Could not update draft settings.");
+              });
+          }}
           onToggleSyncMode={() => {
-            const newMode = syncMode === "public" ? "private" : "public";
-            setSyncMode(newMode);
-            ontologyMutationService.setRealTimeSync(newMode === "public");
-            if (newMode === "public") {
-              notificationService.success("Live Mode Enabled", "Changes will be broadcast immediately.");
+            const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+
+            if (syncMode === "public") {
+              if (!projectId) return;
+              // Clear any draft-required block before starting the copy.
+              ontologyMutationService.setDraftRequired(false);
+              startDraftCopySession(projectId, effectiveUserId, {
+                showModal: true,
+                onReady: () => {
+                  setSyncMode('private');
+                  ontologyMutationService.setRealTimeSync(false);
+                  localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'private');
+                  userPreferencesService.saveSyncMode(projectId, 'private');
+                  notificationService.info("Draft Mode Active", "Editing your private draft — changes won't affect others until you publish.");
+                },
+              });
             } else {
-              notificationService.info("Draft Mode Enabled", "Changes will be saved locally until you save.");
+              // private → public: if user has draft changes, offer pull-from-public dialog
+              // so they can reconcile any public updates before switching view.
+              if (draftCount > 0 && projectId) {
+                setShowPullFromPublic(true);
+                return;
+              }
+              setSyncMode('public');
+              ontologyMutationService.setRealTimeSync(true);
+              if (projectId) {
+                localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
+                userPreferencesService.saveSyncMode(projectId, 'public');
+              }
+              notificationService.info("Public View", "Your draft is preserved — toggle back to Draft Mode to resume editing.");
+              if (requireDraftForMembers && !isProjectOwner) {
+                ontologyMutationService.setDraftRequired(true, () => setShowProPromptType('draftRequired'));
+              }
             }
           }}
           isReasonerRunning={isReasonerRunning}
@@ -14072,11 +16265,15 @@ const Dashboard: React.FC<DashboardProps> = ({
           isConsistencyLoading={isConsistencyLoading}
           onGoToProjectDashboard={onGoToProjectDashboard}
           onGoToWorkspace={onGoToWorkspace}
+          onOpenThemeSettings={() => setShowThemeSettings(true)}
+          subscription={subscription}
+          onExportProAction={handleExportProAction}
+          isViewOnly={isViewOnlyMember}
         />
 
-        <div className="bg-white border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-start justify-between px-4 py-1.5 gap-4">
-            <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 flex-1">
+        <div className="bg-white border-b border-gray-200 flex-shrink-0 min-w-0 overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between px-2 sm:px-4 py-1.5 gap-2 sm:gap-4 min-w-0">
+            <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 flex-1 min-w-0 overflow-x-auto no-scrollbar">
               {visibleMainTabs.map((tabId) => {
                 const tab = ALL_MAIN_TABS[tabId];
                 if (!tab) return null;
@@ -14091,7 +16288,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 );
               })}
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0 flex-wrap justify-end min-w-0">
               {isCloudDeployment && projectId && (
                 <button
                   onClick={() => {
@@ -14101,20 +16298,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                       isCloudDeployment,
                     });
 
-                    // Only cloud deployment with free version doesn't have access to collaboration
-                    if (isCloudDeployment && subscription.isFree) {
+                    // Check for collaboration access using the standardized hook
+                    if (isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')) {
                       showToast(
                         "Collaboration is only available in Pro and Enterprise plans. Upgrade to enable real-time collaboration.",
                         "warning",
                       );
                       return;
                     }
-
+                    
                     setShowCollaborationPanel(!showCollaborationPanel);
                   }}
                   // disabled={isCloudDeployment && subscription.isFree}
                   className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
-                    isCloudDeployment && subscription.isFree
+                    isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')
                       ? "bg-gray-100 text-gray-400 cursor-not-allowed opacity-50"
                       : showCollaborationPanel
                         ? "bg-blue-600 text-white hover:bg-blue-700"
@@ -14123,14 +16320,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                           : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                   }`}
                   title={
-                    isCloudDeployment && subscription.isFree
+                    isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')
                       ? "Collaboration is only available in Pro and Enterprise plans"
                       : `Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? " (Shared file)" : " (Enable sharing to collaborate)"}`
                   }
                 >
                   <Users size={14} />
                   <span>Collaboration</span>
-                  {isCloudDeployment && subscription.isFree && (
+                  {isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration') && (
                     <span className="bg-amber-500 text-white text-[10px] px-1 rounded">PRO</span>
                   )}
                   {hasMultipleActiveUsers && (
@@ -14159,7 +16356,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   )}
                 </button>
               )} */}
-              <span className="text-xs text-gray-600">
+              <span className="text-xs text-gray-600 hidden md:inline truncate max-w-[12rem] lg:max-w-none">
                 Welcome, {user?.username || "Guest"}
                 {user?.workspaceName && (
                   <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">
@@ -14167,6 +16364,49 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </span>
                 )}
               </span>
+              {isProjectViewerRole && (
+                <span
+                  className="flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded text-[10px] font-semibold select-none"
+                  title="You are viewing the published version of this ontology. Contact the project owner for edit access."
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                  </svg>
+                  Public View
+                </span>
+              )}
+              {/* Pull from Public — only visible when in draft mode */}
+              {syncMode === 'private' && projectId && (
+                <button
+                  onClick={() => setShowPullPreview(true)}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
+                  style={{ borderColor: "var(--color-border)" }}
+                  title="Preview and pull latest public version into your draft"
+                >
+                  <Download size={12} />
+                  <span className="hidden sm:inline">Pull</span>
+                </button>
+              )}
+              {/* PR button — opens DraftPRPanel for everyone (reviewers and draft editors) */}
+              {showPRButton && (
+                <button
+                  onClick={() => {
+                    setShowDraftPRPanel(true);
+                    refreshOpenPRCount();
+                  }}
+                  className="relative flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
+                  style={{ borderColor: "var(--color-border)" }}
+                  title={canReviewPR ? "Review pull requests from contributors" : "Raise a pull request for your draft changes"}
+                >
+                  <GitPullRequest size={12} />
+                  <span className="hidden sm:inline">PRs</span>
+                  {openPRCount > 0 && (
+                    <span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 text-[9px] font-bold rounded-full bg-blue-600 text-white">
+                      {openPRCount > 9 ? "9+" : openPRCount}
+                    </span>
+                  )}
+                </button>
+              )}
               <button
                 onClick={() => setShowThemeSettings(true)}
                 className="ontocode-icon-hover-accent cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 text-xs p-2 rounded-md"
@@ -14184,13 +16424,27 @@ const Dashboard: React.FC<DashboardProps> = ({
                   Projects
                 </button>
               )}
-              <button
-                onClick={logout}
-                className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer"
-              >
-                <LogOut size={14} />
-                Logout
-              </button>
+              {/* Desktop download icon — hidden when already in the desktop app */}
+              {!isDesktop() && (
+                <a
+                  href="/desktop"
+                  onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent('navigate-desktop-download')); }}
+                  className="flex items-center gap-1.5 text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-50 p-2 rounded-md cursor-pointer"
+                  title="Download OntoCode Desktop"
+                >
+                  <Monitor size={14} />
+                  <span className="hidden sm:inline">Desktop</span>
+                </a>
+              )}
+              {!isDesktop() && (
+                <button
+                  onClick={() => logout()}
+                  className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer"
+                >
+                  <LogOut size={14} />
+                  Logout
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -14210,51 +16464,89 @@ const Dashboard: React.FC<DashboardProps> = ({
                 >
                   <tab.icon size={14} />
                   <span>{tab.label}</span>
-                  <span className="bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded-sm font-bold">{tab.count || 0}</span>
+                  <TabCountBadge
+                    loading={
+                      (tab.id === "Classes" && isHierarchyLoading) ||
+                      ((tab.id === "ObjectProperties" || tab.id === "DataProperties") &&
+                        isPropertiesLoading) ||
+                      (tab.id === "Individuals" && isIndividualsLoading) ||
+                      (tab.id === "AnnotationProperties" && isAnnotationPropertiesLoading) ||
+                      (tab.id === "Datatypes" && isDatatypesLoading)
+                    }
+                    count={tab.count || 0}
+                  />
                 </button>
               ))}
             </div>
           </div>
         )}
 
-        <main className="flex flex-1 overflow-hidden">
+        {sectionBarMounted && sectionBarLabels.length > 0 && (
+          <SectionLoadingBar
+            sections={sectionBarLabels}
+            open={showSectionLoadingBar && sectionBarSections.length > 0}
+          />
+        )}
+
+        {/* Mobile: stack hierarchy above details. Desktop: each panel scrolls independently inside itself. */}
+        <main className="flex flex-1 flex-col md:flex-row md:overflow-hidden min-h-0">
           {mainTab === "Entities" ? (
             <>
-              <EntityHierarchy
-                entitiesTab={entitiesTab}
-                filteredData={filteredData}
-                selectedItem={selectedItem}
-                expandedNodes={expandedNodes}
-                searchQuery={searchQuery}
-                onSearchQueryChange={setSearchQuery}
-                searchOptions={searchOptions}
-                onSearchOptionsChange={setSearchOptions}
-                onSelectItem={setSelectedItem}
-                onToggleNode={toggleNode}
-                onAddItem={handleAddItem}
-                onDeleteItem={handleDeleteItem}
-                onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
-                onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
-                onRenameItem={handleRenameItem}
-                onQuickSetParent={(item) => {
-                  setQuickEditParentItem(item);
-                  if (entitiesTab === "Classes") {
-                    setQuickParentDialogOpen(true);
-                  } else if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties") {
-                    setQuickPropertyParentDialogOpen(true);
-                  }
-                }}
-                onQuickAddNote={(item) => {
-                  setQuickEditNoteItem(item);
-                  setQuickNoteDialogOpen(true);
-                }}
-                viewMode={currentHierarchyViewMode}
-                onViewModeChange={setCurrentHierarchyViewMode}
-                isReasonerRunning={isReasonerRunning}
-              />
+              {/* Hierarchy panel — flex column, fixed height on desktop so inner overflow-y-auto works */}
+              <div className="w-full md:w-auto flex-shrink-0 flex flex-col max-h-[42dvh] md:max-h-none md:h-full overflow-hidden">
+                <EntityHierarchy
+                  entitiesTab={entitiesTab}
+                  filteredData={filteredData}
+                  selectedItem={selectedItem}
+                  expandedNodes={expandedNodes}
+                  searchQuery={searchQuery}
+                  onSearchQueryChange={setSearchQuery}
+                  searchOptions={searchOptions}
+                  onSearchOptionsChange={setSearchOptions}
+                  onSelectItem={setSelectedItem}
+                  onToggleNode={toggleNode}
+                  onAddItem={handleAddItem}
+                  onDeleteItem={handleDeleteItem}
+                  onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
+                  onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
+                  onRenameItem={handleRenameItem}
+                  onChangeEntityIri={handleChangeEntityIri}
+                  onMoveClass={entitiesTab === "Classes" ? handleMoveClass : undefined}
+                  onQuickSetParent={(item) => {
+                    setQuickEditParentItem(item);
+                    if (entitiesTab === "Classes") {
+                      setQuickParentDialogOpen(true);
+                    } else if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties") {
+                      setQuickPropertyParentDialogOpen(true);
+                    }
+                  }}
+                  onQuickAddNote={(item) => {
+                    setQuickEditNoteItem(item);
+                    setQuickNoteDialogOpen(true);
+                  }}
+                  viewMode={currentHierarchyViewMode}
+                  onViewModeChange={setCurrentHierarchyViewMode}
+                  displayMode={hierarchyDisplayMode}
+                  onDisplayModeChange={setHierarchyDisplayMode}
+                  displayAnnotationPropIri={hierarchyAnnotationPropIri}
+                  onDisplayAnnotationPropChange={setHierarchyAnnotationPropIri}
+                  customTemplate={hierarchyCustomTemplate}
+                  onCustomTemplateChange={setHierarchyCustomTemplate}
+                  annotationProperties={hierarchyAnnotationProperties}
+                  annotationValues={hierarchyAnnotationValues}
+                  importsScope={hierarchyImportsScope}
+                  onImportsScopeChange={setHierarchyImportsScope}
+                  isReasonerRunning={isReasonerRunning}
+                  loadingNodes={loadingNodes}
+                  isViewOnly={isViewOnlyMember}
+                  onViewOnlyAction={handleViewOnlyAction}
+                  isLoading={isEntitiesSectionLoading}
+                />
+              </div>
 
-              <section className="flex-1 overflow-hidden p-2 bg-slate-200 flex flex-col">
-                <div className="flex-1 overflow-hidden flex flex-col">
+              {/* Details panel — scrolls within itself on desktop */}
+              <section className="flex-1 min-w-0 overflow-hidden p-2 bg-slate-200 flex flex-col min-h-0">
+                <div className="flex-1 min-w-0 min-h-0 overflow-y-auto flex flex-col">
                   <DetailsPanel
                     selectedItem={selectedItem}
                     entitiesTab={entitiesTab}
@@ -14271,9 +16563,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                     onAddInverseClick={() => handleOpenPropertySelector("inverse")}
                     onAddDisjointClick={() => handleOpenPropertySelector("disjoint")}
                     onAddEquivalentClick={() => handleOpenPropertySelector("equivalent")}
-                    onAddAnnotationDomainClick={handleOpenAnnotationDomainDialog}
-                    onAddAnnotationRangeClick={handleOpenAnnotationRangeDialog}
-                    onAddAnnotationSuperpropertyClick={handleOpenAnnotationSuperpropertyDialog}
+                    onAddAnnotationDomainClick={() => handleOpenAnnotationDomainDialog()}
+                    onAddAnnotationRangeClick={() => handleOpenAnnotationRangeDialog()}
+                    onAddAnnotationSuperpropertyClick={() => handleOpenAnnotationSuperpropertyDialog()}
                     classHierarchy={classHierarchy}
                     objectProperties={objectProperties}
                     dataProperties={dataProperties}
@@ -14291,6 +16583,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                     individuals={individuals}
                     setIndividuals={setIndividuals}
                     markAsUnsaved={markAsUnsaved}
+                    isViewOnly={isViewOnlyMember}
+                    onViewOnlyAction={handleViewOnlyAction}
+                    isReasonerRunning={isReasonerRunning}
+                    selectedReasoner={selectedReasoner}
                   />
                 </div>
               </section>
@@ -14316,15 +16612,124 @@ const Dashboard: React.FC<DashboardProps> = ({
         objectPropertiesTree={objectPropertyHierarchy}
         dataPropertiesTree={dataPropertyHierarchy}
         title={`Add ${selectorTarget === "domain" ? "Domain" : "Range"} Class Expression`}
+        allowedTabs={selectorAllowedTabs}
+        initialTab={selectorInitialTab}
         expandedNodes={expandedNodes}
         onToggleNode={toggleNode}
         onAddClass={(type) => handleAddItem(type)}
         onDeleteClass={() => handleDeleteItem()}
-        onAddProperty={(type) => handleAddItem(type)}
+        onAddDataProperty={(type) => handleAddItem(type)}
         onDeleteProperty={() => handleDeleteItem()}
         onRefreshClasses={refreshClassHierarchy}
         metadata={metadata}
       />
+
+      {/* View-Only / Draft-Required Prompt */}
+      {showProPromptType && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]" onClick={() => setShowProPromptType(null)}>
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Top accent bar */}
+            <div className={`h-1.5 w-full bg-gradient-to-r ${
+              showProPromptType === 'draftRequired'
+                ? 'from-purple-500 via-violet-500 to-indigo-500'
+                : 'from-violet-500 via-purple-500 to-indigo-500'
+            }`} />
+
+            {/* Header */}
+            <div className="px-6 pt-5 pb-4 flex items-start gap-4">
+              <div className={`flex-shrink-0 w-11 h-11 rounded-xl flex items-center justify-center ${
+                showProPromptType === 'draftRequired'
+                  ? 'bg-purple-50 border border-purple-200'
+                  : 'bg-amber-50 border border-amber-200'
+              }`}>
+                {showProPromptType === 'draftRequired' ? (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-purple-500">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                  </svg>
+                ) : (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                    <line x1="2" y1="2" x2="22" y2="22"/>
+                  </svg>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-[15px] font-semibold text-gray-900 leading-tight">
+                  {showProPromptType === 'export' ? 'Pro Feature'
+                    : showProPromptType === 'draftRequired' ? 'Draft Mode Required'
+                    : 'View-Only Access'}
+                </h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {showProPromptType === 'draftRequired'
+                    ? 'This project requires Draft Mode for editing'
+                    : showProPromptType === 'viewer'
+                    ? 'You are a viewer on this project'
+                    : <>Your account is on the <span className="font-medium text-gray-500">Free plan</span></>}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowProPromptType(null)}
+                className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100 -mt-1 -mr-1"
+                aria-label="Close"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 pb-5">
+              <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
+                {showProPromptType === 'draftRequired' ? (
+                  <>The project owner has configured this project so members must work in <span className="font-medium text-gray-800">Draft Mode</span>. You can browse and explore the shared ontology now — start your private copy to make edits.</>
+                ) : showProPromptType === 'export' ? (
+                  <>Ontology export is a <span className="font-medium text-gray-800">premium feature</span>. To unlock this and other advanced tools, upgrade to a <span className="font-medium text-gray-800">Pro plan / Enterprise plan</span>.</>
+                ) : showProPromptType === 'viewer' ? (
+                  <>You can <span className="font-medium text-gray-800">browse and explore</span> this ontology, but editing is restricted to <span className="font-medium text-gray-800">editors and above</span>.</>
+                ) : (
+                  <>You can <span className="font-medium text-gray-800">browse and explore</span> this ontology, but editing is restricted to the <span className="font-medium text-gray-800">workspace owner</span> on the Free plan.</>
+                )}
+              </div>
+
+              <div className="flex items-start gap-2.5 text-sm text-gray-600">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                </svg>
+                {showProPromptType === 'draftRequired' ? (
+                  <span>Your edits will be saved to a <span className="font-medium text-gray-800">private copy</span> and won't affect others until you publish.</span>
+                ) : showProPromptType === 'viewer' ? (
+                  <span>Contact the <span className="font-medium text-gray-800">project owner</span> to request edit permissions.</span>
+                ) : (
+                  <span>Ask your <span className="font-medium text-gray-800">workspace owner</span> to upgrade to Pro to unlock {showProPromptType === 'export' ? 'exporting' : 'editing for all members'}.</span>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 pb-5 flex justify-end gap-2">
+              {showProPromptType === 'draftRequired' && (
+                <button
+                  onClick={handleSwitchToDraftMode}
+                  className="px-5 py-2 text-sm font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition-colors"
+                >
+                  Switch to Draft Mode
+                </button>
+              )}
+              <button
+                onClick={() => setShowProPromptType(null)}
+                className="px-5 py-2 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-700 transition-colors"
+              >
+                {showProPromptType === 'draftRequired' ? 'Stay in View Mode' : 'Got it'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Import Dialog */}
       {showImportDialog && (
@@ -14348,26 +16753,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                   const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
                   const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
 
-                  // Extract data with fallbacks
-                  const annotationsData = Array.isArray(annotationsRes?.data)
-                    ? annotationsRes.data
-                    : Array.isArray(annotationsRes)
-                      ? annotationsRes
-                      : [];
-                  const importsData = Array.isArray(importsRes?.data)
-                    ? importsRes.data
-                    : Array.isArray(importsRes?.imports)
-                      ? importsRes.imports
-                      : Array.isArray(importsRes)
-                        ? importsRes
-                        : [];
-                  const gciData = Array.isArray(gciRes?.data)
-                    ? gciRes.data
-                    : Array.isArray(gciRes?.axioms)
-                      ? gciRes.axioms
-                      : Array.isArray(gciRes)
-                        ? gciRes
-                        : [];
+                  // Extract data with fallbacks (API returns {success, data: [...]})
+                  const annotationsPayload = annotationsRes?.data?.data ?? annotationsRes?.data ?? annotationsRes;
+                  const annotationsData = Array.isArray(annotationsPayload) ? annotationsPayload : [];
+                  const importsPayload2 = importsRes?.data?.data ?? importsRes?.data ?? importsRes;
+                  const importsData = Array.isArray(importsPayload2) ? importsPayload2 : [];
+                  const gciPayload = gciRes?.data?.data ?? gciRes?.data ?? gciRes;
+                  const gciData = Array.isArray(gciPayload) ? gciPayload : [];
 
                   const updatedMetadata = {
                     ...(metadataRes.data || metadataRes),
@@ -14477,7 +16869,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         onConfirm={handlePropertySelected}
         propertyHierarchy={objectPropertyHierarchy}
-        propertyType={selectedItem?.type === "DataProperty" ? "data" : "object"}
+        propertyType={(selectedItem as any)?.type === "DatatypeProperty" ? "data" : "object"}
         title={`Select ${selectorTarget ? selectorTarget.charAt(0).toUpperCase() + selectorTarget.slice(1) : "Property"}`}
       />
       <PropertyExpressionDialog
@@ -14521,15 +16913,15 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         onConfirm={handleObjectPropertySelected}
         objectPropertyHierarchy={
-          selectedItem?.type === "DatatypeProperty" ? dataPropertyHierarchy : objectPropertyHierarchy
+          (selectedItem as any)?.type === "DatatypeProperty" ? dataPropertyHierarchy : objectPropertyHierarchy
         }
         title={
           selectedItem ? `'${(selectedItem as Property).label || selectedItem.id.split("#").pop()}'` : "Select Property"
         }
         projectId={projectId || undefined}
         onRefresh={refreshProperties}
-        showInverseOption={selectedItem?.type !== "DatatypeProperty"}
-        propertyType={selectedItem?.type === "DatatypeProperty" ? "data" : "object"}
+        showInverseOption={selectorTarget !== "subProperty" && (selectedItem as any)?.type !== "DatatypeProperty"}
+        propertyType={(selectedItem as any)?.type === "DatatypeProperty" ? "data" : "object"}
       />
 
       {/* Annotation Property Domain Dialog (Protégé-style) */}
@@ -14620,6 +17012,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         projectId={projectId || ""}
         projectTitle={activeFileName || myFiles.find((f) => f.projectId === projectId)?.filename || "Unknown"}
         initialProjectId={initialProjectId || undefined}
+        isViewOnly={isViewOnlyMember}
+        onProAction={handleExportProAction}
         availableFiles={
           // Show files from the current project, not all user's projects
           projectFiles.length > 0
@@ -14661,7 +17055,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               // Show loading screen during the wait
               setIsInitialLoading(true);
-              notificationService.info("Processing Merge", "Waiting for GraphDB to finish importing merged data...");
+              notificationService.info("Processing Merge", "Waiting for merged data to finish importing…");
 
               // Clear ALL current state to ensure fully fresh data
               setClassHierarchy([]);
@@ -14711,7 +17105,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
                   if (status === "ERROR") {
                     console.error("[Dashboard] ❌ Import failed during merge re-import");
-                    notificationService.error("Import Failed", "The merged file failed to import into GraphDB.");
+                    notificationService.error("Import Failed", "The merged file failed to import.");
                     setIsInitialLoading(false);
                     return;
                   }
@@ -14728,7 +17122,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 console.warn("[Dashboard] ⚠️ Timed out waiting for import to complete, attempting to fetch anyway");
                 notificationService.warning(
                   "Import Taking Long",
-                  "GraphDB import is taking longer than expected. Attempting to load current data...",
+                  "Import is taking longer than expected. Attempting to load current data…",
                 );
               }
 
@@ -14860,18 +17254,77 @@ const Dashboard: React.FC<DashboardProps> = ({
         />
       )}
 
+      <ReleaseNotesModal
+        isOpen={isReleaseNotesOpen}
+        onClose={() => {
+          setIsReleaseNotesOpen(false);
+          if (appVersion) {
+            localStorage.setItem("ontocode_release_notes_seen", appVersion);
+          }
+        }}
+      />
+
       {/* User Guide Modal - only in cloud mode */}
       {isCloudDeployment && <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />}
+
+      <DraftCopyModal
+        phase={draftCopyPhase}
+        tripleCount={draftCopyTripleCount}
+        onCancel={() => {
+          if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
+          setDraftCopyPhase('idle');
+          // Revert to public mode — the copy either failed or was blocked, so there is no
+          // usable draft graph. Staying in private with no copy would cause 409 on every edit.
+          if (draftCopyPhase === 'failed' || draftCopyPhase === 'import-blocked') {
+            setSyncMode('public');
+            ontologyMutationService.setRealTimeSync(true);
+            if (projectId) {
+              localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
+              userPreferencesService.saveSyncMode(projectId, 'public');
+            }
+            // Re-arm the draft-required block so the member stays in view-only mode.
+            if (requireDraftForMembers && !isProjectOwner) {
+              ontologyMutationService.setDraftRequired(true, () => setShowProPromptType('draftRequired'));
+            }
+          }
+        }}
+      />
+
+      {/* Draft Pull Requests Panel */}
+      {projectId && (
+        <DraftPRPanel
+          isOpen={showDraftPRPanel}
+          onClose={() => setShowDraftPRPanel(false)}
+          projectId={projectId}
+          userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
+          username={user?.username || user?.email || ""}
+          canReview={canReviewPR}
+          canRaisePR={canRaisePR}
+          draftCount={draftCount}
+          onPRApproved={() => {
+            refreshOpenPRCount();
+            notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
+          }}
+        />
+      )}
+
+      {/* Pull Preview Dialog */}
+      {projectId && (
+        <PullPreviewDialog
+          isOpen={showPullPreview}
+          onClose={() => setShowPullPreview(false)}
+          onConfirm={handlePullFromPublic}
+          projectId={projectId}
+          userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
+        />
+      )}
 
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-[9999] space-y-2">
         {collaboration.state.notifications.map((notification) => (
           <ToastNotification
             key={notification.id}
-            type={notification.type}
-            message={notification.message}
-            username={notification.username}
-            userColor={notification.userColor}
+            toasts={[{ id: notification.id, type: notification.type, message: notification.message, username: notification.username, color: notification.userColor }]}
             onDismiss={() => collaboration.removeNotification(notification.id)}
           />
         ))}
@@ -14889,13 +17342,48 @@ const Dashboard: React.FC<DashboardProps> = ({
       />
 
       {/* Queue Status Indicator */}
-      <QueueStatusIndicator projectId={projectId || ""} visible={showQueueStatus && !!projectId} />
+      <QueueStatusIndicator
+        projectId={projectId || pendingImportProjectId || ""}
+        visible={(showQueueStatus || isExpectingFileReady) && !!(projectId || pendingImportProjectId)}
+      />
 
       {/* Global Queue Stats */}
       <GlobalQueueStats visible={true} />
 
       {/* Theme Settings */}
       <ThemeSettings isOpen={showThemeSettings} onClose={() => setShowThemeSettings(false)} />
+
+      {/* Pull Requests modal */}
+      {projectId && (
+        <PRsModal
+          projectId={projectId}
+          currentUserId={user?.userId || user?.email || ""}
+          currentUsername={user?.username || ""}
+          isOwner={isProjectOwner}
+          isOpen={showPRsModal}
+          onClose={() => setShowPRsModal(false)}
+          onCountChange={setPendingPRCount}
+        />
+      )}
+
+      {/* Pull from Public — conflict-aware merge dialog */}
+      {showPullFromPublic && projectId && (
+        <PullFromPublicDialog
+          projectId={projectId}
+          onClose={() => setShowPullFromPublic(false)}
+          onPullComplete={() => {
+            setShowPullFromPublic(false);
+            setSyncMode("public");
+            ontologyMutationService.setRealTimeSync(true);
+            if (projectId) {
+              localStorage.setItem(`ontocode_sync_mode_${projectId}`, "public");
+              userPreferencesService.saveSyncMode(projectId, "public");
+            }
+            notificationService.success("Pull Complete", "Public changes merged into your view.");
+            window.location.reload();
+          }}
+        />
+      )}
 
       {/* History Panel */}
       {projectId && (
@@ -15063,12 +17551,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                         Browse for local ontology file
                       </div>
                       <div className="text-[10px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>
-                        Supports .owl, .rdf, .ttl, .n3, .nt files
+                        Supports .owl, .rdf, .ttl, .n3, .nt files and .zip ontology packages
                       </div>
                     </div>
                     <input
                       type="file"
-                      accept=".owl,.rdf,.xml,.ttl,.n3,.nt"
+                      accept=".owl,.rdf,.xml,.ttl,.n3,.nt,.jsonld,.zip"
                       className="hidden"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
@@ -15164,7 +17652,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       {/* Manual Citation Dialog */}
       <ManualCitationDialog
         isOpen={showManualCitationDialog}
-        onClose={() => setShowManualCitationDialog(false)}
+        onClose={() => {
+          setShowManualCitationDialog(false);
+          setPendingCitation(null);
+        }}
         onSubmit={handleManualCitationSubmit}
       />
 

@@ -1,10 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Tag, Edit3, Search } from 'lucide-react';
-import { AnnotationsDisplay, MultiSelectSection } from './common';
+import { AnnotationsDisplay, MultiSelectSection, CollaboratorPresenceBar } from './common';
 import { IRIEditorDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
 import type { AnnotationProperty } from '../../types';
+
+interface AnnotationPropertyEditorProps {
+  item: AnnotationProperty;
+  onUpdate: (updatedItem: AnnotationProperty) => void;
+  onAddAnnotation: () => void;
+  onEditAnnotation: (propertyIri: string, currentValue: string) => void;
+  onDeleteAnnotation: (key: string) => void;
+  activeTheme?: string;
+  projectId: string;
+  onAddSubPropertyClick?: (editingItem?: string) => void;
+  onAddDomainClick?: (editingItem?: string) => void;
+  onAddRangeClick?: (editingItem?: string) => void;
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+  onNavigate?: (iri: string, type: string) => void;
+}
 
 interface UsageItem {
   type: string;
@@ -13,6 +30,7 @@ interface UsageItem {
   predicate?: string;
   object?: string;
   context?: string;
+  value?: string;
 }
 
 const PropertyUsageTab: React.FC<{ 
@@ -167,7 +185,10 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
   projectId,
   onAddSubPropertyClick,
   onAddDomainClick,
-  onAddRangeClick
+  onAddRangeClick,
+  isViewOnly = false,
+  onViewOnlyAction,
+  onNavigate,
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
@@ -193,11 +214,11 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
       }
       if (newIRI !== item.id) {
         console.warn("IRI renaming requires backend support - not yet implemented");
-        alert("IRI renaming is not yet supported. Only label changes are saved.");
+        notificationService.warning("Not Supported", "IRI renaming is not yet supported. Only label changes are saved.");
       }
     } catch (error) {
       console.error("Failed to update annotation property:", error);
-      alert("Failed to update annotation property. See console for details.");
+      notificationService.error("Update Failed", "Failed to update annotation property. See console for details.");
     }
   };
 
@@ -245,13 +266,14 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
           </div>
         </div>
         <button
-          onClick={() => setIsIRIEditorOpen(true)}
+          onClick={isViewOnly ? () => onViewOnlyAction?.() : () => setIsIRIEditorOpen(true)}
           className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
-          title="Edit IRI and Label"
+          title={isViewOnly ? "View-only: upgrade to edit" : "Edit IRI and Label"}
         >
           <Edit3 size={16} />
         </button>
       </div>
+      <CollaboratorPresenceBar entityId={item.id} />
 
       {/* Tabs - Protégé style with Annotations, Description, Usage */}
       <div className="flex border-b border-gray-200 bg-gray-50">
@@ -294,16 +316,18 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
             {/* Annotations Panel Header - Clean minimal style */}
             <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5 flex items-center justify-between">
               <span className="text-xs font-medium text-stone-700">Annotations: {item.label}</span>
-              <button onClick={onAddAnnotation} className="p-1 hover:bg-stone-200 rounded text-stone-500 hover:text-stone-700" title="Add annotation">
+              <button onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation} className="p-1 hover:bg-stone-200 rounded text-stone-500 hover:text-stone-700" title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}>
                 <Plus size={14} />
               </button>
             </div>
             {/* Annotations Content */}
             <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm">
-              <AnnotationsDisplay 
-                annotations={item.annotations} 
-                onDelete={onDeleteAnnotation} 
-                onEdit={onEditAnnotation} 
+              <AnnotationsDisplay
+                annotations={item.annotations}
+                onDelete={onDeleteAnnotation}
+                onEdit={onEditAnnotation}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
             </div>
           </div>
@@ -324,6 +348,11 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 onAddClick={onAddDomainClick}
                 onDelete={domain => handleDeleteRelation('domain', domain)}
                 themeColor="orange"
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                onNavigate={onNavigate}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Ranges - Can be datatype (literal) or IRI */}
@@ -333,6 +362,11 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 onAddClick={onAddRangeClick}
                 onDelete={range => handleDeleteRelation('range', range)}
                 themeColor="orange"
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                onNavigate={onNavigate}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Superproperties */}
@@ -342,6 +376,11 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 onAddClick={onAddSubPropertyClick}
                 onDelete={prop => handleDeleteRelation('subProperty', prop)}
                 themeColor="orange"
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                onNavigate={onNavigate}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
             </div>
           </div>

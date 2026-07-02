@@ -1,0 +1,10 @@
+node_modules/
+dist-electron/
+
+# Bundled JARs and binaries — populated by: npm run prepare-resources
+# Do NOT commit these; they are large binary files built from the Maven project
+resources/backend/jars/*.jar
+resources/backend/jre/
+resources/backend/mongodb/win32/mongod.exe
+resources/backend/mongodb/darwin/mongod
+resources/backend/mongodb/linux/mongod

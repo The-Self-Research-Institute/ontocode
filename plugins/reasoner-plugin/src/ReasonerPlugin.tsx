@@ -38,6 +38,21 @@ import type {
   ReasonerStats
 } from './types';
 
+/** fetch with JWT — uses window.authenticatedFetch when host app provides it. */
+async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const hostFetch = (window as any).authenticatedFetch;
+  if (typeof hostFetch === 'function') {
+    return hostFetch(input, init);
+  }
+  const headers = new Headers(init?.headers);
+  const token = localStorage.getItem('authToken');
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return fetch(input, { ...init, headers });
+}
+
 interface ReasonerPluginProps {
   projectId: string;
   ontologyIri?: string;
@@ -121,7 +136,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
           throw new Error(`Unknown task: ${task}`);
       }
 
-      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+      const response = await authFetch(`${apiBaseUrl}${endpoint}`, {
         method: method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reasonerType: config.reasonerType.toUpperCase() })
@@ -141,13 +156,20 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         const deadline = Date.now() + MAX_POLL_TIME;
         while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-          const statusRes = await fetch(
+          const statusRes = await authFetch(
             `${apiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
           );
           if (!statusRes.ok) throw new Error(`Poll failed: ${statusRes.statusText}`);
           const statusData = await statusRes.json();
           if (statusData.status === 'COMPLETED') { result = statusData; break; }
-          if (statusData.status === 'FAILED') throw new Error(statusData.error || 'Classification failed');
+          if (statusData.status === 'FAILED') {
+            const failErr = statusData.error || 'Classification failed';
+            const failIssues: any[] = statusData.issues || [];
+            const failDetail = failIssues.length > 0
+              ? failErr + '\n\nConflicts found:\n' + failIssues.slice(0, 10).map((iss: any) => `• ${iss.message || JSON.stringify(iss)}`).join('\n')
+              : failErr;
+            throw new Error(failDetail);
+          }
           setStatus({ isRunning: true, currentTask: task, progress: 0, message: 'Classifying... (still running)' });
         }
         if (result.taskId && result.status === 'RUNNING') {
@@ -175,7 +197,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
           // Get inferred axioms if consistent
           if (result.consistent) {
             try {
-              const axiomsRes = await fetch(`${apiBaseUrl}/plugin-service/api/reasoner/${projectId}/inferred-axioms?reasonerType=${config.reasonerType.toUpperCase()}`);
+              const axiomsRes = await authFetch(`${apiBaseUrl}/plugin-service/api/reasoner/${projectId}/inferred-axioms?reasonerType=${config.reasonerType.toUpperCase()}`);
               if (axiomsRes.ok) {
                 const axiomsData = await axiomsRes.json();
                 if (axiomsData.axioms) {
@@ -196,6 +218,36 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
           break;
           
         case 'classification':
+          // Worker returns inconsistent:true + issues:[...] when ontology has disjoint/complement conflicts
+          if (result.inconsistent) {
+            const issues: any[] = result.issues || [];
+            // Build issue messages for the error display
+            const issueMessages = issues.slice(0, 10).map((iss: any) => iss.message || JSON.stringify(iss));
+            const detail = issues.length > 0
+              ? issueMessages.join('\n')
+              : (result.message || 'The ontology is inconsistent.');
+            // Update the Consistency panel to reflect actual state found during classification
+            setConsistencyResult({
+              isConsistent: false,
+              duration: result.durationMs || duration,
+              timestamp: new Date().toISOString(),
+              errors: issueMessages,
+              unsatisfiableClasses: issues.map((iss: any) => ({
+                iri: iss.iri || '',
+                label: iss.individual || iss.message || 'Unknown'
+              }))
+            });
+            setError(detail);
+            setClassificationResult({
+              timestamp: new Date().toISOString(),
+              duration: result.durationMs || duration,
+              classHierarchy: [],
+              equivalentClasses: [],
+              unsatisfiableClasses: []
+            });
+            break;
+          }
+
           // Map unsatisfiable classes to proper format
           const classUnsatisfiable = (result.unsatisfiableClasses || []).map((item: any) => {
             if (typeof item === 'string') {
@@ -205,7 +257,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
             }
             return item;
           });
-          
+
           setClassificationResult({
             timestamp: new Date().toISOString(),
             duration: result.durationMs || duration,
@@ -226,7 +278,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
       // Get stats
       try {
-        const statsRes = await fetch(`${apiBaseUrl}/plugin-service/api/reasoner/${projectId}/stats?reasonerType=${config.reasonerType.toUpperCase()}`);
+        const statsRes = await authFetch(`${apiBaseUrl}/plugin-service/api/reasoner/${projectId}/stats?reasonerType=${config.reasonerType.toUpperCase()}`);
         if (statsRes.ok) {
           const statsData = await statsRes.json();
           console.log('Stats data received:', statsData); // Debug log
@@ -253,6 +305,16 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       setError(errorMsg);
+      // If classification failed due to inconsistency, flip the consistency panel
+      if (task === 'classification' && errorMsg.toLowerCase().includes('inconsistent')) {
+        setConsistencyResult({
+          isConsistent: false,
+          duration: 0,
+          timestamp: new Date().toISOString(),
+          errors: [errorMsg],
+          unsatisfiableClasses: []
+        });
+      }
       setStatus({ isRunning: false, message: `${task} failed` });
     }
   }, [projectId, ontologyIri, apiBaseUrl, config, onInferredAxiomsChange]);
@@ -270,7 +332,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     try {
       const endpoint = `/plugin-service/api/reasoner/${projectId}/explain-inconsistency`;
 
-      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+      const response = await authFetch(`${apiBaseUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reasonerType: config.reasonerType.toUpperCase() })

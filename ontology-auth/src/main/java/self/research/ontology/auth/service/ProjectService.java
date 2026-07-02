@@ -1,10 +1,14 @@
 package self.research.ontology.auth.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
+import self.research.ontology.auth.repository.UserRepository;
+import self.research.ontology.auth.model.User;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,12 +19,18 @@ import java.util.stream.Collectors;
 @Service
 public class ProjectService {
 
+    private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
+
     private final ProjectRepository projectRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final UserRepository userRepository;
+    private final SystemSettingsService systemSettingsService;
 
-    public ProjectService(ProjectRepository projectRepository, WorkspaceRepository workspaceRepository) {
+    public ProjectService(ProjectRepository projectRepository, WorkspaceRepository workspaceRepository, UserRepository userRepository, SystemSettingsService systemSettingsService) {
         this.projectRepository = projectRepository;
         this.workspaceRepository = workspaceRepository;
+        this.userRepository = userRepository;
+        this.systemSettingsService = systemSettingsService;
     }
 
     /**
@@ -63,13 +73,7 @@ public class ProjectService {
             }
         }
         
-        // Verify workspace exists
-        Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
-        if (workspaceOpt.isEmpty()) {
-            throw new IllegalArgumentException("Workspace not found");
-        }
-        
-        Workspace workspace = workspaceOpt.get();
+        Workspace workspace = getWorkspaceForUsage(workspaceId);
         
         // Check if user has access to workspace
         if (!workspace.isMember(userId)) {
@@ -92,9 +96,90 @@ public class ProjectService {
     }
 
     /**
+     * Non-private (shared) projects: ensure the workspace billing owner and every active workspace admin
+     * have at least editor access, tagged for removal/role rules.
+     */
+    public boolean applyImplicitWorkspaceLeadershipEditors(Project project, Workspace workspace) {
+        if (project == null || workspace == null) {
+            return false;
+        }
+        boolean dirty = false;
+        String wsOwnerId = workspace.getOwnerId();
+        if (wsOwnerId != null && !wsOwnerId.equals(project.getOwnerId())) {
+            dirty |= upsertLinkedWorkspaceEditor(project, workspace, wsOwnerId, Project.WS_EDITOR_LINK_OWNER);
+        }
+        for (Workspace.WorkspaceMember wm : workspace.getMembers()) {
+            if (wm.getUserId() == null || wm.getStatus() != Workspace.MemberStatus.ACTIVE) {
+                continue;
+            }
+            if (wm.getUserId().equals(project.getOwnerId())) {
+                continue;
+            }
+            if (wm.getRole() == Workspace.WorkspaceRole.ADMIN) {
+                dirty |= upsertLinkedWorkspaceEditor(project, workspace, wm.getUserId(), Project.WS_EDITOR_LINK_ADMIN);
+            }
+        }
+        return dirty;
+    }
+
+    private boolean upsertLinkedWorkspaceEditor(Project project, Workspace workspace, String userId, String link) {
+        Workspace.WorkspaceMember wm = workspace.getMember(userId);
+        String username = wm != null ? wm.getUsername() : null;
+        String email = wm != null ? wm.getEmail() : null;
+        if ((username == null || email == null) && userId.equals(workspace.getOwnerId())) {
+            Optional<User> u = userRepository.findById(userId);
+            if (u.isPresent()) {
+                if (username == null) {
+                    username = u.get().getUsername();
+                }
+                if (email == null) {
+                    email = u.get().getEmail();
+                }
+            }
+        }
+        if (username == null) {
+            username = "";
+        }
+        if (email == null) {
+            email = "";
+        }
+
+        Project.ProjectMember pm = project.getMember(userId);
+        if (pm == null) {
+            project.addMember(userId, username, email, "EDITOR", link);
+            return true;
+        }
+
+        boolean dirty = false;
+        if (Project.WS_EDITOR_LINK_OWNER.equals(link)) {
+            if (!Project.WS_EDITOR_LINK_OWNER.equals(pm.getWorkspaceEditorLink())) {
+                pm.setWorkspaceEditorLink(Project.WS_EDITOR_LINK_OWNER);
+                dirty = true;
+            }
+        } else if (Project.WS_EDITOR_LINK_ADMIN.equals(link)) {
+            if (pm.getWorkspaceEditorLink() == null || Project.WS_EDITOR_LINK_ADMIN.equals(pm.getWorkspaceEditorLink())) {
+                pm.setWorkspaceEditorLink(Project.WS_EDITOR_LINK_ADMIN);
+                dirty = true;
+            }
+        }
+
+        String r = pm.getRole() != null ? pm.getRole() : "VIEWER";
+        if ("VIEWER".equals(r)) {
+            pm.setRole("EDITOR");
+            dirty = true;
+        }
+
+        if (dirty) {
+            project.setUpdatedAt(LocalDateTime.now());
+        }
+        return dirty;
+    }
+
+    /**
      * Get all projects in a workspace
      */
     public List<Project> getWorkspaceProjects(String workspaceId) {
+        getWorkspaceForUsage(workspaceId);
         return projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE");
     }
 
@@ -105,6 +190,7 @@ public class ProjectService {
         return projectRepository.findByMembers_UserId(userId)
             .stream()
             .filter(p -> "ACTIVE".equals(p.getStatus()))
+            .filter(p -> isWorkspaceAccessibleForUsage(p.getWorkspaceId()))
             .collect(Collectors.toList());
     }
 
@@ -112,6 +198,7 @@ public class ProjectService {
      * Get all projects for a user in a specific workspace
      */
     public List<Project> getUserProjectsInWorkspace(String userId, String workspaceId) {
+        getWorkspaceForUsage(workspaceId);
         return projectRepository.findByMembers_UserId(userId)
             .stream()
             .filter(p -> "ACTIVE".equals(p.getStatus()))
@@ -123,7 +210,20 @@ public class ProjectService {
      * Get a specific project
      */
     public Optional<Project> getProject(String projectId) {
-        return projectRepository.findActiveByProjectId(projectId);
+        List<Project> projects = projectRepository.findAllActiveByProjectId(projectId);
+        if (projects.isEmpty()) {
+            return Optional.empty();
+        }
+        if (projects.size() > 1) {
+            log.warn("Duplicate active project documents for projectId={} (count={}), using first", projectId, projects.size());
+        }
+        Optional<Project> projectOpt = Optional.of(projects.get(0));
+        if (!isWorkspaceAccessibleForUsage(projectOpt.get().getWorkspaceId())) {
+            log.warn("[ProjectService] getProject blocked: projectId={} workspaceId={} — workspace not accessible (billing or enterprise check)",
+                    projectId, projectOpt.get().getWorkspaceId());
+            return Optional.empty();
+        }
+        return projectOpt;
     }
 
     /**
@@ -137,7 +237,7 @@ public class ProjectService {
      * Update project details
      */
     public Project updateProject(String projectId, String userId, String name, String description) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -197,23 +297,28 @@ public class ProjectService {
      * Add a member to a project
      */
     public Project addMember(String projectId, String userId, String targetUserId, String targetUsername, String targetEmail, String role) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
         
         Project project = projectOpt.get();
         
-        // Check permissions (only OWNER or WORKSPACE OWNER can add members)
+        // Check permissions: project owner, or workspace owner / workspace admin
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can add members");
+            throw new SecurityException("Only project owner or a workspace owner/admin can add members");
+        }
+
+        String normalizedRole = role == null ? "" : role.toUpperCase();
+        if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
+            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER");
         }
         
         if (project.hasMember(targetUserId)) {
             throw new IllegalArgumentException("User is already a member");
         }
         
-        project.addMember(targetUserId, targetUsername, targetEmail, role);
+        project.addMember(targetUserId, targetUsername, targetEmail, normalizedRole);
         return projectRepository.save(project);
     }
 
@@ -221,16 +326,16 @@ public class ProjectService {
      * Update a member's role in a project
      */
     public Project updateMemberRole(String projectId, String userId, String targetUserId, String newRole) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
 
         Project project = projectOpt.get();
 
-        // Only project owner or workspace owner can update roles
+        // Only project owner or workspace owner/admin can update roles
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can update member roles");
+            throw new SecurityException("Only project owner or a workspace owner/admin can update member roles");
         }
 
         // Cannot change the owner's role
@@ -239,8 +344,9 @@ public class ProjectService {
         }
 
         // Validate role
-        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(newRole)) {
-            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, or VIEWER");
+        String normalizedRole = newRole == null ? "" : newRole.toUpperCase();
+        if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
+            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER");
         }
 
         Project.ProjectMember member = project.getMember(targetUserId);
@@ -248,7 +354,18 @@ public class ProjectService {
             throw new IllegalArgumentException("User is not a member of this project");
         }
 
-        member.setRole(newRole);
+        Workspace workspace = workspaceRepository.findByWorkspaceId(project.getWorkspaceId())
+                .orElseThrow(() -> new IllegalStateException("Workspace not found"));
+
+        if (Project.WS_EDITOR_LINK_OWNER.equals(member.getWorkspaceEditorLink())) {
+            throw new IllegalArgumentException("The workspace owner's access on this project cannot be changed.");
+        }
+        if (Project.WS_EDITOR_LINK_ADMIN.equals(member.getWorkspaceEditorLink())
+                && !workspace.getOwnerId().equals(userId)) {
+            throw new SecurityException("Only the workspace owner can change this workspace administrator's project role.");
+        }
+
+        member.setRole(normalizedRole);
         return projectRepository.save(project);
     }
 
@@ -256,7 +373,7 @@ public class ProjectService {
      * Remove a member from a project
      */
     public Project removeMember(String projectId, String userId, String targetUserId) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -265,14 +382,29 @@ public class ProjectService {
         
         // Check permissions
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can remove members");
+            throw new SecurityException("Only project owner or a workspace owner/admin can remove members");
         }
         
         // Cannot remove owner
         if (project.getOwnerId().equals(targetUserId)) {
             throw new IllegalArgumentException("Cannot remove project owner");
         }
-        
+
+        Workspace workspace = workspaceRepository.findByWorkspaceId(project.getWorkspaceId()).orElse(null);
+        if (workspace != null) {
+            Project.ProjectMember target = project.getMember(targetUserId);
+            if (target != null) {
+                if (Project.WS_EDITOR_LINK_OWNER.equals(target.getWorkspaceEditorLink())) {
+                    throw new SecurityException("The workspace owner cannot be removed from this project.");
+                }
+                if (Project.WS_EDITOR_LINK_ADMIN.equals(target.getWorkspaceEditorLink())
+                        && !workspace.getOwnerId().equals(userId)) {
+                    throw new SecurityException(
+                            "Only the workspace owner can remove a workspace administrator from this project.");
+                }
+            }
+        }
+
         project.removeMember(targetUserId);
         return projectRepository.save(project);
     }
@@ -281,7 +413,7 @@ public class ProjectService {
      * Archive a project
      */
     public void archiveProject(String projectId, String userId) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -290,7 +422,7 @@ public class ProjectService {
         
         // Check permissions
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can archive the project");
+            throw new SecurityException("Only project owner or a workspace owner/admin can archive the project");
         }
         
         project.setStatus("ARCHIVED");
@@ -301,7 +433,7 @@ public class ProjectService {
      * Soft delete a project and cascade to all related files
      */
     public void deleteProject(String projectId, String userId) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -310,7 +442,7 @@ public class ProjectService {
         
         // Check permissions
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can delete the project");
+            throw new SecurityException("Only project owner or a workspace owner/admin can delete the project");
         }
         
         // Soft delete the project
@@ -333,7 +465,7 @@ public class ProjectService {
      * Restore a soft deleted project and optionally restore files
      */
     public void restoreProject(String projectId, String userId, boolean restoreFiles) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
@@ -342,7 +474,7 @@ public class ProjectService {
         
         // Check permissions
         if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or workspace owner can restore the project");
+            throw new SecurityException("Only project owner or a workspace owner/admin can restore the project");
         }
         
         if (!Boolean.TRUE.equals(project.getIsDeleted())) {
@@ -371,23 +503,32 @@ public class ProjectService {
      * Check if user has access to a project
      */
     public boolean hasAccess(String projectId, String userId) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
-        if (projectOpt.isEmpty()) {
+        List<Project> projects = projectRepository.findAllActiveByProjectId(projectId);
+        if (projects.isEmpty()) {
             return false;
         }
-        Project project = projectOpt.get();
+        if (projects.size() > 1) {
+            log.warn("Duplicate active project documents for projectId={} (count={}) in hasAccess, using first", projectId, projects.size());
+        }
+        Project project = projects.get(0);
         // Check direct project membership first
         if (project.hasMember(userId)) {
             return true;
         }
-        // Workspace owners and admins have access to all projects in their workspace
+        // Workspace OWNER or ADMIN can access any non-private (shared) project.
+        // A project is considered private when it has only 1 member (the creator).
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
         if (workspaceOpt.isPresent()) {
             Workspace workspace = workspaceOpt.get();
+            if (!canUseWorkspace(workspace)) {
+                return false;
+            }
             Workspace.WorkspaceMember wsMember = workspace.getMember(userId);
             if (wsMember != null) {
-                Workspace.WorkspaceRole role = wsMember.getRole();
-                return role == Workspace.WorkspaceRole.OWNER || role == Workspace.WorkspaceRole.ADMIN;
+                boolean isOwnerOrAdmin = wsMember.getRole() == Workspace.WorkspaceRole.OWNER
+                        || wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
+                // Grant access only to shared (non-private) projects
+                return isOwnerOrAdmin && project.getMembers().size() > 1;
             }
         }
         return false;
@@ -404,12 +545,18 @@ public class ProjectService {
         Project.ProjectMember member = project.getMember(userId);
         if (member != null) {
             String role = member.getRole();
-            return "OWNER".equals(role) || "ADMIN".equals(role) || "EDITOR".equals(role);
+            if ("OWNER".equals(role) || "ADMIN".equals(role) || "EDITOR".equals(role)) {
+                return true;
+            }
+            // VIEWER: fall through to workspace admin check — ws OWNER/ADMIN may still write
         }
-        
-        // Workspace owners/admins also have edit permission
+
+        // Workspace OWNER/ADMIN always have edit permission, even when their project role is VIEWER
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
         if (workspaceOpt.isPresent()) {
+            if (!canUseWorkspace(workspaceOpt.get())) {
+                return false;
+            }
             Workspace.WorkspaceMember wsMember = workspaceOpt.get().getMember(userId);
             if (wsMember != null) {
                 Workspace.WorkspaceRole wsRole = wsMember.getRole();
@@ -427,18 +574,49 @@ public class ProjectService {
     }
 
     /**
-     * Check if user is workspace owner
+     * Workspace owner or workspace admin may administer any project in the workspace.
      */
-    private boolean isWorkspaceOwner(String workspaceId, String userId) {
+    private boolean isWorkspaceOwnerOrAdmin(String workspaceId, String userId) {
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
-        return workspaceOpt.isPresent() && workspaceOpt.get().getOwnerId().equals(userId);
+        if (workspaceOpt.isEmpty()) {
+            return false;
+        }
+        Workspace workspace = workspaceOpt.get();
+        if (!canUseWorkspace(workspace)) {
+            return false;
+        }
+        if (workspace.getOwnerId().equals(userId)) {
+            return true;
+        }
+        Workspace.WorkspaceMember wsMember = workspace.getMember(userId);
+        if (wsMember == null) {
+            return false;
+        }
+        Workspace.WorkspaceRole wsRole = wsMember.getRole();
+        return wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
     }
 
     /**
-     * Check if user can manage project (owner or workspace owner)
+     * Project OWNER/ADMIN, or workspace OWNER/ADMIN (cross-project administration).
      */
     private boolean canManageProject(Project project, String userId) {
-        return isOwner(project, userId) || isWorkspaceOwner(project.getWorkspaceId(), userId);
+        if (isOwner(project, userId)) {
+            return true;
+        }
+        Project.ProjectMember member = project.getMember(userId);
+        if (member != null && "ADMIN".equals(member.getRole())) {
+            return true;
+        }
+        return isWorkspaceOwnerOrAdmin(project.getWorkspaceId(), userId);
+    }
+
+    private Optional<Project> findProjectByIdTolerant(String projectId) {
+        List<Project> projects = projectRepository.findAllByProjectId(projectId);
+        if (projects.isEmpty()) return Optional.empty();
+        if (projects.size() > 1) {
+            log.warn("Duplicate project documents for projectId={} (count={}), using first", projectId, projects.size());
+        }
+        return Optional.of(projects.get(0));
     }
 
     /**
@@ -456,15 +634,21 @@ public class ProjectService {
      * Get project by ID and verify user access
      */
     private Project getProjectById(String projectId, String userId) {
-        Optional<Project> projectOpt = projectRepository.findActiveByProjectId(projectId);
-        if (projectOpt.isEmpty()) {
+        List<Project> projects = projectRepository.findAllActiveByProjectId(projectId);
+        if (projects.isEmpty()) {
             throw new IllegalArgumentException("Project not found or has been deleted");
         }
+        if (projects.size() > 1) {
+            log.warn("Duplicate active project documents for projectId={} (count={}), using first", projectId, projects.size());
+        }
+        Project project = projects.get(0);
+        if (!isWorkspaceAccessibleForUsage(project.getWorkspaceId())) {
+            throw new SecurityException("Workspace payment is pending. Complete payment to continue.");
+        }
         
-        Project project = projectOpt.get();
-        
-        // Check if user has access to this project
-        if (!project.hasMember(userId)) {
+        // Check if user has access to this project.
+        // Workspace OWNER/ADMIN can access any project in their workspace without being a member.
+        if (!project.hasMember(userId) && !isWorkspaceOwnerOrAdmin(project.getWorkspaceId(), userId)) {
             throw new SecurityException("User does not have access to this project");
         }
         
@@ -485,7 +669,53 @@ public class ProjectService {
         return projectRepository.findByMembers_UserId(userId)
             .stream()
             .filter(p -> "ACTIVE".equals(p.getStatus()) && !userId.equals(p.getOwnerId()))
+            .filter(p -> isWorkspaceAccessibleForUsage(p.getWorkspaceId()))
             .collect(Collectors.toList());
+    }
+
+    private Workspace getWorkspaceForUsage(String workspaceId) {
+        Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found"));
+        requireWorkspaceUsable(workspace);
+        return workspace;
+    }
+
+    private void requireWorkspaceUsable(Workspace workspace) {
+        if (!canUseWorkspace(workspace)) {
+            throw new SecurityException("Workspace payment is pending. Complete payment to continue.");
+        }
+    }
+
+    private boolean isWorkspaceAccessibleForUsage(String workspaceId) {
+        return workspaceRepository.findByWorkspaceId(workspaceId)
+                .map(this::canUseWorkspace)
+                .orElse(false);
+    }
+
+    private boolean canUseWorkspace(Workspace workspace) {
+        // Model B: Single source of truth is the OWNER'S account status
+        User owner = userRepository.findById(workspace.getOwnerId()).orElse(null);
+        if (owner == null) return true; // Safety fallback for legacy data
+
+        // Enterprise domain bypass owners always have accessible workspaces
+        if (systemSettingsService.isEnterpriseBypass(owner.getEmail())) return true;
+
+        String subStatus = owner.getSubscriptionStatus();
+        String subPlan = owner.getSubscriptionPlanName();
+
+        // FREE is always usable
+        if (subPlan == null || "FREE".equalsIgnoreCase(subPlan)) {
+            return true;
+        }
+
+        // Paid plans must be active or trialing
+        boolean accessible = "active".equalsIgnoreCase(subStatus) || "trialing".equalsIgnoreCase(subStatus);
+        if (!accessible) {
+            log.warn("[ProjectService] canUseWorkspace=false workspaceId={} ownerEmail={} plan={} status={} (enterprise domains configured: {})",
+                    workspace.getWorkspaceId(), owner.getEmail(), subPlan, subStatus,
+                    systemSettingsService.get().getEnterpriseDomains());
+        }
+        return accessible;
     }
 
     /**

@@ -1,3 +1,5 @@
+<img src="docs/ontocode-logo.png" alt="OntoCode" width="200" />
+
 # OntoCode — Ontology Editing Platform
 
 A **microservices-based ontology editing platform** with a **VS Code extension** and **web editor** for ontology authoring, visualization, reasoning, and collaboration.

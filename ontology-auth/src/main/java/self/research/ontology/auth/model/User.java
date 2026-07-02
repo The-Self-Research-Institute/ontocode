@@ -5,7 +5,6 @@ import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -27,10 +26,6 @@ public class User {
     private String email;
 
     @NotBlank(message = "Password is required")
-    @Pattern(
-        regexp = "^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*[@#$%^&+=!])(?=\\S+$).{8,}$",
-        message = "Password must contain at least 8 characters, one uppercase, one lowercase, one number, and one special character"
-    )
     private String password;
 
     private Set<String> roles = new HashSet<>();
@@ -58,6 +53,32 @@ public class User {
     private String lastOpenedProjectName;
     private String lastOpenedFileId;
     private String lastOpenedFileName;
+
+    // Stripe Billing
+    private String stripeCustomerId;
+    private String stripeSubscriptionId;
+    private String subscriptionStatus;   // active, trialing, past_due, canceled, unpaid
+    private String subscriptionPlanId;   // Stripe price ID
+    private String subscriptionPlanName; // FREE, PRO, ENTERPRISE
+    private String billingInterval;      // monthly, yearly
+    private LocalDateTime subscriptionCurrentPeriodEnd;
+    private boolean autoRenewEnabled = true;
+    private LocalDateTime subscriptionCanceledAt;
+    /**
+     * Set to true the first time this account creates ANY paid subscription
+     * (whether or not the trial completed). Stripe itself does not track
+     * trial eligibility per customer, so we enforce one-trial-per-account
+     * server-side: if this is true, {@code setTrialPeriodDays} is omitted on
+     * subsequent subscription creations. Bug #39 / #40.
+     */
+    private boolean hasUsedFreeTrial = false;
+    private LocalDateTime firstSubscriptionAt;
+    // Pending billing interval downgrade — annual→monthly queued for next renewal
+    private String pendingBillingInterval;
+    private LocalDateTime pendingBillingIntervalDate;
+    // Pending checkout lock — cleared once checkout.session.completed fires
+    private String pendingCheckoutSessionId;
+    private LocalDateTime pendingCheckoutCreatedAt;
 
     // Constructors
     public User() {
@@ -245,4 +266,49 @@ public class User {
 
     public String getLastOpenedFileName() { return lastOpenedFileName; }
     public void setLastOpenedFileName(String lastOpenedFileName) { this.lastOpenedFileName = lastOpenedFileName; }
+
+    public String getStripeCustomerId() { return stripeCustomerId; }
+    public void setStripeCustomerId(String stripeCustomerId) { this.stripeCustomerId = stripeCustomerId; }
+
+    public String getStripeSubscriptionId() { return stripeSubscriptionId; }
+    public void setStripeSubscriptionId(String stripeSubscriptionId) { this.stripeSubscriptionId = stripeSubscriptionId; }
+
+    public String getSubscriptionStatus() { return subscriptionStatus; }
+    public void setSubscriptionStatus(String subscriptionStatus) { this.subscriptionStatus = subscriptionStatus; }
+
+    public String getSubscriptionPlanId() { return subscriptionPlanId; }
+    public void setSubscriptionPlanId(String subscriptionPlanId) { this.subscriptionPlanId = subscriptionPlanId; }
+
+    public String getSubscriptionPlanName() { return subscriptionPlanName; }
+    public void setSubscriptionPlanName(String subscriptionPlanName) { this.subscriptionPlanName = subscriptionPlanName; }
+
+    public String getBillingInterval() { return billingInterval; }
+    public void setBillingInterval(String billingInterval) { this.billingInterval = billingInterval; }
+
+    public String getPendingBillingInterval() { return pendingBillingInterval; }
+    public void setPendingBillingInterval(String pendingBillingInterval) { this.pendingBillingInterval = pendingBillingInterval; }
+
+    public LocalDateTime getPendingBillingIntervalDate() { return pendingBillingIntervalDate; }
+    public void setPendingBillingIntervalDate(LocalDateTime pendingBillingIntervalDate) { this.pendingBillingIntervalDate = pendingBillingIntervalDate; }
+
+    public LocalDateTime getSubscriptionCurrentPeriodEnd() { return subscriptionCurrentPeriodEnd; }
+    public void setSubscriptionCurrentPeriodEnd(LocalDateTime subscriptionCurrentPeriodEnd) { this.subscriptionCurrentPeriodEnd = subscriptionCurrentPeriodEnd; }
+
+    public boolean isAutoRenewEnabled() { return autoRenewEnabled; }
+    public void setAutoRenewEnabled(boolean autoRenewEnabled) { this.autoRenewEnabled = autoRenewEnabled; }
+
+    public LocalDateTime getSubscriptionCanceledAt() { return subscriptionCanceledAt; }
+    public void setSubscriptionCanceledAt(LocalDateTime subscriptionCanceledAt) { this.subscriptionCanceledAt = subscriptionCanceledAt; }
+
+    public boolean isHasUsedFreeTrial() { return hasUsedFreeTrial; }
+    public void setHasUsedFreeTrial(boolean hasUsedFreeTrial) { this.hasUsedFreeTrial = hasUsedFreeTrial; }
+
+    public LocalDateTime getFirstSubscriptionAt() { return firstSubscriptionAt; }
+    public void setFirstSubscriptionAt(LocalDateTime firstSubscriptionAt) { this.firstSubscriptionAt = firstSubscriptionAt; }
+
+    public String getPendingCheckoutSessionId() { return pendingCheckoutSessionId; }
+    public void setPendingCheckoutSessionId(String pendingCheckoutSessionId) { this.pendingCheckoutSessionId = pendingCheckoutSessionId; }
+
+    public LocalDateTime getPendingCheckoutCreatedAt() { return pendingCheckoutCreatedAt; }
+    public void setPendingCheckoutCreatedAt(LocalDateTime pendingCheckoutCreatedAt) { this.pendingCheckoutCreatedAt = pendingCheckoutCreatedAt; }
 }

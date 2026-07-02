@@ -15,22 +15,31 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
-import self.research.ontology.owlEditor.service.GraphDBDatasetService;
+import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
+import self.research.ontology.owlEditor.service.ReasoningJobSubmitService;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.common.ReasoningFriendlyErrors;
 import org.eclipse.rdf4j.rio.RDFFormat;
+import org.springframework.beans.factory.annotation.Value;
 
-import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
+import org.semanticweb.owlapi.model.IRI;
 
 /**
  * Controller for reasoning operations on ontologies.
  * Provides endpoints for consistency checking, classification, realization, and inference.
  */
-@RestController
+@RestController("owlEditorReasonerController")
 @RequestMapping("/api/ontology")
 @CrossOrigin(originPatterns = "*")
 public class ReasonerController {
@@ -44,37 +53,90 @@ public class ReasonerController {
     private ReasonerService reasonerService;
 
     @Autowired
-    private GraphDBDatasetService datasetService;
+    private SparqlDatasetService datasetService;
 
-    // Cache for loaded ontologies (in production, use proper caching)
-    private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
+    @Autowired
+    private ReasoningJobSubmitService reasoningJobSubmitService;
+
+    @Autowired
+    private EditorReasonerCacheService editorReasonerCache;
+
+    @Autowired(required = false)
+    private ReasonerWorkerClient reasonerWorkerClient;
+
+    @Value("${ontocode.reasoner-worker.enabled:false}")
+    private boolean reasonerWorkerEnabled;
+
+    // Ontologies above this triple count are rejected before export to prevent OOM
+    @Value("${ontocode.reasoner.max-triples:5000000}")
+    private long maxReasonerTriples;
 
     /**
-     * Load ontology from GridFS
+     * Load ontology from Fuseki/TDB2 (via temp-file stream) or GridFS fallback.
+     * Rejects oversized ontologies before attempting in-memory OWL API parsing.
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
-        
-        if (ontologyCache.containsKey(projectId)) {
+
+        Optional<OWLOntology> cached = editorReasonerCache.getOntology(projectId);
+        if (cached.isPresent()) {
             log.info("Returning cached ontology for project: {}", projectId);
-            return ontologyCache.get(projectId);
+            return cached.get();
         }
 
-        // Try to load from GraphDB first (most up-to-date)
+        editorReasonerCache.prepareForOntologyLoad(projectId);
+
+        // Guard: reject oversized ontologies before attempting OWL API parsing.
+        // Even with streaming export, loading a 2.8M-triple ontology into OWLOntology
+        // objects exhausts the heap — the guard is the only thing that prevents that.
         try {
-            log.info("Attempting to load ontology from GraphDB for project: {}", projectId);
-            String rdfData = datasetService.exportDataset(projectId, RDFFormat.RDFXML);
-            if (rdfData != null && !rdfData.isBlank()) {
+            long tripleCount = datasetService.getDatasetSize(projectId);
+            if (tripleCount > maxReasonerTriples) {
+                throw new IllegalArgumentException(String.format(
+                    "Ontology too large for in-memory reasoning: %,d triples (limit: %,d). " +
+                    "Use SPARQL queries directly against Fuseki for large ontologies.",
+                    tripleCount, maxReasonerTriples));
+            }
+            log.info("Ontology size check passed: {} triples (limit: {})", tripleCount, maxReasonerTriples);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("Could not check ontology size before reasoning (will proceed): {}", e.getMessage());
+        }
+
+        // Try to load from Fuseki/TDB2 by streaming to a temp file then parsing.
+        // Uses N-Triples format (same as the reasoner worker) with explicit OWLAPI format
+        // declaration to avoid auto-detect overhead and ensure correct parsing of large exports.
+        Path tempFile = null;
+        try {
+            log.info("Attempting to load ontology from Fuseki for project: {}", projectId);
+            tempFile = Files.createTempFile("reasoner-" + projectId + "-", ".nt");
+            try (OutputStream out = Files.newOutputStream(tempFile)) {
+                datasetService.exportDatasetToStream(projectId, RDFFormat.NTRIPLES, out);
+            }
+            long tempBytes = Files.size(tempFile);
+            log.info("Streamed ontology to temp file: {} bytes", tempBytes);
+            if (tempBytes > 0) {
                 OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-                try (InputStream is = new ByteArrayInputStream(rdfData.getBytes(StandardCharsets.UTF_8))) {
-                    OWLOntology ontology = manager.loadOntologyFromOntologyDocument(is);
-                    log.info("Ontology loaded from GraphDB: {} axioms", ontology.getAxiomCount());
-                    ontologyCache.put(projectId, ontology);
+                try (InputStream in = Files.newInputStream(tempFile)) {
+                    org.semanticweb.owlapi.io.StreamDocumentSource source =
+                        new org.semanticweb.owlapi.io.StreamDocumentSource(
+                            in,
+                            IRI.create("urn:ontocode:stats:" + projectId),
+                            new org.semanticweb.owlapi.formats.NTriplesDocumentFormat(),
+                            "application/n-triples");
+                    OWLOntology ontology = manager.loadOntologyFromOntologyDocument(source);
+                    log.info("Ontology loaded from Fuseki stream: {} axioms, {} classes", ontology.getAxiomCount(), ontology.getClassesInSignature().size());
+                    editorReasonerCache.putOntology(projectId, ontology);
                     return ontology;
                 }
             }
         } catch (Exception e) {
-            log.warn("Failed to load ontology from GraphDB, falling back to GridFS: {}", e.getMessage());
+            log.warn("Failed to load ontology from Fuseki, falling back to GridFS: {}", e.getMessage());
+        } finally {
+            if (tempFile != null) {
+                try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
+            }
         }
 
         // Fallback to GridFS
@@ -102,12 +164,44 @@ public class ReasonerController {
             log.info("Class count: {}", ontology.getClassesInSignature().size());
             log.info("Object property count: {}", ontology.getObjectPropertiesInSignature().size());
             log.info("Data property count: {}", ontology.getDataPropertiesInSignature().size());
-            ontologyCache.put(projectId, ontology);
+            editorReasonerCache.putOntology(projectId, ontology);
             return ontology;
         } catch (Exception e) {
             log.error("Error loading ontology from GridFS", e);
             throw e;
         }
+    }
+
+    /**
+     * Submit a hierarchy job to the reasoner-worker and block until completed (max 60s).
+     * Returns the job result on success, or null if the worker is unavailable.
+     */
+    private Map<String, Object> submitHierarchyJobAndWait(String jobType, String projectId, String reasonerType) {
+        if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
+            return null;
+        }
+        Map<String, Object> submitted = reasonerWorkerClient.submitJob(jobType, projectId, null, null, reasonerType, null);
+        if (Boolean.FALSE.equals(submitted.get("success"))) {
+            log.warn("Worker rejected {} job for {}: {}", jobType, projectId, submitted.get("error"));
+            return null;
+        }
+        String jobId = String.valueOf(submitted.get("jobId"));
+        long deadline = System.currentTimeMillis() + 60_000;
+        while (System.currentTimeMillis() < deadline) {
+            try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+            Map<String, Object> job = reasonerWorkerClient.getJob(jobId);
+            if (job == null) break;
+            String status = String.valueOf(job.getOrDefault("status", ""));
+            if ("COMPLETED".equals(status)) {
+                return job; // worker flattens result fields into the top-level response
+            }
+            if ("FAILED".equals(status)) {
+                log.warn("Worker {} job {} failed: {}", jobType, jobId, job.get("error"));
+                return null;
+            }
+        }
+        log.warn("Worker {} job {} timed out after 60s for project {}", jobType, jobId, projectId);
+        return null;
     }
 
     @PostMapping("/{projectId}/reasoner/refresh")
@@ -117,15 +211,10 @@ public class ReasonerController {
     ) {
         try {
             log.info("Refreshing reasoner for project: {}", projectId);
-            OWLOntology oldOntology = ontologyCache.remove(projectId);
-            
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            if (oldOntology != null) {
-                reasonerService.disposeReasoner(oldOntology, type);
-            }
-            
+            editorReasonerCache.invalidateOntology(projectId);
+
             OWLOntology ontology = loadOntology(projectId);
-            
+
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "message", "Reasoner refreshed with latest data from GraphDB",
@@ -133,10 +222,31 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error refreshing reasoner", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
+            return ResponseEntity.ok(friendlyError(e));
+        }
+    }
+
+    /**
+     * Stop reasoning for a project — dispose warmed reasoner sessions without unloading ontology.
+     * POST /api/ontology/{projectId}/reasoner/stop
+     */
+    @PostMapping("/{projectId}/reasoner/stop")
+    public ResponseEntity<Map<String, Object>> stopReasoner(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String reasonerType
+    ) {
+        try {
+            log.info("Stopping reasoner for project: {} ({})", projectId,
+                    reasonerType != null ? reasonerType : "all");
+            editorReasonerCache.stopReasoning(projectId, reasonerType);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Reasoner stopped",
+                    "projectId", projectId
             ));
+        } catch (Exception e) {
+            log.error("Error stopping reasoner", e);
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -150,6 +260,12 @@ public class ReasonerController {
             @RequestParam(defaultValue = "HERMIT") String reasonerType
     ) {
         try {
+            ResponseEntity<Map<String, Object>> async = reasoningJobSubmitService.submit(
+                    "REASONER_CONSISTENCY", projectId, reasonerType, null);
+            if (async != null) {
+                return async;
+            }
+
             log.info("Checking consistency for project: {} with {}", projectId, reasonerType);
             
             OWLOntology ontology = loadOntology(projectId);
@@ -180,21 +296,8 @@ public class ReasonerController {
             return ResponseEntity.ok(result);
             
         } catch (Exception e) {
-            log.error("Error checking consistency for project: " + projectId, e);
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("success", false);
-            errorResponse.put("error", e.getMessage());
-            errorResponse.put("errorType", e.getClass().getSimpleName());
-            errorResponse.put("projectId", projectId);
-            
-            // Include stack trace in development
-            if (log.isDebugEnabled()) {
-                java.io.StringWriter sw = new java.io.StringWriter();
-                e.printStackTrace(new java.io.PrintWriter(sw));
-                errorResponse.put("stackTrace", sw.toString());
-            }
-            
-            return ResponseEntity.status(500).body(errorResponse);
+            log.error("Error checking consistency for project: {}", projectId, e);
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -208,6 +311,12 @@ public class ReasonerController {
             @RequestParam(defaultValue = "HERMIT") String reasonerType
     ) {
         try {
+            ResponseEntity<Map<String, Object>> async = reasoningJobSubmitService.submit(
+                    "REASONER_CLASSIFY", projectId, reasonerType, null);
+            if (async != null) {
+                return async;
+            }
+
             log.info("Classifying ontology for project: {} with {}", projectId, reasonerType);
             
             OWLOntology ontology = loadOntology(projectId);
@@ -227,10 +336,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error during classification", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -244,6 +350,12 @@ public class ReasonerController {
             @RequestParam(defaultValue = "HERMIT") String reasonerType
     ) {
         try {
+            ResponseEntity<Map<String, Object>> async = reasoningJobSubmitService.submit(
+                    "REASONER_REALIZE", projectId, reasonerType, null);
+            if (async != null) {
+                return async;
+            }
+
             log.info("Realizing ontology for project: {} with {}", projectId, reasonerType);
             
             OWLOntology ontology = loadOntology(projectId);
@@ -263,10 +375,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error during realization", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -313,10 +422,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error getting inferred axioms", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -355,10 +461,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error getting inferred superclasses", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -370,25 +473,44 @@ public class ReasonerController {
     public ResponseEntity<Map<String, Object>> getInferredSubClasses(
             @PathVariable String projectId,
             @RequestParam String classIri,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType,
+            @RequestParam(defaultValue = "STRUCTURAL") String reasonerType,
             @RequestParam(defaultValue = "false") boolean direct
     ) {
         try {
             OWLOntology ontology = loadOntology(projectId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
+            // Mirror the mapping from getInferredClassHierarchy: HermiT → OPENLLET so that
+            // child queries use the same reasoner as the initial hierarchy load, preventing
+            // expand-arrow inconsistencies where OPENLLET marks a node hasChildren:true
+            // but ELK returns empty for the same node on expand.
+            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
+            int axiomCount = ontology.getAxiomCount();
+            if (axiomCount > MEDIUM_ONTOLOGY_THRESHOLD && axiomCount <= LARGE_ONTOLOGY_AXIOM_THRESHOLD
+                    && !effectiveType.equalsIgnoreCase("ELK") && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
+                effectiveType = "ELK";
+            }
+            if (axiomCount > LARGE_ONTOLOGY_AXIOM_THRESHOLD && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
+                effectiveType = "STRUCTURAL";
+            }
+            ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
+
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLClass owlClass = df.getOWLClass(IRI.create(classIri));
-            
+            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
+
             Set<OWLClass> subClasses = reasonerService.getInferredSubClasses(ontology, owlClass, type, direct);
-            
-            List<Map<String, String>> subClassesList = subClasses.stream()
-                .map(cls -> Map.of(
-                    "iri", cls.getIRI().toString(),
-                    "label", getLabel(cls, ontology)
-                ))
+
+            List<Map<String, Object>> subClassesList = subClasses.stream()
+                .map(cls -> {
+                    boolean hasChildren = reasoner.getSubClasses(cls, true).getFlattened().stream()
+                            .anyMatch(c -> !c.isOWLNothing() && !c.equals(cls));
+                    Map<String, Object> entry = new HashMap<>();
+                    entry.put("iri", cls.getIRI().toString());
+                    entry.put("label", getLabel(cls, ontology));
+                    entry.put("hasChildren", hasChildren);
+                    return entry;
+                })
                 .collect(Collectors.toList());
-            
+
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "classIri", classIri,
@@ -396,13 +518,10 @@ public class ReasonerController {
                 "direct", direct,
                 "inferredSubClasses", subClassesList
             ));
-            
+
         } catch (Exception e) {
             log.error("Error getting inferred subclasses", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -410,125 +529,208 @@ public class ReasonerController {
      * Get inferred class hierarchy
      * GET /api/ontology/{projectId}/reasoner/inferred-class-hierarchy
      */
+    private static final int MEDIUM_ONTOLOGY_THRESHOLD = 10_000;   // ELK kicks in above this
+    private static final int LARGE_ONTOLOGY_AXIOM_THRESHOLD = 100_000; // STRUCTURAL fallback above this
+    private static final int HIERARCHY_TIMEOUT_SECONDS = 5;
+    // Pre-populate three levels (owl:Thing → children → grandchildren) so the UI can
+    // render and expand the first levels without a lazy fetch. A deeper initial tree
+    // closes the window where the user expands a node before its children are loaded.
+    private static final int INITIAL_HIERARCHY_DEPTH = 3;
+
     @GetMapping("/{projectId}/reasoner/inferred-class-hierarchy")
     public ResponseEntity<Map<String, Object>> getInferredClassHierarchy(
             @PathVariable String projectId,
             @RequestParam(defaultValue = "OPENLLET") String reasonerType
     ) {
         try {
+            Map<String, Object> workerResult = submitHierarchyJobAndWait("REASONER_HIERARCHY", projectId, reasonerType);
+            if (workerResult != null) {
+                Map<String, Object> response = new HashMap<>(workerResult);
+                response.put("projectId", projectId);
+                response.put("lazy", true);
+                return ResponseEntity.ok(response);
+            }
             OWLOntology ontology = loadOntology(projectId);
-            // Default to OPENLLET if HERMIT is requested but failing due to binary compatibility
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
-            ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
 
-            // Ensure classification is done before building hierarchy
-            log.info("Ensuring classification for project {} with {}", projectId, type);
-            reasonerService.classify(ontology, type);
-            
-            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
-            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
-            OWLClass thing = df.getOWLThing();
-            OWLClass nothing = df.getOWLNothing();
-
-            Set<String> visited = new HashSet<>();
-            Map<String, Object> root = buildClassNode(ontology, reasoner, thing, visited);
-            
-            // Handle unsatisfiable classes (under owl:Nothing)
-            Node<OWLClass> unsatisfiableNode = reasoner.getUnsatisfiableClasses();
-            List<Map<String, Object>> hierarchy = new ArrayList<>();
-            hierarchy.add(root);
-            
-            if (unsatisfiableNode.getSize() > 1 || !reasoner.getSubClasses(nothing, true).isEmpty()) {
-                // If there are unsatisfiable classes (other than owl:Nothing itself)
-                // or if owl:Nothing has subclasses (which shouldn't happen in a consistent ontology but still)
-                Map<String, Object> nothingNode = buildClassNode(ontology, reasoner, nothing, visited);
-                hierarchy.add(nothingNode);
+            int axiomCount = ontology.getAxiomCount();
+            // Medium ontologies (10k-100k): switch to ELK (fast EL reasoner, 10-100x faster than HermiT)
+            if (axiomCount > MEDIUM_ONTOLOGY_THRESHOLD
+                    && axiomCount <= LARGE_ONTOLOGY_AXIOM_THRESHOLD
+                    && !effectiveType.equalsIgnoreCase("ELK")
+                    && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
+                log.info("Medium ontology ({} axioms) — switching to ELK for project {}", axiomCount, projectId);
+                effectiveType = "ELK";
+            }
+            // Very large ontologies (>100k): STRUCTURAL is safest (no reasoning, just asserted)
+            if (axiomCount > LARGE_ONTOLOGY_AXIOM_THRESHOLD && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
+                log.warn("Very large ontology ({} axioms) — switching to STRUCTURAL for project {}", axiomCount, projectId);
+                effectiveType = "STRUCTURAL";
             }
 
-            log.info("Inferred class hierarchy built for project: {}. Root node has {} children. Total visited: {}", 
-                projectId, ((List<?>)root.get("children")).size(), visited.size());
+            ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
 
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "projectId", projectId,
-                    "reasonerType", type.getDisplayName(),
-                    "hierarchy", hierarchy
-            ));
+            // Return cached hierarchy immediately if still fresh (Caffeine handles TTL)
+            String cacheKey = projectId + "-" + type.name();
+            EditorReasonerCacheService.HierarchyCacheEntry cached =
+                    editorReasonerCache.getHierarchy(cacheKey).orElse(null);
+            if (cached != null) {
+                log.info("Returning cached hierarchy for project {} ({})", projectId, type);
+                return ResponseEntity.ok(Map.of(
+                        "success", true, "projectId", projectId,
+                        "reasonerType", cached.reasonerType(),
+                        "hierarchy", cached.hierarchy(),
+                        "lazy", true, "cached", true
+                ));
+            }
+
+            log.info("Building class hierarchy for project {} with {} ({} axioms)", projectId, type, axiomCount);
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                ReasonerType finalType = type;
+                Future<Map<String, Object>> future = executor.submit(() -> {
+                    OWLReasoner reasoner = reasonerService.getReasoner(ontology, finalType);
+                    OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+                    OWLClass thing = df.getOWLThing();
+                    OWLClass nothing = df.getOWLNothing();
+
+                    Set<String> visited = new HashSet<>();
+                    Map<String, Object> root = buildClassNode(ontology, reasoner, thing, visited, INITIAL_HIERARCHY_DEPTH);
+
+                    List<Map<String, Object>> hierarchy = new ArrayList<>();
+                    hierarchy.add(root);
+
+                    Node<OWLClass> unsatisfiableNode = reasoner.getUnsatisfiableClasses();
+                    if (unsatisfiableNode.getSize() > 1 || !reasoner.getSubClasses(nothing, true).isEmpty()) {
+                        hierarchy.add(buildClassNode(ontology, reasoner, nothing, visited, INITIAL_HIERARCHY_DEPTH));
+                    }
+
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("hierarchy", hierarchy);
+                    result.put("reasonerType", finalType.getDisplayName());
+                    result.put("totalClasses", visited.size());
+                    return result;
+                });
+
+                Map<String, Object> result = future.get(HIERARCHY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> builtHierarchy = (List<Map<String, Object>>) result.get("hierarchy");
+                editorReasonerCache.putHierarchy(cacheKey, new EditorReasonerCacheService.HierarchyCacheEntry(
+                        builtHierarchy, (String) result.get("reasonerType")));
+                log.info("Hierarchy built for project {} — {} classes", projectId, result.get("totalClasses"));
+
+                return ResponseEntity.ok(Map.of(
+                        "success", true, "projectId", projectId,
+                        "reasonerType", result.get("reasonerType"),
+                        "hierarchy", builtHierarchy,
+                        "lazy", true
+                ));
+            } catch (TimeoutException e) {
+                executor.shutdownNow();
+                log.warn("Hierarchy timed out after {}s for project {} — returning timeout signal", HIERARCHY_TIMEOUT_SECONDS, projectId);
+                return ResponseEntity.ok(Map.of(
+                        "success", true, "projectId", projectId,
+                        "reasonerType", type.getDisplayName(),
+                        "hierarchy", List.of(),
+                        "timeout", true,
+                        "lazy", true
+                ));
+            } finally {
+                executor.shutdown();
+            }
         } catch (Exception e) {
             log.error("Error getting inferred class hierarchy", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
-    private Map<String, Object> buildClassNode(OWLOntology ontology, OWLReasoner reasoner, OWLClass owlClass, Set<String> visited) {
+    private Map<String, Object> buildClassNode(OWLOntology ontology, OWLReasoner reasoner,
+                                               OWLClass owlClass, Set<String> visited, int maxDepth) {
         String iri = owlClass.getIRI().toString();
-        
-        // Get equivalent classes
-        Node<OWLClass> equivalentNode = reasoner.getEquivalentClasses(owlClass);
-        List<String> equivalentClassIris = equivalentNode.getEntities().stream()
+
+        List<Map<String, String>> equivalentClasses = reasoner.getEquivalentClasses(owlClass).getEntities().stream()
                 .filter(cls -> !cls.equals(owlClass))
-                .map(cls -> cls.getIRI().toString())
-                .collect(Collectors.toList());
-        
-        List<Map<String, String>> equivalentClasses = equivalentNode.getEntities().stream()
-                .filter(cls -> !cls.equals(owlClass))
-                .map(cls -> Map.of(
-                    "iri", cls.getIRI().toString(),
-                    "label", getLabel(cls, ontology)
-                ))
+                .map(cls -> Map.of("iri", cls.getIRI().toString(), "label", getLabel(cls, ontology)))
                 .collect(Collectors.toList());
 
-        // Don't skip owl:Thing or owl:Nothing even if visited, but skip others to prevent cycles
         if (visited.contains(iri) && !owlClass.isOWLThing() && !owlClass.isOWLNothing()) {
-            log.debug("Skipping already visited class: {}", iri);
-            return Map.of(
-                "id", iri, 
-                "label", getLabel(owlClass, ontology), 
-                "children", List.of(), 
-                "hasChildren", false,
-                "equivalentClasses", equivalentClasses
-            );
+            return Map.of("id", iri, "label", getLabel(owlClass, ontology),
+                    "children", List.of(), "hasChildren", false, "equivalentClasses", equivalentClasses);
         }
         visited.add(iri);
 
-        // Get direct inferred subclasses
         NodeSet<OWLClass> subClassesNodeSet = reasoner.getSubClasses(owlClass, true);
-        
+        boolean hasAnyChildren = subClassesNodeSet.getFlattened().stream()
+                .anyMatch(c -> !c.isOWLNothing() && !c.equals(owlClass));
+
         List<Map<String, Object>> children = new ArrayList<>();
-        for (Node<OWLClass> subClassNode : subClassesNodeSet) {
-            OWLClass representative = subClassNode.getRepresentativeElement();
-            if (representative.isOWLNothing() && !owlClass.isOWLThing()) {
-                continue; // owl:Nothing is handled separately or at the end
+        if (maxDepth > 0) {
+            for (Node<OWLClass> subClassNode : subClassesNodeSet) {
+                OWLClass representative = subClassNode.getRepresentativeElement();
+                if (representative.isOWLNothing() && !owlClass.isOWLThing()) continue;
+                if (representative.equals(owlClass)) continue;
+                children.add(buildClassNode(ontology, reasoner, representative, visited, maxDepth - 1));
             }
-            if (representative.equals(owlClass)) {
-                continue;
-            }
-            
-            Map<String, Object> childNode = buildClassNode(ontology, reasoner, representative, visited);
-            if (childNode != null) {
-                children.add(childNode);
-            }
+            children.sort(Comparator.comparing(m -> m.get("label").toString()));
         }
-        
-        children.sort(Comparator.comparing(m -> m.get("label").toString()));
 
         Map<String, Object> node = new HashMap<>();
         node.put("id", iri);
         node.put("label", getLabel(owlClass, ontology));
         node.put("children", children);
-        node.put("hasChildren", !children.isEmpty());
+        node.put("hasChildren", hasAnyChildren);
         node.put("type", "Class");
         node.put("equivalentClasses", equivalentClasses);
-        
         if (owlClass.isOWLNothing() || !reasoner.isSatisfiable(owlClass)) {
             node.put("isUnsatisfiable", true);
         }
-        
-        log.debug("Built node for {} with {} children", iri, children.size());
         return node;
+    }
+
+    private List<Map<String, Object>> buildAnnotationPropertyHierarchy(OWLOntology ontology) {
+        Set<OWLAnnotationProperty> signature = ontology.getAnnotationPropertiesInSignature();
+        Map<String, Map<String, Object>> nodeMap = new LinkedHashMap<>();
+        Map<String, Set<String>> superMap = new HashMap<>();
+
+        for (OWLAnnotationProperty prop : signature) {
+            String iri = prop.getIRI().toString();
+            Map<String, Object> node = new HashMap<>();
+            node.put("id", iri);
+            node.put("label", getLabel(prop, ontology));
+            node.put("type", "AnnotationProperty");
+            node.put("children", new ArrayList<Map<String, Object>>());
+            node.put("hasChildren", false);
+            nodeMap.put(iri, node);
+        }
+
+        for (OWLSubAnnotationPropertyOfAxiom axiom : ontology.getAxioms(AxiomType.SUB_ANNOTATION_PROPERTY_OF)) {
+            if (!axiom.getSubProperty().isNamed() || !axiom.getSuperProperty().isNamed()) {
+                continue;
+            }
+            String sub = axiom.getSubProperty().asOWLAnnotationProperty().getIRI().toString();
+            String sup = axiom.getSuperProperty().asOWLAnnotationProperty().getIRI().toString();
+            if (!nodeMap.containsKey(sub) || !nodeMap.containsKey(sup) || sub.equals(sup)) {
+                continue;
+            }
+            superMap.computeIfAbsent(sub, ignored -> new HashSet<>()).add(sup);
+        }
+
+        Set<String> hasSuper = new HashSet<>();
+        for (Map.Entry<String, Set<String>> entry : superMap.entrySet()) {
+            String subIri = entry.getKey();
+            for (String superIri : entry.getValue()) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> children = (List<Map<String, Object>>) nodeMap.get(superIri).get("children");
+                children.add(nodeMap.get(subIri));
+                nodeMap.get(superIri).put("hasChildren", true);
+                hasSuper.add(subIri);
+            }
+        }
+
+        return nodeMap.values().stream()
+                .filter(node -> !hasSuper.contains(node.get("id")))
+                .sorted(Comparator.comparing(m -> m.get("label").toString()))
+                .collect(Collectors.toList());
     }
 
     /**
@@ -541,9 +743,16 @@ public class ReasonerController {
             @RequestParam(defaultValue = "OPENLLET") String reasonerType
     ) {
         try {
+            Map<String, Object> workerResult = submitHierarchyJobAndWait("REASONER_OBJ_PROP_HIERARCHY", projectId, reasonerType);
+            if (workerResult != null) {
+                Map<String, Object> response = new HashMap<>(workerResult);
+                response.put("projectId", projectId);
+                return ResponseEntity.ok(response);
+            }
             OWLOntology ontology = loadOntology(projectId);
-            // Default to OPENLLET if HERMIT is requested but failing due to binary compatibility
-            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
+            // HERMIT → OPENLLET (binary compat); ELK → OPENLLET (ELK has no property hierarchy support)
+            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") || reasonerType.equalsIgnoreCase("ELK")
+                    ? "OPENLLET" : reasonerType;
             ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
 
             log.info("========== Object Property Hierarchy Request ==========");
@@ -613,10 +822,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting inferred object property hierarchy", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -630,9 +836,16 @@ public class ReasonerController {
             @RequestParam(defaultValue = "OPENLLET") String reasonerType
     ) {
         try {
+            Map<String, Object> workerResult = submitHierarchyJobAndWait("REASONER_DATA_PROP_HIERARCHY", projectId, reasonerType);
+            if (workerResult != null) {
+                Map<String, Object> response = new HashMap<>(workerResult);
+                response.put("projectId", projectId);
+                return ResponseEntity.ok(response);
+            }
             OWLOntology ontology = loadOntology(projectId);
-            // Default to OPENLLET if HERMIT is requested but failing due to binary compatibility
-            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
+            // HERMIT → OPENLLET (binary compat); ELK → OPENLLET (ELK has no property hierarchy support)
+            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") || reasonerType.equalsIgnoreCase("ELK")
+                    ? "OPENLLET" : reasonerType;
             ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
             log.info("========== Data Property Hierarchy Request ==========");
             log.info("Project ID: {}", projectId);
@@ -695,10 +908,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting inferred data property hierarchy", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
                         
@@ -847,10 +1057,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error getting inferred instances", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -889,10 +1096,53 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting all inferred individuals", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
+            return ResponseEntity.ok(friendlyError(e));
+        }
+    }
+
+    /**
+     * Get inferred types for a single individual
+     * GET /api/ontology/{projectId}/reasoner/inferred-individual-types?individualIri=...
+     */
+    @GetMapping("/{projectId}/reasoner/inferred-individual-types")
+    public ResponseEntity<Map<String, Object>> getInferredTypesForIndividual(
+            @PathVariable String projectId,
+            @RequestParam String individualIri,
+            @RequestParam(defaultValue = "HERMIT") String reasonerType
+    ) {
+        try {
+            OWLOntology ontology = loadOntology(projectId);
+            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            OWLNamedIndividual individual = df.getOWLNamedIndividual(IRI.create(individualIri));
+
+            Set<OWLClass> assertedTypes = ontology.getClassAssertionAxioms(individual).stream()
+                    .map(OWLClassAssertionAxiom::getClassExpression)
+                    .filter(OWLClassExpression::isNamed)
+                    .map(OWLClassExpression::asOWLClass)
+                    .collect(Collectors.toSet());
+
+            Set<OWLClass> inferredTypes = reasonerService.getInferredTypes(ontology, individual, type);
+            OWLClass nothing = df.getOWLNothing();
+            OWLClass thing = df.getOWLThing();
+
+            List<Map<String, String>> typesList = inferredTypes.stream()
+                    .filter(cls -> !cls.equals(nothing) && !cls.equals(thing))
+                    .filter(cls -> !assertedTypes.contains(cls))
+                    .map(cls -> Map.of(
+                            "iri", cls.getIRI().toString(),
+                            "label", getLabel(cls, ontology)
+                    ))
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "individualIri", individualIri,
+                    "inferredTypes", typesList
             ));
+        } catch (Exception e) {
+            log.error("Error getting inferred types for individual {}", individualIri, e);
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -907,19 +1157,7 @@ public class ReasonerController {
         try {
             OWLOntology ontology = loadOntology(projectId);
             
-            // Annotation properties are not reasoned over by standard OWL reasoners,
-            // so we return the asserted hierarchy to keep the UI consistent.
-            List<Map<String, Object>> hierarchy = ontology.getAnnotationPropertiesInSignature().stream()
-                    .map(prop -> {
-                        Map<String, Object> node = new HashMap<>();
-                        node.put("id", prop.getIRI().toString());
-                        node.put("label", getLabel(prop, ontology));
-                        node.put("type", "AnnotationProperty");
-                        node.put("children", List.of());
-                        node.put("hasChildren", false);
-                        return node;
-                    })
-                    .collect(Collectors.toList());
+            List<Map<String, Object>> hierarchy = buildAnnotationPropertyHierarchy(ontology);
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -928,10 +1166,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting inferred annotation property hierarchy", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -963,10 +1198,7 @@ public class ReasonerController {
             ));
         } catch (Exception e) {
             log.error("Error getting inferred datatypes", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1018,7 +1250,7 @@ public class ReasonerController {
             return ResponseEntity.ok(Map.of("success", true, "data", result));
         } catch (Exception e) {
             log.error("Error getting inferred class details", e);
-            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1103,7 +1335,7 @@ public class ReasonerController {
             return ResponseEntity.ok(Map.of("success", true, "data", result));
         } catch (Exception e) {
             log.error("Error getting inferred property details", e);
-            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1128,10 +1360,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error getting reasoner stats", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1145,6 +1374,12 @@ public class ReasonerController {
             @RequestParam(defaultValue = "HERMIT") String reasonerType
     ) {
         try {
+            ResponseEntity<Map<String, Object>> async = reasoningJobSubmitService.submit(
+                    "REASONER_RUN", projectId, reasonerType, null);
+            if (async != null) {
+                return async;
+            }
+
             log.info("Running full reasoning for project: {} with {}", projectId, reasonerType);
             
             OWLOntology ontology = loadOntology(projectId);
@@ -1190,10 +1425,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error running reasoner", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1204,8 +1436,7 @@ public class ReasonerController {
     @PostMapping("/reasoner/clear-cache")
     public ResponseEntity<Map<String, Object>> clearCache() {
         try {
-            reasonerService.clearCache();
-            ontologyCache.clear();
+            editorReasonerCache.clearAll();
             
             return ResponseEntity.ok(Map.of(
                 "success", true,
@@ -1214,10 +1445,7 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error clearing cache", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.ok(friendlyError(e));
         }
     }
 
@@ -1238,6 +1466,18 @@ public class ReasonerController {
         return splitIndex >= 0 && splitIndex < iri.length() - 1
             ? iri.substring(splitIndex + 1)
             : iri;
+    }
+
+    private Map<String, Object> friendlyError(Exception e) {
+        String msg = ReasoningFriendlyErrors.forUser(e.getMessage());
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", false);
+        body.put("message", msg);
+        String raw = e.getMessage() != null ? e.getMessage().toLowerCase(java.util.Locale.ROOT) : "";
+        if (raw.contains("too large") || (raw.contains("triples") && raw.contains("limit"))) {
+            body.put("tooLargeForReasoner", true);
+        }
+        return body;
     }
 
     private String formatAxiom(OWLAxiom axiom, OWLOntology ontology) {

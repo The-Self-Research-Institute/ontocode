@@ -1,12 +1,14 @@
 package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.ImportOptions;
 import self.research.ontology.owlEditor.model.ImportQueueItem;
 import self.research.ontology.owlEditor.model.collaboration.QueueStatusMessage;
 
+import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,6 +18,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Manages import queue with notifications and statistics
@@ -29,11 +34,26 @@ public class ImportQueueManager {
     private final ProjectMetadataService metadataService;
     private final LinkedList<ImportQueueItem> queue = new LinkedList<>();
     private final Map<String, ImportQueueItem> activeImports = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService retryScheduler =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "import-retry-scheduler");
+                t.setDaemon(true);
+                return t;
+            });
 
-    // Configuration — keep at 1 on t3.large (2 vCPU / 8GB); increase on larger instances
-    private static final int MAX_CONCURRENT_IMPORTS = 1;
-    private static final int MAX_RETRIES = 3; // Maximum retry attempts for failed imports
-    private static final long RETRY_DELAY_MS = 10 * 1000; // 10 seconds delay before retry
+    // Tuned via ONTOCODE_IMPORT_MAX_CONCURRENT env var in docker-compose.
+    // With Apache Jena TDB2 (current triplestore), keep this at 1 on ALL tiers.
+    // TDB2 is single-writer: concurrent imports parse into heap simultaneously but
+    // writes to Fuseki serialize at the transaction lock anyway — no throughput gain,
+    // double the memory pressure. Only raise above 1 if the triplestore is replaced
+    // with a multi-writer backend.
+    @Value("${ontocode.import.max-concurrent:1}")
+    private int maxConcurrentImports;
+
+    private static final int MAX_RETRIES = 3;
+    private static final long RETRY_DELAY_MS = 10 * 1000;
+    /** Cap total queue wait shown to users (sum of ahead-of-you estimates). */
+    private static final long MAX_WAIT_TIME_MS = 20 * 60 * 1000;
 
     public ImportQueueManager(SimpMessagingTemplate messagingTemplate,
                               ImportTimeEstimator estimator,
@@ -116,7 +136,7 @@ public class ImportQueueManager {
      */
     public synchronized ImportQueueItem dequeue() {
         long dequeueStart = System.nanoTime();
-        if (activeImports.size() >= MAX_CONCURRENT_IMPORTS || queue.isEmpty()) {
+        if (activeImports.size() >= maxConcurrentImports || queue.isEmpty()) {
             return null;
         }
 
@@ -231,23 +251,22 @@ public class ImportQueueManager {
      * Schedule a retry for a failed import
      */
     private void scheduleRetry(ImportQueueItem item) {
-        new Thread(() -> {
-            try {
-                Thread.sleep(RETRY_DELAY_MS);
-                synchronized (this) {
-                    item.setStatus(ImportQueueItem.ImportStatus.QUEUED);
-                    item.setQueuePosition(queue.size() + 1);
-                    queue.addLast(item);
-                    log.info("[Queue] Re-queued project {} for retry (attempt {}/{})",
-                            item.getProjectId(), item.getRetryCount(), item.getMaxRetries());
-                    notifyQueueStatus(item.getProjectId());
-                    broadcastQueueStats();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.error("[Queue] Retry scheduling interrupted for project {}", item.getProjectId());
+        retryScheduler.schedule(() -> {
+            synchronized (this) {
+                item.setStatus(ImportQueueItem.ImportStatus.QUEUED);
+                item.setQueuePosition(queue.size() + 1);
+                queue.addLast(item);
+                log.info("[Queue] Re-queued project {} for retry (attempt {}/{})",
+                        item.getProjectId(), item.getRetryCount(), item.getMaxRetries());
+                notifyQueueStatus(item.getProjectId());
+                broadcastQueueStats();
             }
-        }).start();
+        }, RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        retryScheduler.shutdownNow();
     }
 
     /**
@@ -330,6 +349,7 @@ public class ImportQueueManager {
                 .queuedImports(queue.size())
                 .averageProcessingTimeMs(getAverageProcessingTime())
                 .queue(queuedProjects)
+                .activeProjectIds(new java.util.ArrayList<>(activeImports.keySet()))
                 .build();
     }
 
@@ -337,7 +357,7 @@ public class ImportQueueManager {
      * Check if queue can accept more imports
      */
     public synchronized boolean canProcess() {
-        return activeImports.size() < MAX_CONCURRENT_IMPORTS;
+        return activeImports.size() < maxConcurrentImports;
     }
 
     /**
@@ -375,7 +395,7 @@ public class ImportQueueManager {
             waitTimeMs += estimateDurationMsForItem(item);
         }
 
-        return waitTimeMs;
+        return Math.min(waitTimeMs, MAX_WAIT_TIME_MS);
     }
 
     private long estimateRemainingTimeMs(ImportQueueItem item) {

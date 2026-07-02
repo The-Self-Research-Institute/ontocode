@@ -43,53 +43,77 @@ export const draftTrackingService = {
   /**
    * Get all unapplied drafts for a project
    */
-  async getDrafts(projectId: string): Promise<DraftChange[]> {
-    const response = await apiClient.get(`/api/ontology/${projectId}/drafts`);
-    return response.data.drafts;
+  async getDrafts(projectId: string, userId?: string): Promise<DraftChange[]> {
+    const params = userId ? { userId, _cb: Date.now() } : { _cb: Date.now() };
+    const response = await apiClient.get(`/api/ontology/${projectId}/drafts`, params);
+    const data = (response as any)?.data ?? response;
+    return (data as any)?.drafts ?? [];
   },
-  
+
   /**
-   * Get draft statistics
+   * Get draft statistics (optionally scoped to one user's private draft).
+   * Cache-busted on every call so the browser never serves stale counts.
    */
-  async getDraftStats(projectId: string): Promise<DraftStatistics> {
+  async getDraftStats(projectId: string, userId?: string): Promise<DraftStatistics> {
     try {
-      console.log(`[draftTrackingService] Getting draft stats for project: ${projectId}`);
-      const response = await apiClient.get(`/api/ontology/${projectId}/drafts/stats`);
-      
-      console.log('[draftTrackingService] getDraftStats response:', response);
-      
-      // Handle both direct response and response.data (VS Code proxy vs direct HTTP)
-      const data = response.data || response;
-      
-      if (!data) {
-        console.error('[draftTrackingService] No response data:', response);
-        throw new Error('No response from server');
-      }
-      
-      // Extract just the statistics, excluding wrapper fields
-      const { success, projectId: pid, ...stats } = data;
-      console.log('[draftTrackingService] Extracted stats:', stats);
+      // Append cache-buster so browsers never serve a cached count after save/discard
+      const params: Record<string, any> = { _cb: Date.now() };
+      if (userId) params.userId = userId;
+      const response = await apiClient.get(`/api/ontology/${projectId}/drafts/stats`, params);
+
+      // apiClient returns resp.data in axios mode and the raw proxy response in VS Code mode
+      const data: any = (response as any)?.data ?? response;
+
+      if (!data) throw new Error('No response from server');
+
+      // Remove non-stat wrapper fields before returning
+      const { success: _s, projectId: _pid, ...stats } = data;
       return stats as DraftStatistics;
     } catch (error) {
       console.error('[draftTrackingService] getDraftStats failed:', error);
       throw error;
     }
   },
-  
+
   /**
-   * Apply all drafts to GraphDB (used during save)
+   * Preview publish conflicts before save.
    */
-  async applyDrafts(projectId: string): Promise<{ success: boolean; appliedCount: number; message: string }> {
-    const response = await apiClient.post(`/api/ontology/${projectId}/drafts/apply`);
-    return response.data;
+  async getPublishPreview(projectId: string, userId: string): Promise<Record<string, unknown>> {
+    const response = await apiClient.get(`/api/ontology/${projectId}/drafts/publish-preview`, { userId, _cb: Date.now() });
+    return ((response as any)?.data ?? response) as Record<string, unknown>;
   },
-  
+
   /**
-   * Discard all unapplied drafts
+   * Apply drafts for one user to GraphDB (used during save).
+   * Pass merge=true with per-conflict resolutions for three-way merge.
    */
-  async discardDrafts(projectId: string): Promise<{ success: boolean; discardedCount: number; message: string }> {
-    const response = await apiClient.delete(`/api/ontology/${projectId}/drafts`);
-    return response.data;
+  async applyDrafts(
+    projectId: string,
+    userId: string,
+    force = false,
+    merge = false,
+    resolutions?: Record<string, { action: string; renameSuffix?: string }>,
+  ): Promise<{ success: boolean; appliedCount: number; message: string }> {
+    let url = `/api/ontology/${projectId}/drafts/apply?userId=${encodeURIComponent(userId)}`;
+    if (force) url += '&force=true';
+    if (merge) url += '&merge=true';
+    const response = await apiClient.post(url, merge && resolutions ? resolutions : undefined);
+    // In axios mode response IS the data; in VS Code proxy mode response has a .data wrapper
+    return ((response as any)?.data ?? response) as { success: boolean; appliedCount: number; message: string };
+  },
+
+  /**
+   * Discard unapplied drafts (optionally for one user only)
+   */
+  async discardDrafts(
+    projectId: string,
+    userId?: string,
+  ): Promise<{ success: boolean; discardedCount: number; message: string }> {
+    const url = userId
+      ? `/api/ontology/${projectId}/drafts?userId=${encodeURIComponent(userId)}`
+      : `/api/ontology/${projectId}/drafts`;
+    const response = await apiClient.delete(url);
+    return ((response as any)?.data ?? response) as { success: boolean; discardedCount: number; message: string };
   },
   
   /**
@@ -98,7 +122,60 @@ export const draftTrackingService = {
   async clearAppliedDrafts(projectId: string): Promise<void> {
     await apiClient.delete(`/api/ontology/${projectId}/drafts/applied`);
   },
+
+  /**
+   * Initiate a copy-on-switch draft (copy main → draft graph asynchronously).
+   * Returns immediately; poll getDraftCopyStatus until status === 'READY'.
+   * Resolves with tripleCount + mainRevisionAtCopy on success.
+   * Rejects if an import is in progress (409).
+   */
+  async initiateDraftCopy(projectId: string, userId: string): Promise<{ tripleCount: number; mainRevisionAtCopy: number }> {
+    const response = await apiClient.post(`/api/ontology/${projectId}/draft/copy`, { userId });
+    const data = response.data || response;
+    if (!data.success) {
+      throw new Error(data.reason || 'Failed to initiate draft copy');
+    }
+    return { tripleCount: data.tripleCount, mainRevisionAtCopy: data.mainRevisionAtCopy };
+  },
+
+  /**
+   * Poll the status of an in-progress draft copy.
+   * Returns 'COPYING' | 'READY' | 'FAILED' | 'NOT_FOUND'
+   */
+  async getDraftCopyStatus(projectId: string, userId: string): Promise<'COPYING' | 'READY' | 'FAILED' | 'NOT_FOUND'> {
+    const response = await apiClient.get(
+      `/api/ontology/${projectId}/draft/copy/status`,
+      { userId }
+    );
+    const data = response.data || response;
+    return data.status as 'COPYING' | 'READY' | 'FAILED' | 'NOT_FOUND';
+  },
   
+  /**
+   * Fetch draft settings for a project (requireDraftForMembers, isOwner).
+   */
+  async getDraftSettings(projectId: string, userId: string): Promise<{
+    requireDraftForMembers: boolean;
+    isOwner: boolean;
+  }> {
+    const response = await apiClient.get(`/api/ontology/${projectId}/draft/settings`, { userId });
+    const data = response.data || response;
+    return {
+      requireDraftForMembers: Boolean(data.requireDraftForMembers),
+      isOwner: Boolean(data.isOwner),
+    };
+  },
+
+  /**
+   * Update requireDraftForMembers — owner only.
+   */
+  async setRequireDraftForMembers(projectId: string, userId: string, value: boolean): Promise<void> {
+    await apiClient.put(`/api/ontology/${projectId}/draft/settings`, {
+      userId,
+      requireDraftForMembers: value,
+    });
+  },
+
   /**
    * Generate a unique session ID
    */

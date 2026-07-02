@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { generateUrlPath, parseUrlPath } from '../config/routes';
 
 export interface RouteState {
-    view: 'deployment' | 'login' | 'signup' | 'workspace' | 'projectDashboard' | 'projectLibrary' | 'dashboard' | 'invitation' | 'subscription';
+    view: 'deployment' | 'login' | 'signup' | 'workspace' | 'projectDashboard' | 'projectLibrary' | 'dashboard' | 'invitation' | 'subscription' | 'billing' | 'desktopDownload';
     projectId?: string | null;
     projectName?: string;
     fileId?: string | null;
@@ -52,7 +52,8 @@ export const useRouter = (
         return [];
     }, []);
 
-    // Helper to check if route has changed
+    // Helper to check if route has changed. `view` covers /billing
+    // because billing has its own view value, so no extra field is needed.
     const hasRouteChanged = useCallback((prev: RouteState, next: RouteState): boolean => {
         return (
             prev.view !== next.view ||
@@ -155,6 +156,13 @@ export const useRouter = (
 
             const route = event.state as RouteState | null;
 
+            // If history leads back to workspace, trigger workspace selection properly
+            if (route?.view === 'workspace') {
+                console.log('[Router] Back navigation to workspace — navigating to workspace selection');
+                onRouteChange({ view: 'workspace' }, true);
+                return;
+            }
+
             if (route) {
                 isPopStateNavigation.current = true;
                 console.log('[Router] Restoring route:', route);
@@ -224,11 +232,16 @@ export const useRouter = (
         console.log('[Router] Route history size:', historyStackRef.current.length);
     }, [currentRoute, hasRouteChanged, saveRouteHistory]);
 
-    // Navigate back programmatically
+    // Navigate back programmatically; falls back to workspace selection if no history
     const goBack = useCallback(() => {
-        console.log('[Router] Programmatic back navigation');
-        window.history.back();
-    }, []);
+        console.log('[Router] Programmatic back navigation, stack size:', historyStackRef.current.length);
+        if (historyStackRef.current.length > 1) {
+            window.history.back();
+        } else {
+            // Nothing to go back to — navigate to workspace selection
+            onRouteChange({ view: 'workspace' }, false);
+        }
+    }, [onRouteChange]);
 
     // Navigate forward programmatically
     const goForward = useCallback(() => {
@@ -237,11 +250,22 @@ export const useRouter = (
     }, []);
 
     // Navigate to a specific route
-    const navigateTo = useCallback((route: Partial<RouteState>) => {
-        console.log('[Router] Navigating to:', route);
-        const newRoute = { ...currentRoute, ...route } as RouteState;
+    const navigateTo = useCallback((route: Partial<RouteState> & { replace?: boolean }) => {
+        const { replace, ...routeUpdate } = route;
+        console.log('[Router] Navigating to:', routeUpdate, replace ? '(replace)' : '');
+        const newRoute = { ...currentRoute, ...routeUpdate } as RouteState;
         onRouteChange(newRoute, false); // Not from browser navigation
-    }, [currentRoute, onRouteChange]);
+
+        if (replace) {
+            const url = generateUrlPath(newRoute);
+            window.history.replaceState(newRoute, '', url);
+            const stack = historyStackRef.current.length > 0
+                ? [...historyStackRef.current.slice(0, -1), newRoute]
+                : [newRoute];
+            historyStackRef.current = stack;
+            saveRouteHistory(stack);
+        }
+    }, [currentRoute, onRouteChange, saveRouteHistory]);
 
     // Clear route history (e.g., on logout)
     const clearHistory = useCallback(() => {

@@ -63,19 +63,33 @@ export const routes: Record<string, RouteConfig> = {
         view: 'dashboard',
         params: ['projectName', 'fileName'],
     },
+    billing: {
+        path: '/billing',
+        view: 'billing',
+    },
 };
 
 const shouldUseHashRouting = (): boolean => {
     const protocol = window.location.protocol;
-    return protocol.startsWith('vscode-webview') || protocol.startsWith('vscode-webview-resource');
+    // file:// (Electron desktop) and vscode-webview both need hash routing.
+    // Path-based routing breaks under file:// because Ctrl+R tries to load
+    // e.g. file:///login as an actual file path instead of serving index.html.
+    return protocol === 'file:' ||
+        protocol.startsWith('vscode-webview') ||
+        protocol.startsWith('vscode-webview-resource');
 };
 
 /**
  * Generate URL path from route state
  */
 export const generateUrlPath = (state: RouteState): string => {
-    const baseUrl = window.location.origin;
     const useHashRouting = shouldUseHashRouting();
+
+    // window.location.origin is the opaque string "null" for file:// URLs.
+    // Use the file path portion of href instead so hashes anchor to index.html.
+    const baseUrl = (useHashRouting && window.location.protocol === 'file:')
+        ? window.location.href.split('#')[0].split('?')[0]
+        : window.location.origin;
 
     const withRoute = (path: string): string => {
         return useHashRouting ? `${baseUrl}#${path}` : `${baseUrl}${path}`;
@@ -120,6 +134,9 @@ export const generateUrlPath = (state: RouteState): string => {
             }
             // Non-workspace editor (continue without workspace)
             return withRoute(routes.editor.path);
+
+        case 'billing':
+            return withRoute(routes.billing.path);
 
         default:
             return useHashRouting ? `${baseUrl}#/` : `${baseUrl}/`;
@@ -181,6 +198,15 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
 
         case 'subscription':
             return { view: 'subscription', showSubscriptionPlan: true };
+
+        // Landing target for the desktop app's "Renew/Buy on the web" links
+        // (electronAPI.openPurchase → /desktop-pricing?plan=&device=). Lands the
+        // user on plan selection; after checkout they download a license file.
+        case 'desktop-pricing':
+            return { view: 'subscription', showSubscriptionPlan: true };
+
+        case 'billing':
+            return { view: 'billing' };
 
         case 'invitation':
         case 'invite':

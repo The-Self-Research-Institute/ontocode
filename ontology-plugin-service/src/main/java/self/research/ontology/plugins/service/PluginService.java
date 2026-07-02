@@ -48,7 +48,10 @@ public class PluginService {
 
     public Page<PluginDTO> searchPlugins(String query, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "totalDownloads"));
-        Page<Plugin> plugins = pluginRepository.searchPlugins(query, pageable);
+        // Escape PCRE metacharacters so user input is treated as a literal search term,
+        // not a regex — prevents ReDoS via patterns like (a+)+ or catastrophic backtracking.
+        String safeQuery = query == null ? "" : query.replaceAll("[\\\\^$.|?*+()\\[\\]{}]", "\\\\$0");
+        Page<Plugin> plugins = pluginRepository.searchPlugins(safeQuery, pageable);
         return plugins.map(this::toDTO);
     }
 

@@ -20,6 +20,7 @@ const PropertySelectorDialog: React.FC<PropertySelectorDialogProps> = ({
 }) => {
   const [selectedProp, setSelectedProp] = useState<any | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
 
   if (!isOpen) return null;
 
@@ -62,8 +63,8 @@ const PropertySelectorDialog: React.FC<PropertySelectorDialogProps> = ({
               filteredData={propertyHierarchy}
               selectedItem={selectedProp}
               expandedNodes={expandedNodes}
-              searchQuery=""
-              onSearchQueryChange={() => {}}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
               onSelectItem={(item) => setSelectedProp(item)}
               onToggleNode={toggleNode}
               onAddItem={() => {}}

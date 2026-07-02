@@ -6,7 +6,8 @@ echo Starting OntoCode Development Services
 echo ========================================
 echo.
 
-docker compose -f docker-compose.dev.yml up -d
+REM Build local service images so newly added routes/controllers are present.
+docker compose -f docker-compose.dev.yml up -d --build
 
 if %ERRORLEVEL% EQU 0 (
     echo.
@@ -24,6 +25,7 @@ if %ERRORLEVEL% EQU 0 (
     echo   MongoDB:        mongodb://localhost:27017
     echo   VS Code Web:    http://localhost:3000
     echo.
+    echo Local source images were rebuilt before startup.
     echo To view logs:     docker compose -f docker-compose.dev.yml logs -f
     echo To stop services: docker compose -f docker-compose.dev.yml down
     echo.

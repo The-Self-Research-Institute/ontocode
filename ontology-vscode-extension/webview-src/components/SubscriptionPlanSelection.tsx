@@ -1,264 +1,575 @@
-import React, { useState } from 'react';
-import { Check, X, Sparkles, Zap, Crown, ArrowRight, LogOut, Users, HardDrive, Shield, Bug } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Check, X, Sparkles, Zap, Crown, ArrowRight, LogOut, Bug, Star, Shield, Gift } from 'lucide-react';
 import ReportIssueModal from './ReportIssueModal';
+import { usePlanPricing } from '../hooks/usePlanPricing';
+import { isInheritedPlanFeature, orderPlanFeatures } from '../utils/planFeatures';
 
 interface SubscriptionPlanSelectionProps {
     username: string;
     workspaceId: string;
     workspaceName: string;
-    onPlanSelected: (planId: string) => void;
+    currentPlanId?: string;
+    currentStatus?: string;
+    currentBillingInterval?: BillingInterval;
+    trialEligible?: boolean;
+    allowCurrentPlanSelection?: boolean;
+    onPlanSelected: (planId: string, interval: "monthly" | "annual") => Promise<void> | void;
     onSkip: () => void;
     onLogout: () => void;
 }
+
+type BillingInterval = "monthly" | "annual";
 
 interface Plan {
     id: string;
     name: string;
     icon: React.ReactNode;
-    price: number;
-    period: string;
+    monthlyPrice: number;
+    annualPrice: number;
     description: string;
+    tagline: string;
     features: string[];
     limitations?: string[];
     popular?: boolean;
     gradient: string;
-    buttonColor: string;
+    glowColor: string;
     badge?: string;
 }
 
+const PLANS: Plan[] = [
+    {
+        id: 'FREE',
+        name: 'Free',
+        icon: <Sparkles size={22} />,
+        monthlyPrice: 0,
+        annualPrice: 0,
+        description: 'Get started at no cost',
+        tagline: 'Perfect for solo ontology engineers exploring the platform',
+        features: [
+            'Up to 3 workspaces',
+            'Up to 3 workspace members',
+            '10 GB storage',
+            'OWL/RDF ontology editing',
+            'Class hierarchy & properties',
+            'SPARQL query execution',
+            'SWRL rule editor',
+            'DL Query & reasoning',
+            'Import OWL/TTL/RDF files',
+            'Custom plugin support',
+            'Invite & manage members',
+            'Community support',
+        ],
+        limitations: [
+            'Invited members are view-only',
+            'No shared editing for members',
+        ],
+        gradient: 'from-slate-500 to-slate-700',
+        glowColor: 'shadow-slate-500/30',
+    },
+    {
+        id: 'PRO',
+        name: 'Professional',
+        icon: <Zap size={22} />,
+        monthlyPrice: 59,
+        annualPrice: 59,
+        description: 'For serious ontology projects',
+        tagline: 'Collaborate within your workspace and unlock advanced features',
+        features: [
+            'Up to 10 workspaces',
+            'Up to 10 workspace members',
+            '100 GB storage',
+            'Everything in Free',
+            'Role-based editing for members',
+            'Export to multiple formats',
+            'Priority email support',
+        ],
+        popular: true,
+        badge: 'Most Popular',
+        gradient: 'from-violet-500 to-indigo-600',
+        glowColor: 'shadow-violet-500/40',
+    },
+    {
+        id: 'ENTERPRISE',
+        name: 'Enterprise',
+        icon: <Crown size={22} />,
+        monthlyPrice: 299,
+        annualPrice: 299,
+        description: 'For large organizations',
+        tagline: 'Unlimited scale with dedicated support and SLA',
+        features: [
+            'Unlimited workspace members',
+            'Unlimited workspaces',
+            'Unlimited storage',
+            'Everything in Professional',
+            'Early access to new features',
+            'Priority channel support',
+        ],
+        gradient: 'from-amber-500 to-orange-600',
+        glowColor: 'shadow-amber-500/40',
+        badge: 'Best Value',
+    },
+];
+
 const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     username,
-    workspaceId,
     workspaceName,
+    currentPlanId = 'FREE',
+    currentStatus = '',
+    currentBillingInterval = 'monthly',
+    trialEligible = true,
+    allowCurrentPlanSelection = false,
     onPlanSelected,
     onSkip,
-    onLogout
+    onLogout,
 }) => {
-    const [selectedPlan, setSelectedPlan] = useState<string>('PRO');
+    const normalizedCurrentPlanId = currentPlanId.toUpperCase();
+    const [selectedPlan, setSelectedPlan] = useState<string>(normalizedCurrentPlanId);
+    const [billingInterval, setBillingInterval] = useState<BillingInterval>('monthly');
     const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
 
-    const plans: Plan[] = [
-        {
-            id: 'FREE',
-            name: 'Free',
-            icon: <Sparkles size={28} />,
-            price: 0,
-            period: 'forever',
-            description: 'Perfect for getting started',
-            features: [
-                'Up to 10 team members',
-                '5 GB storage',
-                'OWL/RDF ontology editing',
-                'Class hierarchy & properties',
-                'SPARQL query execution',
-                'SWRL rule editor',
-                'DL Query & reasoning',
-                'Import OWL/TTL/RDF files',
-                'Custom plugin support',
-                'Community support'
-            ],
-            limitations: [
-                'No Live collaboration'
-            ],
-            gradient: 'from-gray-400 to-gray-600',
-            buttonColor: 'bg-gray-600 hover:bg-gray-700'
-        },
-        {
-            id: 'PRO',
-            name: 'Professional',
-            icon: <Zap size={28} />,
-            price: 29,
-            period: 'per month',
-            description: 'For growing teams',
-            features: [
-                'Up to 50 team members',
-                '50 GB storage',
-                'All Free features',
-                'Live collaboration',
-                'Priority email support'
-            ],
-            popular: true,
-            badge: 'Most Popular',
-            gradient: 'from-purple-500 to-blue-600',
-            buttonColor: 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700'
-        },
-        {
-            id: 'ENTERPRISE',
-            name: 'Enterprise',
-            icon: <Crown size={28} />,
-            price: 99,
-            period: 'per month',
-            description: 'For large organizations',
-            features: [
-                'Unlimited team members',
-                'Unlimited storage',
-                'All Pro features',
-                'Advanced collaboration',
-                'Dedicated support'
-            ],
-            gradient: 'from-amber-500 to-orange-600',
-            buttonColor: 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700',
-            badge: 'Best Value'
+    const { getPricing, trialPeriodDays } = usePlanPricing();
+    const plans = PLANS.map(plan => {
+        const live = getPricing(plan.id);
+        return {
+            ...plan,
+            monthlyPrice: live.monthlyPrice,
+            annualPrice: live.annualPrice,
+            features: live.features.length ? live.features : plan.features,
+            limitations: live.limitations.length ? live.limitations : (plan.limitations ?? []),
+        };
+    });
+
+    const getDisplayPrice = (plan: Plan) =>
+        billingInterval === 'annual' ? plan.annualPrice : plan.monthlyPrice;
+
+    const getAnnualSavings = (plan: Plan) => {
+        if (plan.monthlyPrice === 0) return 0;
+        return (plan.monthlyPrice - plan.annualPrice) * 12;
+    };
+
+    const getDiscountPercent = (plan: Plan) => {
+        if (plan.monthlyPrice === 0) return 0;
+        return Math.round((plan.monthlyPrice - plan.annualPrice) / plan.monthlyPrice * 100);
+    };
+
+    const getPlanRank = (id: string) => {
+        const ranks = { FREE: 1, PRO: 2, ENTERPRISE: 3 };
+        return ranks[id.toUpperCase() as keyof typeof ranks] || 0;
+    };
+
+    const currentRank = getPlanRank(normalizedCurrentPlanId);
+    const availablePlans = plans.filter(plan =>
+        currentRank >= 2 ? getPlanRank(plan.id) >= currentRank : true
+    );
+
+    useEffect(() => {
+        if (getPlanRank(normalizedCurrentPlanId) > 0) {
+            setSelectedPlan(normalizedCurrentPlanId);
         }
-    ];
+    }, [normalizedCurrentPlanId]);
 
-    const handleContinue = () => {
-        onPlanSelected(selectedPlan);
+
+    const discountPercentages = availablePlans.filter(p => p.monthlyPrice > 0).map(getDiscountPercent);
+    const maxDiscount = discountPercentages.length > 0 ? Math.max(...discountPercentages) : 0;
+
+    const selectedPlanData = availablePlans.find(p => p.id === selectedPlan) ?? availablePlans[0];
+    const selectedDiscount = selectedPlanData ? getDiscountPercent(selectedPlanData) : 0;
+    
+    // Ensure badgeDiscount uses live data and falls back to max discount if selected has none
+    const badgeDiscount = selectedDiscount > 0 ? selectedDiscount : maxDiscount;
+
+    const selectedRank = getPlanRank(selectedPlan);
+    const isDowngradeAttempt = selectedRank < currentRank && currentRank > 1; // Only check if current is paid
+    const isUpgrade = selectedRank > currentRank;
+    const isCurrentPaidPlan = selectedPlan === normalizedCurrentPlanId && currentRank > 1;
+    const disableContinue = isProcessing || isDowngradeAttempt || (isCurrentPaidPlan && !allowCurrentPlanSelection);
+    const isCurrentActivePaidPlan = isCurrentPaidPlan && !allowCurrentPlanSelection;
+    const isInactiveCurrentPlan = allowCurrentPlanSelection && currentRank > 1;
+    const isPaidSelected = (selectedPlanData?.monthlyPrice ?? 0) > 0;
+    const isEnterpriseSelected = selectedPlan === 'ENTERPRISE';
+    const isEnterpriseUpgrade = isEnterpriseSelected && isUpgrade && currentRank > 1;
+    const selectedPlanHasTrial = trialEligible && isPaidSelected && !isEnterpriseSelected;
+    const normalizedCurrentStatus = currentStatus.toUpperCase();
+    const isTrialingEnterpriseUpgrade = isEnterpriseUpgrade && normalizedCurrentStatus === 'TRIALING';
+    const normalizedCurrentBillingInterval = currentBillingInterval === 'annual' ? 'annual' : 'monthly';
+    const currentPlanIsActiveLike = normalizedCurrentStatus === 'ACTIVE' || normalizedCurrentStatus === 'TRIALING';
+    const disableMonthlyInterval = currentRank > 1 && currentPlanIsActiveLike && normalizedCurrentBillingInterval === 'annual' && !isUpgrade;
+
+    useEffect(() => {
+        if (disableMonthlyInterval && billingInterval === 'monthly') {
+            setBillingInterval('annual');
+        }
+    }, [billingInterval, disableMonthlyInterval]);
+
+    const handleContinue = async () => {
+        if (disableContinue) return;
+        setIsProcessing(true);
+        try {
+            await onPlanSelected(selectedPlan, billingInterval);
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     return (
-      <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-y-auto">
-        {/* Animated background */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-40 -right-40 w-64 h-64 md:w-96 md:h-96 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse"></div>
-          <div className="absolute -bottom-40 -left-40 w-64 h-64 md:w-96 md:h-96 bg-blue-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse delay-1000"></div>
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-64 h-64 md:w-96 md:h-96 bg-indigo-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-pulse delay-500"></div>
-        </div>
-
-        {/* Content */}
-        <div className="relative z-10 min-h-full flex flex-col justify-center px-4 py-6 sm:px-6 md:px-8">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-4 flex-shrink-0">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-white mb-1 flex items-center gap-3">
-                <span className="bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
-                  Choose Your Plan
-                </span>
-              </h1>
-              <p className="text-gray-300 text-xs sm:text-sm">
-                Welcome, <span className="font-semibold text-purple-300">{username}</span> • Workspace:{" "}
-                <span className="font-medium text-purple-300">{workspaceName}</span>
-              </p>
+        <div className="dark-surface h-screen bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 relative overflow-hidden">
+            {/* Background orbs */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                <div className="absolute -top-32 -right-32 w-96 h-96 bg-violet-600 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" />
+                <div className="absolute -bottom-32 -left-32 w-96 h-96 bg-indigo-600 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" style={{ animationDelay: '1s' }} />
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-purple-600 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-pulse" style={{ animationDelay: '2s' }} />
             </div>
-            <button
-              onClick={onLogout}
-              className="flex items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white rounded-lg transition-all text-sm"
-            >
-              <LogOut size={18} />
-              <span className="hidden sm:inline">Logout</span>
-            </button>
-          </div>
 
-          {/* Plans */}
-          <div className="flex items-center justify-center py-4 flex-1">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-7xl w-full">
-              {plans.map((plan) => (
-                <div
-                  key={plan.id}
-                  onClick={() => setSelectedPlan(plan.id)}
-                  className={`
-                    relative bg-white/10 backdrop-blur-xl rounded-2xl p-4 sm:p-5 cursor-pointer transition-all duration-300 flex flex-col
-                    border-2 ${
-                      selectedPlan === plan.id
-                        ? "border-white shadow-2xl shadow-purple-500/50 scale-[1.02] md:scale-105"
-                        : "border-white/20 hover:border-white/40 hover:scale-[1.01] md:hover:scale-102"
-                    }
-                    ${plan.popular ? "ring-4 ring-purple-500/50" : ""}
-                  `}
-                >
-                  {plan.badge && (
-                    <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-                      <span
-                        className={`bg-gradient-to-r ${plan.gradient} text-white px-3 py-1 rounded-full text-xs font-bold shadow-lg`}
-                      >
-                        {plan.badge}
-                      </span>
+            <div className="relative z-10 h-full min-h-0 flex flex-col px-4 py-4 sm:px-6">
+
+                {/* Top bar */}
+                <div className="flex items-center justify-between mb-3 shrink-0">
+                    <div>
+                        <div className="flex items-center gap-2 mb-1">
+                            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
+                                <Star size={14} className="text-white" />
+                            </div>
+                            <span className="text-violet-300 text-xs font-semibold uppercase tracking-widest">OntoCode</span>
+                        </div>
+                        <h1 className="text-xl sm:text-2xl font-bold text-white">
+                            {isInactiveCurrentPlan ? 'Renew your subscription' : currentRank > 1 ? 'Manage your plan' : 'Choose your plan'}
+                        </h1>
+                        <p className="text-slate-400 text-xs mt-0.5">
+                            Hi <span className="text-violet-300 font-medium">{username}</span> — account <span className="text-violet-300 font-medium">{workspaceName}</span>
+                        </p>
                     </div>
-                  )}
-
-                  {/* Icon & Title */}
-                  <div className="mb-3">
-                    <div
-                      className={`w-10 h-10 rounded-xl bg-gradient-to-br ${plan.gradient} flex items-center justify-center text-white mb-2 shadow-lg`}
+                    <button
+                        onClick={onLogout}
+                        className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white rounded-lg transition-all text-sm"
                     >
-                      {React.cloneElement(plan.icon as React.ReactElement, { size: 20 })}
-                    </div>
-                    <h3 className="text-xl font-bold text-white mb-1">{plan.name}</h3>
-                    <p className="text-gray-300 text-xs">{plan.description}</p>
-                  </div>
-
-                  {/* Price */}
-                  <div className="mb-3">
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-2xl sm:text-3xl font-bold text-white">${plan.price}</span>
-                      <span className="text-gray-400 text-xs">/{plan.period}</span>
-                    </div>
-                  </div>
-
-                  {/* Features - Scrollable */}
-                  <div className="flex-1 overflow-y-auto space-y-2 mb-3 pr-2" style={{ maxHeight: "280px" }}>
-                    {plan.features.map((feature, index) => (
-                      <div key={index} className="flex items-start gap-2">
-                        <Check size={14} className="text-green-400 flex-shrink-0 mt-0.5" />
-                        <span className="text-gray-200 text-xs">{feature}</span>
-                      </div>
-                    ))}
-
-                    {/* Limitations */}
-                    {plan.limitations && plan.limitations.length > 0 && (
-                      <div className="space-y-1.5 pt-2 border-t border-white/20 mt-2">
-                        {plan.limitations.map((limitation, index) => (
-                          <div key={index} className="flex items-start gap-2">
-                            <X size={14} className="text-gray-500 flex-shrink-0 mt-0.5" />
-                            <span className="text-gray-400 text-xs">{limitation}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Selection indicator */}
-                  {selectedPlan === plan.id && (
-                    <div className="absolute top-4 right-4">
-                      <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center">
-                        <Check size={20} className="text-purple-600" />
-                      </div>
-                    </div>
-                  )}
+                        <LogOut size={15} />
+                        <span className="hidden sm:inline">Logout</span>
+                    </button>
                 </div>
-              ))}
+
+                {/* Billing terms banner */}
+                <div className="mb-3 flex justify-center shrink-0">
+                    <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600/30 to-indigo-600/30 border border-violet-500/40 rounded-full backdrop-blur-sm">
+                        <Gift size={16} className="text-violet-300" />
+                        <span className="text-white text-sm font-medium">
+                            {isCurrentActivePaidPlan ? (
+                                <>Current plan: {selectedPlanData?.name} <span className="text-violet-300">{normalizedCurrentStatus ? `(${normalizedCurrentStatus})` : ''}</span></>
+                            ) : isPaidSelected ? (
+                                selectedPlanHasTrial ? (
+                                    <>{trialPeriodDays}-day trial on paid plans <span className="text-violet-300">with renewal reminders at 15, 7, and 1 day{currentRank > 1 && normalizedCurrentStatus ? ` (${normalizedCurrentStatus})` : ''}</span></>
+                                ) : (
+                                    <>Trial already used <span className="text-violet-300">paid plans are charged when activated{currentRank > 1 && normalizedCurrentStatus ? ` (${normalizedCurrentStatus})` : ''}</span></>
+                                )
+                            ) : (
+                                <>Free plan <span className="text-violet-300">with no card required</span></>
+                            )}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Trial banner */}
+                <div className="hidden">
+                    <div className="flex items-center gap-2.5 px-5 py-2.5 bg-gradient-to-r from-violet-600/30 to-indigo-600/30 border border-violet-500/40 rounded-full backdrop-blur-sm">
+                        <Gift size={16} className="text-violet-300" />
+                        <span className="text-white text-sm font-medium">
+                            {isEnterpriseSelected ? (
+                                <>Enterprise Plan — <span className="text-violet-300">Unlimited scale with priority support</span></>
+                            ) : !trialEligible ? (
+                                <>Trial already used — <span className="text-violet-300">paid plans are charged when activated</span></>
+                            ) : (
+                                <>{trialPeriodDays}-day free trial on Professional plan — <span className="text-violet-300">card saved, not charged until day {trialPeriodDays + 1}</span></>
+                            )}
+                        </span>
+                    </div>
+                </div>
+
+                {/* No-Downgrade Heads-up */}
+                {isUpgrade && (
+                    <div className="mb-3 flex justify-center shrink-0">
+                        <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg backdrop-blur-sm">
+                            <Shield size={14} className="text-amber-400" />
+                            <p className="text-amber-200 text-xs">
+                                <strong>Note:</strong> Once you upgrade to {selectedPlanData?.name}, downgrading to a lower plan is not permitted.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Billing toggle */}
+                <div className="flex justify-center mb-4 shrink-0">
+                    <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-1">
+                        <button
+                            onClick={() => {
+                                if (!disableMonthlyInterval) {
+                                    setBillingInterval('monthly');
+                                }
+                            }}
+                            disabled={disableMonthlyInterval}
+                            title={disableMonthlyInterval ? 'Annual subscriptions cannot switch to monthly until the current annual period ends.' : 'Monthly billing'}
+                            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                                billingInterval === 'monthly'
+                                    ? 'bg-purple-600 text-white shadow-sm'
+                                    : 'text-slate-400 hover:text-white'
+                            } ${disableMonthlyInterval ? 'opacity-40 cursor-not-allowed hover:text-slate-400' : ''}`}
+                        >
+                            Monthly
+                        </button>
+                        <button
+                            onClick={() => setBillingInterval('annual')}
+                            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                                billingInterval === 'annual'
+                                    ? 'bg-purple-600 text-white shadow-sm'
+                                    : 'text-slate-400 hover:text-white'
+                            }`}
+                        >
+                            Annual
+                            {badgeDiscount > 0 && (
+                                <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
+                                    billingInterval === 'annual'
+                                        ? 'bg-green-500 text-white'
+                                        : 'bg-green-600/30 text-green-400'
+                                }`}>
+                                    Save {badgeDiscount}%
+                                </span>
+                            )}
+                        </button>
+                    </div>
+                </div>
+                {disableMonthlyInterval && (
+                    <p className="mb-3 text-center text-xs text-slate-400">
+                        Annual plans stay annual until the current billing period ends. Monthly to annual upgrades are charged immediately with Stripe proration.
+                    </p>
+                )}
+
+                {/* Plan cards (scrollable region) */}
+                <div className="flex-1 min-h-0 flex items-start justify-center overflow-y-auto px-1 pb-3">
+                    <div className={`w-full ${availablePlans.length <= 2 ? 'max-w-3xl' : 'max-w-5xl'}`}>
+                        <div className="pb-2">
+                            <div className={`grid grid-cols-1 sm:grid-cols-2 ${availablePlans.length <= 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-3'} gap-4 w-full`}>
+                        {availablePlans.map((plan) => {
+                            const isSelected = selectedPlan === plan.id;
+                            const savings = getAnnualSavings(plan);
+                            const price = getDisplayPrice(plan);
+
+                            return (
+                                <div
+                                    key={plan.id}
+                                    onClick={() => setSelectedPlan(plan.id)}
+                                    className={`
+                                        relative flex flex-col h-full rounded-2xl cursor-pointer transition-all duration-200
+                                        ${isSelected
+                                            ? `bg-white/10 border-2 border-violet-400 shadow-xl ${plan.glowColor}`
+                                            : 'bg-white/5 border-2 border-white/10 hover:border-white/25 hover:bg-white/8'
+                                        }
+                                        ${plan.popular ? 'ring-2 ring-violet-500/50' : ''}
+                                    `}
+                                >
+                                    {/* Badge */}
+                                    {plan.badge && (
+                                        <div className="absolute top-2 left-1/2 -translate-x-1/2">
+                                            <span className={`bg-gradient-to-r ${plan.gradient} text-white px-3 py-0.5 rounded-full text-xs font-bold shadow-lg`}>
+                                                {plan.badge}
+                                            </span>
+                                        </div>
+                                    )}
+
+                                    {/* Selected checkmark */}
+                                    {isSelected && (
+                                        <div className="absolute top-3 right-3 w-6 h-6 rounded-full bg-violet-500 flex items-center justify-center">
+                                            <Check size={13} className="text-white" />
+                                        </div>
+                                    )}
+
+                                    <div className={`px-4 pb-4 ${plan.badge ? 'pt-8' : 'pt-4'} flex flex-col flex-1`}>
+                                        {/* Header */}
+                                        <div className="flex items-center gap-3 mb-2">
+                                            <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${plan.gradient} flex items-center justify-center text-white shadow-lg flex-shrink-0`}>
+                                                {plan.icon}
+                                            </div>
+                                            <div>
+                                                <h3 className="text-base font-bold text-white leading-tight">{plan.name}</h3>
+                                                <p className="text-slate-400 text-xs">{plan.description}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Price */}
+                                        <div className="mb-1">
+                                            <div className="flex items-baseline gap-1">
+                                                <span className="text-2xl font-extrabold text-white">${price}</span>
+                                                {plan.monthlyPrice > 0 && (
+                                                    <span className="text-slate-400 text-xs">/ mo</span>
+                                                )}
+                                                {plan.monthlyPrice === 0 && (
+                                                    <span className="text-slate-400 text-xs">forever</span>
+                                                )}
+                                            </div>
+                                            {billingInterval === 'annual' && plan.monthlyPrice > 0 && (
+                                                <p className="text-xs text-slate-400 mt-0.5">
+                                                    ${plan.annualPrice * 12}/yr
+                                                    {savings > 0 && (
+                                                        <span className="ml-1.5 text-green-400 font-semibold">
+                                                            · saves ${savings} ({getDiscountPercent(plan)}% off)
+                                                        </span>
+                                                    )}
+                                                </p>
+                                            )}
+                                            {billingInterval === 'monthly' && plan.monthlyPrice > 0 && (
+                                                <p className="text-xs text-slate-500 mt-0.5">
+                                                    Billed monthly
+                                                    {savings > 0 && (
+                                                        <span className="ml-1.5 text-green-400 font-medium">
+                                                            · Save {getDiscountPercent(plan)}% with annual
+                                                        </span>
+                                                    )}
+                                                </p>
+                                            )}
+                                        </div>
+
+                                        {/* Tagline */}
+                                        <p className="text-violet-200/70 text-[11px] mb-2 italic">{plan.tagline}</p>
+
+                                        <hr className="border-white/10 mb-2" />
+
+                                        {/* Features */}
+                                        <div className="flex-1 space-y-1.5">
+                                            {orderPlanFeatures(plan.features).map((f, i) => (
+                                                <div key={i} className="flex items-start gap-2">
+                                                    <Check size={13} className="text-green-400 flex-shrink-0 mt-0.5" />
+                                                    <span className={`text-xs leading-relaxed ${isInheritedPlanFeature(f) ? 'font-semibold text-white' : 'text-slate-300'}`}>{f}</span>
+                                                </div>
+                                            ))}
+                                            {plan.limitations?.map((l, i) => (
+                                                <div key={i} className="flex items-start gap-2">
+                                                    <X size={13} className="text-slate-600 flex-shrink-0 mt-0.5" />
+                                                    <span className="text-slate-500 text-xs leading-relaxed">{l}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        {/* Trial note */}
+                                        {plan.monthlyPrice > 0 && (
+                                            <div className="mt-2 pt-2 border-t border-white/10">
+                                                <div className="flex items-center gap-1.5 text-violet-300 text-xs">
+                                                    <Shield size={12} />
+                                                    <span>
+                                                        {trialEligible && plan.id !== 'ENTERPRISE'
+                                                            ? `${trialPeriodDays}-day trial • card not charged until day ${trialPeriodDays + 1}`
+                                                            : 'No trial available • charged when activated'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {false && plan.id === 'ENTERPRISE' && (
+                                            <div className="mt-3 pt-3 border-t border-white/10">
+                                                <div className="flex items-center gap-1.5 text-amber-300 text-xs font-medium">
+                                                    <Crown size={12} />
+                                                    <span>Enterprise Tier • No trial version available</span>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* CTA */}
+                <div className="shrink-0 flex flex-col items-center gap-2 pt-2 pb-1 bg-slate-950/30">
+                    {selectedPlanData && selectedPlanData.monthlyPrice > 0 && (
+                        <p className="text-slate-400 text-xs text-center">
+                            {isCurrentActivePaidPlan ? (
+                                <>
+                                    This is your current{' '}
+                                    <span className="text-violet-300 font-medium">{selectedPlanData.name}</span>
+                                    {' '}plan{normalizedCurrentStatus ? ` (${normalizedCurrentStatus})` : ''}.
+                                </>
+                            ) : selectedPlanHasTrial ? (
+                                <>
+                                    You'll start your{' '}
+                                    <span className="text-white font-medium">{trialPeriodDays}-day free trial</span>
+                                    {' '}of <span className="text-violet-300 font-medium">{selectedPlanData.name}</span>.
+                                    {' '}Your card won't be charged until the trial ends.
+                                </>
+                            ) : (
+                                <>
+                                    Your free trial has already been used.{' '}
+                                    <span className="text-violet-300 font-medium">{selectedPlanData.name}</span>
+                                    {' '}will be charged when activated.
+                                </>
+                            )}
+                        </p>
+                    )}
+                    {isTrialingEnterpriseUpgrade && (
+                        <p className="max-w-xl rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-2 text-amber-200 text-xs text-center font-medium">
+                            Heads up: Enterprise upgrades do not include a new trial. Your current trial ends and Enterprise is charged immediately.
+                        </p>
+                    )}
+                    {isDowngradeAttempt && (
+                        <p className="text-red-400 text-xs text-center font-bold">
+                            ⚠️ Downgrades are not permitted. You can only maintain or upgrade your plan.
+                        </p>
+                    )}
+
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={onSkip}
+                            className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white rounded-xl transition-all text-sm"
+                        >
+                            Go Back
+                        </button>
+                        <button
+                            onClick={handleContinue}
+                            disabled={disableContinue}
+                            className={`px-7 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg shadow-violet-500/30 text-sm disabled:opacity-50 ${disableContinue ? 'cursor-not-allowed opacity-70 grayscale-[0.5]' : ''}`}
+                        >
+                            {isProcessing ? "Processing..." : (
+                                <>
+                                    {isDowngradeAttempt ? "Downgrade Restricted" : (
+                                        <>
+                                            {isCurrentPaidPlan && !allowCurrentPlanSelection
+                                                ? "Your Current Plan"
+                                                : isInactiveCurrentPlan && selectedPlan === normalizedCurrentPlanId
+                                                    ? `Renew ${selectedPlanData?.name}`
+                                                    : <>{isUpgrade ? 'Upgrade' : selectedPlan === 'FREE' ? 'Continue with' : 'Select'} {selectedPlanData?.name}</>
+                                            }
+                                            {!disableContinue && <ArrowRight size={15} />}
+                                        </>
+                                    )}
+                                </>
+                            )}
+                        </button>
+                    </div>
+
+                    <p className="text-slate-500 text-xs text-center">
+                        Paid plans renew automatically. Reminders are sent 15, 7, and 1 day before renewal. Expired or canceled subscriptions block workspace access until renewed.
+                    </p>
+                    <p className="hidden">
+                        {isEnterpriseSelected 
+                          ? "Instant activation • No trial for Enterprise • Billed monthly/annually"
+                          : selectedPlanHasTrial
+                            ? `Card required • not charged for ${trialPeriodDays} days • cancel anytime before trial ends`
+                            : "Card required • charged when activated"}
+                    </p>
+                </div>
             </div>
-          </div>
 
-          {/* Action Buttons */}
-          <div className="relative z-20 flex items-center justify-center gap-3 sm:gap-4 mt-4 mb-3 flex-shrink-0">
+            {/* Report Issue */}
             <button
-              onClick={onSkip}
-              className="px-5 py-2 bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white rounded-xl transition-all text-sm"
+                onClick={() => setIsReportIssueModalOpen(true)}
+                className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-slate-400 hover:text-white transition-colors backdrop-blur-sm z-50"
             >
-              Skip for now
+                <Bug size={13} />
+                Report Issue
             </button>
-            <button
-              onClick={handleContinue}
-              className="px-6 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg shadow-purple-500/50 text-sm"
-            >
-              Continue with {plans.find((p) => p.id === selectedPlan)?.name}
-              <ArrowRight size={16} />
-            </button>
-          </div>
 
-          {/* Footer */}
-          <div className="text-center mb-2 sm:mb-4 flex-shrink-0">
-            <p className="text-gray-400 text-xs">
-              All plans include a 14-day free trial • Cancel anytime • No credit card required
-            </p>
-          </div>
-
-          {/* Report Issue floating button */}
-          <button
-            onClick={() => setIsReportIssueModalOpen(true)}
-            className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"
-            title="Report an issue"
-          >
-            <Bug size={14} />
-            Report Issue
-          </button>
-
-          {isReportIssueModalOpen && (
-            <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
-          )}
+            {isReportIssueModalOpen && (
+                <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
+            )}
         </div>
-      </div>
     );
 };
 
