@@ -80,7 +80,13 @@ export function getGatewayUrl(type?: DeploymentType): string {
         return config?.SELF_HOSTED_GATEWAY_URL || DEFAULTS.SELF_HOSTED_GATEWAY_URL;
     }
     if (deploymentType === 'cloud') {
-        return config?.CLOUD_GATEWAY_URL || DEFAULTS.CLOUD_GATEWAY_URL;
+        // No explicit URL configured: derive the gateway from the page's hostname.
+        // Use protocol+hostname only (no port) — webapp runs on :3000 but the
+        // gateway/API is always on :80 (HTTP default, omitted by browsers).
+        return config?.CLOUD_GATEWAY_URL
+            || (typeof window !== 'undefined'
+                ? window.location.protocol + '//' + window.location.hostname
+                : DEFAULTS.CLOUD_GATEWAY_URL);
     }
     return config?.SELF_HOSTED_GATEWAY_URL || DEFAULTS.SELF_HOSTED_GATEWAY_URL;
 }
