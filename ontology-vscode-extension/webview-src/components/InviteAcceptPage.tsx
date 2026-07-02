@@ -13,7 +13,6 @@ interface InvitationDetails {
     invitedByEmail: string;
     role: string;
     status: string;
-    expiresAt: string;
 }
 
 interface InviteAcceptPageProps {
@@ -29,8 +28,6 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [accepting, setAccepting] = useState(false);
-    const [isExpired, setIsExpired] = useState(false);
-    const [resending, setResending] = useState(false);
     const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
     
     const { user } = useAuth();
@@ -71,10 +68,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
             setInvitation(invData);
             
             // Check response status flags from backend
-            if (response?.expired) {
-                setIsExpired(true);
-                setError(response?.message || 'This invitation has expired.');
-            } else if (response?.alreadyAccepted) {
+            if (response?.alreadyAccepted) {
                 // Invitation was already accepted - show success message and redirect
                 console.log('[InviteAcceptPage] Invitation already accepted, redirecting to workspace');
                 if (onAccepted) {
@@ -87,9 +81,6 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
                 return;
             } else if (response?.cancelled) {
                 setError(response?.message || 'This invitation has been cancelled.');
-            } else if (invData.expiresAt && new Date(invData.expiresAt) < new Date()) {
-                setIsExpired(true);
-                setError('This invitation has expired.');
             }
         } catch (err: any) {
             console.error('[InviteAcceptPage] Error loading invitation:', err);
@@ -103,39 +94,11 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
             } else if (err?.code === 'TIMEOUT' || err?.message?.includes('timeout')) {
                 setError('Connection timed out. Please check your network connection and try again.');
             } else {
-                // Handle error message from various sources
                 const errorMsg = err?.error || err?.response?.data?.error || err?.message || 'Failed to load invitation details';
-                if (errorMsg.toLowerCase().includes('expired')) {
-                    setIsExpired(true);
-                }
                 setError(errorMsg);
             }
         } finally {
             setLoading(false);
-        }
-    };
-
-    const handleResendInvitation = async () => {
-        if (!token) return;
-        
-        try {
-            setResending(true);
-            console.log('[InviteAcceptPage] Requesting invitation resend for token');
-            
-            // Use the public endpoint that doesn't require authentication
-            const response = await apiClient.post(`/api/invitations/request-resend/${token}`);
-            
-            setIsExpired(false);
-            
-            // Note: The token will be different now, user needs to use the new link from email
-            // Show a message to user to check their email for the new link
-            setError('A new invitation link has been sent to your email. Please check your inbox and use the new link.');
-        } catch (err: any) {
-            console.error('[InviteAcceptPage] Error resending invitation:', err);
-            const errorMsg = err?.error || err?.message || 'Failed to resend invitation. Please contact the workspace owner.';
-            setError(errorMsg);
-        } finally {
-            setResending(false);
         }
     };
 
@@ -221,7 +184,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
 
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50">
+            <div className="min-h-screen overflow-y-auto flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50 p-6">
                 <div className="text-center">
                     <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-purple-600 mx-auto"></div>
                     <p className="mt-4 text-gray-600">Loading invitation...</p>
@@ -232,7 +195,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
 
     if (error) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50 p-6">
+            <div className="min-h-screen overflow-y-auto flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50 p-6">
                 <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8">
                     <div className="text-center">
                         <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -240,20 +203,9 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                             </svg>
                         </div>
-                        <h2 className="text-2xl font-bold text-gray-900 mb-2">
-                            {isExpired ? 'Invitation Expired' : 'Invalid Invitation'}
-                        </h2>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Invalid Invitation</h2>
                         <p className="text-gray-600 mb-6">{error}</p>
                         <div className="flex flex-col gap-3">
-                            {isExpired && invitation?.inviteeEmail && (
-                                <button
-                                    onClick={handleResendInvitation}
-                                    disabled={resending}
-                                    className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {resending ? 'Resending...' : 'Resend Invitation'}
-                                </button>
-                            )}
                             <button
                                 onClick={() => { onError && onError(); }}
                                 className="w-full px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
@@ -268,7 +220,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50 p-6">
+        <div className="min-h-screen overflow-y-auto flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50 p-6">
             <div className="max-w-md w-full bg-white rounded-xl shadow-lg overflow-hidden">
                 <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-8 text-white">
                     <div className="text-center">
@@ -306,31 +258,31 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
                             <p className="text-sm text-gray-900">{invitation?.inviteeEmail}</p>
                         </div>
 
-                        <div className="pt-4 border-t">
-                            <p className="text-xs text-gray-500">
-                                This invitation expires on {invitation?.expiresAt ? new Date(invitation.expiresAt).toLocaleDateString() : 'N/A'}
-                            </p>
-                        </div>
                     </div>
 
-                    <button
-                        onClick={handleAcceptInvitation}
-                        disabled={accepting}
-                        className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {accepting ? 'Accepting...' : user ? 'Accept Invitation' : 'Sign Up & Accept'}
-                    </button>
-
-                    {!user && (
-                        <p className="text-center text-sm text-gray-600 mt-4">
-                            Already have an account?{' '}
+                    {user ? (
+                        <button
+                            onClick={handleAcceptInvitation}
+                            disabled={accepting}
+                            className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {accepting ? 'Accepting...' : 'Accept Invitation'}
+                        </button>
+                    ) : (
+                        <div className="flex flex-col gap-3">
                             <button
                                 onClick={() => onLoginRequired && onLoginRequired(invitation?.inviteeEmail || '')}
-                                className="text-purple-600 hover:text-purple-700 font-medium"
+                                className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
                             >
-                                Login
+                                Login & Accept
                             </button>
-                        </p>
+                            <button
+                                onClick={handleAcceptInvitation}
+                                className="w-full px-6 py-3 border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 transition-colors font-medium"
+                            >
+                                Sign Up & Accept
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>

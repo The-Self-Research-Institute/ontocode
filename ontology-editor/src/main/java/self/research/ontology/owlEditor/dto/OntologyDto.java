@@ -14,10 +14,16 @@ public class OntologyDto {
         private String label;
         private String description;
         private String parent;
+        /** All named superclass IRIs (rdfs:subClassOf and intersection parents). */
+        private List<String> subClassOf;
         private List<TreeNode> children;
         private Boolean hasChildren;
         private Map<String, String> annotations;
-        
+        /** Each entry: {iri, label} — populated for asserted hierarchy nodes that have owl:equivalentClass */
+        private List<Map<String, String>> equivalentClasses;
+        /** IRI of the ontology that declares this class (null = active ontology). Populated when scope=closure. */
+        private String sourceOntology;
+
         // Getters & Setters
         public String getId() { return id; }
         public void setId(String id) { this.id = id; }
@@ -27,12 +33,18 @@ public class OntologyDto {
         public void setDescription(String description) { this.description = description; }
         public String getParent() { return parent; }
         public void setParent(String parent) { this.parent = parent; }
+        public List<String> getSubClassOf() { return subClassOf; }
+        public void setSubClassOf(List<String> subClassOf) { this.subClassOf = subClassOf; }
         public List<TreeNode> getChildren() { return children; }
         public void setChildren(List<TreeNode> children) { this.children = children; }
         public Boolean getHasChildren() { return hasChildren; }
         public void setHasChildren(Boolean hasChildren) { this.hasChildren = hasChildren; }
         public Map<String, String> getAnnotations() { return annotations; }
         public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
+        public List<Map<String, String>> getEquivalentClasses() { return equivalentClasses; }
+        public void setEquivalentClasses(List<Map<String, String>> equivalentClasses) { this.equivalentClasses = equivalentClasses; }
+        public String getSourceOntology() { return sourceOntology; }
+        public void setSourceOntology(String sourceOntology) { this.sourceOntology = sourceOntology; }
     }
 
     // For PropertyEditor.tsx

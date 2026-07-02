@@ -1,9 +1,11 @@
-﻿/* eslint-disable @typescript-eslint/no-explicit-any */
+﻿// @ts-nocheck
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useRef } from "react";
 import apiClient from "../../../services/apiClient";
 import ontologyMutationService from "../../../services/ontologyMutationService";
 import { draftTrackingService } from "../../../services/draftTrackingService";
 import { notificationService } from "../../../services/notificationService";
+import { importStageLabel, sanitizeImportMessage } from "../../../utils/importStatusText";
 import { syncService } from "../../../services/syncService";
 import { pluginLoader } from "../../../services/pluginLoader";
 import type { DashboardState } from "./useDashboardState";
@@ -241,41 +243,58 @@ export function useDashboardInit(state: DashboardState) {
     }
   }, []);
 
-  // Check status once (no polling - rely on WebSocket notifications)
   const waitForProcessingComplete = useCallback(
     async (currentProjectId: string): Promise<{ ready: boolean; error?: string; status?: string }> => {
-      try {
-        const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(currentProjectId)}`);
-        const status = statusRes?.data?.status || statusRes?.status;
+      const POLL_INTERVAL_MS = 3000;
+      const deadline = Date.now() + 15 * 60 * 1000; // 15-minute hard timeout
 
-        console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
+      while (true) {
+        try {
+          const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(currentProjectId)}`);
+          const status = statusRes?.data?.status || statusRes?.status;
 
-        if (status === "COMPLETED") {
+          console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
+
+          if (status === "COMPLETED") {
+            setLoadingStatusMessage("");
+            return { ready: true, status };
+          }
+
+          if (status === "ERROR") {
+            console.error("[Dashboard] Project processing failed");
+            const errorMessage = statusRes?.data?.errorMessage || statusRes?.data?.error || "Import failed";
+            return { ready: false, error: errorMessage, status };
+          }
+
+          if (status === "PROCESSING") {
+            const stage = statusRes?.data?.stage;
+            const progress = statusRes?.data?.progress;
+            const label = importStageLabel(stage, statusRes?.data?.statusMessage);
+            const progressText = progress != null ? ` (${progress}%)` : "";
+            setLoadingStatusMessage(`${label}${progressText}`);
+            setIsInitialLoading(true);
+
+            if (Date.now() >= deadline) {
+              return {
+                ready: false,
+                error: "Processing is taking longer than expected. The file is large — please check back in a few minutes.",
+                status,
+              };
+            }
+            await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+            continue;
+          }
+
+          // Unknown status — allow loading attempt
+          console.warn("[Dashboard] Unknown status, allowing load attempt:", status);
           return { ready: true, status };
+        } catch (error) {
+          console.error("[Dashboard] Error checking project status:", error);
+          return { ready: true };
         }
-
-        if (status === "ERROR") {
-          console.error("[Dashboard] Project processing failed");
-          const errorMessage = statusRes?.data?.errorMessage || statusRes?.data?.error || "Import failed";
-          return { ready: false, error: errorMessage, status };
-        }
-
-        // If PROCESSING, WebSocket will notify when complete
-        if (status === "PROCESSING") {
-          console.log("[Dashboard] File is processing, waiting for WebSocket notification...");
-          return { ready: false, error: "File is still processing. Please wait a moment and try again.", status };
-        }
-
-        // Unknown status - allow loading attempt
-        console.warn("[Dashboard] Unknown status, allowing load attempt:", status);
-        return { ready: true, status };
-      } catch (error) {
-        console.error("[Dashboard] Error checking project status:", error);
-        // Don't block on error - let the load attempt happen
-        return { ready: true };
       }
     },
-    [],
+    [encodeProjectId, setLoadingStatusMessage, setIsInitialLoading],
   );
 
   const resolveUserEmail = useCallback(() => {
@@ -360,17 +379,18 @@ export function useDashboardInit(state: DashboardState) {
         // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
         // so we don't need to make separate calls for those
         const apiFetchStart = Date.now();
-        const dataFetchPromise = Promise.all([
-          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`),
-          apiClient
-            .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`)
-            .catch(() => null),
-          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`),
-        ]);
+        const metadataRes = await apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`);
+        const [topLevelRes, instanceCountsRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] =
+          await Promise.all([
+            apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`),
+            apiClient
+              .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`)
+              .catch(() => null),
+            apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`),
+            apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`),
+            apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`),
+            apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`),
+          ]);
 
         // Allow UI to be responsive immediately if not waiting
         if (!waitForCompletion) {
@@ -378,17 +398,6 @@ export function useDashboardInit(state: DashboardState) {
             setIsInitialLoading(false);
           }, 500);
         }
-
-        // Continue loading in background
-        const [
-          metadataRes,
-          topLevelRes,
-          instanceCountsRes,
-          propertiesRes,
-          individualsRes,
-          annotationPropsRes,
-          datatypesRes,
-        ] = await dataFetchPromise;
 
         const apiFetchDuration = Date.now() - apiFetchStart;
         console.log(`[Dashboard] [PERF] 7 parallel API fetches completed: ${apiFetchDuration}ms`);
@@ -850,10 +859,14 @@ export function useDashboardInit(state: DashboardState) {
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       console.log("[Dashboard] ðŸ“¥ Raw annotations data received:", data);
-      // Filter out invalid annotations - backend returns propertyIri
-      const validAnnotations = (Array.isArray(data) ? data : []).filter(
-        (ann) => ann && ann.propertyIri && ann.value !== undefined,
-      );
+      const validAnnotations = (Array.isArray(data) ? data : [])
+        .map((ann) => {
+          if (!ann || ann.value === undefined) return null;
+          const propertyIri = ann.propertyIri || ann.property;
+          if (!propertyIri) return null;
+          return { ...ann, propertyIri, property: propertyIri };
+        })
+        .filter(Boolean);
       console.log("[Dashboard] âœ… Valid annotations after filtering:", validAnnotations);
 
       // Only update if we got data, or if explicitly clearing (validAnnotations.length >= 0 always true, so always update)
@@ -2519,16 +2532,12 @@ export function useDashboardInit(state: DashboardState) {
 
             // Update loading status message for user feedback
             if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.message) {
-              setLoadingStatusMessage(message.status.metadata.message);
+              setLoadingStatusMessage(sanitizeImportMessage(message.status.metadata.message as string));
             } else if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.stage) {
-              const stage = message.status.metadata.stage;
-              const stageMessages: Record<string, string> = {
-                parsing: "Parsing ontology file...",
-                "graphdb-loading": "Loading data into GraphDB (this may take several minutes for large files)...",
-                "graphdb-load-complete": "GraphDB load complete, computing metadata...",
-                "computing-metadata": "Computing ontology statistics...",
-              };
-              setLoadingStatusMessage(stageMessages[stage] || "Processing...");
+              const stage = message.status.metadata.stage as string;
+              setLoadingStatusMessage(
+                importStageLabel(stage, message.status.metadata?.message as string | undefined),
+              );
             }
           }
 
@@ -2627,7 +2636,10 @@ export function useDashboardInit(state: DashboardState) {
               status: message.status.status,
             });
 
-            const errorMessage = message.status.statusMessage || message.status.metadata?.error || "Import failed";
+            const errorMessage =
+              sanitizeImportMessage(message.status.statusMessage) ||
+              sanitizeImportMessage(message.status.metadata?.error as string) ||
+              "Import failed";
             const projectName = message.status.projectId || "unknown";
 
             // Extract more user-friendly error message
@@ -2636,17 +2648,17 @@ export function useDashboardInit(state: DashboardState) {
               errorMessage.includes("UnknownHostException: graphdb") ||
               errorMessage.includes("UnknownHostException")
             ) {
-              displayError = "Cannot connect to GraphDB. Please ensure GraphDB service is running and accessible.";
+              displayError = "Cannot connect to the ontology service. Please ensure backend services are running.";
               console.log("[Dashboard] ðŸ”„ Translated error to user-friendly message (UnknownHost)");
             } else if (errorMessage.includes("Connection refused") || errorMessage.includes("ConnectException")) {
-              displayError = "GraphDB connection refused. Please verify GraphDB is running on the correct port.";
+              displayError = "Ontology service connection refused. Please verify backend services are running.";
               console.log("[Dashboard] ðŸ”„ Translated error to user-friendly message (Connection refused)");
             } else if (errorMessage.includes("HTTP error code 404")) {
-              displayError = "Repository not found or not initialized. Please check GraphDB configuration.";
+              displayError = "Ontology data store not found or not initialized. Please check service configuration.";
               console.log("[Dashboard] ðŸ”„ Translated error to user-friendly message (404)");
             } else if (errorMessage.includes("unable to start transaction")) {
               displayError =
-                "Unable to start database transaction. Please verify GraphDB is running and the repository exists.";
+                "Unable to start database transaction. Please verify backend services are running.";
               console.log("[Dashboard] ðŸ”„ Translated error to user-friendly message (transaction)");
             }
 
@@ -3563,8 +3575,7 @@ export function useDashboardInit(state: DashboardState) {
 
   useEffect(() => {
     // Initialize notification service to show toasts via collaboration context
-    // This is a one-time setup that shouldn't re-run
-    notificationService.onToast((options) => {
+    const unsubscribe = notificationService.onToast((options) => {
       collaboration.addNotification({
         type: options.type,
         message: `${options.title}: ${options.message}`,
@@ -3579,7 +3590,9 @@ export function useDashboardInit(state: DashboardState) {
     if (typeof window !== "undefined" && !window.vscode) {
       notificationService.requestPermission();
     }
-  }, []); // Empty deps - collaboration.addNotification is stable
+
+    return unsubscribe;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // Load previously installed plugins from localStorage

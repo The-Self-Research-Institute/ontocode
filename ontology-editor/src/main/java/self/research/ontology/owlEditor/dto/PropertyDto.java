@@ -9,7 +9,7 @@ public class PropertyDto {
     private String label;
     private String description;
     private String type;
-    private Map<String, String> annotations;
+    private Map<String, List<String>> annotations;
     private List<String> domains;
     private List<String> ranges;
     private List<String> characteristics;
@@ -18,6 +18,7 @@ public class PropertyDto {
     private List<String> inverseProperties;
     private List<String> disjointProperties;
     private List<String> equivalentProperties;
+    private List<String> propertyChains;
     private List<PropertyDto> children;  // NEW - for tree structure
 
     // Getters and Setters
@@ -61,11 +62,11 @@ public class PropertyDto {
         this.type = type;
     }
 
-    public Map<String, String> getAnnotations() {
+    public Map<String, List<String>> getAnnotations() {
         return annotations;
     }
 
-    public void setAnnotations(Map<String, String> annotations) {
+    public void setAnnotations(Map<String, List<String>> annotations) {
         this.annotations = annotations;
     }
 
@@ -131,6 +132,14 @@ public class PropertyDto {
 
     public void setEquivalentProperties(List<String> equivalentProperties) {
         this.equivalentProperties = equivalentProperties;
+    }
+
+    public List<String> getPropertyChains() {
+        return propertyChains;
+    }
+
+    public void setPropertyChains(List<String> propertyChains) {
+        this.propertyChains = propertyChains;
     }
 
     public List<PropertyDto> getChildren() {

@@ -16,6 +16,7 @@ import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
@@ -89,6 +90,28 @@ public class JiraService {
         }
         
         try {
+            PermissionCheck permissionCheck = checkProjectPermissions();
+            if (permissionCheck.checked && (!permissionCheck.canBrowseProject || !permissionCheck.canCreateIssues)) {
+                StringBuilder message = new StringBuilder("Jira credentials are valid but missing permissions for project ")
+                    .append(jiraProjectKey)
+                    .append(": ");
+
+                if (!permissionCheck.canBrowseProject) {
+                    message.append("Browse Projects");
+                }
+                if (!permissionCheck.canBrowseProject && !permissionCheck.canCreateIssues) {
+                    message.append(", ");
+                }
+                if (!permissionCheck.canCreateIssues) {
+                    message.append("Create Issues");
+                }
+
+                return JiraValidationResult.builder()
+                    .success(false)
+                    .message(message.toString())
+                    .build();
+            }
+
             // Test connection by getting project details
             String projectUrl = jiraCloudUrl + "/rest/api/3/project/" + jiraProjectKey;
             
@@ -144,6 +167,31 @@ public class JiraService {
                 .build();
         }
     }
+
+    private PermissionCheck checkProjectPermissions() {
+        try {
+            String permissionsUrl = jiraCloudUrl
+                + "/rest/api/3/mypermissions?projectKey="
+                + URLEncoder.encode(jiraProjectKey, StandardCharsets.UTF_8)
+                + "&permissions=BROWSE_PROJECTS,CREATE_ISSUES";
+
+            JsonNode response = webClient.get()
+                .uri(permissionsUrl)
+                .headers(this::setAuthHeaders)
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(Duration.ofSeconds(10));
+
+            JsonNode permissions = response != null ? response.path("permissions") : null;
+            boolean canBrowseProject = permissions != null && permissions.path("BROWSE_PROJECTS").path("havePermission").asBoolean(false);
+            boolean canCreateIssues = permissions != null && permissions.path("CREATE_ISSUES").path("havePermission").asBoolean(false);
+
+            return new PermissionCheck(true, canBrowseProject, canCreateIssues);
+        } catch (Exception e) {
+            log.warn("Could not validate Jira permissions for project {}", jiraProjectKey, e);
+            return new PermissionCheck(false, false, false);
+        }
+    }
     
     /**
      * Create a bug issue in Jira under the configured epic
@@ -152,7 +200,7 @@ public class JiraService {
         if (!isEnabled()) {
             throw new IllegalStateException("Jira integration is not enabled");
         }
-        
+
         try {
             ObjectNode issueData = buildIssuePayload(summary, description, priority, issueType);
             
@@ -259,31 +307,31 @@ public class JiraService {
     private ObjectNode buildIssuePayload(String summary, String description, String priority, String issueType) {
         ObjectNode payload = objectMapper.createObjectNode();
         ObjectNode fields = objectMapper.createObjectNode();
-        
+
         // Project
         ObjectNode project = objectMapper.createObjectNode();
         project.put("key", jiraProjectKey);
         fields.set("project", project);
-        
+
         // Issue type
         ObjectNode issueTypeNode = objectMapper.createObjectNode();
         issueTypeNode.put("name", issueType);
         fields.set("issuetype", issueTypeNode);
-        
+
         // Summary and description
         fields.put("summary", summary);
-        
+
         // Description in Atlassian Document Format (ADF)
         ObjectNode descriptionAdf = buildDescriptionAdf(description);
         fields.set("description", descriptionAdf);
-        
+
         // Priority
         if (priority != null && !priority.isEmpty()) {
             ObjectNode priorityNode = objectMapper.createObjectNode();
             priorityNode.put("name", priority);
             fields.set("priority", priorityNode);
         }
-        
+
         // Parent epic (if configured) - Note: Not all projects support parent field
         // If this fails, the epic can be linked manually or via a different mechanism
         if (jiraEpicKey != null && !jiraEpicKey.isEmpty()) {
@@ -296,7 +344,7 @@ public class JiraService {
                 log.warn("Could not set parent epic {}: {}", jiraEpicKey, e.getMessage());
             }
         }
-        
+
         payload.set("fields", fields);
         return payload;
     }
@@ -371,4 +419,6 @@ public class JiraService {
         private String issueUrl;
         private String errorMessage;
     }
+
+    private record PermissionCheck(boolean checked, boolean canBrowseProject, boolean canCreateIssues) {}
 }

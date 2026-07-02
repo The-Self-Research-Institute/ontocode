@@ -210,20 +210,34 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setError(null);
     
     try {
-      const response = await apiClient.post<SparqlQueryResult>(
+      const response = await apiClient.post<any>(
         `/api/sparql/query/${projectId}`,
         { query: queryText }
       );
-      // Transform backend response to expected format
+      // Backend returns { head: {vars:[]}, results: [{var: value,...}], executionTime }
+      // results is a flat array of {var: stringValue} maps (not SPARQL JSON {bindings:[...]} format)
+      if (response.error) {
+        setError(response.error);
+        return;
+      }
+      // Defensive: handle flat array, SPARQL JSON bindings wrapper, or JSON-string (double-encode)
+      let resultsData = response.results;
+      if (typeof resultsData === 'string') {
+        try { resultsData = JSON.parse(resultsData); } catch { resultsData = []; }
+      }
+      const rawRows: Record<string, any>[] = Array.isArray(resultsData)
+        ? resultsData
+        : Array.isArray(resultsData?.bindings)
+          ? resultsData.bindings
+          : [];
       const transformedResults: SparqlQueryResult = {
         head: response.head,
         results: {
-          bindings: (response.results?.bindings || []).map((row: Record<string, any>) => {
+          bindings: rawRows.map((row: Record<string, any>) => {
             const binding: SparqlBinding = {};
             for (const [key, val] of Object.entries(row)) {
-              // Handle both simple string values and SparqlBinding objects
               binding[key] = {
-                type: val?.type || 'literal',
+                type: val?.type || (typeof val === 'string' && val.startsWith('http') ? 'uri' : 'literal'),
                 value: (typeof val === 'string' ? val : val?.value) || '',
                 datatype: val?.datatype,
                 'xml:lang': val?.['xml:lang']
@@ -235,7 +249,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
         executionTime: (response as any).executionTime
       };
       setResults(transformedResults);
-      // Switch to results tab automatically
       setActiveTab('results');
     } catch (err: any) {
       setError(err?.message || 'Failed to execute query');

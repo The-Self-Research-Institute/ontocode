@@ -2,18 +2,27 @@ package self.research.ontology.auth.repository;
 
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.Query;
+import org.springframework.stereotype.Repository;
 import self.research.ontology.auth.model.Project;
 
 import java.util.List;
 import java.util.Optional;
 
+@Repository("authProjectRepository")
 public interface ProjectRepository extends MongoRepository<Project, String> {
     
     Optional<Project> findByProjectId(String projectId);
+
+    // List variant — tolerates duplicate documents with the same projectId
+    List<Project> findAllByProjectId(String projectId);
     
     // Find project excluding soft-deleted ones
     @Query("{ 'projectId': ?0, $or: [ { 'isDeleted': { $exists: false } }, { 'isDeleted': false } ] }")
     Optional<Project> findActiveByProjectId(String projectId);
+
+    // List variant — tolerates duplicate documents (returns all matches)
+    @Query("{ 'projectId': ?0, $or: [ { 'isDeleted': { $exists: false } }, { 'isDeleted': false } ] }")
+    List<Project> findAllActiveByProjectId(String projectId);
     
     List<Project> findByWorkspaceId(String workspaceId);
     

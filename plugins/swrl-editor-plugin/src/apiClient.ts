@@ -66,19 +66,29 @@ class ApiClient {
   }
 
   private async fetchRequest<T>(method: string, url: string, data?: any): Promise<T> {
-    const baseUrl = window.API_BASE_URL || 'http://localhost:8082';
+    const baseUrl = window.API_BASE_URL || '';
     const fullUrl = url.startsWith('http') ? url : `${baseUrl}${url}`;
-    
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = localStorage.getItem('authToken');
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
     const response = await fetch(fullUrl, {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: data ? JSON.stringify(data) : undefined,
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      let detail = '';
+      try {
+        const body = await response.text();
+        if (body) {
+          const parsed = JSON.parse(body);
+          detail = parsed.error || parsed.message || body;
+        }
+      } catch { /* ignore parse failure */ }
+      throw new Error(detail || `Request failed (${response.status})`);
     }
 
     // Handle empty responses (e.g., DELETE operations)
@@ -86,7 +96,7 @@ class ApiClient {
     if (!text || text.trim() === '') {
       return {} as T;
     }
-    
+
     return JSON.parse(text);
   }
 

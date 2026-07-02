@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useAuth } from "../custom-hook/useAuth";
 import { Loader2, Eye, EyeOff, ArrowLeft, KeyRound, Bug } from "lucide-react";
 import ReportIssueModal from "./ReportIssueModal";
@@ -18,7 +18,23 @@ const ResetPasswordForm = ({ onBackToLogin, initialToken }: ResetPasswordFormPro
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [countdown, setCountdown] = useState(3);
   const { resetPassword } = useAuth();
+
+  useEffect(() => {
+    if (!successMessage) return;
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          onBackToLogin();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [successMessage, onBackToLogin]);
 
   const validatePassword = (pwd: string): string | null => {
     if (pwd.length < 8) return "Password must be at least 8 characters";
@@ -84,11 +100,14 @@ const ResetPasswordForm = ({ onBackToLogin, initialToken }: ResetPasswordFormPro
             <div className="bg-green-500/10 border border-green-400/30 text-green-400 px-4 py-3 rounded-lg mb-6 text-sm backdrop-blur-sm">
               {successMessage}
             </div>
+            <p className="text-gray-400 text-sm mb-3">
+              Redirecting to sign in in {countdown}s…
+            </p>
             <button
               onClick={onBackToLogin}
               className="w-full flex items-center justify-center py-3 px-4 rounded-lg text-sm font-medium text-white transition-all duration-300 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600"
             >
-              Sign In with New Password
+              Sign In Now
             </button>
           </div>
         ) : (

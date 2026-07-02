@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OntoCode Desktop — Electron Developer Guide</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f7f8fa;
+    color: #1a1a2e;
+    font-size: 14px;
+    line-height: 1.65;
+  }
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 240px;
+    background: #1a1a2e; color: #c8cfe8; overflow-y: auto;
+    padding: 24px 0;
+  }
+  .sidebar .logo {
+    padding: 0 20px 24px; border-bottom: 1px solid #2d2d4a;
+    margin-bottom: 12px;
+  }
+  .sidebar .logo h1 { font-size: 16px; color: #fff; font-weight: 700; }
+  .sidebar .logo p  { font-size: 11px; color: #7a8099; margin-top: 3px; }
+  .sidebar nav a {
+    display: block; padding: 7px 20px; color: #c8cfe8; text-decoration: none;
+    font-size: 13px; border-left: 3px solid transparent;
+    transition: background .15s, border-color .15s;
+  }
+  .sidebar nav a:hover { background: #2a2a44; }
+  .sidebar nav a.active { background: #2a2a44; border-left-color: #6c63ff; color: #fff; }
+  .sidebar nav .section-head {
+    padding: 14px 20px 4px; font-size: 10px; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase; color: #4a5068;
+  }
+  main { margin-left: 240px; padding: 48px 56px; max-width: 960px; }
+  h1 { font-size: 28px; font-weight: 800; color: #1a1a2e; margin-bottom: 8px; }
+  h2 {
+    font-size: 20px; font-weight: 700; color: #1a1a2e;
+    margin: 48px 0 16px; padding-top: 48px;
+    border-top: 1px solid #e2e5ef;
+  }
+  h2:first-of-type { margin-top: 24px; padding-top: 24px; border-top: none; }
+  h3 { font-size: 15px; font-weight: 700; color: #2d3150; margin: 28px 0 10px; }
+  p  { margin-bottom: 14px; color: #3a3d5c; }
+  .lead { font-size: 16px; color: #4a4d6c; margin-bottom: 32px; }
+  pre {
+    background: #1a1a2e; color: #e2e5f0; border-radius: 8px;
+    padding: 16px 20px; overflow-x: auto; font-size: 13px;
+    font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    margin-bottom: 16px; line-height: 1.55;
+  }
+  code {
+    background: #eef0f8; color: #5b3fc0; border-radius: 4px;
+    padding: 1px 6px; font-size: 12.5px;
+    font-family: "Cascadia Code", Consolas, monospace;
+  }
+  pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+  .comment { color: #6b7a99; }
+  .kw  { color: #c792ea; }
+  .str { color: #c3e88d; }
+  .num { color: #f78c6c; }
+  table {
+    width: 100%; border-collapse: collapse; margin-bottom: 24px;
+    font-size: 13px;
+  }
+  th { background: #1a1a2e; color: #c8cfe8; text-align: left; padding: 9px 14px; font-weight: 600; }
+  td { border-bottom: 1px solid #e2e5ef; padding: 9px 14px; vertical-align: top; }
+  tr:hover td { background: #f0f2fa; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+  }
+  .badge-green  { background: #d4f8e8; color: #0d6e3f; }
+  .badge-blue   { background: #dde8ff; color: #1746a0; }
+  .badge-orange { background: #fff0db; color: #9b4d00; }
+  .badge-purple { background: #ede8ff; color: #5b3fc0; }
+  .callout {
+    border-left: 4px solid; border-radius: 0 6px 6px 0;
+    padding: 14px 18px; margin-bottom: 20px; font-size: 13px;
+  }
+  .callout-info  { border-color: #6c63ff; background: #ede8ff; color: #2d1d6e; }
+  .callout-tip   { border-color: #22c55e; background: #d4f8e8; color: #0d4e2e; }
+  .callout-warn  { border-color: #f59e0b; background: #fff8e1; color: #7c5400; }
+  .callout strong { display: block; margin-bottom: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .arch-box {
+    background: #1a1a2e; border-radius: 10px; padding: 28px 24px;
+    margin-bottom: 24px; overflow-x: auto;
+  }
+  .arch-box pre { background: none; padding: 0; margin: 0; color: #c8cfe8; }
+  .step-list { list-style: none; padding: 0; }
+  .step-list li {
+    display: flex; gap: 16px; margin-bottom: 18px; align-items: flex-start;
+  }
+  .step-num {
+    flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%;
+    background: #6c63ff; color: #fff; font-weight: 800; font-size: 13px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step-body { flex: 1; }
+  .step-body strong { display: block; margin-bottom: 4px; color: #1a1a2e; }
+  .resource-tree {
+    background: #1a1a2e; border-radius: 8px; padding: 20px 24px;
+    font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px;
+    color: #c8cfe8; line-height: 1.9; margin-bottom: 20px;
+  }
+  .resource-tree .dir  { color: #82aaff; }
+  .resource-tree .file { color: #c3e88d; }
+  .resource-tree .note { color: #6b7a99; }
+  .toc-chip {
+    display: inline-block; background: #ede8ff; color: #5b3fc0;
+    border-radius: 20px; padding: 4px 12px; font-size: 12px;
+    text-decoration: none; margin: 3px 4px 3px 0;
+  }
+  .toc-chip:hover { background: #6c63ff; color: #fff; }
+  hr { border: none; border-top: 1px solid #e2e5ef; margin: 36px 0; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+  .card {
+    background: #fff; border: 1px solid #e2e5ef; border-radius: 10px;
+    padding: 20px 22px;
+  }
+  .card h4 { font-size: 14px; font-weight: 700; margin-bottom: 8px; color: #1a1a2e; }
+  .card p  { font-size: 13px; margin: 0; color: #4a5068; }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+  <div class="logo">
+    <h1>OntoCode Desktop</h1>
+    <p>Electron Developer Guide</p>
+  </div>
+  <nav>
+    <div class="section-head">Getting Started</div>
+    <a href="#overview">Overview</a>
+    <a href="#architecture">Architecture</a>
+    <div class="section-head">Development</div>
+    <a href="#dev-workflow">Dev Hot-Reload</a>
+    <a href="#env-vars">Environment Variables</a>
+    <a href="#java-changes">Java / Backend Changes</a>
+    <div class="section-head">Conversion Guide</div>
+    <a href="#what-changed">What Changed</a>
+    <a href="#api-url">API URL Injection</a>
+    <a href="#ipc">IPC Bridge</a>
+    <a href="#service-manager">ServiceManager</a>
+    <a href="#resource-layout">Resource Layout</a>
+    <div class="section-head">Build</div>
+    <a href="#prepare">Prepare Resources</a>
+    <a href="#jre">Bundled JRE</a>
+    <a href="#package">Package &amp; Distribute</a>
+    <div class="section-head">Sync &amp; Share</div>
+    <a href="#sync-overview">Sync Overview</a>
+    <a href="#pairing">Device Pairing</a>
+    <a href="#share-link">Share Links</a>
+    <a href="#sync-ipc">Sync IPC API</a>
+    <div class="section-head">Reference</div>
+    <a href="#quickref">Quick Reference</a>
+  </nav>
+</div>
+
+<main>
+
+  <!-- Hero -->
+  <h1>OntoCode Desktop — Electron Guide</h1>
+  <p class="lead">Everything you need to develop, build, and ship the standalone desktop app.
+    No Docker required at runtime — all backend services start automatically inside the app.</p>
+
+  <div>
+    <a href="#dev-workflow" class="toc-chip">Dev hot-reload</a>
+    <a href="#what-changed" class="toc-chip">Conversion guide</a>
+    <a href="#jre" class="toc-chip">Bundled JRE</a>
+    <a href="#package" class="toc-chip">Build for Windows</a>
+    <a href="#sync-overview" class="toc-chip">P2P Sync</a>
+  </div>
+
+  <!-- Overview -->
+  <h2 id="overview">Overview</h2>
+  <p>OntoCode Desktop is a fully self-contained Electron application. The end user installs
+    a single <code>.exe</code> / <code>.dmg</code> / <code>.AppImage</code> and gets a
+    complete ontology editing environment — no Java, no Docker, no account required.</p>
+
+  <div class="two-col">
+    <div class="card">
+      <h4>🖥 End User</h4>
+      <p>Downloads the installer. Launches OntoCode. Everything starts automatically.
+        Works 100% offline. Files stay on their own machine.</p>
+    </div>
+    <div class="card">
+      <h4>🛠 Developer</h4>
+      <p>Runs Docker for the backend, Vite for the UI, and Electron pointed at both.
+        React changes appear in Electron via HMR in &lt;100 ms.</p>
+    </div>
+  </div>
+
+  <!-- Architecture -->
+  <h2 id="architecture">Architecture</h2>
+  <div class="arch-box"><pre>
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  Electron Process  (main.js)                                         │
+  │                                                                      │
+  │  ┌──────────────────────┐  IPC  ┌────────────────────────────────┐  │
+  │  │  BrowserWindow       │ ◄───► │  ipcMain handlers              │  │
+  │  │  (Chromium renderer) │       │  file:open / file:saveAs       │  │
+  │  │                      │       │  sync:shareWorkspace           │  │
+  │  │  React UI            │       │  sync:addPeer / sync:parseLink │  │
+  │  │  (webview-src/)      │       │  config:get / auth:*           │  │
+  │  └──────────────────────┘       └────────────┬───────────────────┘  │
+  │                                              │                       │
+  │                                    ServiceManager                    │
+  │                                  ┌─────────────────────┐            │
+  │                                  │ mongod  :27117       │            │
+  │                                  │ fuseki  :13030       │            │
+  │                                  │ owl-editor  :18083   │            │
+  │                                  │ syncthing   :18384   │            │
+  │                                  └─────────────────────┘            │
+  └──────────────────────────────────────────────────────────────────────┘
+  </pre></div>
+
+  <p>All four processes are child processes of Electron. They are started sequentially at
+    launch (each health-checked before the next starts) and stopped gracefully on quit.
+    Ports are offset from the defaults so a running Docker stack never conflicts with the
+    desktop app.</p>
+
+  <table>
+    <thead><tr><th>Service</th><th>Docker port</th><th>Desktop port</th><th>Binary source</th></tr></thead>
+    <tbody>
+      <tr><td>MongoDB</td><td>27017</td><td>27117</td><td><code>resources/backend/mongodb/</code></td></tr>
+      <tr><td>Apache Jena Fuseki</td><td>3030</td><td>13030</td><td><code>resources/backend/jars/fuseki-server.jar</code></td></tr>
+      <tr><td>OWL Editor (Spring Boot)</td><td>8083</td><td>18083</td><td><code>resources/backend/jars/owl-editor.jar</code></td></tr>
+      <tr><td>Syncthing</td><td>—</td><td>18384</td><td><code>resources/backend/syncthing/</code></td></tr>
+    </tbody>
+  </table>
+
+  <!-- Dev Workflow -->
+  <h2 id="dev-workflow">Dev Hot-Reload Workflow</h2>
+
+  <p>In dev mode (<code>ELECTRON_IS_DEV=1</code>), Electron skips the bundled JAR startup
+    entirely, connects to your Docker backend, and loads the React UI from Vite's dev server
+    which provides full HMR. React changes appear in the Electron window in ~100 ms.</p>
+
+  <h3>One-command start (Windows)</h3>
+  <pre><span class="comment">REM From the repo root or electron-app/</span>
+electron-app\scripts\start-electron-dev.bat</pre>
+
+  <p>This script does three things in sequence:</p>
+  <ol class="step-list">
+    <li>
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <strong>Start Docker backend</strong>
+        <code>docker compose -f docker-compose.dev.yml up -d</code>
+      </div>
+    </li>
+    <li>
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <strong>Start Vite dev server</strong>
+        Opens a new terminal running <code>npm run dev</code> in <code>webview-src/</code> (port 5173)
+      </div>
+    </li>
+    <li>
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <strong>Start Electron</strong>
+        Launches with <code>ELECTRON_IS_DEV=1</code> — DevTools open automatically, no JAR startup
+      </div>
+    </li>
+  </ol>
+
+  <h3>Manual start (three terminals)</h3>
+  <pre><span class="comment"># Terminal 1 — Docker backend</span>
+docker compose -f docker-compose.dev.yml up -d
+
+<span class="comment"># Terminal 2 — Vite HMR</span>
+cd ontology-vscode-extension\webview-src
+npm run dev
+
+<span class="comment"># Terminal 3 — Electron</span>
+cd electron-app
+<span class="kw">set</span> ELECTRON_IS_DEV=1
+npx electron .</pre>
+
+  <h2 id="env-vars">Environment Variables</h2>
+  <table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>ELECTRON_IS_DEV</code></td><td><code>0</code></td><td><code>1</code> = dev mode: skip JAR startup, connect to Docker</td></tr>
+      <tr><td><code>ELECTRON_DEV_API_URL</code></td><td><code>http://localhost:8083</code></td><td>Backend URL override for dev mode</td></tr>
+      <tr><td><code>ELECTRON_VITE_URL</code></td><td><code>http://localhost:5173</code></td><td>Vite dev server URL override</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="java-changes">Changing Java / Spring Boot Code</h2>
+  <p>Java changes need a Docker rebuild. Electron stays open — just refresh the window
+    after the service restarts.</p>
+  <pre><span class="comment">Rebuild only the editor service (~30-60 s)</span>
+docker compose -f docker-compose.dev.yml up -d --build ontology-editor
+
+<span class="comment">Then in Electron:</span>
+Ctrl+R   (refresh window)</pre>
+
+  <!-- Conversion Guide -->
+  <h2 id="what-changed">Conversion Guide — What Changed</h2>
+  <p>The web app (Docker + browser) became a desktop app (Electron + child processes).
+    These are the specific changes made to adapt it.</p>
+
+  <h2 id="api-url">1. API URL Injection</h2>
+  <p>In the web app the gateway routes requests. In Electron the React app talks directly
+    to the Spring Boot service. <code>main.js</code> injects the URL on page load:</p>
+  <pre><span class="comment">// main.js — injected into every page load</span>
+mainWindow.webContents.executeJavaScript(<span class="str">`
+  window.__DESKTOP_API_URL__ = 'http://127.0.0.1:18083';
+  window.__DESKTOP_MODE__    = true;
+  window.__IS_DEV__          = false;
+`</span>);</pre>
+  <p>The React <code>apiClient.ts</code> checks <code>window.__DESKTOP_API_URL__</code>
+    and uses it when present, falling back to the normal gateway path in the browser.</p>
+
+  <h2 id="ipc">2. IPC Bridge (preload.js)</h2>
+  <p>Native capabilities (file picker, sync, notifications) are exposed to the renderer
+    via Electron's contextBridge — never via <code>nodeIntegration</code>.</p>
+  <pre><span class="comment">// preload.js</span>
+contextBridge.exposeInMainWorld(<span class="str">'electronAPI'</span>, {
+  openFile:      ()      =&gt; ipcRenderer.invoke(<span class="str">'file:open'</span>),
+  saveAsFile:    (data)  =&gt; ipcRenderer.invoke(<span class="str">'file:saveAs'</span>, data),
+  syncStatus:    ()      =&gt; ipcRenderer.invoke(<span class="str">'sync:status'</span>),
+  shareWorkspace:(opts)  =&gt; ipcRenderer.invoke(<span class="str">'sync:shareWorkspace'</span>, opts),
+  ipc:           (ch, d) =&gt; ipcRenderer.invoke(ch, d),
+});</pre>
+  <p>In React, always guard with <code>window.electronAPI?</code> so the same code works
+    in both the browser and Electron.</p>
+
+  <h2 id="service-manager">3. ServiceManager</h2>
+  <p>The four processes that run as Docker containers in the web app run as Node.js
+    <code>child_process.spawn()</code> calls in the desktop app. Each process is:</p>
+  <ul style="margin: 0 0 16px 24px;">
+    <li>Health-checked before the next one starts (TCP or HTTP poll)</li>
+    <li>Logged to <code>%APPDATA%/OntoCode/logs/&lt;name&gt;.log</code></li>
+    <li>Stopped gracefully on quit (SIGTERM → SIGKILL after grace period)</li>
+  </ul>
+  <pre><span class="comment">// Startup sequence in ServiceManager.startAll()</span>
+await startMongo();    <span class="comment">// waits for TCP :27117</span>
+await startFuseki();   <span class="comment">// waits for HTTP /$/ping on :13030</span>
+await startEditor();   <span class="comment">// waits for HTTP /actuator/health on :18083</span></pre>
+
+  <h2 id="resource-layout">4. Resource Layout</h2>
+  <div class="resource-tree">
+    <span class="dir">electron-app/resources/backend/</span><br>
+    &nbsp;&nbsp;<span class="dir">jars/</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">owl-editor.jar</span>  <span class="note">← Spring Boot fat JAR</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">fuseki-server.jar</span>  <span class="note">← Apache Jena Fuseki 6.1.0 standalone</span><br>
+    &nbsp;&nbsp;<span class="dir">mongodb/</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">win32/</span>&nbsp;&nbsp;<span class="file">mongod.exe</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">darwin/</span>&nbsp;<span class="file">mongod</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">linux/</span>&nbsp;&nbsp;<span class="file">mongod</span><br>
+    &nbsp;&nbsp;<span class="dir">jre/</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">bin/</span>&nbsp;<span class="file">java.exe</span>  <span class="note">← bundled by prepare-resources.js via jlink</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">lib/</span>&nbsp;<span class="note">…</span><br>
+    &nbsp;&nbsp;<span class="dir">syncthing/</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">win32/</span>&nbsp;&nbsp;<span class="file">syncthing.exe</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">darwin/</span>&nbsp;<span class="file">syncthing</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">linux/</span>&nbsp;&nbsp;<span class="file">syncthing</span>
+  </div>
+
+  <!-- Build -->
+  <h2 id="prepare">Prepare Resources</h2>
+  <p>Before building the installer, all backend binaries must be in
+    <code>resources/backend/</code>. Run the prepare script once per release:</p>
+  <pre>cd electron-app
+node scripts/prepare-resources.js</pre>
+
+  <p>The script handles each resource in order:</p>
+  <table>
+    <thead><tr><th>Step</th><th>Source</th><th>Destination</th><th>If missing</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>owl-editor.jar</td>
+        <td><code>ontology-editor/target/*.jar</code></td>
+        <td><code>jars/owl-editor.jar</code></td>
+        <td>Run <code>mvn package -DskipTests</code></td>
+      </tr>
+      <tr>
+        <td>fuseki-server.jar</td>
+        <td><code>fuseki-docker/fuseki-server.jar</code></td>
+        <td><code>jars/fuseki-server.jar</code></td>
+        <td>Download from Apache Jena</td>
+      </tr>
+      <tr>
+        <td>mongod</td>
+        <td><code>data/mongodb/bin/&lt;platform&gt;/</code></td>
+        <td><code>mongodb/&lt;platform&gt;/</code></td>
+        <td>Download MongoDB Community portable</td>
+      </tr>
+      <tr>
+        <td><strong>JRE</strong></td>
+        <td>jlink (if JDK available) or Temurin download</td>
+        <td><code>jre/</code></td>
+        <td><span class="badge badge-green">Auto-handled by script</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="jre">Bundled JRE — No System Java Required</h2>
+  <div class="callout callout-tip">
+    <strong>Key point</strong>
+    The packaged desktop app includes its own Java runtime. End users never need to install
+    Java. The JRE is checked first by both <code>detect-java.js</code> and
+    <code>ServiceManager.js</code> before falling back to any system Java.
+  </div>
+
+  <h3>How the JRE is bundled</h3>
+  <p><code>prepare-resources.js</code> tries two strategies in order:</p>
+
+  <ol class="step-list">
+    <li>
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <strong>jlink (preferred — uses the build machine's JDK)</strong>
+        Creates a minimal custom runtime with only the modules Spring Boot and Fuseki need.
+        Result: ~65 MB. Fastest option, no download required.
+        <pre style="margin-top:8px"><span class="comment"># Equivalent manual command:</span>
+jlink --add-modules java.base,java.desktop,java.management,java.naming,\
+  java.net.http,java.sql,java.xml,jdk.httpserver,jdk.jfr,jdk.unsupported \
+  --output resources/backend/jre \
+  --strip-debug --no-man-pages --compress=2</pre>
+      </div>
+    </li>
+    <li>
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <strong>Temurin 17 download (auto-fallback)</strong>
+        If no JDK / jlink is available, downloads the pre-built Eclipse Temurin 17 JRE
+        (~200 MB) from Adoptium's API, extracts it, and places it in <code>resources/backend/jre/</code>.
+      </div>
+    </li>
+  </ol>
+
+  <table>
+    <thead><tr><th>JRE type</th><th>Size on disk</th><th>In installer (compressed)</th></tr></thead>
+    <tbody>
+      <tr><td>Full Temurin 17 JRE</td><td>~200 MB</td><td>~80 MB</td></tr>
+      <tr><td>jlink minimal</td><td>~65 MB</td><td>~30 MB</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="package">Package &amp; Distribute</h2>
+
+  <div class="callout callout-info">
+    <strong>Build order</strong>
+    Always run prepare-resources before dist. electron-builder packages whatever is
+    in resources/backend/ — it does not download anything itself.
+  </div>
+
+  <pre><span class="comment"># 1. Build Spring Boot JAR</span>
+mvn -pl ontology-editor package -DskipTests
+
+<span class="comment"># 2. Bundle JRE + copy all resources</span>
+cd electron-app
+node scripts/prepare-resources.js
+
+<span class="comment"># 3. Build React SPA</span>
+<span class="comment">#    (prepare-resources does this automatically; manual step shown for clarity)</span>
+cd ../ontology-vscode-extension/webview-src &amp;&amp; npm run build
+cd ../../electron-app
+
+<span class="comment"># 4. Package</span>
+npm run dist:win    <span class="comment"># → dist-electron/OntoCode Setup x.x.x.exe</span>
+npm run dist:mac    <span class="comment"># → dist-electron/OntoCode-x.x.x.dmg</span>
+npm run dist:linux  <span class="comment"># → dist-electron/OntoCode-x.x.x.AppImage</span></pre>
+
+  <h3>CI / CD (GitHub Actions sketch)</h3>
+  <pre>jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { java-version: '21', distribution: 'temurin' }
+      - run: mvn -pl ontology-editor package -DskipTests
+      - run: npm ci &amp;&amp; node scripts/prepare-resources.js &amp;&amp; npm run dist:win
+        working-directory: electron-app
+        env: { GH_TOKEN: <span class="str">${{ secrets.GITHUB_TOKEN }}</span> }</pre>
+
+  <!-- Sync -->
+  <h2 id="sync-overview">Decentralized Sync &amp; Share — Overview</h2>
+  <p>OntoCode Desktop uses <strong>Syncthing</strong> for peer-to-peer sync. Syncthing is
+    bundled as a binary and starts automatically. No central server, no account, no
+    subscription required for sync.</p>
+
+  <div class="two-col">
+    <div class="card">
+      <h4>P2P Sync</h4>
+      <p>Devices sync directly over LAN or via Syncthing's community relay servers.
+        No data passes through OntoCode servers.</p>
+    </div>
+    <div class="card">
+      <h4>Share Links</h4>
+      <p>A <code>ontocode-sync://…</code> URL encodes your device ID + folder IDs.
+        Send it to a collaborator by any means.</p>
+    </div>
+  </div>
+
+  <h2 id="pairing">Device Pairing Flow</h2>
+  <div class="arch-box"><pre>
+  Device A (Alice)                            Device B (Bob)
+  ────────────────                            ──────────────────
+  1. Click "Share Workspace"
+  2. Select workspace folder
+  3. Copy share link ──── send via email ───► 4. Click "Import Link"
+                                              5. Paste link
+                                              6. OntoCode adds Device A as peer
+                                              7. Requests folder
+  8. Accept incoming request ◄─────────────────────────────────
+  ─────────────────────────────────────────────────────────────
+  Sync starts automatically whenever both devices are online
+  </pre></div>
+
+  <h2 id="share-link">Share Link Format</h2>
+  <pre><span class="comment">// Format</span>
+ontocode-sync://&lt;base64url(JSON)&gt;
+
+<span class="comment">// JSON payload</span>
+{
+  <span class="str">"v"</span>:         1,
+  <span class="str">"deviceId"</span>:  <span class="str">"ABCDE12-FGHIJ34-..."</span>,
+  <span class="str">"folderIds"</span>: [<span class="str">"ontocode-a1b2c3d4"</span>]
+}</pre>
+
+  <div class="callout callout-info">
+    <strong>No credentials in the link</strong>
+    The link only identifies which device and folders to request. Syncthing's TLS device
+    certificate model handles authentication — you explicitly accept each peer.
+  </div>
+
+  <h2 id="sync-ipc">Sync IPC API</h2>
+  <pre><span class="comment">// All calls go via window.electronAPI.ipc(channel, payload)</span>
+
+<span class="comment">// Is Syncthing running?</span>
+<span class="kw">const</span> status = <span class="kw">await</span> window.electronAPI.ipc(<span class="str">'sync:status'</span>);
+<span class="comment">// → { running: true }</span>
+
+<span class="comment">// Get this device's ID</span>
+<span class="kw">const</span> deviceId = <span class="kw">await</span> window.electronAPI.ipc(<span class="str">'sync:deviceId'</span>);
+<span class="comment">// → "ABCDE12-..."</span>
+
+<span class="comment">// Share a workspace (opens folder picker)</span>
+<span class="kw">const</span> result = <span class="kw">await</span> window.electronAPI.ipc(<span class="str">'sync:shareWorkspace'</span>, { label: <span class="str">'MyOntology'</span> });
+<span class="comment">// → { folderPath, folderId, link: "ontocode-sync://..." }</span>
+
+<span class="comment">// Import a share link received from another user</span>
+<span class="kw">const</span> parsed = <span class="kw">await</span> window.electronAPI.ipc(<span class="str">'sync:parseLink'</span>, { link });
+<span class="kw">await</span> window.electronAPI.ipc(<span class="str">'sync:addPeer'</span>, {
+  deviceId: parsed.deviceId,
+  folderId: parsed.folderIds[<span class="num">0</span>],
+  peerName: <span class="str">'Alice'</span>,
+});
+
+<span class="comment">// Sync progress for a folder (0–100)</span>
+<span class="kw">const</span> pct = <span class="kw">await</span> window.electronAPI.ipc(<span class="str">'sync:completion'</span>, { folderId, deviceId });
+
+<span class="comment">// Pause / resume a folder</span>
+<span class="kw">await</span> window.electronAPI.ipc(<span class="str">'sync:setPaused'</span>, { folderId, paused: <span class="kw">true</span> });</pre>
+
+  <!-- Quick Reference -->
+  <h2 id="quickref">Quick Reference</h2>
+  <table>
+    <thead><tr><th>Task</th><th>Command</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Start dev mode (one click)</strong></td><td><code>electron-app\scripts\start-electron-dev.bat</code></td></tr>
+      <tr><td>Start Electron only (dev)</td><td><code>cd electron-app &amp;&amp; set ELECTRON_IS_DEV=1 &amp;&amp; npx electron .</code></td></tr>
+      <tr><td>Build Spring Boot JAR</td><td><code>mvn -pl ontology-editor package -DskipTests</code></td></tr>
+      <tr><td><strong>Bundle JRE + copy all resources</strong></td><td><code>cd electron-app &amp;&amp; node scripts/prepare-resources.js</code></td></tr>
+      <tr><td><strong>Package Windows installer</strong></td><td><code>cd electron-app &amp;&amp; npm run dist:win</code></td></tr>
+      <tr><td>Package all platforms</td><td><code>cd electron-app &amp;&amp; npm run dist</code></td></tr>
+      <tr><td>Rebuild Docker on Java change</td><td><code>docker compose -f docker-compose.dev.yml up -d --build ontology-editor</code></td></tr>
+      <tr><td>Logs directory</td><td><code>%APPDATA%\OntoCode\logs\</code></td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <p style="color:#9a9db8;font-size:12px">OntoCode Desktop &mdash; Electron Guide &mdash; 2026</p>
+
+</main>
+</body>
+</html>

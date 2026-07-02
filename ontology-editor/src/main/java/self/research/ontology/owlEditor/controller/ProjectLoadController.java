@@ -19,6 +19,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.servlet.http.HttpServletRequest;
+
+import self.research.ontology.owlEditor.config.JwtClaimUtils;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.apache.commons.io.input.TeeInputStream;
 
@@ -26,18 +29,21 @@ import java.util.Locale;
 
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.ImportOptions;
+import self.research.ontology.owlEditor.model.merge.ConflictResolution;
+import self.research.ontology.owlEditor.model.merge.ResolutionAction;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.GraphDBDatasetService;
-import self.research.ontology.owlEditor.service.GraphDBHistoryService;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.GridFSFileService;
 import self.research.ontology.owlEditor.service.OntologyPreparseService;
 import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.ProjectShareService;
+import self.research.ontology.owlEditor.service.DesktopOntologyLoader;
 import self.research.ontology.owlEditor.service.StorageManager;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
 
@@ -50,11 +56,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import org.bson.Document;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.gridfs.GridFsResource;
 
 @RestController
 @RequestMapping("/api/ontology")
@@ -62,9 +75,17 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ProjectLoadController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectLoadController.class);
+    private static final java.util.regex.Pattern PCT_PATTERN = java.util.regex.Pattern.compile("(\\d+)%");
     
     // Project-level locks to prevent concurrent saves
     private final ConcurrentHashMap<String, Object> projectSaveLocks = new ConcurrentHashMap<>();
+
+    // Tracks projects with an active uploadByFileRef in progress.
+    // Prevents a second call from triggering a full re-import while the first
+    // is still running the Fuseki PUT (Fuseki appears empty during the PUT,
+    // so hasGraphData() returns false and the skip guard doesn't fire).
+    private final java.util.Set<String> importInFlight =
+        java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
@@ -72,13 +93,45 @@ public class ProjectLoadController {
     private final GridFSFileService gridFSFileService;
     private final ProjectShareService shareService;
     private final DraftTrackingService draftTrackingService;
-    private final GraphDBHistoryService historyService;
+    private final OntologyHistoryService historyService;
     private final DraftChangeRepository draftChangeRepository;
     private final SimpMessagingTemplate messagingTemplate;
-    private final GraphDBDatasetService datasetService;
+    private final SparqlDatasetService datasetService;
     private final ProjectRepository projectRepository;
+
+    // Desktop-only — null in cloud
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.cache.ProjectOntologyCache ontologyCache;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private DesktopOntologyLoader desktopOntologyLoader;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.DesktopHierarchyService desktopHierarchyService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.OntologyQueryService ontologyQueryService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.HierarchyIndexService hierarchyIndexService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.DesktopFusekiSyncScheduler fusekiSyncScheduler;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
+    private static final String DESKTOP_USER_ID = "desktop-user-local";
+
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
+    private final MongoTemplate mongoTemplate;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
@@ -86,13 +139,14 @@ public class ProjectLoadController {
                                  GridFSFileService gridFSFileService,
                                  ProjectShareService shareService,
                                  DraftTrackingService draftTrackingService,
-                                 GraphDBHistoryService historyService,
+                                 OntologyHistoryService historyService,
                                  DraftChangeRepository draftChangeRepository,
                                  SimpMessagingTemplate messagingTemplate,
-                                 GraphDBDatasetService datasetService,
+                                 SparqlDatasetService datasetService,
                                  ProjectRepository projectRepository,
                                  OntologyPreparseService preparseService,
-                                 ImportWorkerDispatcher importWorkerDispatcher) {
+                                 ImportWorkerDispatcher importWorkerDispatcher,
+                                 MongoTemplate mongoTemplate) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
@@ -106,6 +160,7 @@ public class ProjectLoadController {
         this.projectRepository = projectRepository;
         this.preparseService = preparseService;
         this.importWorkerDispatcher = importWorkerDispatcher;
+        this.mongoTemplate = mongoTemplate;
     }
 
     @PostMapping("/upload/{projectId:.+}")  // Allow slashes in path variable
@@ -122,9 +177,9 @@ public class ProjectLoadController {
         log.info("[ProjectLoadController] ═══ Upload STARTED - projectId: {}, filename: {}, size: {} bytes, ownerEmail: {}, workspaceId: {}, parentProjectId: {}, action: {}, compressed: {}",
             projectId, file.getOriginalFilename(), file.getSize(), ownerEmail, workspaceId, parentProjectId, action, compressed);
         try {
-            // VALIDATION: Check file size (max 300MB)
+            // VALIDATION: Check file size (max 1GB)
             long stepStart = System.nanoTime();
-            long maxSize = 300 * 1024 * 1024; // 300MB
+            long maxSize = 1024L * 1024 * 1024; // 1GB
             if (file.getSize() > maxSize) {
                 log.warn("File too large: {} bytes (max: {} bytes)", file.getSize(), maxSize);
                 return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
@@ -220,50 +275,80 @@ public class ProjectLoadController {
             Path projectDir = storageManager.prepareProjectDir(actualProjectId);
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
+            Path importRoot = original;
+            boolean ontologyPackage = isOntologyPackage(filename, file.getContentType());
 
             String gridfsFileId;
-            
-            // Auto-detect GZIP compression
-            InputStream fileStream = file.getInputStream();
-            InputStream effectiveStream = fileStream;
-            boolean wasCompressed = compressed;
-            
-            if (!compressed) {
-                PushbackInputStream pb = new PushbackInputStream(fileStream, 2);
-                byte[] signature = new byte[2];
-                int len = pb.read(signature);
-                if (len > 0) {
-                    pb.unread(signature, 0, len);
+
+            if (ontologyPackage) {
+                Path packageZip = projectDir.resolve("ontology-package.zip");
+                Path libraryDir = projectDir.resolve("ontology-library");
+                deleteRecursively(libraryDir);
+                Files.createDirectories(libraryDir);
+
+                try (InputStream in = file.getInputStream();
+                     OutputStream out = Files.newOutputStream(packageZip,
+                             StandardOpenOption.CREATE,
+                             StandardOpenOption.TRUNCATE_EXISTING,
+                             StandardOpenOption.WRITE);
+                     TeeInputStream tee = new TeeInputStream(in, out, true)) {
+                    gridfsFileId = gridFSFileService.storeFile(
+                        actualProjectId,
+                        filename,
+                        file.getContentType(),
+                        tee
+                    );
                 }
-                
-                if (len == 2 && signature[0] == (byte) 0x1f && signature[1] == (byte) 0x8b) {
-                    log.info("[ProjectLoadController] Auto-detected GZIP content. Enabling decompression.");
-                    effectiveStream = new GZIPInputStream(pb);
-                    wasCompressed = true;
-                } else {
-                    effectiveStream = pb;
-                }
+
+                extractOntologyPackage(packageZip, libraryDir);
+                importRoot = selectPackageRootOntology(libraryDir, filename)
+                        .orElseThrow(() -> new IOException("Ontology package must contain at least one ontology file (.owl, .rdf, .ttl, .n3, .nt, .xml, .jsonld)"));
+                Files.copy(importRoot, original, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                filename = importRoot.getFileName().toString();
+                log.info("[ProjectLoadController] Ontology package root selected: {}", importRoot);
             } else {
-                effectiveStream = new GZIPInputStream(fileStream);
-            }
-
-            try (InputStream in = effectiveStream;
-                 OutputStream out = Files.newOutputStream(original,
-                         StandardOpenOption.CREATE,
-                         StandardOpenOption.TRUNCATE_EXISTING,
-                         StandardOpenOption.WRITE);
-                 TeeInputStream tee = new TeeInputStream(in, out, true)) {
-
-                if (wasCompressed) {
-                    log.info("[ProjectLoadController] Decompressing gzipped file before processing");
+                // Auto-detect GZIP compression
+                InputStream fileStream = file.getInputStream();
+                InputStream effectiveStream = fileStream;
+                boolean wasCompressed = compressed;
+                
+                if (!compressed) {
+                    PushbackInputStream pb = new PushbackInputStream(fileStream, 2);
+                    byte[] signature = new byte[2];
+                    int len = pb.read(signature);
+                    if (len > 0) {
+                        pb.unread(signature, 0, len);
+                    }
+                    
+                    if (len == 2 && signature[0] == (byte) 0x1f && signature[1] == (byte) 0x8b) {
+                        log.info("[ProjectLoadController] Auto-detected GZIP content. Enabling decompression.");
+                        effectiveStream = new GZIPInputStream(pb);
+                        wasCompressed = true;
+                    } else {
+                        effectiveStream = pb;
+                    }
+                } else {
+                    effectiveStream = new GZIPInputStream(fileStream);
                 }
 
-                gridfsFileId = gridFSFileService.storeFile(
-                    actualProjectId,
-                    filename,  // Use potentially modified filename
-                    file.getContentType(),
-                    tee
-                );
+                try (InputStream in = effectiveStream;
+                     OutputStream out = Files.newOutputStream(original,
+                             StandardOpenOption.CREATE,
+                             StandardOpenOption.TRUNCATE_EXISTING,
+                             StandardOpenOption.WRITE);
+                     TeeInputStream tee = new TeeInputStream(in, out, true)) {
+
+                    if (wasCompressed) {
+                        log.info("[ProjectLoadController] Decompressing gzipped file before processing");
+                    }
+
+                    gridfsFileId = gridFSFileService.storeFile(
+                        actualProjectId,
+                        filename,  // Use potentially modified filename
+                        file.getContentType(),
+                        tee
+                    );
+                }
             }
 
             log.info("[ProjectLoadController] [TIMING] File save (disk + GridFS): {} ms", (System.nanoTime() - stepStart) / 1_000_000);
@@ -282,7 +367,7 @@ public class ProjectLoadController {
             // This must be done BEFORE GraphDB import, as GraphDB will reorganize the content
             stepStart = System.nanoTime();
             log.info("Extracting citation-entity mappings from uploaded file: {}", filename);
-            storageManager.extractCitationMappingsFromFile(original, actualProjectId);
+            storageManager.extractCitationMappingsFromFile(importRoot, actualProjectId);
             log.info("[ProjectLoadController] [TIMING] Citation extraction: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             // FIX: Batch metadata updates into single operation for better performance
@@ -294,14 +379,19 @@ public class ProjectLoadController {
 
             stepStart = System.nanoTime();
             ImportOptions options = resolveImportOptions(importMode, partition);
-            importWorkerDispatcher.dispatch(actualProjectId, original, ownerEmail, filename, gridfsFileId, options);
+            importWorkerDispatcher.dispatch(actualProjectId, importRoot, ownerEmail, filename, gridfsFileId, options);
             log.info("[ProjectLoadController] [TIMING] Import dispatch: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             stepStart = System.nanoTime();
-            RDFFormat format = detectFormat(original);
+            RDFFormat format = detectFormat(importRoot);
             log.info("[ProjectLoadController] [TIMING] Format detection: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
-            preparseService.preparse(original, actualProjectId, format);
+            // Skip duplicate full-file streaming parse for large uploads; import already scans the file.
+            if (Files.size(importRoot) <= 50L * 1024 * 1024) {
+                preparseService.preparse(importRoot, actualProjectId, format);
+            } else {
+                log.info("[ProjectLoadController] Skipping preparse for large upload ({} bytes)", Files.size(importRoot));
+            }
             
             long totalUploadMs = (System.nanoTime() - uploadStartTime) / 1_000_000;
             log.info("[ProjectLoadController] ═══ Upload endpoint COMPLETED in {} ms ({} sec) for project: {}",
@@ -331,6 +421,200 @@ public class ProjectLoadController {
     }
     
     /**
+     * Server-side import by file reference — avoids browser download/re-upload for large files.
+     * Reads the file directly from the shared MongoDB GridFS (via file_metadata UUID → gridfsId),
+     * writes it to disk, and dispatches the import job exactly as the regular upload does.
+     */
+    @PostMapping("/upload-by-file-ref/{projectId:.+}")
+    public ResponseEntity<Map<String, Object>> uploadByFileRef(
+            @PathVariable String projectId,
+            @RequestParam String fileId,
+            @RequestParam String parentProjectId,
+            @RequestParam(required = false) String ownerEmail,
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String importMode,
+            @RequestParam(required = false) String partition,
+            @RequestParam(required = false) String workspaceId) {
+        long startTime = System.nanoTime();
+        log.info("[ProjectLoadController] ═══ UploadByFileRef STARTED - projectId: {}, fileId: {}, ownerEmail: {}",
+                projectId, fileId, ownerEmail);
+        // Guard: if an import is already running for this project, return immediately.
+        // Without this, a second frontend call while the Fuseki PUT is in flight (Fuseki
+        // still shows 0 triples) bypasses the hasGraphData skip and starts a full re-import.
+        if (!importInFlight.add(projectId)) {
+            log.info("[ProjectLoadController] Import already in flight for project {}, returning ALREADY_LOADING", projectId);
+            return ResponseEntity.ok(Map.of(
+                "success", true, "projectId", projectId,
+                "status", "ALREADY_LOADING", "source", "in-flight-guard"
+            ));
+        }
+        try {
+            var mongoStatus = metadataService.readStatus(projectId);
+            if (importService.isImportActiveOrQueued(projectId)) {
+                log.info("[ProjectLoadController] Import already active for project {}, returning ALREADY_LOADING", projectId);
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "status", "ALREADY_LOADING",
+                    "source", "import-service-guard"
+                ));
+            }
+
+            // Desktop fast path: skip re-import if data already exists.
+            // Priority: OWLAPI cached → MongoDB status COMPLETED → Fuseki SPARQL count.
+            // MongoDB check is most reliable (always fast, doesn't require Fuseki connection).
+            if (ontologyCache != null) {
+                boolean owlapiReady = ontologyCache.has(projectId);
+
+                boolean mongoCompleted = mongoStatus
+                    .map(s -> "COMPLETED".equals(s.status()) || "UPDATED".equals(s.status()))
+                    .orElse(false);
+
+                boolean fileExists = storageManager.findCurrentOntology(projectId).isPresent();
+
+                // If MongoDB status is PROCESSING or ERROR, the last import was interrupted
+                // or failed — do NOT skip even if Fuseki has partial data. Force re-import.
+                boolean importFailed = mongoStatus
+                    .map(s -> "PROCESSING".equals(s.status()) || "ERROR".equals(s.status()))
+                    .orElse(false);
+                if (importFailed && fileExists) {
+                    log.info("[ProjectLoadController] MongoDB status is PROCESSING/ERROR — forcing re-import for {}", projectId);
+                    // Fall through to full import path (do not set shouldSkip)
+                }
+
+                // Extra Fuseki check only if MongoDB says completed but file is missing
+                // (handles case where data was manually cleared)
+                boolean fusekiHasData = false;
+                if (importFailed) {
+                    // Never skip on a previously failed/interrupted import
+                    mongoCompleted = false;
+                } else if (mongoCompleted && !fileExists) {
+                    // File missing → someone cleared data, allow re-import
+                    mongoCompleted = false;
+                    log.info("[ProjectLoadController] MongoDB says COMPLETED but file missing — forcing re-import for {}", projectId);
+                } else if (!mongoCompleted && fileExists) {
+                    // MongoDB not completed but file exists → check Fuseki as fallback
+                    fusekiHasData = datasetService.hasGraphData(projectId);
+                }
+
+                boolean shouldSkip = owlapiReady || mongoCompleted || fusekiHasData;
+                log.info("[ProjectLoadController] Desktop skip check: owlapi={} mongoDone={} fileExists={} fuseki={} → skip={}",
+                    owlapiReady, mongoCompleted, fileExists, fusekiHasData, shouldSkip);
+
+                if (shouldSkip) {
+                    log.info("[ProjectLoadController] Desktop shortcut — skipping re-import for {}", projectId);
+                    if (!owlapiReady && storageManager.findCurrentOntology(projectId).isEmpty()) {
+                        materializeOntologyFromFileRef(projectId, fileId);
+                    }
+                    Map<String, Object> body = new java.util.LinkedHashMap<>();
+                    body.put("success", true);
+                    body.put("projectId", projectId);
+                    body.put("status", "ALREADY_LOADED");
+                    body.put("source", "desktop-cache-skip");
+                    // Block until OWLAPI is warm on reopen — logs show many ALREADY_LOADED returns
+                    // with owlapi=false while the UI fell through to SPARQL (Fuseki often down).
+                    if (!owlapiReady && desktopOntologyLoader != null) {
+                        log.info("[ProjectLoadController] ALREADY_LOADED — blocking OWLAPI warm for {}", projectId);
+                        body.putAll(desktopOntologyLoader.warmProject(projectId, 120_000));
+                    } else {
+                        body.put("owlapiReady", owlapiReady);
+                    }
+                    if (fusekiSyncScheduler != null) {
+                        fusekiSyncScheduler.scheduleAfterOpen(projectId);
+                    }
+                    return ResponseEntity.ok(body);
+                }
+            }
+
+            // 1. Look up file_metadata by UUID fileId to resolve gridfsId and fileName
+            Document fileMeta = mongoTemplate.getDb()
+                    .getCollection("file_metadata")
+                    .find(new Document("fileId", fileId)
+                            .append("isDeleted", new Document("$ne", true)))
+                    .first();
+
+            if (fileMeta == null) {
+                log.warn("[ProjectLoadController] file_metadata not found for fileId: {}", fileId);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("success", false, "error", "File not found: " + fileId));
+            }
+
+            String gridfsId = fileMeta.getString("gridfsId");
+            String fileName = fileMeta.getString("fileName");
+            log.info("[ProjectLoadController] Resolved file: fileName={}, gridfsId={}", fileName, gridfsId);
+
+            // 2. Stream file bytes from GridFS
+            Optional<GridFsResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
+            if (resourceOpt.isEmpty()) {
+                log.error("[ProjectLoadController] GridFS content missing for gridfsId: {}", gridfsId);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("success", false, "error", "File content not found in storage"));
+            }
+
+            // 3. Clear dataset when replacing
+            if ("replace".equals(action)) {
+                try {
+                    datasetService.clearDataset(projectId);
+                    log.info("[ProjectLoadController] Cleared GraphDB dataset for project {}", projectId);
+                } catch (Exception e) {
+                    log.warn("[ProjectLoadController] Failed to clear dataset for {}: {}", projectId, e.getMessage());
+                }
+            }
+
+            // 4. Write file to project directory (same path as normal upload)
+            Path projectDir = storageManager.prepareProjectDir(projectId);
+            Path original = projectDir.resolve("ontology.original.owl");
+            Files.createDirectories(original.getParent());
+
+            try (InputStream in = resourceOpt.get().getInputStream();
+                 OutputStream out = Files.newOutputStream(original,
+                         StandardOpenOption.CREATE,
+                         StandardOpenOption.TRUNCATE_EXISTING,
+                         StandardOpenOption.WRITE)) {
+                in.transferTo(out);
+            }
+            log.info("[ProjectLoadController] [TIMING] GridFS read + disk write: {} ms",
+                    (System.nanoTime() - startTime) / 1_000_000);
+
+            // 5. Citation mappings, metadata, dispatch import
+            storageManager.extractCitationMappingsFromFile(original, projectId);
+            ProjectStatus status = ProjectStatus.uploaded(fileName);
+            metadataService.updateProjectMetadata(projectId, status, gridfsId, ownerEmail, workspaceId, parentProjectId);
+
+            ImportOptions options = resolveImportOptions(importMode, partition);
+            importWorkerDispatcher.dispatch(projectId, original, ownerEmail, fileName, gridfsId, options);
+
+            RDFFormat format = detectFormat(original);
+            if (Files.size(original) <= 50L * 1024 * 1024) {
+                preparseService.preparse(original, projectId, format);
+            } else {
+                log.info("[ProjectLoadController] Skipping preparse for large file ref ({} bytes)", Files.size(original));
+            }
+
+            long totalMs = (System.nanoTime() - startTime) / 1_000_000;
+            log.info("[ProjectLoadController] ═══ UploadByFileRef COMPLETED in {} ms for project: {}", totalMs, projectId);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "gridfsFileId", gridfsId,
+                    "filename", fileName,
+                    "message", "Import from file reference scheduled"));
+        } catch (IOException e) {
+            log.error("[ProjectLoadController] UploadByFileRef IO error", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("[ProjectLoadController] UploadByFileRef failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error",
+                            e.getMessage() != null ? e.getMessage() : "Unexpected error"));
+        } finally {
+            importInFlight.remove(projectId);
+        }
+    }
+
+    /**
      * Generate a unique filename for a copy by adding a numeric suffix
      * @param originalFilename The original filename
      * @param ownerEmail The owner's email
@@ -358,6 +642,110 @@ public class ProjectLoadController {
         
         log.info("Generated copy filename: {} from original: {}", candidateFilename, originalFilename);
         return candidateFilename;
+    }
+
+    private boolean isOntologyPackage(String filename, String contentType) {
+        String lowerName = filename != null ? filename.toLowerCase(Locale.ROOT) : "";
+        String lowerContentType = contentType != null ? contentType.toLowerCase(Locale.ROOT) : "";
+        return lowerName.endsWith(".zip")
+                || lowerContentType.contains("zip")
+                || lowerContentType.contains("x-zip-compressed");
+    }
+
+    private void extractOntologyPackage(Path packageZip, Path targetDir) throws IOException {
+        Path normalizedTarget = targetDir.toAbsolutePath().normalize();
+        try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(packageZip))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                Path destination = normalizedTarget.resolve(entry.getName()).normalize();
+                if (!destination.startsWith(normalizedTarget)) {
+                    throw new IOException("Unsafe ZIP entry outside target directory: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    Files.createDirectories(destination);
+                } else {
+                    Files.createDirectories(destination.getParent());
+                    Files.copy(zip, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                zip.closeEntry();
+            }
+        }
+    }
+
+    private Optional<Path> selectPackageRootOntology(Path libraryDir, String packageFilename) throws IOException {
+        String packageBaseName = packageFilename != null ? packageFilename : "";
+        int dot = packageBaseName.lastIndexOf('.');
+        if (dot > 0) {
+            packageBaseName = packageBaseName.substring(0, dot);
+        }
+        final String normalizedPackageBase = packageBaseName.toLowerCase(Locale.ROOT);
+
+        List<Path> candidates = new ArrayList<>();
+        try (java.util.stream.Stream<Path> stream = Files.walk(libraryDir, 8)) {
+            stream
+                    .filter(Files::isRegularFile)
+                    .filter(this::isOntologyDocumentFile)
+                    .forEach(candidates::add);
+        }
+        if (candidates.isEmpty()) {
+            return Optional.empty();
+        }
+
+        candidates.sort(Comparator
+                .comparingInt((Path path) -> scoreRootCandidate(libraryDir, path, normalizedPackageBase))
+                .thenComparing(path -> libraryDir.relativize(path).toString()));
+        return Optional.of(candidates.get(0));
+    }
+
+    private int scoreRootCandidate(Path libraryDir, Path path, String normalizedPackageBase) {
+        Path relative = libraryDir.relativize(path);
+        String fileName = path.getFileName() != null ? path.getFileName().toString().toLowerCase(Locale.ROOT) : "";
+        String base = fileName;
+        int dot = base.lastIndexOf('.');
+        if (dot > 0) {
+            base = base.substring(0, dot);
+        }
+
+        if (!normalizedPackageBase.isBlank() && base.equals(normalizedPackageBase)) {
+            return 0;
+        }
+        if (relative.getNameCount() == 1 && (fileName.equals("root.owl") || fileName.equals("ontology.owl"))) {
+            return 1;
+        }
+        if (relative.getNameCount() == 1) {
+            return 2;
+        }
+        if (fileName.equals("root.owl") || fileName.equals("ontology.owl")) {
+            return 3;
+        }
+        return 4;
+    }
+
+    private boolean isOntologyDocumentFile(Path path) {
+        String name = path.getFileName() != null ? path.getFileName().toString().toLowerCase(Locale.ROOT) : "";
+        if (name.equals("catalog-v001.xml")) {
+            return false;
+        }
+        return name.endsWith(".owl")
+                || name.endsWith(".rdf")
+                || name.endsWith(".xml")
+                || name.endsWith(".ttl")
+                || name.endsWith(".n3")
+                || name.endsWith(".nt")
+                || name.endsWith(".jsonld")
+                || name.endsWith(".owlxml");
+    }
+
+    private void deleteRecursively(Path path) throws IOException {
+        if (path == null || !Files.exists(path)) {
+            return;
+        }
+        try (java.util.stream.Stream<Path> stream = Files.walk(path)) {
+            List<Path> paths = stream.sorted(Comparator.reverseOrder()).toList();
+            for (Path p : paths) {
+                Files.deleteIfExists(p);
+            }
+        }
     }
 
     private ImportOptions resolveImportOptions(String importMode, String partition) {
@@ -475,7 +863,76 @@ public class ProjectLoadController {
     @GetMapping("/status/{projectId:.+}")  // Allow slashes in path variable
     public ResponseEntity<Map<String, Object>> status(@PathVariable String projectId) {
         return metadataService.readStatus(projectId)
-                .map(status -> ResponseEntity.ok(Map.of("success", true, "data", status)))
+                .map(status -> {
+                    Map<String, Object> data = new java.util.LinkedHashMap<>();
+                    data.put("status", status.status());
+                    data.put("statusMessage", status.statusMessage());
+                    data.put("updatedAt", status.updatedAt());
+                    data.put("filename", status.filename());
+                    metadataService.readMeta(projectId).ifPresent(meta -> {
+                        Object ip = meta.get("importProgress");
+                        if (ip instanceof Map<?, ?> progressMap) {
+                            Object p = progressMap.get("progress");
+                            if (p instanceof Number n) {
+                                data.put("progress", n.intValue());
+                            }
+                            Object stage = progressMap.get("stage");
+                            if (stage != null) {
+                                data.put("stage", stage.toString());
+                            }
+                        }
+                    });
+                    if (!data.containsKey("progress") && status.statusMessage() != null) {
+                        java.util.regex.Matcher m = PCT_PATTERN.matcher(status.statusMessage());
+                        if (m.find()) {
+                            data.put("progress", Integer.parseInt(m.group(1)));
+                        }
+                    }
+                    boolean owlapiReady = ontologyCache != null && ontologyCache.has(projectId);
+                    data.put("owlapiReady", owlapiReady);
+
+                    long graphSize = -1;
+                    boolean graphReady = false;
+                    if ("COMPLETED".equals(status.status())) {
+                        if (desktopHierarchyService != null) {
+                            // Desktop: trust the COMPLETED status — OWLAPI is authoritative.
+                            // Skip the Fuseki COUNT which can block 60+ seconds on cold TDB2.
+                            graphReady = true;
+                        } else {
+                            graphSize = datasetService.getGraphTripleCount(projectId);
+                            graphReady = graphSize > 0;
+                        }
+                    }
+                    // During PROCESSING, skip synchronous triple COUNT — Fuseki may block for
+                    // minutes on large graphs and stall status polls (gateway 504/500).
+                    data.put("graphSize", graphSize > 0 ? graphSize : null);
+                    data.put("graphReady", graphReady);
+
+                    int topLevel = 0;
+                    if (desktopHierarchyService != null && owlapiReady) {
+                        topLevel = desktopHierarchyService.topLevelClassTotal(projectId);
+                    } else if (graphReady && ontologyQueryService != null) {
+                        try {
+                            topLevel = ontologyQueryService.topLevelClassCount(projectId);
+                        } catch (Exception sparqlEx) {
+                            log.debug("[Status] SPARQL top-level count unavailable for {}: {}", projectId, sparqlEx.getMessage());
+                        }
+                    } else if (hierarchyIndexService != null && hierarchyIndexService.isReady(projectId)) {
+                        topLevel = 1;
+                    }
+
+                    boolean hierarchyReady = topLevel > 0;
+                    data.put("topLevelClasses", topLevel);
+                    data.put("hierarchyReady", hierarchyReady);
+                    data.put("editorReady", hierarchyReady);
+                    if ("COMPLETED".equals(status.status()) && graphReady && !hierarchyReady) {
+                        data.put("hierarchyWarming", true);
+                        if (status.statusMessage() == null || status.statusMessage().isBlank()) {
+                            data.put("statusMessage", "Loading class hierarchy…");
+                        }
+                    }
+                    return ResponseEntity.ok(Map.of("success", true, "data", data));
+                })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("success", false, "error", "Project not found")));
     }
@@ -544,7 +1001,10 @@ public class ProjectLoadController {
     public ResponseEntity<Map<String, Object>> save(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId,
-            @RequestParam(required = false) String username) {
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false, defaultValue = "false") boolean force,
+            @RequestParam(required = false, defaultValue = "false") boolean merge,
+            @RequestBody(required = false) Map<String, Map<String, String>> resolutionsBody) {
         
         // Get or create a lock object for this project
         Object lock = projectSaveLocks.computeIfAbsent(projectId, k -> new Object());
@@ -552,17 +1012,51 @@ public class ProjectLoadController {
         // Synchronize on the project-specific lock to prevent concurrent saves
         synchronized (lock) {
             try {
-                log.info("[SAVE] Save requested for project: {} by user: {} (acquiring lock)", projectId, username);
+                String effectiveUserId = (userId != null && !userId.isBlank()) ? userId : "anonymous";
+                if (desktopMode) {
+                    effectiveUserId = DESKTOP_USER_ID;
+                }
+                log.info("[SAVE] Save requested for project: {} by user: {} (acquiring lock, force={}, merge={})",
+                        projectId, username, force, merge);
 
-                // STEP 1: Get all unapplied drafts BEFORE applying them (for history recording)
+                // STEP 1: Get this user's unapplied drafts BEFORE applying them (for history recording)
                 log.info("[SAVE] Fetching drafts to record in history...");
-                java.util.List<DraftChange> drafts = draftChangeRepository.findByProjectIdAndAppliedFalseOrderByTimestampAsc(projectId);
-                log.info("[SAVE] Found {} unapplied drafts", drafts.size());
+                java.util.List<DraftChange> drafts = draftChangeRepository
+                        .findByProjectIdAndUserIdAndAppliedFalseOrderByTimestampAsc(projectId, effectiveUserId);
+                log.info("[SAVE] Found {} unapplied drafts for user {}", drafts.size(), effectiveUserId);
 
-                // STEP 2: Apply all unapplied drafts to GraphDB
+                // STEP 2: Publish only this user's draft graph to main
                 log.info("[SAVE] Applying drafts to GraphDB...");
-                DraftTrackingService.ApplyDraftsResult draftResult = draftTrackingService.applyDrafts(projectId);
-                
+                Map<String, ConflictResolution> resolutions = null;
+                if (merge && resolutionsBody != null && !resolutionsBody.isEmpty()) {
+                    resolutions = new java.util.HashMap<>();
+                    for (Map.Entry<String, Map<String, String>> entry : resolutionsBody.entrySet()) {
+                        String actionStr = entry.getValue() != null ? entry.getValue().get("action") : null;
+                        if (actionStr != null) {
+                            ConflictResolution cr = new ConflictResolution();
+                            try { cr.setAction(ResolutionAction.valueOf(actionStr)); } catch (IllegalArgumentException ignored) {}
+                            String suffix = entry.getValue().get("renameSuffix");
+                            if (suffix != null) cr.setRenameSuffix(suffix);
+                            resolutions.put(entry.getKey(), cr);
+                        }
+                    }
+                }
+                DraftTrackingService.ApplyDraftsResult draftResult =
+                        draftTrackingService.applyDrafts(projectId, effectiveUserId, force, merge, resolutions);
+
+                if (draftResult.isConflictBlocked()) {
+                    log.warn("[SAVE] Publish blocked for project {} user {}: {}",
+                            projectId, effectiveUserId, draftResult.getMessage());
+                    Map<String, Object> body = new java.util.HashMap<>();
+                    body.put("success", false);
+                    body.put("error", draftResult.getMessage());
+                    body.put("conflictBlocked", true);
+                    if (draftResult.getPublishAnalysis() != null) {
+                        body.putAll(draftResult.getPublishAnalysis().toResponseMap());
+                    }
+                    return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+                }
+
                 if (!draftResult.isSuccess()) {
                     log.error("[SAVE] Failed to apply drafts: {}", draftResult.getMessage());
                     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -640,7 +1134,7 @@ public class ProjectLoadController {
                 
                 historyService.recordEdit(
                     projectId,
-                    userId != null ? userId : "system",
+                    effectiveUserId,
                     username != null ? username : "System",
                     draft.getOperationType(),
                     entityIRI,
@@ -662,7 +1156,7 @@ public class ProjectLoadController {
                 Map<String, Object> saveNotification = Map.of(
                     "type", "PROJECT_SAVED",
                     "projectId", projectId,
-                    "userId", userId != null ? userId : "system",
+                    "userId", effectiveUserId,
                     "username", username != null ? username : "System",
                     "appliedChanges", draftResult.getAppliedCount(),
                     "timestamp", System.currentTimeMillis(),
@@ -673,6 +1167,8 @@ public class ProjectLoadController {
             }
             
             log.info("[SAVE] ✅ Save completed successfully, releasing lock");
+
+            refreshDesktopOwlApiAfterSave(projectId);
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -692,6 +1188,27 @@ public class ProjectLoadController {
         }
     }
 
+    /** After publish, reload OWLAPI from disk so desktop reads match saved state. */
+    private void refreshDesktopOwlApiAfterSave(String projectId) {
+        if (!desktopMode) {
+            return;
+        }
+        try {
+            if (ontologyCache != null) {
+                ontologyCache.evict(projectId);
+            }
+            if (desktopOntologyLoader != null) {
+                desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
+            }
+            if (fusekiSyncScheduler != null) {
+                fusekiSyncScheduler.scheduleAfterOpen(projectId);
+            }
+            log.info("[SAVE] Scheduled OWLAPI refresh after save for project {}", projectId);
+        } catch (Exception e) {
+            log.warn("[SAVE] OWLAPI refresh after save failed for {}: {}", projectId, e.getMessage());
+        }
+    }
+
     /**
      * Check if a file with the same name already exists for the user
      * @param filename The filename to check
@@ -701,13 +1218,24 @@ public class ProjectLoadController {
     @GetMapping("/check-duplicate")
     public ResponseEntity<Map<String, Object>> checkDuplicate(
             @RequestParam String filename,
-            @RequestParam String ownerEmail) {
+            @RequestParam(required = false) String ownerEmail,
+            HttpServletRequest request) {
         try {
-            log.info("[CHECK-DUPLICATE] Checking for duplicate - filename: {}, ownerEmail: {}", filename, ownerEmail);
+            String email = ownerEmail;
+            if (email == null || email.isBlank()) {
+                email = JwtClaimUtils.extractEmail(request.getHeader("Authorization"));
+            }
+            if (email == null || email.isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "error", "ownerEmail is required (or sign in with a JWT that includes an email claim)"
+                ));
+            }
+            log.info("[CHECK-DUPLICATE] Checking for duplicate - filename: {}, ownerEmail: {}", filename, email);
             
             // Check if filename conflicts with shared files
-            if (shareService.isFilenameInSharedFiles(filename, ownerEmail)) {
-                log.warn("[CHECK-DUPLICATE] Filename conflicts with shared file: {} for user: {}", filename, ownerEmail);
+            if (shareService.isFilenameInSharedFiles(filename, email)) {
+                log.warn("[CHECK-DUPLICATE] Filename conflicts with shared file: {} for user: {}", filename, email);
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(Map.of(
                             "success", false,
@@ -717,7 +1245,7 @@ public class ProjectLoadController {
             }
             
             // Check if user owns a file with this name
-            Optional<String> existingProjectId = metadataService.getExistingProjectId(filename, ownerEmail);
+            Optional<String> existingProjectId = metadataService.getExistingProjectId(filename, email);
             if (existingProjectId.isPresent()) {
                 String projectId = existingProjectId.get();
                 log.info("[CHECK-DUPLICATE] Found duplicate file - projectId: {}", projectId);
@@ -767,9 +1295,34 @@ public class ProjectLoadController {
             @RequestParam String fileName,
             @RequestParam(required = false) String fileId) {
         try {
-            log.info("[CHECK-GRAPHDB-DUPLICATE] Checking GraphDB for project: {}, fileName: {}, fileId: {}", 
+            // Fast path 1: OWLAPI model cached — data is definitely in Fuseki.
+            if (ontologyCache != null && ontologyCache.has(projectId)) {
+                long classCount = ontologyCache.get(projectId)
+                    .map(c -> c.ontology().classesInSignature().count()).orElse(0L);
+                log.info("[CHECK-GRAPHDB-DUPLICATE] OWLAPI cache shortcut — {} classes", classCount);
+                return ResponseEntity.ok(Map.of("success", true, "exists", true,
+                    "projectId", projectId, "fileName", fileName,
+                    "graphSize", classCount, "ontologyIRIs", List.of(), "source", "owlapi-cache"));
+            }
+
+            // Fast path 2: desktop-only — filesystem check is only safe when Fuseki is
+            // managed exclusively by the desktop app (single user, no external Fuseki changes).
+            // On cloud, Fuseki can be cleared/migrated independently so we must always query it.
+            if (ontologyCache != null) { // ontologyCache bean only exists in desktop mode
+                Optional<java.nio.file.Path> currentFile = storageManager.findCurrentOntology(projectId);
+                if (currentFile.isPresent()) {
+                    log.info("[CHECK-GRAPHDB-DUPLICATE] Desktop file-system shortcut — ontology file exists at {}",
+                        currentFile.get().getFileName());
+                    return ResponseEntity.ok(Map.of("success", true, "exists", true,
+                        "projectId", projectId, "fileName", fileName,
+                        "graphSize", -1, "ontologyIRIs", List.of(), "source", "filesystem-check",
+                        "graphReady", true));
+                }
+            }
+
+            log.info("[CHECK-GRAPHDB-DUPLICATE] Checking Fuseki for project: {}, fileName: {}, fileId: {}",
                 projectId, fileName, fileId);
-            
+
             // Call the GraphDB service to check if file is already loaded
             Map<String, Object> checkResult = datasetService.checkFileExistsInGraphDB(projectId, fileName, fileId);
             
@@ -1172,6 +1725,40 @@ public class ProjectLoadController {
         } catch (Exception e) {
             log.error("[ProjectLoadController] Delete failed for {}: {}", projectId, e.getMessage(), e);
             return ResponseEntity.status(500).body(Map.of("success", false, "error", "Failed to delete project"));
+        }
+    }
+
+    /**
+     * ALREADY_LOADED fast path: OWLAPI warm needs an on-disk OWL file after app restart
+     * even when Mongo/Fuseki still have the ontology.
+     */
+    private void materializeOntologyFromFileRef(String projectId, String fileId) {
+        try {
+            Document fileMeta = mongoTemplate.getDb()
+                    .getCollection("file_metadata")
+                    .find(new Document("fileId", fileId)
+                            .append("isDeleted", new Document("$ne", true)))
+                    .first();
+            if (fileMeta == null) {
+                log.warn("[ProjectLoadController] Cannot materialize {} — file_metadata missing for fileId {}", projectId, fileId);
+                return;
+            }
+            String gridfsId = fileMeta.getString("gridfsId");
+            Optional<GridFsResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
+            if (resourceOpt.isEmpty()) {
+                log.warn("[ProjectLoadController] Cannot materialize {} — GridFS missing for {}", projectId, gridfsId);
+                return;
+            }
+            Path projectDir = storageManager.prepareProjectDir(projectId);
+            Path original = projectDir.resolve("ontology.original.owl");
+            Path current = projectDir.resolve("ontology.current.owl");
+            try (InputStream in = resourceOpt.get().getInputStream()) {
+                Files.copy(in, original, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            Files.copy(original, current, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            log.info("[ProjectLoadController] Materialized ontology on disk for OWLAPI warm: {}", projectId);
+        } catch (Exception e) {
+            log.warn("[ProjectLoadController] Failed to materialize ontology for {}: {}", projectId, e.getMessage());
         }
     }
 }

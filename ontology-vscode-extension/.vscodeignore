@@ -25,3 +25,6 @@ out.txt
 *.vsix
 **/bundle-stats-*.json
 **/bundle-report-*.html
+*.mp4
+images/gifs/**
+images/screenshots/**

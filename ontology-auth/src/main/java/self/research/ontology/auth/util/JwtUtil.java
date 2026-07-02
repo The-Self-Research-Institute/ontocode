@@ -5,6 +5,9 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
@@ -21,14 +24,59 @@ import java.util.stream.Collectors;
 @Component
 public class JwtUtil {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtUtil.class);
+
     @Value("${jwt.secret}")
     private String SECRET_KEY;
 
     @Value("${jwt.expiration}")
     private long EXPIRATION_TIME; // in milliseconds
 
-    public String extractUsername(String token) {
+    @PostConstruct
+    public void validateSecrets() {
+        if (SECRET_KEY == null || SECRET_KEY.isBlank()) {
+            throw new IllegalStateException(
+                "[SECURITY] jwt.secret (JWT_SECRET) must be set. " +
+                "Generate one with: openssl rand -base64 48");
+        }
+        byte[] decoded;
+        try {
+            decoded = Decoders.BASE64.decode(SECRET_KEY);
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                "[SECURITY] jwt.secret is not valid Base64. " +
+                "Generate one with: openssl rand -base64 48");
+        }
+        if (decoded.length < 32) {
+            throw new IllegalStateException(
+                "[SECURITY] jwt.secret must decode to at least 256 bits (32 bytes). " +
+                "Current length: " + decoded.length + " bytes.");
+        }
+        log.info("JWT secret validated — {} bytes.", decoded.length);
+    }
+
+    public String extractEmail(String token) {
         return extractClaim(token, Claims::getSubject);
+    }
+
+    /**
+     * Extract the email (subject) from a token that may already be expired.
+     * Used exclusively by the refresh endpoint so that a token expiring between
+     * the last 60-second client-side check and the actual refresh call does not
+     * produce a hard 401 and force the user out.
+     */
+    public String extractEmailAllowExpired(String token) {
+        try {
+            return extractClaim(token, Claims::getSubject);
+        } catch (io.jsonwebtoken.ExpiredJwtException e) {
+            return e.getClaims().getSubject();
+        } catch (io.jsonwebtoken.JwtException e) {
+            throw new IllegalArgumentException("Invalid or expired session token: " + e.getMessage(), e);
+        }
+    }
+
+    public String extractUsername(String token) {
+        return extractEmail(token);
     }
 
     public Date extractExpiration(String token) {
@@ -53,21 +101,24 @@ public class JwtUtil {
     }
 
     public String generateToken(UserDetails userDetails, String email, String userId) {
+        return generateToken(userDetails, email, userId, null);
+    }
+
+    public String generateToken(UserDetails userDetails, String email, String userId, String planName) {
         Map<String, Object> claims = new HashMap<>();
-        // Add roles to claims
         List<String> roles = userDetails.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .collect(Collectors.toList());
         claims.put("roles", roles);
-        // Add email to claims
         claims.put("email", email);
-        // Add isAdmin flag for easy frontend checking
         claims.put("isAdmin", roles.contains("ROLE_ADMIN"));
-        // Add userId to claims so frontend always has it
         if (userId != null) {
             claims.put("userId", userId);
         }
-        return createToken(claims, userDetails.getUsername());
+        // Include plan so downstream services can enforce access without a DB call
+        claims.put("plan", planName != null ? planName.toUpperCase() : "FREE");
+        claims.put("username", userDetails.getUsername());
+        return createToken(claims, email);
     }
 
     // Overloaded method for workspace-scoped tokens
@@ -86,8 +137,9 @@ public class JwtUtil {
     }
 
     public Boolean validateToken(String token, UserDetails userDetails) {
-        final String username = extractUsername(token);
-        return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
+        final String email = extractEmail(token);
+        // During transition, we check if the subject matches the UserDetails username (which will now be the email)
+        return (email.equals(userDetails.getUsername()) && !isTokenExpired(token));
     }
 
     private Key getSigningKey() {

@@ -12,9 +12,12 @@ import {
   FileCode,
   Image,
   File,
+  FileVideo,
 } from "lucide-react";
 import { useAuth } from "../custom-hook/useAuth";
-import { getEditorUrl } from "../config/deploymentConfig";
+import { getCloudGatewayUrl } from "../config/deploymentConfig";
+import { isAppOnline, subscribeOnlineStatus } from "../utils/connectivity";
+import { isDesktop } from "../utils/desktop";
 
 interface ReportIssueModalProps {
   projectName?: string;
@@ -25,7 +28,7 @@ interface ReportIssueModalProps {
 
 // Get API base URL based on deployment type
 const getApiBaseUrl = () => {
-  return getEditorUrl();
+  return getCloudGatewayUrl();
 };
 
 export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
@@ -44,11 +47,18 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   const [filePreviews, setFilePreviews] = useState<Map<string, string>>(new Map());
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [online, setOnline] = useState(isAppOnline);
   const [submitResult, setSubmitResult] = useState<{
     success: boolean;
     message: string;
     jiraUrl?: string;
+    jiraFailureReason?: string;
   } | null>(null);
+
+  useEffect(() => {
+    setOnline(isAppOnline());
+    return subscribeOnlineStatus(setOnline);
+  }, []);
 
   // Get system info
   const getSystemInfo = () => {
@@ -98,9 +108,15 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       ".owl",
       ".ttl",
       ".rdf",
+      ".mp4",
+      ".webm",
+      ".ogg",
+      ".mov",
+      ".m4v",
     ];
     const allowedMimeTypes = [
       "image/",
+      "video/",
       "application/pdf",
       "application/msword",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -122,7 +138,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
     if (invalidTypeFiles.length > 0) {
       alert(
-        `The following files have unsupported file types: ${invalidTypeFiles.map((f: File) => f.name).join(", ")}\\n\\nSupported formats: images, PDF, Word documents (.doc, .docx), text files, logs, and ontology files (.owl, .ttl, .rdf)`,
+        `The following files have unsupported file types: ${invalidTypeFiles.map((f: File) => f.name).join(", ")}\\n\\nSupported formats: images, videos (.mp4, .webm, .mov, .ogg), PDF, Word documents (.doc, .docx), text files, logs, and ontology files (.owl, .ttl, .rdf)`,
       );
       return;
     }
@@ -143,6 +159,10 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       const isPDF = fileName.endsWith(".pdf");
       const isWordDoc = fileName.endsWith(".doc") || fileName.endsWith(".docx");
 
+      const isVideo =
+        file.type.startsWith("video/") ||
+        [".mp4", ".webm", ".ogg", ".mov", ".m4v"].some((ext) => fileName.endsWith(ext));
+
       if (file.type.startsWith("image/")) {
         // Image preview - read as data URL
         const reader = new FileReader();
@@ -152,6 +172,10 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
           }
         };
         reader.readAsDataURL(file);
+      } else if (isVideo) {
+        // Video preview - use an object URL (avoids loading large files into memory)
+        const objectUrl = URL.createObjectURL(file);
+        setFilePreviews((prev) => new Map(prev).set(file.name, `video:${objectUrl}`));
       } else if (isTextFile) {
         // Text file preview - read first 500 characters
         const reader = new FileReader();
@@ -208,13 +232,39 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
     // Remove preview if exists
     if (filePreviews.has(fileToRemove.name)) {
+      const existingPreview = filePreviews.get(fileToRemove.name);
+      // Release video object URLs to avoid leaking memory
+      if (existingPreview?.startsWith("video:")) {
+        URL.revokeObjectURL(existingPreview.substring(6));
+      }
       const newPreviews = new Map(filePreviews);
       newPreviews.delete(fileToRemove.name);
       setFilePreviews(newPreviews);
     }
   };
 
+  // Release any outstanding video object URLs when the modal unmounts
+  useEffect(() => {
+    return () => {
+      filePreviews.forEach((preview) => {
+        if (preview.startsWith("video:")) {
+          URL.revokeObjectURL(preview.substring(6));
+        }
+      });
+    };
+  }, [filePreviews]);
+
   const handleSubmit = async () => {
+    if (!online) {
+      setSubmitResult({
+        success: false,
+        message: isDesktop()
+          ? "You are offline. Connect to the internet to send a report to our team."
+          : "You are offline. Reconnect to the internet before submitting an issue report.",
+      });
+      return;
+    }
+
     if (!title.trim()) {
       alert("Please enter a title");
       return;
@@ -278,16 +328,20 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       const result = await response.json();
 
       if (result.success) {
+        const jiraFailureReason = result.jiraFailureReason || undefined;
         setSubmitResult({
           success: true,
-          message: result.message || "Issue reported successfully!",
+          message: result.message || (issueType === "Task" ? "Feature request submitted successfully!" : "Issue reported successfully!"),
           jiraUrl: result.jiraIssueUrl,
+          jiraFailureReason,
         });
 
-        // Close modal after 3 seconds on success
-        setTimeout(() => {
-          onClose();
-        }, 3000);
+        if (!jiraFailureReason) {
+          // Close modal after 3 seconds only when Jira creation succeeded.
+          setTimeout(() => {
+            onClose();
+          }, 3000);
+        }
       } else {
         setSubmitResult({
           success: false,
@@ -312,6 +366,11 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
     if (fileType.startsWith("image/")) {
       return { icon: Image, color: "bg-green-100", iconColor: "text-green-600" };
+    } else if (
+      fileType.startsWith("video/") ||
+      [".mp4", ".webm", ".ogg", ".mov", ".m4v"].some((ext) => fileName.endsWith(ext))
+    ) {
+      return { icon: FileVideo, color: "bg-indigo-100", iconColor: "text-indigo-600" };
     } else if (fileName.endsWith(".pdf")) {
       return { icon: File, color: "bg-red-100", iconColor: "text-red-600" };
     } else if (fileName.endsWith(".doc") || fileName.endsWith(".docx")) {
@@ -354,6 +413,8 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     }
   };
 
+  const isPartialSuccess = !!submitResult?.success && !!submitResult?.jiraFailureReason;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[95vh] overflow-hidden flex flex-col">
@@ -377,26 +438,49 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
           </button>
         </div>
 
+        {!online && (
+          <div className="mx-6 mt-4 px-4 py-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm flex items-start gap-2">
+            <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+            <span>
+              <strong>Offline.</strong> Issue reports are sent to our servers when you are online.
+              {isDesktop() ? " Your ontology work continues locally." : " Reconnect, then submit."}
+            </span>
+          </div>
+        )}
+
         {/* Success/Error Message */}
         {submitResult && (
           <div
             className={`mx-6 mt-6 p-5 rounded-lg flex items-start gap-4 shadow-md ${
-              submitResult.success
+              isPartialSuccess
+                ? "bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300"
+                : submitResult.success
                 ? "bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300"
                 : "bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-300"
             }`}
           >
-            <div className={`flex-shrink-0 p-2 rounded-full ${submitResult.success ? "bg-green-100" : "bg-red-100"}`}>
-              {submitResult.success ? (
+            <div className={`flex-shrink-0 p-2 rounded-full ${
+              isPartialSuccess ? "bg-amber-100" : submitResult.success ? "bg-green-100" : "bg-red-100"
+            }`}>
+              {isPartialSuccess ? (
+                <AlertCircle className="text-amber-600" size={24} />
+              ) : submitResult.success ? (
                 <CheckCircle className="text-green-600" size={24} />
               ) : (
                 <AlertCircle className="text-red-600" size={24} />
               )}
             </div>
             <div className="flex-1">
-              <p className={`text-base font-semibold mb-2 ${submitResult.success ? "text-green-900" : "text-red-900"}`}>
+              <p className={`text-base font-semibold mb-2 ${
+                isPartialSuccess ? "text-amber-900" : submitResult.success ? "text-green-900" : "text-red-900"
+              }`}>
                 {submitResult.message}
               </p>
+              {submitResult.jiraFailureReason && (
+                <p className="text-sm text-amber-900 bg-amber-100 border border-amber-200 rounded-md px-3 py-2">
+                  Jira sync failed: {submitResult.jiraFailureReason}
+                </p>
+              )}
               {submitResult.success && (
                 <div className="flex items-center gap-3 mt-3">
                   <span
@@ -587,13 +671,13 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
                 {/* Supported file types */}
                 <span className={`text-gray-500 transition-all ${attachments.length > 0 ? "text-[10px]" : "text-xs"}`}>
-                  JPG, PNG, PDF, DOC, DOCX, TXT, .log, .owl, .ttl, .rdf
+                  JPG, PNG, MP4, WEBM, MOV, PDF, DOC, DOCX, TXT, .log, .owl, .ttl, .rdf
                 </span>
 
                 <input
                   type="file"
                   multiple
-                  accept="image/*,.pdf,.doc,.docx,.txt,.log,.owl,.ttl,.rdf"
+                  accept="image/*,video/*,.mp4,.webm,.ogg,.mov,.m4v,.pdf,.doc,.docx,.txt,.log,.owl,.ttl,.rdf"
                   onChange={handleFileSelect}
                   className="hidden"
                   disabled={submitting}
@@ -630,8 +714,16 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                             preview &&
                             !preview.startsWith("text:") &&
                             !preview.startsWith("pdf:") &&
-                            !preview.startsWith("word:") ? (
+                            !preview.startsWith("word:") &&
+                            !preview.startsWith("video:") ? (
                               <img src={preview} alt={file.name} className="w-full h-full object-cover rounded" />
+                            ) : preview?.startsWith("video:") ? (
+                              <video
+                                src={preview.substring(6)}
+                                controls
+                                preload="metadata"
+                                className="w-full h-full object-cover rounded bg-black"
+                              />
                             ) : preview?.startsWith("text:") ? (
                               <div className="w-full h-full bg-white rounded border border-gray-200 p-2 overflow-hidden">
                                 <pre className="text-[7px] leading-tight text-gray-700 font-mono whitespace-pre-wrap break-all">
@@ -692,7 +784,8 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             </button>
             <button
               onClick={handleSubmit}
-              disabled={submitting || !title.trim() || !description.trim()}
+              disabled={submitting || !online || !title.trim() || !description.trim()}
+              title={!online ? "Connect to the internet to submit a report" : undefined}
               className="px-6 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg hover:shadow-xl transition-all"
             >
               {submitting ? (
@@ -703,7 +796,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
               ) : (
                 <>
                   <Bug size={18} />
-                  <span>Submit Issue Report</span>
+                  <span>{issueType === "Task" ? "Submit Feature Request" : "Submit Issue Report"}</span>
                 </>
               )}
             </button>

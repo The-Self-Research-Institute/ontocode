@@ -1,696 +1,283 @@
 package self.research.ontology.plugins.controller;
 
 import com.mongodb.client.gridfs.model.GridFSFile;
-import org.semanticweb.owlapi.apibinding.OWLManager;
-import org.semanticweb.owlapi.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.RequestEntity;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import self.research.ontology.plugins.service.ReasonerService;
-import self.research.ontology.plugins.service.ReasonerType;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.http.HttpStatus;
+import self.research.ontology.common.ReasoningFriendlyErrors;
+import self.research.ontology.plugins.service.ReasonerWorkerClient;
 
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
 
-/**
- * Controller for reasoning operations on ontologies.
- * Provides endpoints for consistency checking, classification, realization, and inference.
- */
-@RestController
+@RestController("pluginReasonerController")
 @RequestMapping("/api/reasoner")
 @CrossOrigin(originPatterns = "*")
 public class ReasonerController {
 
     private static final Logger log = LoggerFactory.getLogger(ReasonerController.class);
 
-    @Autowired
-    @Qualifier("ontologyGridFsTemplate")
-    private GridFsTemplate gridfs;
+    @Autowired(required = false)
+    private ReasonerWorkerClient reasonerWorkerClient;
 
-    @Autowired
-    private ReasonerService reasonerService;
+    @Value("${ontocode.reasoner-worker.enabled:false}")
+    private boolean reasonerWorkerEnabled;
 
     @Value("${ontology.editor.url:http://owl-editor:8083}")
     private String editorServiceUrl;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    @Autowired
+    @Qualifier("ontologyGridFsTemplate")
+    private GridFsTemplate gridfs;
 
-    // Cache for loaded ontologies
-    private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
+    private final RestTemplate restTemplate = buildRestTemplate();
 
-    // Async classification task tracking
-    private final ConcurrentHashMap<String, Map<String, Object>> classifyTasks = new ConcurrentHashMap<>();
-    private final ExecutorService classifyExecutor = Executors.newFixedThreadPool(2);
-
-    /**
-     * Extract base project ID from partition format.
-     * Partition IDs use format: proj-xxx--partition-uuid
-     * Example: proj-33c06f4a--5c615441-ee3f-4d6d-b77d-6555cc7833e8 → proj-33c06f4a
-     */
-    private String extractBaseProjectId(String projectId) {
-        if (projectId == null || !projectId.contains("--")) {
-            return projectId;
-        }
-        String baseId = projectId.substring(0, projectId.indexOf("--"));
-        log.debug("Extracted base projectId '{}' from partition format '{}'", baseId, projectId);
-        return baseId;
+    private static RestTemplate buildRestTemplate() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory f =
+            new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        f.setConnectTimeout(5_000);
+        f.setReadTimeout(30_000);
+        return new RestTemplate(f);
     }
 
-    /**
-     * Load ontology from multiple sources in priority order:
-     * 1. Editor service (for ontologies being edited)
-     * 2. GridFS (for uploaded ontologies)
-     * 3. Local filesystem (development fallback)
-     */
-    private OWLOntology loadOntology(String projectId) throws Exception {
-        log.info("Loading ontology for project: {}", projectId);
+    // ─── Worker proxy helpers ────────────────────────────────────────────────
 
-        // Extract base projectId if this is a partition ID (format: proj-xxx--partition-uuid)
-        String baseProjectId = extractBaseProjectId(projectId);
-        if (ontologyCache.containsKey(baseProjectId)) {
-            log.info("Returning cached ontology for project: {}", baseProjectId);
-            return ontologyCache.get(baseProjectId);
-        }
-
-        // 1. Try editor service first (for ontologies being edited in the IDE)
-        OWLOntology editorOntology = loadOntologyFromEditorService(baseProjectId);
-        if (editorOntology != null) {
-            ontologyCache.put(baseProjectId, editorOntology);
-            return editorOntology;
-        }
-
-        // 2. Try GridFS (for uploaded ontologies)
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(baseProjectId)));
-        if (file == null) {
-            log.warn("File not found with metadata.projectId={}, trying filename", baseProjectId);
-            file = gridfs.findOne(new Query(Criteria.where("filename").is(baseProjectId + ".owl")));
-        }
-
-        if (file != null) {
-            log.info("Found ontology file in GridFS: {}", file.getFilename());
-            GridFsResource resource = gridfs.getResource(file);
-            try (InputStream inputStream = resource.getInputStream()) {
-                OWLOntology ontology = loadOntologyFromStream(baseProjectId, inputStream, "GridFS file " + file.getFilename());
-                if (ontology != null) {
-                    ontologyCache.put(baseProjectId, ontology);
-                    return ontology;
-                }
-            }
-        }
-
-        // 3. Fallback: try loading from local filesystem (dev convenience)
-        OWLOntology filesystemOntology = loadOntologyFromFilesystem(baseProjectId);
-        if (filesystemOntology != null) {
-            ontologyCache.put(baseProjectId, filesystemOntology);
-            return filesystemOntology;
-        }
-
-        log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", baseProjectId);
-        throw new RuntimeException("Ontology file not found for project: " + baseProjectId + 
-            ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.");
+    private ResponseEntity<Map<String, Object>> workerUnavailable() {
+        return ResponseEntity.status(503).body(Map.of(
+            "success", false,
+            "error", "Reasoning worker is not available. Contact your administrator."
+        ));
     }
 
-    /**
-     * Fetch ontology from the editor service API
-     * Uses configured editor URL: ${ontology.editor.url}
-     */
-    private OWLOntology loadOntologyFromEditorService(String projectId) {
-        log.debug("Attempting to fetch from editor service at: {}", editorServiceUrl);
+    private ResponseEntity<Map<String, Object>> submitToWorker(
+            String jobType, String projectId, String reasonerType) {
+        if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
+            return workerUnavailable();
+        }
         try {
-            String url = editorServiceUrl + "/api/ontology-file/" + projectId;
-            log.info("Fetching ontology from editor service: {}", url);
-            
-            ResponseEntity<byte[]> response = restTemplate.getForEntity(url, byte[].class);
-            
-            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                try (InputStream inputStream = new java.io.ByteArrayInputStream(response.getBody())) {
-                    OWLOntology ontology = loadOntologyFromStream(projectId, inputStream, "editor service");
-                    if (ontology != null) {
-                        log.info("Successfully loaded ontology from editor service");
-                        return ontology;
-                    }
-                }
-            } else {
-                log.warn("Editor service returned status {} for project {}", response.getStatusCode(), projectId);
+            Map<String, Object> worker = reasonerWorkerClient.submit(jobType, projectId, reasonerType);
+            if (Boolean.FALSE.equals(worker.get("success"))) {
+                return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", ReasoningFriendlyErrors.forUser(String.valueOf(worker.get("error")))));
             }
+            String jobId = String.valueOf(worker.get("jobId"));
+            return ResponseEntity.accepted().body(Map.of(
+                "async", true,
+                "taskId", jobId,
+                "jobId", jobId,
+                "status", worker.getOrDefault("status", "QUEUED"),
+                "pollUrl", "/api/dl-query/jobs/" + jobId));
         } catch (Exception e) {
-            log.warn("Could not fetch ontology from editor service for project {}: {}", projectId, e.getMessage());
-        }
-        return null;
-    }
-
-    private OWLOntology loadOntologyFromStream(String projectId, InputStream inputStream, String sourceDescription) {
-        try {
-            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-            log.info("Loading ontology for {} from {}", projectId, sourceDescription);
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
-            log.info("Ontology loaded successfully: {} axioms", ontology.getAxiomCount());
-            return ontology;
-        } catch (Exception e) {
-            log.error("Failed to load ontology from {}", sourceDescription, e);
-            return null;
-        }
-    }
-
-    private OWLOntology loadOntologyFromFilesystem(String projectId) {
-        List<Path> candidateFiles = Arrays.asList(
-            Paths.get("..", "ontology-editor", "data", "projects", projectId, "ontology.current.owl"),
-            Paths.get("..", "ontology-editor", "data", "projects", projectId, "ontology.original.owl"),
-            Paths.get("ontology-editor", "data", "projects", projectId, "ontology.current.owl"),
-            Paths.get(projectId + ".owl"),
-            Paths.get("test-reasoner-ontology.owl"),
-            Paths.get("..", "test-reasoner-ontology.owl")
-        );
-
-        for (Path candidate : candidateFiles) {
-            Path absolute = candidate.toAbsolutePath().normalize();
-            if (!Files.exists(absolute)) {
-                continue;
-            }
-
-            log.info("Attempting to load ontology from filesystem path: {}", absolute);
-            try (InputStream inputStream = Files.newInputStream(absolute)) {
-                OWLOntology ontology = loadOntologyFromStream(projectId, inputStream, "filesystem path " + absolute);
-                if (ontology != null) {
-                    return ontology;
-                }
-            } catch (Exception e) {
-                log.error("Failed to read ontology file at {}", absolute, e);
-            }
-        }
-
-        log.warn("No filesystem ontology file found for project: {}", projectId);
-        return null;
-    }
-
-    /**
-     * Check ontology consistency
-     * POST /api/reasoner/{projectId}/consistency
-     */
-    @PostMapping("/{projectId}/consistency")
-    public ResponseEntity<Map<String, Object>> checkConsistency(
-            @PathVariable String projectId,
-            @RequestBody Map<String, String> request
-    ) {
-        try {
-            String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
-            log.info("Checking consistency for project: {} with {}", projectId, reasonerType);
-            
-            OWLOntology ontology = loadOntology(projectId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            long startTime = System.currentTimeMillis();
-            boolean isConsistent = reasonerService.isConsistent(ontology, type);
-            long duration = System.currentTimeMillis() - startTime;
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("consistent", isConsistent);
-            result.put("reasonerType", type.getDisplayName());
-            result.put("durationMs", duration);
-            result.put("projectId", projectId);
-            
-            // If inconsistent, get unsatisfiable classes
-            if (!isConsistent) {
-                Set<OWLClass> unsatisfiable = reasonerService.getUnsatisfiableClasses(ontology, type);
-                List<Map<String, String>> unsatisfiableList = unsatisfiable.stream()
-                    .map(cls -> Map.of(
-                        "iri", cls.getIRI().toString(),
-                        "label", getLabel(cls, ontology)
-                    ))
-                    .collect(Collectors.toList());
-                result.put("unsatisfiableClasses", unsatisfiableList);
-            }
-            
-            return ResponseEntity.ok(result);
-            
-        } catch (Exception e) {
-            log.error("Error checking consistency", e);
+            log.error("Error submitting {} job for project {}", jobType, projectId, e);
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
-                "error", e.getMessage()
-            ));
+                "error", ReasoningFriendlyErrors.forUser(e.getMessage())));
         }
     }
 
-    /**
-     * Classify the ontology (compute class hierarchy) — async version.
-     * Returns immediately with a taskId; poll GET /api/reasoner/{projectId}/classify/status/{taskId} for results.
-     * POST /api/reasoner/{projectId}/classify
-     */
-    @PostMapping("/{projectId}/classify")
-    public ResponseEntity<Map<String, Object>> classify(
-            @PathVariable String projectId,
-            @RequestBody Map<String, String> request
-    ) {
-        try {
-            String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
-            log.info("Classifying ontology for project: {} with {}", projectId, reasonerType);
-
-            // Pre-validate reasoner type
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-
-            // Pre-load ontology on the request thread so errors surface immediately
-            OWLOntology ontology = loadOntology(projectId);
-
-            String taskId = UUID.randomUUID().toString();
-
-            Map<String, Object> taskInfo = new ConcurrentHashMap<>();
-            taskInfo.put("status", "RUNNING");
-            taskInfo.put("startedAt", System.currentTimeMillis());
-            taskInfo.put("reasonerType", type.getDisplayName());
-            classifyTasks.put(taskId, taskInfo);
-
-            classifyExecutor.submit(() -> {
-                try {
-                    long startTime = System.currentTimeMillis();
-                    reasonerService.classify(ontology, type);
-                    long duration = System.currentTimeMillis() - startTime;
-
-                    Map<String, Object> classificationData = reasonerService.getClassificationResults(ontology, type);
-
-                    taskInfo.put("status", "COMPLETED");
-                    taskInfo.put("success", true);
-                    taskInfo.put("durationMs", duration);
-                    taskInfo.put("message", "Classification completed successfully");
-                    taskInfo.put("classHierarchy", classificationData.get("classHierarchy"));
-                    taskInfo.put("objectPropertyHierarchy", classificationData.get("objectPropertyHierarchy"));
-                    taskInfo.put("dataPropertyHierarchy", classificationData.get("dataPropertyHierarchy"));
-                    taskInfo.put("equivalentClasses", classificationData.get("equivalentClasses"));
-                    taskInfo.put("unsatisfiableClasses", classificationData.get("unsatisfiableClasses"));
-                    taskInfo.put("totalClasses", classificationData.get("totalClasses"));
-                } catch (Exception e) {
-                    log.error("Async classification failed for project: {}", projectId, e);
-                    taskInfo.put("status", "FAILED");
-                    taskInfo.put("success", false);
-                    taskInfo.put("error", e.getMessage());
-                }
-            });
-
-            Map<String, Object> accepted = new HashMap<>();
-            accepted.put("taskId", taskId);
-            accepted.put("status", "RUNNING");
-            accepted.put("pollUrl", "/api/reasoner/" + projectId + "/classify/status/" + taskId);
-            return ResponseEntity.accepted().body(accepted);
-
-        } catch (Exception e) {
-            log.error("Error starting classification", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
-        }
-    }
-
-    /**
-     * Poll for async classification results.
-     * GET /api/reasoner/{projectId}/classify/status/{taskId}
-     */
-    @GetMapping("/{projectId}/classify/status/{taskId}")
-    public ResponseEntity<Map<String, Object>> classifyStatus(
-            @PathVariable String projectId,
-            @PathVariable String taskId
-    ) {
-        Map<String, Object> taskInfo = classifyTasks.get(taskId);
-        if (taskInfo == null) {
-            return ResponseEntity.status(404).body(Map.of(
-                "success", false,
-                "error", "Task not found: " + taskId
-            ));
-        }
-
-        String status = (String) taskInfo.get("status");
-        Map<String, Object> response = new HashMap<>(taskInfo);
+    private ResponseEntity<Map<String, Object>> mapWorkerJobStatus(String taskId, Map<String, Object> remote) {
+        Map<String, Object> response = new HashMap<>(remote);
         response.put("taskId", taskId);
-
-        if ("COMPLETED".equals(status) || "FAILED".equals(status)) {
-            // Cleanup after retrieval — keep for 60s in case of retry
-            classifyExecutor.submit(() -> {
-                try { Thread.sleep(60_000); } catch (InterruptedException ignored) {}
-                classifyTasks.remove(taskId);
-            });
+        String status = String.valueOf(remote.getOrDefault("status", "QUEUED"));
+        if ("COMPLETED".equals(status)) {
+            response.put("status", "COMPLETED");
+            response.put("success", true);
+        } else if ("FAILED".equals(status)) {
+            response.put("status", "FAILED");
+            response.put("success", false);
+            response.put("error", ReasoningFriendlyErrors.forUser(String.valueOf(remote.get("error"))));
+        } else {
+            response.put("status", "RUNNING");
         }
-
         return ResponseEntity.ok(response);
     }
 
-    /**
-     * Realize the ontology (compute instances)
-     * POST /api/reasoner/{projectId}/realize
-     */
+    // ─── Reasoning endpoints ─────────────────────────────────────────────────
+
+    @PostMapping("/{projectId}/consistency")
+    public ResponseEntity<Map<String, Object>> checkConsistency(
+            @PathVariable String projectId,
+            @RequestBody Map<String, String> request) {
+        log.info("Consistency check for project: {}", projectId);
+        return submitToWorker("REASONER_CONSISTENCY", projectId,
+                request.getOrDefault("reasonerType", "HERMIT"));
+    }
+
+    @PostMapping("/{projectId}/classify")
+    public ResponseEntity<Map<String, Object>> classify(
+            @PathVariable String projectId,
+            @RequestBody Map<String, String> request) {
+        log.info("Classify for project: {}", projectId);
+        return submitToWorker("REASONER_CLASSIFY", projectId,
+                request.getOrDefault("reasonerType", "HERMIT"));
+    }
+
+    @GetMapping("/{projectId}/classify/status/{taskId}")
+    public ResponseEntity<Map<String, Object>> classifyStatus(
+            @PathVariable String projectId,
+            @PathVariable String taskId) {
+        if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
+            return workerUnavailable();
+        }
+        Map<String, Object> remote = reasonerWorkerClient.getJob(taskId);
+        if (remote == null || remote.get("jobId") == null) {
+            return ResponseEntity.status(404).body(Map.of(
+                "success", false,
+                "error", "Task not found: " + taskId));
+        }
+        return mapWorkerJobStatus(taskId, remote);
+    }
+
     @PostMapping("/{projectId}/realize")
     public ResponseEntity<Map<String, Object>> realize(
             @PathVariable String projectId,
-            @RequestBody Map<String, String> request
-    ) {
-        try {
-            String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
-            log.info("Realizing ontology for project: {} with {}", projectId, reasonerType);
-            
-            OWLOntology ontology = loadOntology(projectId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            long startTime = System.currentTimeMillis();
-            reasonerService.realize(ontology, type);
-            long duration = System.currentTimeMillis() - startTime;
-            
-            // Get realization results
-            Map<String, Object> realizationData = reasonerService.getRealizationResults(ontology, type);
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.put("reasonerType", type.getDisplayName());
-            result.put("durationMs", duration);
-            result.put("message", "Realization completed successfully");
-            result.put("instances", realizationData.get("instances"));
-            result.put("totalInstances", realizationData.get("totalInstances"));
-            
-            return ResponseEntity.ok(result);
-            
-        } catch (Exception e) {
-            log.error("Error during realization", e);
-            if (e.getMessage() != null && e.getMessage().contains("Ontology file not found")) {
-                return ResponseEntity.status(404).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage(),
-                    "errorType", "ONTOLOGY_NOT_FOUND",
-                    "projectId", projectId,
-                    "suggestion", "Please upload an ontology file for this project. Use /api/reasoner/diagnose/" + projectId + " to investigate."
-                ));
-            }
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
-        }
+            @RequestBody Map<String, String> request) {
+        log.info("Realize for project: {}", projectId);
+        return submitToWorker("REASONER_REALIZE", projectId,
+                request.getOrDefault("reasonerType", "HERMIT"));
     }
 
-    /**
-     * Explain why the ontology is inconsistent
-     * POST /api/reasoner/{projectId}/explain-inconsistency
-     */
-    @PostMapping("/{projectId}/explain-inconsistency")
-    public ResponseEntity<Map<String, Object>> explainInconsistency(
-            @PathVariable String projectId,
-            @RequestBody Map<String, String> request
-    ) {
-        try {
-            String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
-            log.info("Explaining inconsistency for project: {} with {}", projectId, reasonerType);
-            
-            OWLOntology ontology = loadOntology(projectId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            Map<String, Object> explanation = reasonerService.explainInconsistency(ontology, type);
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.putAll(explanation);
-            
-            return ResponseEntity.ok(result);
-            
-        } catch (Exception e) {
-            log.error("Error explaining inconsistency", e);
-            if (e.getMessage() != null && e.getMessage().contains("Ontology file not found")) {
-                return ResponseEntity.status(404).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage(),
-                    "errorType", "ONTOLOGY_NOT_FOUND",
-                    "projectId", projectId,
-                    "suggestion", "Please upload an ontology file for this project. Use /api/reasoner/diagnose/" + projectId + " to investigate."
-                ));
-            }
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
-        }
-    }
-
-    /**
-     * Get inferred axioms
-     * GET /api/reasoner/{projectId}/inferred-axioms
-     */
     @GetMapping("/{projectId}/inferred-axioms")
     public ResponseEntity<Map<String, Object>> getInferredAxioms(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType
-    ) {
-        try {
-            log.info("Getting inferred axioms for project: {} with {}", projectId, reasonerType);
-            
-            OWLOntology ontology = loadOntology(projectId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            long startTime = System.currentTimeMillis();
-            Set<OWLAxiom> inferredAxioms = reasonerService.getInferredAxioms(ontology, type);
-            long duration = System.currentTimeMillis() - startTime;
-            
-            List<Map<String, String>> axiomsList = inferredAxioms.stream()
-                .limit(100) // Limit to first 100 to avoid huge responses
-                .map(axiom -> Map.of(
-                    "axiomType", axiom.getAxiomType().getName(),
-                    "readable", formatAxiom(axiom, ontology),
-                    "axiom", axiom.toString()
-                ))
-                .collect(Collectors.toList());
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.put("axioms", axiomsList);
-            result.put("totalCount", inferredAxioms.size());
-            result.put("durationMs", duration);
-            
-            return ResponseEntity.ok(result);
-            
-        } catch (Exception e) {
-            log.error("Error getting inferred axioms", e);
-            if (e.getMessage() != null && e.getMessage().contains("Ontology file not found")) {
-                return ResponseEntity.status(404).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage(),
-                    "errorType", "ONTOLOGY_NOT_FOUND",
-                    "projectId", projectId,
-                    "suggestion", "Please upload an ontology file for this project. Use /api/reasoner/diagnose/" + projectId + " to investigate."
-                ));
-            }
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
-        }
+            @RequestParam(defaultValue = "HERMIT") String reasonerType) {
+        log.info("Inferred axioms for project: {}", projectId);
+        return submitToWorker("REASONER_RUN", projectId, reasonerType);
     }
 
-    /**
-     * Get reasoner statistics
-     * GET /api/reasoner/{projectId}/stats
-     */
+    @PostMapping("/{projectId}/explain-inconsistency")
+    public ResponseEntity<Map<String, Object>> explainInconsistency(
+            @PathVariable String projectId,
+            @RequestBody Map<String, String> request) {
+        // REASONER_EXPLAIN is not yet a worker job type.
+        return ResponseEntity.status(501).body(Map.of(
+            "success", false,
+            "error", "Explain inconsistency is not yet supported via the reasoning worker."));
+    }
+
     @GetMapping("/{projectId}/stats")
     public ResponseEntity<Map<String, Object>> getReasonerStats(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType
-    ) {
-        try {
-            OWLOntology ontology = loadOntology(projectId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            Map<String, Object> stats = reasonerService.getReasonerStats(ontology, type);
-            stats.put("success", true);
-            stats.put("projectId", projectId);
-            
-            return ResponseEntity.ok(stats);
-            
-        } catch (Exception e) {
-            log.error("Error getting reasoner stats", e);
-            if (e.getMessage() != null && e.getMessage().contains("Ontology file not found")) {
-                return ResponseEntity.status(404).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage(),
-                    "errorType", "ONTOLOGY_NOT_FOUND",
-                    "projectId", projectId,
-                    "suggestion", "Please upload an ontology file for this project. Use /api/reasoner/diagnose/" + projectId + " to investigate."
-                ));
-            }
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
-        }
+            @RequestParam(defaultValue = "HERMIT") String reasonerType) {
+        // Stats are per-session; poll /api/dl-query/jobs/{jobId} for job progress instead.
+        return ResponseEntity.status(501).body(Map.of(
+            "success", false,
+            "error", "Reasoner stats are not available for worker-based reasoning."));
     }
 
-    /**
-     * Clear reasoner cache
-     * POST /api/reasoner/clear-cache
-     */
+    @PostMapping("/{projectId}/stop")
+    public ResponseEntity<Map<String, Object>> stopReasoner(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String reasonerType) {
+        // Worker jobs are self-managed; nothing to stop locally.
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "No local reasoner running.",
+            "projectId", projectId));
+    }
+
     @PostMapping("/clear-cache")
     public ResponseEntity<Map<String, Object>> clearCache() {
-        try {
-            reasonerService.clearCache();
-            ontologyCache.clear();
-            
-            return ResponseEntity.ok(Map.of(
-                "success", true,
-                "message", "Cache cleared successfully"
-            ));
-            
-        } catch (Exception e) {
-            log.error("Error clearing cache", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
-        }
+        // No local OWL cache — nothing to clear.
+        return ResponseEntity.ok(Map.of("success", true, "message", "Cache cleared."));
     }
 
-    /**
-     * Diagnostic endpoint to check GridFS file storage status
-     * GET /api/reasoner/diagnose/{projectId}
-     */
+    // ─── Diagnostic endpoint ─────────────────────────────────────────────────
+
     @GetMapping("/diagnose/{projectId}")
     public ResponseEntity<Map<String, Object>> diagnoseFileStorage(@PathVariable String projectId) {
         try {
-            Map<String, Object> diagnosis = new HashMap<>();
+            Map<String, Object> diagnosis = new LinkedHashMap<>();
             diagnosis.put("projectId", projectId);
             diagnosis.put("timestamp", new java.util.Date());
-            
-            // Check GridFS by metadata.projectId
-            GridFSFile fileByMetadata = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
-            if (fileByMetadata != null) {
+            diagnosis.put("editorServiceUrl", editorServiceUrl);
+            diagnosis.put("workerEnabled", reasonerWorkerEnabled);
+
+            // Check editor service reachability (forward JWT if present)
+            String encoded = java.net.URLEncoder.encode(projectId, StandardCharsets.UTF_8).replace("+", "%20");
+            String base = editorServiceUrl.endsWith("/")
+                    ? editorServiceUrl.substring(0, editorServiceUrl.length() - 1) : editorServiceUrl;
+            String url = base + "/api/ontology-file/" + encoded;
+            Map<String, Object> editorCheck = new LinkedHashMap<>();
+            editorCheck.put("url", url);
+            try {
+                HttpHeaders headers = new HttpHeaders();
+                try {
+                    ServletRequestAttributes attrs =
+                            (ServletRequestAttributes) RequestContextHolder.currentRequestAttributes();
+                    String auth = attrs.getRequest().getHeader("Authorization");
+                    if (auth != null && auth.startsWith("Bearer ")) {
+                        headers.set("Authorization", auth);
+                    }
+                } catch (Exception ignored) { }
+                RequestEntity<Void> req = new RequestEntity<>(headers, HttpMethod.GET,
+                        java.net.URI.create(url));
+                ResponseEntity<byte[]> resp = restTemplate.exchange(req, byte[].class);
+                editorCheck.put("httpStatus", resp.getStatusCode().value());
+                byte[] body = resp.getBody();
+                editorCheck.put("bytes", body != null ? body.length : 0);
+                editorCheck.put("available", resp.getStatusCode() == HttpStatus.OK
+                        && body != null && body.length > 0);
+            } catch (Exception e) {
+                editorCheck.put("available", false);
+                editorCheck.put("error", e.getMessage());
+            }
+            diagnosis.put("editorService", editorCheck);
+
+            // Check GridFS
+            GridFSFile fileByMeta = gridfs.findOne(
+                    new Query(Criteria.where("metadata.projectId").is(projectId)));
+            GridFSFile fileByName = fileByMeta == null
+                    ? gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")))
+                    : null;
+            GridFSFile found = fileByMeta != null ? fileByMeta : fileByName;
+            if (found != null) {
                 diagnosis.put("foundInGridFS", true);
-                diagnosis.put("searchMethod", "metadata.projectId");
-                diagnosis.put("gridfsFileId", fileByMetadata.getObjectId().toString());
-                diagnosis.put("filename", fileByMetadata.getFilename());
-                diagnosis.put("uploadDate", fileByMetadata.getUploadDate());
-                diagnosis.put("length", fileByMetadata.getLength());
-                diagnosis.put("metadata", fileByMetadata.getMetadata());
-                diagnosis.put("status", "OK - File found in GridFS");
+                diagnosis.put("searchMethod", fileByMeta != null ? "metadata.projectId" : "filename");
+                diagnosis.put("gridfsFileId", found.getObjectId().toString());
+                diagnosis.put("filename", found.getFilename());
+                diagnosis.put("length", found.getLength());
+                if (found.getMetadata() != null) {
+                    diagnosis.put("metadata", found.getMetadata());
+                }
             } else {
-                // Try by filename
-                GridFSFile fileByFilename = gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")));
-                if (fileByFilename != null) {
-                    diagnosis.put("foundInGridFS", true);
-                    diagnosis.put("searchMethod", "filename");
-                    diagnosis.put("gridfsFileId", fileByFilename.getObjectId().toString());
-                    diagnosis.put("filename", fileByFilename.getFilename());
-                    diagnosis.put("uploadDate", fileByFilename.getUploadDate());
-                    diagnosis.put("length", fileByFilename.getLength());
-                    diagnosis.put("metadata", fileByFilename.getMetadata());
-                    diagnosis.put("warning", "File found by filename only, not by metadata.projectId");
-                } else {
-                    diagnosis.put("foundInGridFS", false);
-                    diagnosis.put("status", "ERROR - File not found in GridFS");
-                }
+                diagnosis.put("foundInGridFS", false);
+                diagnosis.put("note", "File not found by metadata.projectId or filename. "
+                        + "The file may be retrievable via file_metadata.gridfsId lookup.");
             }
-            
-            // Check filesystem fallback locations
-            List<Map<String, Object>> filesystemChecks = new ArrayList<>();
-            List<Path> candidateFiles = Arrays.asList(
-                Paths.get("..", "ontology-editor", "data", "projects", projectId, "ontology.current.owl"),
-                Paths.get("..", "ontology-editor", "data", "projects", projectId, "ontology.original.owl"),
-                Paths.get("ontology-editor", "data", "projects", projectId, "ontology.current.owl"),
-                Paths.get(projectId + ".owl")
-            );
-            
-            for (Path candidate : candidateFiles) {
-                Path absolute = candidate.toAbsolutePath().normalize();
-                Map<String, Object> fileCheck = new HashMap<>();
-                fileCheck.put("path", absolute.toString());
-                fileCheck.put("exists", Files.exists(absolute));
-                if (Files.exists(absolute)) {
-                    fileCheck.put("size", Files.size(absolute));
-                    fileCheck.put("lastModified", Files.getLastModifiedTime(absolute).toString());
-                }
-                filesystemChecks.add(fileCheck);
-            }
-            diagnosis.put("filesystemFallback", filesystemChecks);
-            
-            // Check if cached
-            diagnosis.put("cachedInMemory", ontologyCache.containsKey(projectId));
-            
-            // List recent GridFS files for reference
+
+            // Recent GridFS files (last 10)
             List<Map<String, Object>> recentFiles = new ArrayList<>();
             gridfs.find(new Query().limit(10))
                 .sort(new org.bson.Document("uploadDate", -1))
-                .forEach(file -> {
-                    Map<String, Object> fileInfo = new HashMap<>();
-                    fileInfo.put("filename", file.getFilename());
-                    fileInfo.put("uploadDate", file.getUploadDate());
-                    fileInfo.put("fileId", file.getObjectId().toString());
-                    if (file.getMetadata() != null) {
-                        fileInfo.put("metadata", file.getMetadata());
-                    }
-                    recentFiles.add(fileInfo);
-                });
+                .forEach(file -> recentFiles.add(Map.of(
+                    "filename", file.getFilename(),
+                    "uploadDate", String.valueOf(file.getUploadDate()),
+                    "fileId", file.getObjectId().toString())));
             diagnosis.put("recentGridFSFiles", recentFiles);
-            
-            // Provide suggestions
-            List<String> suggestions = new ArrayList<>();
-            if (!diagnosis.containsKey("foundInGridFS") || !(Boolean) diagnosis.get("foundInGridFS")) {
-                suggestions.add("File not found in GridFS - the upload may have failed or the file was deleted");
-                suggestions.add("Check if the project was copied without copying the ontology file");
-                suggestions.add("Try re-uploading the ontology file or copying from the original project");
-                suggestions.add("Check MongoDB GridFS collections: db.fs.files and db.fs.chunks");
-            }
-            diagnosis.put("suggestions", suggestions);
-            
+
             return ResponseEntity.ok(diagnosis);
-            
         } catch (Exception e) {
             log.error("Error diagnosing file storage for project: {}", projectId, e);
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage(),
-                "projectId", projectId
-            ));
+                "projectId", projectId));
         }
-    }
-
-    // Helper methods
-
-    private String getLabel(OWLEntity entity, OWLOntology ontology) {
-        return ontology.getAnnotationAssertionAxioms(entity.getIRI()).stream()
-            .filter(a -> a.getProperty().isLabel())
-            .findFirst()
-            .map(a -> a.getValue().asLiteral().map(OWLLiteral::getLiteral).orElse(""))
-            .orElse(getLocalName(entity.getIRI().toString()));
-    }
-
-    private String getLocalName(String iri) {
-        int hashIndex = iri.lastIndexOf('#');
-        int slashIndex = iri.lastIndexOf('/');
-        int splitIndex = Math.max(hashIndex, slashIndex);
-        return splitIndex >= 0 && splitIndex < iri.length() - 1
-            ? iri.substring(splitIndex + 1)
-            : iri;
-    }
-
-    private String formatAxiom(OWLAxiom axiom, OWLOntology ontology) {
-        String axiomString = axiom.toString();
-        
-        // Replace IRIs with labels where possible
-        for (OWLEntity entity : axiom.getSignature()) {
-            String label = getLabel(entity, ontology);
-            if (!label.isEmpty()) {
-                axiomString = axiomString.replace(entity.getIRI().toString(), label);
-            }
-        }
-        
-        return axiomString;
     }
 }

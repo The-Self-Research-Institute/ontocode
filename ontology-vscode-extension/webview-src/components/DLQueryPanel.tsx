@@ -12,13 +12,14 @@
  * - https://oboacademy.github.io/obook/tutorial/basic-dl-query/
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { 
   Play, Plus, Loader2, AlertCircle, CheckCircle, 
   ChevronDown, ChevronRight, HelpCircle, BookOpen,
   Copy, Check, Info, Layers, Users, ArrowUp, ArrowDown,
   Equal, Sparkles, Search
 } from 'lucide-react';
+import type { TreeNode } from '../types';
 
 // Types
 interface DLQueryResult {
@@ -30,9 +31,14 @@ interface DLQueryResult {
 
 interface DLQueryResponse {
   success: boolean;
-  query: string;
-  queryType: string[];
-  results: {
+  async?: boolean;
+  jobId?: string;
+  status?: string;
+  queuePosition?: number;
+  estimatedWaitTimeMs?: number;
+  query?: string;
+  queryType?: string[];
+  results?: {
     superclasses?: DLQueryResult[];
     directSuperclasses?: DLQueryResult[];
     subclasses?: DLQueryResult[];
@@ -41,9 +47,130 @@ interface DLQueryResponse {
     instances?: DLQueryResult[];
     directInstances?: DLQueryResult[];
   };
-  executionTime: number;
+  executionTime?: number;
+  executionTimeMs?: number;
   error?: string;
 }
+
+interface DLQueryJobUpdate {
+  jobId: string;
+  projectId: string;
+  status: string;
+  queuePosition?: number;
+  estimatedWaitTimeMs?: number;
+  message?: string;
+  executionTimeMs?: number;
+  result?: DLQueryResponse['results'];
+  error?: string;
+}
+
+const formatDlQueryProgress = (detail: DLQueryJobUpdate): string => {
+  const waitSec = detail.estimatedWaitTimeMs
+    ? Math.max(1, Math.ceil(detail.estimatedWaitTimeMs / 1000))
+    : 0;
+  if (detail.status === 'PROCESSING') {
+    return 'Running your query…';
+  }
+  if (detail.status === 'QUEUED') {
+    const pos = detail.queuePosition ?? 0;
+    if (pos <= 1) {
+      return waitSec > 0
+        ? `Your query is next in line (about ${waitSec} sec)`
+        : 'Your query is next in line';
+    }
+    const ahead = Math.max(0, pos - 1);
+    return waitSec > 0
+      ? `Your query is queued — position ${pos} (${ahead} ahead, about ${waitSec} sec)`
+      : `Your query is queued — position ${pos}`;
+  }
+  return 'Working on your query…';
+};
+
+const friendlyDlQueryError = (raw?: string): string => {
+  if (!raw) return 'Could not run this query. Please try again.';
+  const lower = raw.toLowerCase();
+  if (lower.includes('inconsistent')) {
+    return 'This ontology has inconsistent data (for example, an individual typed as both a class and its opposite). Fix that in the editor, then try again.';
+  }
+  if (lower.includes('too large') || lower.includes('out of memory') || lower.includes('triples')) {
+    return 'This ontology is too large for DL Query. Try a simpler expression or use the SPARQL tab instead.';
+  }
+  if (lower.includes('openllet') || lower.includes('pellet') || lower.includes('reasoner')) {
+    return 'Could not run this query on the current ontology. Check for inconsistent class or individual types, then try again.';
+  }
+  return raw;
+};
+
+const waitForDlQueryJob = (
+  jobId: string,
+  apiClient: { get: <T>(url: string) => Promise<T> }
+): Promise<DLQueryJobUpdate> =>
+  new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutMs = 45 * 60 * 1000;
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn();
+    };
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      window.clearInterval(pollId);
+      window.removeEventListener('dlQueryJobUpdate', onUpdate);
+      window.dispatchEvent(new CustomEvent('dlQueryUnsubscribe', { detail: { jobId } }));
+    };
+
+    const onTerminal = (detail: DLQueryJobUpdate) => {
+      if (detail.status === 'COMPLETED') {
+        settle(() => resolve(detail));
+      } else if (detail.status === 'FAILED') {
+        settle(() => reject(new Error(friendlyDlQueryError(detail.error))));
+      }
+    };
+
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<DLQueryJobUpdate>).detail;
+      if (!detail || detail.jobId !== jobId) return;
+      onTerminal(detail);
+    };
+
+    const poll = async () => {
+      if (settled) return;
+      try {
+        const data = await apiClient.get<DLQueryResponse & { status?: string }>(
+          `/api/dl-query/jobs/${jobId}`
+        );
+        if (data.status === 'COMPLETED' || (data.success && data.results)) {
+          settle(() =>
+            resolve({
+              jobId,
+              projectId: '',
+              status: 'COMPLETED',
+              result: data.results,
+              executionTimeMs: data.executionTime ?? data.executionTimeMs,
+            })
+          );
+        } else if (data.status === 'FAILED' || data.success === false) {
+          settle(() => reject(new Error(friendlyDlQueryError(data.error))));
+        }
+      } catch {
+        // ignore transient poll errors
+      }
+    };
+
+    window.addEventListener('dlQueryJobUpdate', onUpdate);
+    window.dispatchEvent(new CustomEvent('dlQuerySubscribe', { detail: { jobId } }));
+
+    void poll();
+    const pollId = window.setInterval(() => void poll(), 1500);
+
+    const timeoutId = window.setTimeout(() => {
+      settle(() => reject(new Error('This query is taking longer than expected. Please try again.')));
+    }, timeoutMs);
+  });
 
 interface OntologyMetrics {
   classCount?: number;
@@ -54,6 +181,9 @@ interface OntologyMetrics {
 
 interface DLQueryPanelProps {
   projectId: string;
+  classHierarchy?: TreeNode[];
+  expandedClassNodeIds?: string[];
+  onToggleClassNode?: (nodeId: string) => void;
   classes: { id: string; label: string }[];
   objectProperties: { id: string; label: string }[];
   dataProperties: { id: string; label: string }[];
@@ -171,6 +301,9 @@ const QUERY_TYPES = [
 
 export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
   projectId,
+  classHierarchy = [],
+  expandedClassNodeIds,
+  onToggleClassNode,
   classes,
   objectProperties,
   dataProperties,
@@ -195,6 +328,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
   // State
   const [query, setQuery] = useState(initialQuery);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
   const [results, setResults] = useState<DLQueryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedTypes, setSelectedTypes] = useState<string[]>(['subclasses', 'instances']);
@@ -204,6 +338,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
   const [copied, setCopied] = useState(false);
   const [newClassName, setNewClassName] = useState('');
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [classTreeSearch, setClassTreeSearch] = useState('');
+  const [expandedClassNodes, setExpandedClassNodes] = useState<string[]>(['http://www.w3.org/2002/07/owl#Thing']);
 
   // Autocomplete suggestions based on current input
   const suggestions = useMemo(() => {
@@ -244,6 +380,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     return allSuggestions.slice(0, 10);
   }, [query, classes, objectProperties, dataProperties]);
 
+  const pendingJobListenerRef = useRef<((event: Event) => void) | null>(null);
+
   // Execute query
   const handleExecuteQuery = useCallback(async () => {
     if (!query.trim()) {
@@ -257,80 +395,68 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     }
     
     setIsLoading(true);
+    setLoadingMessage(null);
     setError(null);
     setResults(null);
+
+    if (pendingJobListenerRef.current) {
+      window.removeEventListener('dlQueryJobUpdate', pendingJobListenerRef.current);
+      pendingJobListenerRef.current = null;
+    }
     
     try {
-      const response = await apiClient.post<DLQueryResponse>(
+      const submit = await apiClient.post<DLQueryResponse>(
         `/api/ontology/${projectId}/dl-query`,
         { 
           expression: query,
           queryTypes: selectedTypes
         }
       );
-      
-      setResults(response);
-      
-      if (!response.success && response.error) {
-        setError(response.error);
+
+      if (submit.async && submit.jobId) {
+        const progressListener = (event: Event) => {
+          const detail = (event as CustomEvent<DLQueryJobUpdate>).detail;
+          if (!detail || detail.jobId !== submit.jobId) return;
+          setLoadingMessage(formatDlQueryProgress(detail));
+        };
+        pendingJobListenerRef.current = progressListener;
+        window.addEventListener('dlQueryJobUpdate', progressListener);
+
+        let jobUpdate: DLQueryJobUpdate;
+        try {
+          jobUpdate = await waitForDlQueryJob(submit.jobId, apiClient);
+        } finally {
+          if (pendingJobListenerRef.current) {
+            window.removeEventListener('dlQueryJobUpdate', pendingJobListenerRef.current);
+            pendingJobListenerRef.current = null;
+          }
+        }
+
+        const resultPayload = jobUpdate.result as Record<string, unknown> | undefined;
+        const response: DLQueryResponse = {
+          success: true,
+          query: (resultPayload?.query as string) || submit.query || query,
+          queryType: (resultPayload?.queryType as string[]) || selectedTypes,
+          results: (resultPayload?.results ?? jobUpdate.result) as DLQueryResponse['results'],
+          executionTime: jobUpdate.executionTimeMs ?? (resultPayload?.executionTime as number),
+        };
+        setResults(response);
+        return;
+      }
+
+      setResults(submit);
+      if (!submit.success && submit.error) {
+        setError(submit.error);
       }
     } catch (err: any) {
-      // Fallback: simulate results for demo purposes if backend not available
-      console.warn('DL Query API not available, using simulated results');
-      
-      // Simple pattern matching for demo
-      const simulatedResults: DLQueryResponse = {
-        success: true,
-        query: query,
-        queryType: selectedTypes,
-        results: {},
-        executionTime: 150
-      };
-      
-      // Find matching classes/individuals based on query
-      const queryLower = query.toLowerCase();
-      
-      if (selectedTypes.includes('subclasses') || selectedTypes.includes('directSubclasses')) {
-        const matchingClasses = classes
-          .filter(c => {
-            const label = c.label.toLowerCase();
-            // Simple heuristic: if query mentions a class, show related classes
-            return queryLower.includes(label) || label.includes(queryLower.split(' ')[0]);
-          })
-          .slice(0, 10)
-          .map(c => ({ type: 'class' as const, iri: c.id, label: c.label }));
-        
-        if (selectedTypes.includes('subclasses')) {
-          simulatedResults.results.subclasses = matchingClasses;
-        }
-        if (selectedTypes.includes('directSubclasses')) {
-          simulatedResults.results.directSubclasses = matchingClasses.slice(0, 5);
-        }
-      }
-      
-      if (selectedTypes.includes('instances') || selectedTypes.includes('directInstances')) {
-        const matchingIndividuals = individuals
-          .filter(i => {
-            const label = i.label.toLowerCase();
-            return queryLower.split(' ').some(word => label.includes(word) || word.includes(label.substring(0, 3)));
-          })
-          .slice(0, 15)
-          .map(i => ({ type: 'individual' as const, iri: i.id, label: i.label }));
-        
-        if (selectedTypes.includes('instances')) {
-          simulatedResults.results.instances = matchingIndividuals;
-        }
-        if (selectedTypes.includes('directInstances')) {
-          simulatedResults.results.directInstances = matchingIndividuals.slice(0, 8);
-        }
-      }
-      
-      setResults(simulatedResults);
-      setError('Note: Using simulated results. Backend DL Query endpoint not available.');
+      console.error('DL Query API failed:', err);
+      setResults(null);
+      setError(friendlyDlQueryError(err?.response?.data?.error || err?.message) || 'Could not run this query. Please try again.');
     } finally {
       setIsLoading(false);
+      setLoadingMessage(null);
     }
-  }, [query, selectedTypes, projectId, apiClient, classes, individuals]);
+  }, [query, selectedTypes, projectId, apiClient]);
 
   // Toggle query type selection
   const toggleQueryType = (typeId: string) => {
@@ -346,6 +472,103 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     setQuery(expression);
     setResults(null);
     setError(null);
+  };
+
+  const toggleClassNode = (nodeId: string) => {
+    if (onToggleClassNode) {
+      onToggleClassNode(nodeId);
+      return;
+    }
+    setExpandedClassNodes(prev =>
+      prev.includes(nodeId) ? prev.filter(id => id !== nodeId) : [...prev, nodeId]
+    );
+  };
+
+  const useClassInQuery = (node: TreeNode) => {
+    setQuery(node.label || node.id);
+    setResults(null);
+    setError(null);
+  };
+
+  const filteredClassHierarchy = useMemo(() => {
+    const search = classTreeSearch.trim().toLowerCase();
+    if (!search) return classHierarchy;
+
+    const filterNode = (node: TreeNode): TreeNode | null => {
+      const children = (node.children || [])
+        .map(filterNode)
+        .filter((child): child is TreeNode => Boolean(child));
+      const matches =
+        (node.label || '').toLowerCase().includes(search) ||
+        (node.id || '').toLowerCase().includes(search);
+
+      if (matches || children.length > 0) {
+        return { ...node, children, hasChildren: node.hasChildren || children.length > 0 };
+      }
+      return null;
+    };
+
+    return classHierarchy
+      .map(filterNode)
+      .filter((node): node is TreeNode => Boolean(node));
+  }, [classHierarchy, classTreeSearch]);
+
+  const renderClassNode = (node: TreeNode, level = 0): React.ReactNode => {
+    const hasChildren = Boolean(node.hasChildren || node.children?.length);
+    const activeExpandedNodes = expandedClassNodeIds || expandedClassNodes;
+    const isExpanded = activeExpandedNodes.includes(node.id) || Boolean(classTreeSearch.trim());
+    const isBuiltinThing = node.id === 'http://www.w3.org/2002/07/owl#Thing';
+    const isDefined = Boolean(node.equivalentClassesAxioms?.length || node.equivalentClasses?.length);
+    const equivalentLabels = (node.equivalentClasses || [])
+      .map(eq => eq.label || eq.iri)
+      .filter(Boolean);
+
+    return (
+      <div key={node.id}>
+        <div
+          className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-purple-50 cursor-pointer text-xs group"
+          style={{ paddingLeft: `${level * 14 + 6}px` }}
+          title={node.id}
+          onClick={() => !isBuiltinThing && useClassInQuery(node)}
+        >
+          <button
+            className="w-4 h-4 flex items-center justify-center text-gray-500"
+            disabled={!hasChildren}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (hasChildren) toggleClassNode(node.id);
+            }}
+          >
+            {hasChildren ? (isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : null}
+          </button>
+          <span className={`w-3 h-3 rounded-sm border flex items-center justify-center flex-shrink-0 ${
+            isDefined ? 'bg-amber-300 border-amber-600' : 'bg-amber-400 border-amber-600'
+          }`}>
+            {isDefined ? <span className="text-white text-[8px] leading-none font-bold">≡</span> : null}
+          </span>
+          <span className={`truncate ${isBuiltinThing ? 'text-gray-500' : 'text-gray-800 group-hover:text-purple-700'}`}>
+            {node.label || node.id}
+          </span>
+          {typeof node.totalInstanceCount === 'number' && node.totalInstanceCount > 0 && (
+            <span className="ml-auto text-[10px] text-gray-500">{node.totalInstanceCount}</span>
+          )}
+        </div>
+        {equivalentLabels.length > 0 && (
+          <div
+            className="ml-8 pr-2 pb-1 text-[10px] text-amber-700 truncate"
+            style={{ paddingLeft: `${level * 14 + 6}px` }}
+            title={`Equivalent To: ${equivalentLabels.join(', ')}`}
+          >
+            ≡ {equivalentLabels.join(', ')}
+          </div>
+        )}
+        {Boolean(node.children?.length) && isExpanded && (
+          <div>
+            {node.children!.map(child => renderClassNode(child, level + 1))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Copy results to clipboard
@@ -394,6 +617,30 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
 
   return (
     <div className="flex h-full bg-gray-50">
+      {/* Left Sidebar - Class Hierarchy */}
+      <aside className="w-72 bg-white border-r border-gray-200 flex flex-col overflow-hidden">
+        <div className="p-3 border-b border-gray-100">
+          <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Class Hierarchy</h3>
+          <div className="relative">
+            <Search size={13} className="absolute left-2 top-2 text-gray-400" />
+            <input
+              value={classTreeSearch}
+              onChange={e => setClassTreeSearch(e.target.value)}
+              placeholder="Find class..."
+              className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded bg-white text-gray-800 focus:ring-1 focus:ring-purple-500"
+            />
+          </div>
+          <p className="text-[10px] text-gray-500 mt-1">Click a class to use it as the query expression.</p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-1">
+          {filteredClassHierarchy.length > 0 ? (
+            filteredClassHierarchy.map(node => renderClassNode(node))
+          ) : (
+            <div className="p-3 text-xs text-gray-500 text-center">No classes found.</div>
+          )}
+        </div>
+      </aside>
+
       {/* Main Query Area */}
       <main className="flex-1 flex flex-col p-3 overflow-hidden">
         {/* Query Input Section */}
@@ -582,11 +829,11 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
             {isLoading ? (
               <div className="flex items-center justify-center h-full text-gray-600">
                 <Loader2 size={24} className="animate-spin mr-2" />
-                <span>Executing query...</span>
+                <span>{loadingMessage || 'Running your query…'}</span>
               </div>
             ) : results ? (
               <div className="space-y-4">
-                {Object.entries(results.results).map(([type, items]) => {
+                {Object.entries(results.results || {}).map(([type, items]) => {
                   const filteredItems = filterResults(items);
                   if (!filteredItems || filteredItems.length === 0) return null;
                   

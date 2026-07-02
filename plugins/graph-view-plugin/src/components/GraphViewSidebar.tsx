@@ -4,12 +4,13 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { 
-  Search, X, ChevronDown, ChevronRight, ChevronUp, Info, Tag,
-  Square, Circle, Diamond, Triangle, Hexagon,
-  Link2, Filter, BarChart3, Eye, EyeOff, Layers, GitBranch
+import {
+  Search, X, ChevronDown, ChevronRight,
+  Square, Circle, Diamond, Hexagon,
+  Layers, GitBranch
 } from 'lucide-react';
 import { OntologyNode as BaseOntologyNode, OntologyEdge } from '../types';
+import { ClassHierarchyPanel } from './ClassHierarchyPanel';
 
 interface OntologyNode extends BaseOntologyNode {
   iri?: string;
@@ -266,217 +267,11 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     return { parents, children, properties: uniqueProperties, instances };
   };
 
-  // Build class hierarchy tree with relationships
-  const classHierarchyTree = useMemo(() => {
-    const classNodes = nodes.filter(n => n.type === 'class');
-    
-    // Build relationship map
-    const childrenMap = new Map<string, OntologyNode[]>();
-    const parentMap = new Map<string, OntologyNode[]>();
-    
-    edges.forEach(edge => {
-      if (edge.type === 'subClassOf') {
-        // edge.from is child, edge.to is parent
-        if (!childrenMap.has(edge.to)) {
-          childrenMap.set(edge.to, []);
-        }
-        const childNode = classNodes.find(n => n.id === edge.from);
-        if (childNode && !childrenMap.get(edge.to)!.some(c => c.id === childNode.id)) {
-          childrenMap.get(edge.to)!.push(childNode);
-        }
-        
-        if (!parentMap.has(edge.from)) {
-          parentMap.set(edge.from, []);
-        }
-        const parentNode = classNodes.find(n => n.id === edge.to);
-        if (parentNode && !parentMap.get(edge.from)!.some(p => p.id === parentNode.id)) {
-          parentMap.get(edge.from)!.push(parentNode);
-        }
-      }
-    });
-    
-    // Find root classes (no parents) - exclude owl:Thing-like nodes if they have children
-    const rootClasses = classNodes.filter(node => !parentMap.has(node.id) || parentMap.get(node.id)!.length === 0)
-      .sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id));
-    
-    return { rootClasses, childrenMap, parentMap };
-  }, [nodes, edges]);
+  // NOTE: The hierarchy tab is now rendered by <ClassHierarchyPanel /> below.
+  // The previous in-component class-hierarchy index, expansion state and
+  // recursive renderers have been removed — the panel handles all of that
+  // (multi-parent, cycle-safe, virtualized, keyboard-navigable).
 
-  // Track expanded nodes in the class hierarchy tree
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
-
-  // Auto-expand tree nodes when search term changes (at component level, not inside render function)
-  React.useEffect(() => {
-    if (!searchTerm) return;
-    const { childrenMap } = classHierarchyTree;
-    const matchesSearch = (node: OntologyNode): boolean => {
-      const term = searchTerm.toLowerCase();
-      if ((node.label || node.id).toLowerCase().includes(term)) return true;
-      const ch = childrenMap.get(node.id) || [];
-      return ch.some(c => matchesSearch(c));
-    };
-    // Find all nodes with matching descendants and auto-expand them
-    const toExpand = new Set<string>();
-    const checkNode = (nodeId: string) => {
-      const children = childrenMap.get(nodeId) || [];
-      const matchingChildren = children.filter(c => matchesSearch(c));
-      if (matchingChildren.length > 0) {
-        toExpand.add(nodeId);
-      }
-      children.forEach(c => checkNode(c.id));
-    };
-    classHierarchyTree.rootClasses.forEach(r => checkNode(r.id));
-    if (toExpand.size > 0) {
-      setExpandedNodes(prev => {
-        const next = new Set(prev);
-        toExpand.forEach(id => next.add(id));
-        return next;
-      });
-    }
-  }, [searchTerm, classHierarchyTree]);
-
-  // Render hierarchy tree with navigator style
-  const renderHierarchyNode = (node: OntologyNode, level: number = 0): JSX.Element => {
-    const children = classHierarchyTree.childrenMap.get(node.id) || [];
-    const parents = classHierarchyTree.parentMap.get(node.id) || [];
-    const hasChildren = children.length > 0;
-    const hasParents = parents.length > 0;
-    const isExpanded = expandedNodes.has(node.id);
-
-    return (
-      <div key={node.id}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            padding: '6px 8px',
-            marginLeft: `${level * 20}px`,
-            cursor: 'pointer',
-            borderRadius: '4px',
-            backgroundColor: selectedNode?.id === node.id ? '#e0e7ff' : 'transparent',
-            transition: 'background-color 0.15s'
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = selectedNode?.id === node.id ? '#e0e7ff' : '#f3f4f6';
-            onNodeHighlight(node.id);
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = selectedNode?.id === node.id ? '#e0e7ff' : 'transparent';
-            onNodeHighlight(null);
-          }}
-        >
-          {/* Expand Up (Parents) Icon */}
-          {hasParents && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                // Could trigger expand parents action
-              }}
-              style={{
-                marginRight: '4px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                color: '#fff',
-                backgroundColor: '#667eea',
-                border: 'none',
-                borderRadius: '50%',
-                width: '18px',
-                height: '18px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 0,
-                flexShrink: 0
-              }}
-              title={`Has ${parents.length} parent(s)`}
-            >
-              <ChevronUp size={12} />
-            </button>
-          )}
-          
-          {/* Expand Down (Children) Icon */}
-          {hasChildren && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setExpandedNodes(prev => {
-                  const newSet = new Set(prev);
-                  if (newSet.has(node.id)) {
-                    newSet.delete(node.id);
-                  } else {
-                    newSet.add(node.id);
-                  }
-                  return newSet;
-                });
-              }}
-              style={{
-                marginRight: '6px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                color: '#fff',
-                backgroundColor: '#10b981',
-                border: 'none',
-                borderRadius: '50%',
-                width: '18px',
-                height: '18px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 0,
-                flexShrink: 0
-              }}
-              title={`${isExpanded ? 'Collapse' : 'Expand'} ${children.length} child(ren)`}
-            >
-              {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            </button>
-          )}
-          
-          {/* Spacer if no icons */}
-          {!hasChildren && !hasParents && <span style={{ width: '22px', display: 'inline-block', flexShrink: 0 }} />}
-          
-          <span
-            style={{
-              fontSize: '13px',
-              color: '#374151',
-              flex: 1,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              cursor: 'pointer'
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              // Clicking the class label opens the hierarchy navigator
-              onNodeSelect(node);
-            }}
-            title="Click to open class hierarchy navigator"
-          >
-            {node.label || node.id}
-          </span>
-          <span
-            style={{
-              fontSize: '10px',
-              color: '#9ca3af',
-              marginLeft: '8px',
-              padding: '2px 6px',
-              backgroundColor: '#4A90E220',
-              borderRadius: '4px',
-              flexShrink: 0
-            }}
-          >
-            class
-          </span>
-        </div>
-        {isExpanded && hasChildren && (
-          <div>
-            {children.map(child => renderHierarchyNode(child, level + 1))}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   // Get available node types from current graph (excluding properties)
   const availableNodeTypes = useMemo(() => {
@@ -555,184 +350,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     onFilterChange({ ...filters, edgeTypes: newTypes });
   };
 
-  // Render a tree node for the hierarchy view (Protégé-style)
-  const renderHierarchyTreeNode = (
-    node: OntologyNode,
-    level: number,
-    childrenMap: Map<string, OntologyNode[]>,
-    search: string
-  ): JSX.Element => {
-    const children = (childrenMap.get(node.id) || []).sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id));
-    const hasTreeChildren = children.length > 0;
-    const isTreeExpanded = expandedNodes.has(node.id);
-    const isSelected = selectedNode?.id === node.id;
-    const isVisibleInGraph = graphVisibleNodeIds ? graphVisibleNodeIds.has(node.id) : true;
-    const isExpandedInGraph = graphExpandedNodeIds ? graphExpandedNodeIds.has(node.id) : false;
-
-    // Filter children by search
-    const matchesSearch = (n: OntologyNode): boolean => {
-      if (!search) return true;
-      const term = search.toLowerCase();
-      if ((n.label || n.id).toLowerCase().includes(term)) return true;
-      const ch = childrenMap.get(n.id) || [];
-      return ch.some(c => matchesSearch(c));
-    };
-    const visibleChildren = children.filter(c => matchesSearch(c));
-    const selfMatches = !search || (node.label || node.id).toLowerCase().includes(search.toLowerCase());
-
-    return (
-      <div key={node.id}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            padding: '3px 6px 3px ' + (8 + level * 16) + 'px',
-            cursor: 'pointer',
-            backgroundColor: isSelected ? '#ede9fe' : 'transparent',
-            borderLeft: isSelected ? '3px solid #7c3aed' : '3px solid transparent',
-            minHeight: '26px',
-            transition: 'background-color 0.1s'
-          }}
-          onMouseEnter={(e) => {
-            if (!isSelected) e.currentTarget.style.backgroundColor = '#f5f3ff';
-            onNodeHighlight(node.id);
-          }}
-          onMouseLeave={(e) => {
-            if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
-            onNodeHighlight(null);
-          }}
-          onClick={() => {
-            onNodeSelect(node);
-          }}
-        >
-          {/* Tree expand/collapse toggle */}
-          {hasTreeChildren ? (
-            <span
-              onClick={(e) => {
-                e.stopPropagation();
-                setExpandedNodes(prev => {
-                  const next = new Set(prev);
-                  if (next.has(node.id)) next.delete(node.id);
-                  else next.add(node.id);
-                  return next;
-                });
-              }}
-              style={{
-                width: '16px',
-                height: '16px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                color: '#6b7280',
-                fontSize: '10px',
-                marginRight: '2px'
-              }}
-            >
-              {isTreeExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            </span>
-          ) : (
-            <span style={{ width: '16px', marginRight: '2px', flexShrink: 0 }} />
-          )}
-
-          {/* Class icon - small colored dot */}
-          <span style={{
-            width: '8px',
-            height: '8px',
-            borderRadius: '50%',
-            backgroundColor: isVisibleInGraph ? '#7c3aed' : '#d1d5db',
-            flexShrink: 0,
-            marginRight: '6px'
-          }} />
-
-          {/* Label */}
-          <span style={{
-            fontSize: '12px',
-            color: selfMatches && search ? '#1e1b4b' : (isVisibleInGraph ? '#374151' : '#9ca3af'),
-            fontWeight: selfMatches && search ? 600 : 400,
-            flex: 1,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap' as const
-          }}>
-            {node.label || node.id}
-          </span>
-
-          {/* Child count badge */}
-          {hasTreeChildren && (
-            <span style={{
-              fontSize: '10px',
-              color: '#9ca3af',
-              backgroundColor: '#f3f4f6',
-              padding: '0 4px',
-              borderRadius: '4px',
-              marginLeft: '4px',
-              flexShrink: 0
-            }}>
-              {children.length}
-            </span>
-          )}
-
-          {/* Graph visibility toggle */}
-          <span
-            onClick={(e) => {
-              e.stopPropagation();
-              if (isExpandedInGraph) {
-                onGraphNodeCollapse?.(node.id);
-              } else {
-                onGraphNodeExpand?.(node.id);
-              }
-            }}
-            title={isExpandedInGraph ? 'Collapse in graph' : 'Expand in graph'}
-            style={{
-              marginLeft: '4px',
-              color: isExpandedInGraph ? '#7c3aed' : '#d1d5db',
-              cursor: 'pointer',
-              flexShrink: 0,
-              display: 'inline-flex',
-              alignItems: 'center'
-            }}
-          >
-            {isExpandedInGraph ? <Eye size={12} /> : <EyeOff size={12} />}
-          </span>
-
-          {/* Focus mode trigger — isolates this class + its parents/children */}
-          {onFocusNode && (
-            <span
-              onClick={(e) => {
-                e.stopPropagation();
-                if (focusedNodeId === node.id && onClearFocus) {
-                  onClearFocus();
-                } else {
-                  onFocusNode(node.id);
-                }
-              }}
-              title={focusedNodeId === node.id ? 'Exit focus mode' : 'Focus on this class (parents + children only)'}
-              style={{
-                marginLeft: '4px',
-                color: focusedNodeId === node.id ? '#7c3aed' : '#9ca3af',
-                cursor: 'pointer',
-                flexShrink: 0,
-                display: 'inline-flex',
-                alignItems: 'center',
-                fontSize: '11px',
-                fontWeight: focusedNodeId === node.id ? 700 : 400
-              }}
-            >
-              🎯
-            </span>
-          )}
-        </div>
-
-        {/* Render children */}
-        {isTreeExpanded && visibleChildren.length > 0 && (
-          <div>
-            {visibleChildren.map(child => renderHierarchyTreeNode(child, level + 1, childrenMap, search))}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   return (
     <div style={{...styles.sidebar, width: `${sidebarWidth}px`}}>
@@ -791,9 +408,19 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
       </div>
 
       {/* === HIERARCHY MODE === */}
+      {/*
+        * The hierarchy tab is rendered by the production-grade
+        * <ClassHierarchyPanel /> component, which provides:
+        *   - virtualized rendering (handles 100k+ classes)
+        *   - multi-parent + cycle-safe traversal
+        *   - asserted/inferred/all toggle
+        *   - sub/super-class direction toggle
+        *   - full keyboard navigation (arrow keys, F2, Del, etc.)
+        *   - working right-click context menu
+        *   - badges for child count, instance count and multi-parent classes
+        */}
       {sidebarMode === 'hierarchy' && (
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          {/* Focus mode banner */}
           {focusedNodeId && (() => {
             const focusNode = nodes.find(n => n.id === focusedNodeId);
             return (
@@ -805,13 +432,23 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 background: '#ede9fe',
                 borderBottom: '1px solid #c4b5fd',
                 fontSize: 11,
-                color: '#4c1d95'
+                color: '#4c1d95',
+                flexShrink: 0
               }}>
-                <span title="Focus mode">🎯</span>
-                <span style={{ fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span title="Focus mode" aria-hidden>🎯</span>
+                <span
+                  style={{
+                    fontWeight: 600,
+                    flex: 1,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
                   {focusNode?.label || focusedNodeId.split(/[#/]/).pop()}
                 </span>
                 <button
+                  type="button"
                   onClick={() => onClearFocus?.()}
                   style={{
                     padding: '2px 8px',
@@ -830,62 +467,28 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               </div>
             );
           })()}
-          {/* Search */}
-          <div style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0' }}>
-            <div style={{ position: 'relative' }}>
-              <Search size={14} style={{ position: 'absolute', left: '8px', top: '7px', color: '#9ca3af' }} />
-              <input
-                type="text"
-                placeholder="Search classes..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '6px 28px 6px 28px',
-                  fontSize: '12px',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '6px',
-                  outline: 'none',
-                  boxSizing: 'border-box' as const
-                }}
-              />
-              {searchTerm && (
-                <X size={14} style={{ position: 'absolute', right: '8px', top: '7px', color: '#9ca3af', cursor: 'pointer' }}
-                  onClick={() => setSearchTerm('')} />
-              )}
-            </div>
-          </div>
-          {/* Tree */}
-          <div style={{ flex: 1, overflow: 'auto', padding: '4px 0' }}>
-            {(() => {
-              const { rootClasses, childrenMap } = classHierarchyTree;
-              const matchesSearch = (node: OntologyNode): boolean => {
-                if (!searchTerm) return true;
-                const term = searchTerm.toLowerCase();
-                if ((node.label || node.id).toLowerCase().includes(term)) return true;
-                // Check if any descendant matches
-                const children = childrenMap.get(node.id) || [];
-                return children.some(c => matchesSearch(c));
-              };
-              const filteredRoots = rootClasses.filter(r => matchesSearch(r));
-              if (filteredRoots.length === 0) {
-                return <div style={{ padding: '16px', textAlign: 'center' as const, color: '#9ca3af', fontSize: '12px' }}>No classes found</div>;
-              }
-              return filteredRoots.map(root => renderHierarchyTreeNode(root, 0, childrenMap, searchTerm));
-            })()}
-          </div>
-          {/* Stats */}
-          <div style={{
-            padding: '6px 10px',
-            borderTop: '1px solid #e5e7eb',
-            fontSize: '11px',
-            color: '#9ca3af',
-            backgroundColor: '#f9fafb',
-            display: 'flex',
-            justifyContent: 'space-between'
-          }}>
-            <span>{nodes.filter(n => n.type === 'class').length} classes</span>
-            <span>{graphVisibleNodeIds ? graphVisibleNodeIds.size : nodes.length} visible</span>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <ClassHierarchyPanel
+              nodes={nodes}
+              edges={edges}
+              selectedNodeId={selectedNode?.id ?? null}
+              onSelect={(node) => onNodeSelect(node)}
+              onActivate={(node) => {
+                onNodeSelect(node);
+                onGraphNodeExpand?.(node.id);
+              }}
+              onShowInGraph={(node) => {
+                onNodeSelect(node);
+                if (graphExpandedNodeIds && !graphExpandedNodeIds.has(node.id)) {
+                  onGraphNodeExpand?.(node.id);
+                }
+              }}
+              onFocusInGraph={(node) => onFocusNode?.(node.id)}
+              onShowSubclasses={(node) => onGraphNodeExpand?.(node.id)}
+              onShowSuperclasses={(node) => onNodeSelect(node)}
+              onShowIndividuals={(node) => onGraphNodeExpand?.(node.id)}
+              readonly
+            />
           </div>
         </div>
       )}

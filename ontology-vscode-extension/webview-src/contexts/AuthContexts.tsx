@@ -1,6 +1,17 @@
-﻿
+
 import React, { createContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import apiClient from '../services/apiClient';
+import {
+    clearLastOpenedProjectState,
+    clearSessionCache,
+    SUPPRESS_WORKSPACE_AUTO_OPEN_KEY,
+} from '../utils/sessionCleanup';
+import {
+    isDesktop,
+    getDesktopLicense,
+    DesktopLicense,
+    DESKTOP_LICENSE_UPDATED_EVENT,
+} from '../utils/desktop';
 
 interface User {
     token: string;
@@ -13,23 +24,28 @@ interface User {
     workspaceName?: string;
     workspaceRole?: string;
     subscriptionPlan?: string; // Workspace subscription plan: 'free', 'pro', or 'enterprise'
+    enterpriseDomainBypass?: boolean; // true = access granted via allowed-domain list, not payment
 }
 
 interface AuthContextType {
     user: User | null;
     loading: boolean;
     needsWorkspaceSelection: boolean;
+    maintenanceActive: boolean;
+    maintenanceMessage: string;
     login: (username: string, password: string) => Promise<void>;
     signup: (username: string, email: string, password: string) => Promise<{ requiresVerification: boolean; email?: string; message?: string }>;
     forgotPassword: (email: string) => Promise<string>;
     resetPassword: (token: string, password: string) => Promise<string>;
     resendVerification: (email: string) => Promise<string>;
-    verifyEmailAndLogin: (token: string) => Promise<void>;
+    verifyEmailAndLogin: (token: string) => Promise<string>;
     selectWorkspace: (workspaceData: any) => void;
     switchWorkspace: () => void;
     updateSubscriptionPlan: (planId: string) => Promise<void>;
     updateUserRole: (deploymentType: 'self-hosted' | 'cloud') => Promise<void>;
-    logout: () => void;
+    refreshPermissions: () => Promise<void>;
+    patchEnterpriseBypass: (bypass: boolean) => void;
+    logout: (showExpiredMessage?: boolean) => void;
     sessionExpiredMessage: string | null;
 }
 
@@ -79,13 +95,35 @@ const decodeToken = (token: string): { userId?: string; username: string; email?
             workspaceId: payload.workspaceId,
             workspaceName: payload.workspaceName,
             workspaceRole: payload.workspaceRole,
-            subscriptionPlan: payload.subscriptionPlan
+            subscriptionPlan: payload.subscriptionPlan || payload.plan
         };
     } catch (e) {
         console.error('[AuthContext] Error decoding token:', e);
         return { username: 'unknown' };
     }
 };
+
+const getStoredEnterpriseDomainBypass = (): boolean => {
+    try { return localStorage.getItem('enterpriseDomainBypass') === 'true'; } catch { return false; }
+};
+
+// Desktop build: the entire user identity is derived from the signed license
+// file (name, email, plan). There is no login. FREE/no-license falls back to a
+// generic anonymous local user. The fixed workspace id matches the one seeded by
+// the desktop backend (DesktopBootstrap).
+const buildDesktopUser = (license: DesktopLicense | null): User => ({
+    token: '',
+    userId: 'desktop-user-local',
+    username: license?.name || 'Desktop User',
+    email: license?.email || 'local@ontocode.desktop',
+    roles: ['ROLE_USER'],
+    isAdmin: false,
+    workspaceId: 'desktop-workspace-local',
+    workspaceName: 'My projects',
+    workspaceRole: 'OWNER',
+    subscriptionPlan: (license?.plan || 'FREE'),
+    enterpriseDomainBypass: false,
+});
 
 const getStoredDeploymentType = (): DeploymentType | null => {
     try {
@@ -105,7 +143,8 @@ const shouldRequireWorkspaceSelection = (
     workspaceId?: string
 ): boolean => {
     if (deploymentType === 'self-hosted') {
-        return false;
+        // Desktop: show workspace/projects page when user has no workspace yet
+        return !workspaceId;
     }
     if (deploymentType === 'cloud') {
         return !workspaceId;
@@ -119,17 +158,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const [needsWorkspaceSelection, setNeedsWorkspaceSelection] = useState(false);
-    const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);    
+    const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);
+    const [maintenanceActive, setMaintenanceActive] = useState(false);
+    const [maintenanceMessage, setMaintenanceMessage] = useState('');
     // Flag to ignore workspace restoration when switching workspaces
     const ignoringWorkspaceRef = useRef(false);
     const logout = useCallback((showExpiredMessage = false) => {
         console.log('[AuthContext] Logging out...');
 
-        // Always start fresh after logout: do not carry workspace context into next login.
-        localStorage.removeItem('lastWorkspaceId');
-        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
+        clearSessionCache();
+        clearLastOpenedProjectState();
         ignoringWorkspaceRef.current = false;
-        
+        try { localStorage.removeItem('enterpriseDomainBypass'); } catch {}
+
         setUser(null);
         setNeedsWorkspaceSelection(false);
         if (showExpiredMessage) {
@@ -137,9 +178,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (window.vscode) {
             window.vscode.postMessage({ type: 'logout' });
-        } else {
-            // Clear local token in browser/web mode.
-            localStorage.removeItem('authToken');
         }
         console.log('[AuthContext]  Logout successful');
     }, []);
@@ -147,10 +185,40 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Register unauthorized callback with apiClient
     useEffect(() => {
         apiClient.setUnauthorizedCallback(() => {
-            console.log('[AuthContext] API returned 401 - Auto logout');
-            logout(true);
+            // Desktop runs a permit-all local backend with no real session — never
+            // log the user out on a stray 401.
+            if (isDesktop()) return;
+            const token = localStorage.getItem('authToken');
+            if (!token || isTokenExpired(token)) {
+                // Token is genuinely expired — show "Session expired" and log out
+                console.log('[AuthContext] 401 + token expired — session expired, logging out');
+                logout(true);
+            } else {
+                // Token is still valid but got a 401 — this is an authorization error on a
+                // specific resource (e.g., billing, permissions), not a session expiry.
+                // Do NOT log the user out or show "Session expired".
+                console.warn('[AuthContext] 401 received but token is still valid — ignoring (not a session expiry)');
+            }
         });
     }, [logout]);
+
+    useEffect(() => {
+        apiClient.setMaintenanceCallback((msg: string) => {
+            setMaintenanceActive(true);
+            setMaintenanceMessage(msg);
+        });
+    }, []);
+
+    // Check maintenance status once on startup — catches logged-in users who load the app during maintenance
+    useEffect(() => {
+        if (isDesktop()) return; // desktop has no cloud maintenance window
+        apiClient.get('/api/maintenance/status').then((data: any) => {
+            if (data?.active) {
+                setMaintenanceActive(true);
+                setMaintenanceMessage(data.message || 'System is under maintenance.');
+            }
+        }).catch(() => { /* ignore — server unreachable, don't block the app */ });
+    }, []);
 
     const requestTokenFromVSCode = useCallback(() => {
         if (window.vscode) {
@@ -175,7 +243,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const deploymentType = getStoredDeploymentType();
                 
                 // Cloud users are always admins
-                const isAdmin = deploymentType === 'cloud' ? true : (userInfo.isAdmin || false);
+                const isAdmin = userInfo.isAdmin || false;
                 
                 const requiresWorkspace = shouldRequireWorkspaceSelection(
                     deploymentType,
@@ -184,29 +252,55 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 );
 
                 // Persist user state from token
-                setUser({ 
+                setUser({
                     token: token,
                     userId: userInfo.userId,
-                    username: userInfo.username, 
+                    username: userInfo.username,
                     email: userInfo.email,
                     roles: userInfo.roles,
                     isAdmin: isAdmin,
                     workspaceId: skipWorkspaceMode ? undefined : userInfo.workspaceId,
                     workspaceName: skipWorkspaceMode ? undefined : userInfo.workspaceName,
                     workspaceRole: skipWorkspaceMode ? undefined : userInfo.workspaceRole,
-                    subscriptionPlan: userInfo.subscriptionPlan
+                    subscriptionPlan: userInfo.subscriptionPlan,
+                    enterpriseDomainBypass: getStoredEnterpriseDomainBypass()
                 });
 
                 // Workspace selection based on deployment choice and role
                 setNeedsWorkspaceSelection(skipWorkspaceMode ? false : requiresWorkspace);
                 setSessionExpiredMessage(null);
             }
-            
+
             setLoading(false);
         }
     }, [logout]);
 
     useEffect(() => {
+        // ── Desktop build: no login — derive the user from the signed license ──
+        if (isDesktop()) {
+            let cancelled = false;
+            const applyLicense = async () => {
+                let license: DesktopLicense | null = null;
+                try {
+                    license = await getDesktopLicense();
+                } catch {
+                    license = null;
+                }
+                if (cancelled) return;
+                setUser(buildDesktopUser(license));
+                setNeedsWorkspaceSelection(false);
+                setSessionExpiredMessage(null);
+                setLoading(false);
+            };
+            applyLicense();
+            const onLicenseUpdated = () => applyLicense();
+            window.addEventListener(DESKTOP_LICENSE_UPDATED_EVENT, onLicenseUpdated);
+            return () => {
+                cancelled = true;
+                window.removeEventListener(DESKTOP_LICENSE_UPDATED_EVENT, onLicenseUpdated);
+            };
+        }
+
         requestTokenFromVSCode();
 
         const handleMessage = (event: MessageEvent) => {
@@ -238,7 +332,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         const deploymentType = getStoredDeploymentType();
                         
                         // Cloud users are always admins
-                        const isAdmin = deploymentType === 'cloud' ? true : (userInfo.isAdmin || false);
+                        const isAdmin = userInfo.isAdmin || false;
                         
                         const requiresWorkspace = shouldRequireWorkspaceSelection(
                             deploymentType,
@@ -246,18 +340,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             skipWorkspaceMode ? undefined : userInfo.workspaceId
                         );
 
+                        // Sync token to localStorage so apiClient can read it for all
+                        // subsequent requests. Without this, a recreated webview has no
+                        // token in localStorage even though the user is "logged in".
+                        localStorage.setItem('authToken', message.token);
+
                         // Persist user state from token
-                        setUser({ 
+                        setUser({
                             token: message.token,
                             userId: userInfo.userId,
-                            username: userInfo.username, 
+                            username: userInfo.username,
                             email: userInfo.email,
                             roles: userInfo.roles,
                             isAdmin: isAdmin,
                             workspaceId: skipWorkspaceMode ? undefined : userInfo.workspaceId,
                             workspaceName: skipWorkspaceMode ? undefined : userInfo.workspaceName,
                             workspaceRole: skipWorkspaceMode ? undefined : userInfo.workspaceRole,
-                            subscriptionPlan: userInfo.subscriptionPlan
+                            subscriptionPlan: userInfo.subscriptionPlan,
+                            enterpriseDomainBypass: getStoredEnterpriseDomainBypass()
                         });
 
                         // Workspace selection based on deployment choice and role
@@ -287,6 +387,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (isTokenExpired(user.token)) {
                 console.log('[AuthContext]  Token expired, logging out');
                 logout(true);
+                return;
+            }
+            // Piggyback maintenance check — catches maintenance turning ON mid-session
+            if (!isDesktop()) {
+                apiClient.get('/api/maintenance/status').then((data: any) => {
+                    if (data?.active) {
+                        setMaintenanceActive(true);
+                        setMaintenanceMessage(data.message || 'System is under maintenance.');
+                    }
+                }).catch(() => { /* ignore — don't disrupt the session on network hiccup */ });
             }
         }, 60000); // Check every 60 seconds
 
@@ -309,10 +419,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const responseData = response?.data || response;
             const roles = responseData?.roles || [];
             const email = responseData?.email || '';
-            
+
             // Cloud users are always admins
             const deploymentType = getStoredDeploymentType();
-            const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || false);
+            const isAdmin = responseData?.isAdmin || false;
+            const enterpriseDomainBypass = responseData?.enterpriseDomainBypass || false;
+            try { localStorage.setItem('enterpriseDomainBypass', String(enterpriseDomainBypass)); } catch {}
 
             if (!token) {
                 // Check if it's an error response
@@ -357,17 +469,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         }
                         
                         const wsUserInfo = decodeToken(selectResponse.jwt);
-                        const userData = { 
+                        const userData = {
                             token: selectResponse.jwt,
                             userId: wsUserInfo.userId || userInfo.userId,
-                            username: wsUserInfo.username || username, 
+                            username: wsUserInfo.username || username,
                             email: wsUserInfo.email || email,
                             roles: wsUserInfo.roles || roles,
                             isAdmin: wsUserInfo.isAdmin || isAdmin,
                             workspaceId: selectResponse.workspaceId,
                             workspaceName: selectResponse.workspaceName,
                             workspaceRole: selectResponse.role,
-                            subscriptionPlan: selectResponse.subscriptionPlan || wsUserInfo.subscriptionPlan
+                            subscriptionPlan: selectResponse.subscriptionPlan || wsUserInfo.subscriptionPlan,
+                            enterpriseDomainBypass
                         };
                         console.log('[AuthContext] 👤 Setting user with workspace:', userData);
                         setUser(userData);
@@ -389,17 +502,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
             
             // Set user data (either workspace wasn't auto-selected, or user already has workspace in JWT)
-            setUser({ 
+            setUser({
                 token,
                 userId: userInfo.userId,
-                username: userInfo.username || username, 
+                username: userInfo.username || username,
                 email: userInfo.email || email,
                 roles: userInfo.roles || roles,
                 isAdmin: userInfo.isAdmin || isAdmin,
                 workspaceId: userInfo.workspaceId,
                 workspaceName: userInfo.workspaceName,
                 workspaceRole: userInfo.workspaceRole,
-                subscriptionPlan: userInfo.subscriptionPlan
+                subscriptionPlan: userInfo.subscriptionPlan,
+                enterpriseDomainBypass
             });
             
             // After login, update user role based on deployment type
@@ -424,22 +538,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         
                         const roleData = roleResponse?.data || roleResponse;
                         // Cloud users are always admins
-                        const newIsAdmin = deploymentType === 'cloud' ? true : (roleData?.isAdmin || false);
+                        const newIsAdmin = roleData?.isAdmin || false;
                         const newRoles = roleData?.roles || [];
                         
-                        setUser({ 
+                        setUser({
                             token: newToken,
                             userId: userInfo.userId,
-                            username: userInfo.username || username, 
+                            username: userInfo.username || username,
                             email: userInfo.email || email,
                             roles: newRoles,
                             isAdmin: newIsAdmin,
                             workspaceId: userInfo.workspaceId,
                             workspaceName: userInfo.workspaceName,
                             workspaceRole: userInfo.workspaceRole,
-                            subscriptionPlan: userInfo.subscriptionPlan
+                            subscriptionPlan: userInfo.subscriptionPlan,
+                            enterpriseDomainBypass
                         });
-                        
+
                         // Determine workspace selection based on deployment type and role
                         const requiresWorkspace = shouldRequireWorkspaceSelection(
                             deploymentType,
@@ -472,6 +587,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setSessionExpiredMessage(null);
         } catch (error: any) {
             console.error('[AuthContext]  Login failed:', error);
+            // 503 with maintenance:true — redirect to maintenance page instead of showing error
+            if (error?.status === 503 || error?.data?.maintenance === true || error?.maintenance === true) {
+                const msg = error?.data?.message || error?.data?.error || error?.message || 'System is under maintenance.';
+                setMaintenanceActive(true);
+                setMaintenanceMessage(msg);
+                return;
+            }
             const message = error?.message || error?.data?.message || error?.data?.error || 'Invalid username or password';
             throw new Error(message.includes('Login failed:') ? message : `Login failed: ${message}`);
         }
@@ -516,7 +638,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 
                 // Cloud users are always admins
                 const deploymentType = getStoredDeploymentType();
-                const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || userInfo.isAdmin || false);
+                const isAdmin = responseData?.isAdmin || userInfo.isAdmin || false;
                 
                 console.log('[AuthContext] Initial signup - deploymentType:', deploymentType, 'isAdmin:', isAdmin);
                 
@@ -551,7 +673,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             
                             const roleData = roleResponse?.data || roleResponse;
                             // Cloud users are always admins, don't let role update override this
-                            const newIsAdmin = deploymentType === 'cloud' ? true : (roleData?.isAdmin || false);
+                            const newIsAdmin = roleData?.isAdmin || false;
                             const newRoles = roleData?.roles || [];
                             
                             setUser({ 
@@ -607,6 +729,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.error('[AuthContext] Signup failed:', error);
             // Re-throw verification results as-is
             if (error?.requiresVerification) throw error;
+            if (error?.status === 503 || error?.data?.maintenance === true || error?.maintenance === true) {
+                const msg = error?.data?.message || error?.data?.error || error?.message || 'System is under maintenance.';
+                setMaintenanceActive(true);
+                setMaintenanceMessage(msg);
+                return { requiresVerification: false };
+            }
             const message = error?.message || error?.data?.message || error?.data?.error || 'Could not create account';
             throw new Error(message);
         }
@@ -645,9 +773,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const verifyEmailAndLogin = async (token: string): Promise<void> => {
+    const verifyEmailAndLogin = async (token: string): Promise<string> => {
         console.log('[AuthContext] Verifying email and auto-logging in...');
-        const response = await apiClient.get('/api/auth/verify', { token });
+        const response = await apiClient.get('/api/auth/verify-email', { token });
         const data = response?.data || response;
 
         const jwt = data?.jwt;
@@ -656,6 +784,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             throw new Error('Verification failed - no token received');
         }
 
+        const verifiedEmail = data?.email || decodeToken(jwt).email || '';
+
         // Save token
         localStorage.setItem('authToken', jwt);
         if (window.vscode) {
@@ -663,14 +793,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         const userInfo = decodeToken(jwt);
-        const deploymentType = getStoredDeploymentType();
-        const isAdmin = deploymentType === 'cloud' ? true : (data?.isAdmin || false);
+        const isAdmin = data?.isAdmin || false;
 
         setUser({
             token: jwt,
             userId: userInfo.userId,
             username: data?.username || userInfo.username,
-            email: data?.email || userInfo.email,
+            email: verifiedEmail || userInfo.email,
             roles: data?.roles || userInfo.roles || [],
             isAdmin,
             workspaceId: userInfo.workspaceId,
@@ -681,6 +810,39 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setNeedsWorkspaceSelection(!userInfo.workspaceId);
         setSessionExpiredMessage(null);
         console.log('[AuthContext] ✅ Email verified and auto-logged in as', data?.username);
+        return verifiedEmail;
+    };
+
+    const applyWorkspaceSession = (workspaceData: any) => {
+        if (!workspaceData?.jwt) {
+            throw new Error('No token received from workspace selection');
+        }
+        if (workspaceData.workspaceId) {
+            localStorage.setItem('lastWorkspaceId', workspaceData.workspaceId);
+        }
+        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
+        localStorage.removeItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY);
+        localStorage.setItem('authToken', workspaceData.jwt);
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'saveAuthToken', token: workspaceData.jwt });
+        }
+        const userInfo = decodeToken(workspaceData.jwt);
+        const roles = userInfo.roles || user?.roles || [];
+        const isAdmin = userInfo.isAdmin || user?.isAdmin || roles.includes('ROLE_ADMIN');
+        setUser({
+            token: workspaceData.jwt,
+            userId: userInfo.userId || user?.userId,
+            username: workspaceData.username || userInfo.username,
+            email: userInfo.email || user?.email,
+            roles,
+            isAdmin,
+            workspaceId: workspaceData.workspaceId,
+            workspaceName: workspaceData.workspaceName,
+            workspaceRole: workspaceData.role,
+            subscriptionPlan: workspaceData.subscriptionPlan || userInfo.subscriptionPlan || 'FREE',
+            enterpriseDomainBypass: user?.enterpriseDomainBypass || getStoredEnterpriseDomainBypass(),
+        });
+        setNeedsWorkspaceSelection(false);
     };
 
     const selectWorkspace = (workspaceData: any) => {
@@ -693,9 +855,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.log('[AuthContext] Setting needsWorkspaceSelection to false');
             console.log('[AuthContext] User will proceed to editor without workspace context');
 
+            clearLastOpenedProjectState();
             localStorage.setItem(SKIP_WORKSPACE_MODE_KEY, 'true');
+            localStorage.removeItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY);
             localStorage.removeItem('lastWorkspaceId');
-            
+            apiClient.put('/api/auth/last-opened', { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
+
             // Set flag to ignore workspace restoration from next storedAuthToken message
             ignoringWorkspaceRef.current = true;
             console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
@@ -719,42 +884,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             throw new Error('No token received from workspace selection');
         }
 
-        // Save workspace ID for auto-selection on next login
-        if (workspaceData.workspaceId) {
-            localStorage.setItem('lastWorkspaceId', workspaceData.workspaceId);
-            console.log('[AuthContext] 💾 Saved workspace for future auto-login:', workspaceData.workspaceId);
-        }
-        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
-
-        // Save new workspace-scoped token
-        // Always save to localStorage for webview API client
-        localStorage.setItem('authToken', workspaceData.jwt);
-        
-        if (window.vscode) {
-            // Also save to VS Code secure storage
-            window.vscode.postMessage({ type: 'saveAuthToken', token: workspaceData.jwt });
-        }
-
-        // Decode JWT to get all user info
-        const userInfo = decodeToken(workspaceData.jwt);
-        
-        // Preserve roles and isAdmin from current user or use decoded values
-        const roles = userInfo.roles || user?.roles || [];
-        const isAdmin = userInfo.isAdmin || user?.isAdmin || roles.includes('ROLE_ADMIN');
-        
-        setUser({ 
-            token: workspaceData.jwt,
-            userId: userInfo.userId || user?.userId,
-            username: workspaceData.username || userInfo.username, 
-            email: userInfo.email || user?.email,
-            roles: roles,
-            isAdmin: isAdmin,
-            workspaceId: workspaceData.workspaceId,
-            workspaceName: workspaceData.workspaceName,
-            workspaceRole: workspaceData.role,
-            subscriptionPlan: workspaceData.subscriptionPlan || 'FREE' // Workspace subscription plan
-        });
-        setNeedsWorkspaceSelection(false);
+        console.log('[AuthContext] 💾 Applying workspace session');
+        applyWorkspaceSession(workspaceData);
         console.log('[AuthContext]  Workspace selection complete');
     };
 
@@ -771,8 +902,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Set flag to ignore workspace restoration from next storedAuthToken message
         ignoringWorkspaceRef.current = true;
         console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
+        clearLastOpenedProjectState();
         localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
-        
+        localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, 'true');
+        apiClient.put('/api/auth/last-opened', { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'clearLastProjectState' });
+        }
+
         // Clear workspace-specific data but keep the user logged in with token
         const updatedUser = {
             ...user,
@@ -812,6 +949,72 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
+    const refreshPermissions = async () => {
+        try {
+            if (isDesktop()) {
+                return;
+            }
+            const storedToken = localStorage.getItem('authToken');
+            if (!storedToken || isTokenExpired(storedToken)) {
+                console.log('[AuthContext] ⏭ Skipping refresh — token expired or missing');
+                return;
+            }
+            console.log('[AuthContext] 🔄 Refreshing permissions from server...');
+
+            // Re-issue workspace-scoped JWT so members keep the workspace plan (not account plan).
+            if (user?.workspaceId) {
+                const response = await apiClient.post(`/api/workspaces/${user.workspaceId}/select`);
+                const workspaceData = response?.data || response;
+                if (workspaceData?.jwt) {
+                    applyWorkspaceSession(workspaceData);
+                    return;
+                }
+            }
+
+            const response = await apiClient.get('/api/auth/refresh');
+            const data = response?.data || response;
+            
+            const newToken = data.jwt;
+            if (newToken) {
+                console.log('[AuthContext] ✅ Received fresh JWT after refresh');
+                localStorage.setItem('authToken', newToken);
+                if (window.vscode) {
+                    window.vscode.postMessage({ type: 'saveAuthToken', token: newToken });
+                }
+                
+                const userInfo = decodeToken(newToken);
+                setUser({
+                    token: newToken,
+                    userId: userInfo.userId || user?.userId,
+                    username: userInfo.username || user?.username || 'unknown',
+                    email: userInfo.email || user?.email,
+                    roles: userInfo.roles || user?.roles || [],
+                    isAdmin: userInfo.isAdmin || user?.isAdmin || false,
+                    workspaceId: userInfo.workspaceId || user?.workspaceId,
+                    workspaceName: userInfo.workspaceName || user?.workspaceName,
+                    workspaceRole: userInfo.workspaceRole || user?.workspaceRole,
+                    subscriptionPlan: userInfo.subscriptionPlan || user?.subscriptionPlan,
+                    enterpriseDomainBypass: user?.enterpriseDomainBypass || getStoredEnterpriseDomainBypass()
+                });
+                
+                const deploymentType = getStoredDeploymentType();
+                const requiresWorkspace = shouldRequireWorkspaceSelection(
+                    deploymentType,
+                    userInfo.isAdmin || (userInfo.roles && userInfo.roles.includes('ROLE_ADMIN')),
+                    userInfo.workspaceId
+                );
+                setNeedsWorkspaceSelection(requiresWorkspace);
+            }
+        } catch (error: any) {
+            console.error('[AuthContext] ❌ Failed to refresh permissions:', error);
+            if (error?.status === 503 || error?.data?.maintenance === true || error?.maintenance === true) {
+                const msg = error?.data?.message || error?.data?.error || error?.message || 'System is under maintenance.';
+                setMaintenanceActive(true);
+                setMaintenanceMessage(msg);
+            }
+        }
+    };
+
     const updateUserRole = async (deploymentType: 'self-hosted' | 'cloud') => {
         if (!user) {
             throw new Error('No user logged in');
@@ -840,7 +1043,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 
                 const responseData = response?.data || response;
                 // Cloud users are always admins
-                const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || false);
+                const isAdmin = responseData?.isAdmin || false;
                 const roles = responseData?.roles || [];
                 
                 setUser({
@@ -863,10 +1066,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
+    const patchEnterpriseBypass = (bypass: boolean) => {
+        try { localStorage.setItem('enterpriseDomainBypass', String(bypass)); } catch {}
+        setUser(prev => {
+            if (!prev) return prev;
+            // Account-level bypass flag only — do not overwrite workspace effective plan in JWT.
+            return { ...prev, enterpriseDomainBypass: bypass };
+        });
+    };
+
     const value = {
         user,
         loading,
         needsWorkspaceSelection,
+        maintenanceActive,
+        maintenanceMessage,
         login,
         signup,
         forgotPassword,
@@ -877,6 +1091,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         switchWorkspace,
         updateSubscriptionPlan,
         updateUserRole,
+        refreshPermissions,
+        patchEnterpriseBypass,
         logout: () => logout(false),
         sessionExpiredMessage,
     };

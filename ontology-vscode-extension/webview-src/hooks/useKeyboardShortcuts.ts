@@ -9,7 +9,7 @@ export interface KeyboardShortcut {
   shiftKey?: boolean;
   altKey?: boolean;
   metaKey?: boolean;
-  handler: () => void;
+  handler?: () => void;
   enabled?: boolean;
   preventDefaultInVSCode?: boolean; // If true, won't work in VSCode to avoid conflicts
 }
@@ -56,7 +56,7 @@ export const useKeyboardShortcuts = ({ shortcuts, enabled = true }: UseKeyboardS
       if (key === shortcutKey && ctrlMatch && shiftMatch && altMatch && metaMatch) {
         event.preventDefault();
         event.stopPropagation();
-        shortcut.handler();
+        shortcut.handler?.();
         return;
       }
     }

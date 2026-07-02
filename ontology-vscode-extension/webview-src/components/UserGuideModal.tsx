@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { isDesktop } from "../utils/desktop";
 import {
   X,
   BookOpen,
@@ -17,6 +18,7 @@ import {
   Share2,
   Bug,
   Code,
+  CreditCard,
 } from "lucide-react";
 
 interface UserGuideModalProps {
@@ -27,6 +29,7 @@ interface UserGuideModalProps {
 export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose }) => {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     workspace: true,
+    billing: false,
     inviteMembers: false,
     acceptInvitation: false,
     project: false,
@@ -38,6 +41,8 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
   });
 
   if (!isOpen) return null;
+
+  const desktop = isDesktop();
 
   const toggleSection = (section: string) => {
     setExpandedSections((prev) => ({
@@ -51,6 +56,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
     const newValue = !currentlyAllExpanded;
     setExpandedSections({
       workspace: newValue,
+      billing: newValue,
       inviteMembers: newValue,
       acceptInvitation: newValue,
       project: newValue,
@@ -66,6 +72,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
     // Map section IDs to state keys
     const sectionMap: Record<string, string> = {
       "section-workspace": "workspace",
+      "section-billing": "billing",
       "section-invite": "inviteMembers",
       "section-accept": "acceptInvitation",
       "section-project": "project",
@@ -81,6 +88,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
     if (sectionKey) {
       setExpandedSections({
         workspace: false,
+        billing: false,
         inviteMembers: false,
         acceptInvitation: false,
         project: false,
@@ -126,7 +134,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
         <div style={styles.content}>
           <p style={styles.intro}>
             Welcome to OntoCode! This guide follows the logical workflow for setting up and using OntoCode. Start with
-            creating a workspace, then invite team members, and progress through creating projects and files. Each
+            creating a workspace, then invite workspace members, and progress through creating projects and files. Each
             section includes positive scenarios (what to do) and negative scenarios (what to avoid) to help you work
             efficiently.
           </p>
@@ -135,46 +143,60 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
           <div style={styles.tableOfContents}>
             <h3 style={styles.tocTitle}>Quick Navigation</h3>
             <div style={styles.tocGrid}>
-              <div style={styles.tocItem} onClick={() => scrollToSection("section-workspace")}>
-                <Building2 size={18} style={{ color: "#f59e0b" }} />
-                <span>1. Create a Workspace</span>
-              </div>
-              <div style={styles.tocItem} onClick={() => scrollToSection("section-invite")}>
-                <UserPlus size={18} style={{ color: "#8b5cf6" }} />
-                <span>2. Invite Members</span>
-              </div>
-              <div style={styles.tocItem} onClick={() => scrollToSection("section-accept")}>
-                <Mail size={18} style={{ color: "#06b6d4" }} />
-                <span>3. Accept Invitation</span>
-              </div>
+              {!desktop && (
+                <div style={styles.tocItem} onClick={() => scrollToSection("section-workspace")}>
+                  <Building2 size={18} style={{ color: "#f59e0b" }} />
+                  <span>1. Create a Workspace</span>
+                </div>
+              )}
+              {!desktop && (
+                <div style={styles.tocItem} onClick={() => scrollToSection("section-billing")}>
+                  <CreditCard size={18} style={{ color: "#10b981" }} />
+                  <span>2. Subscription &amp; Billing</span>
+                </div>
+              )}
+              {!desktop && (
+                <div style={styles.tocItem} onClick={() => scrollToSection("section-invite")}>
+                  <UserPlus size={18} style={{ color: "#8b5cf6" }} />
+                  <span>3. Invite Members</span>
+                </div>
+              )}
+              {!desktop && (
+                <div style={styles.tocItem} onClick={() => scrollToSection("section-accept")}>
+                  <Mail size={18} style={{ color: "#06b6d4" }} />
+                  <span>4. Accept Invitation</span>
+                </div>
+              )}
               <div style={styles.tocItem} onClick={() => scrollToSection("section-project")}>
                 <FolderPlus size={18} style={{ color: "#10b981" }} />
-                <span>4. Create a Project</span>
+                <span>{desktop ? '1' : '5'}. Create a Project</span>
               </div>
-              <div style={styles.tocItem} onClick={() => scrollToSection("section-assign")}>
-                <Users size={18} style={{ color: "#ec4899" }} />
-                <span>5. Assign Project Members</span>
-              </div>
+              {!desktop && (
+                <div style={styles.tocItem} onClick={() => scrollToSection("section-assign")}>
+                  <Users size={18} style={{ color: "#ec4899" }} />
+                  <span>6. Assign Project Members</span>
+                </div>
+              )}
               <div style={styles.tocItem} onClick={() => scrollToSection("section-file")}>
                 <FileText size={18} style={{ color: "#3b82f6" }} />
-                <span>6. Create a New File</span>
+                <span>{desktop ? '2' : '7'}. Create a New File</span>
               </div>
               <div style={styles.tocItem} onClick={() => scrollToSection("section-collaboration")}>
                 <Share2 size={18} style={{ color: "#8b5cf6" }} />
-                <span>7. Collaboration</span>
+                <span>{desktop ? '3' : '8'}. Collaboration</span>
               </div>
               <div style={styles.tocItem} onClick={() => scrollToSection("section-report")}>
                 <Bug size={18} style={{ color: "#ef4444" }} />
-                <span>8. Report an Issue</span>
+                <span>{desktop ? '4' : '9'}. Report an Issue</span>
               </div>
               <div style={styles.tocItem} onClick={() => scrollToSection("section-codeview")}>
                 <Code size={18} style={{ color: "#06b6d4" }} />
-                <span>9. Code View</span>
+                <span>{desktop ? '5' : '10'}. Code View</span>
               </div>
             </div>
           </div>
 
-          {/* Section 1: How to Create a Workspace */}
+          {!desktop && (
           <div id="section-workspace" style={styles.section}>
             <button onClick={() => toggleSection("workspace")} style={styles.sectionHeader}>
               {expandedSections.workspace ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -191,10 +213,12 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   </h4>
                   <ul style={styles.list}>
                     <li>
-                      <strong>During Signup:</strong> First workspace is created automatically when you register
+                      <strong>After signup:</strong> Completing registration does not create a workspace by itself. After
+                      you verify your email and sign in, use <strong>Create New Workspace</strong> on the workspace
+                      selector to add your first workspace.
                     </li>
                     <li>
-                      <strong>Additional Workspaces:</strong> Click "Create Workspace" from workspace selector dropdown
+                      <strong>Additional Workspaces:</strong> Click "Create New Workspace" from workspace selector dropdown
                     </li>
                     <li>
                       <strong>Naming Convention:</strong> Use organization/team names (e.g., "Research Lab",
@@ -205,8 +229,10 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       team
                     </li>
                     <li>
-                      <strong>Subscription Plan:</strong> Select appropriate plan based on team size and needs
-                      (Free/Pro/Enterprise)
+                      <strong>Workspace Details:</strong> Enter a workspace name and optional description
+                    </li>
+                    <li>
+                      <strong>Account Subscription:</strong> Upgrade your account plan later from Billing when you need higher member or project limits
                     </li>
                     <li>
                       <strong>Ownership:</strong> Creator automatically becomes workspace owner with full permissions
@@ -218,9 +244,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                     <div style={styles.exampleContent}>
                       Workspace Name: "BioinformaticsLab - Stanford"
                       <br />
-                      Plan: Pro (for 10 team members)
+                      Description: Academic research in genomics ontologies
                       <br />
-                      Purpose: Academic research in genomics ontologies
+                      Subscription: Upgrade from Billing if the team outgrows Free limits
                     </div>
                   </div>
                 </div>
@@ -238,15 +264,11 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       <strong>Personal + Team Mix:</strong> ❌ Don't mix personal and team projects in same workspace
                     </li>
                     <li>
-                      <strong>Wrong Plan Selection:</strong> ❌ Free plan has limitations - choose plan matching team
-                      size
-                    </li>
-                    <li>
                       <strong>Duplicate Registration:</strong> ❌ Each email can only create one account - use workspace
                       invitations instead
                     </li>
                     <li>
-                      <strong>No Workspace Management:</strong> ❌ Neglecting to archive or delete unused workspaces
+                      <strong>No Workspace Management:</strong> ❌ Neglecting to delete unused workspaces
                     </li>
                   </ul>
                 </div>
@@ -258,21 +280,179 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   </h4>
                   <ul style={styles.list}>
                     <li>🔹 Switch between multiple workspaces instantly</li>
-                    <li>🔹 Each workspace has independent subscription and billing</li>
-                    <li>🔹 Invite unlimited members (based on subscription)</li>
+                    <li>🔹 Workspaces you own share your account subscription and billing</li>
+                    <li>🔹 Invite members up to your plan limit</li>
                     <li>🔹 Workspace data is isolated and secure</li>
                   </ul>
                 </div>
               </div>
             )}
           </div>
+          )}
 
-          {/* Section 2: How to Invite Members */}
+          {!desktop && (
+          <div id="section-billing" style={styles.section}>
+            <button onClick={() => toggleSection("billing")} style={styles.sectionHeader}>
+              {expandedSections.billing ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+              <CreditCard size={20} style={{ color: "#10b981" }} />
+              <span style={styles.sectionTitle}>2. Subscription &amp; Billing</span>
+            </button>
+
+            {expandedSections.billing && (
+              <div style={styles.sectionContent}>
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <CheckCircle size={16} style={{ color: "#10b981" }} />
+                    Plans &amp; Pricing
+                  </h4>
+                  <div style={styles.infoBox}>
+                    <strong>Available Plans:</strong>
+                    <ul style={styles.roleList}>
+                      <li><strong>FREE:</strong> Limited members &amp; projects — ideal for exploring OntoCode</li>
+                      <li><strong>PRO:</strong> Increased member limits, priority support, monthly or annual billing — annual discount available</li>
+                      <li><strong>ENTERPRISE:</strong> Unlimited members, custom limits, annual discount available</li>
+                    </ul>
+                  </div>
+                  <ul style={styles.list}>
+                    <li>
+                      <strong>14-Day Free Trial:</strong> New subscribers on PRO get a 14-day trial — no
+                      charge until the trial ends. The trial is a one-time offer per account.
+                    </li>
+                    <li>
+                      <strong>Annual Billing:</strong> Choose yearly billing during checkout to receive a discount
+                      compared to the equivalent monthly total
+                    </li>
+                    <li>
+                      <strong>Account-level subscription:</strong> Billing is tied to the workspace owner&apos;s
+                      account. All workspaces that person owns inherit that plan; if the account subscription lapses,
+                      paid access to those workspaces is suspended until billing is current again.
+                    </li>
+                  </ul>
+                </div>
+
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <CheckCircle size={16} style={{ color: "#10b981" }} />
+                    Positive Cases (Recommended)
+                  </h4>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #10b981" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      Subscribing to a Plan
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Access Billing:</strong> Go to Workspace Settings → Billing tab
+                      </li>
+                      <li>
+                        <strong>Choose Plan:</strong> Select PRO or ENTERPRISE and your billing interval
+                        (Monthly / Yearly)
+                      </li>
+                      <li>
+                        <strong>Enter Card Details:</strong> Payment is handled securely by Stripe — your card data
+                        never touches OntoCode servers
+                      </li>
+                      <li>
+                        <strong>Confirm Subscription:</strong> After payment, your workspace is immediately upgraded and
+                        all members gain access to the new plan features
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #3b82f6" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      Managing Your Subscription
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Update Payment Method:</strong> Go to Billing → Update Card to add a new payment method
+                        via Stripe
+                      </li>
+                      <li>
+                        <strong>Billing Portal:</strong> Click "Manage Billing" to open the Stripe customer portal —
+                        view invoices, download receipts, and update payment details
+                      </li>
+                      <li>
+                        <strong>Auto-Renewal:</strong> Enabled by default. You can disable auto-renewal at any time —
+                        your subscription stays active until the end of the current billing period
+                      </li>
+                      <li>
+                        <strong>Re-enable Auto-Renewal:</strong> If you disabled auto-renewal, you can turn it back on
+                        before the period ends to continue uninterrupted
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={styles.example}>
+                    <strong>Recommended Flow:</strong>
+                    <div style={styles.exampleContent}>
+                      Start FREE → Explore features → Upgrade to PRO with annual billing (save ~20%)
+                      <br />
+                      Use 14-day trial → Confirm subscription → Access full plan features immediately
+                    </div>
+                  </div>
+                </div>
+
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <XCircle size={16} style={{ color: "#ef4444" }} />
+                    Negative Cases (Common Pitfalls)
+                  </h4>
+                  <ul style={styles.list}>
+                    <li>
+                      <strong>Trial Used:</strong> The 14-day free trial is a one-time offer per account — it cannot
+                      be restarted or applied to a second subscription
+                    </li>
+                    <li>
+                      <strong>Only Owner Can Cancel:</strong> Only the workspace owner can cancel or modify the
+                      workspace subscription — members and editors cannot
+                    </li>
+                    <li>
+                      <strong>Cancel Plan:</strong> Billing → Cancel Plan turns off auto-renewal. Your paid access
+                      continues until the end of the current billing period
+                    </li>
+                    <li>
+                      <strong>Payment Failure:</strong> If a payment fails, workspace access may be suspended — update
+                      your payment method promptly via the Billing portal
+                    </li>
+                    <li>
+                      <strong>No Downgrades:</strong> OntoCode does not support moving to a lower paid plan. You can
+                      keep your current plan, upgrade, or cancel renewal at period end
+                    </li>
+                  </ul>
+
+                  <div style={styles.warning}>
+                    <AlertCircle size={16} />
+                    <span>
+                      <strong>Important:</strong> The workspace owner's subscription status affects all workspace
+                      members. If the owner's plan expires, all members lose access to that workspace.
+                    </span>
+                  </div>
+                </div>
+
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <Users size={16} style={{ color: "#8b5cf6" }} />
+                    Possibilities &amp; Features
+                  </h4>
+                  <ul style={styles.list}>
+                    <li>Switch between monthly and yearly billing by resubscribing</li>
+                    <li>Stripe billing portal provides full invoice history and PDF receipts</li>
+                    <li>Auto-renewal can be toggled without canceling your current subscription</li>
+                    <li>Subscription status is visible on the Billing page (Active / Trialing / Expired)</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+          </div>
+          )}
+
+          {!desktop && (
           <div id="section-invite" style={styles.section}>
             <button onClick={() => toggleSection("inviteMembers")} style={styles.sectionHeader}>
               {expandedSections.inviteMembers ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <UserPlus size={20} style={{ color: "#ec4899" }} />
-              <span style={styles.sectionTitle}>2. How to Invite Members & Who Can Invite</span>
+              <span style={styles.sectionTitle}>3. How to Invite Members & Who Can Invite</span>
             </button>
 
             {expandedSections.inviteMembers && (
@@ -287,15 +467,14 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       <strong>From Dashboard:</strong> Click "Invite Member" button (UserPlus icon) on Project Dashboard
                     </li>
                     <li>
-                      <strong>Required Info:</strong> Provide: Email address, Username, and Role (Owner/Editor/Viewer)
+                      <strong>Required Info:</strong> Provide the invitee email address and workspace role (Admin, Member, or Viewer)
                     </li>
                     <li>
                       <strong>Email Validation:</strong> Ensure email is valid and belongs to intended recipient
                     </li>
                     <li>
-                      <strong>Role Selection:</strong> Start with Viewer for new members, upgrade as needed
+                      <strong>Role Selection:</strong> Start with Viewer for new workspace members and promote to Admin or Member as needed
                     </li>
-                    <li></li>
                     <li>
                       <strong>Follow-up:</strong> Confirm invitation was received and accepted
                     </li>
@@ -355,8 +534,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   <div style={styles.warning}>
                     <AlertCircle size={16} />
                     <span>
-                      <strong>Privacy:</strong> Invited users can see all workspace projects unless restricted by
-                      permissions.
+                      <strong>Privacy:</strong> Invited users join the workspace. Project access still depends on each project's sharing settings.
                     </span>
                   </div>
                 </div>
@@ -371,19 +549,19 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                     <li>🔹 Track invitation status (Pending/Accepted/Expired)</li>
                     <li>🔹 Cancel pending invitations anytime</li>
                     <li>🔹 7days is the invitation expiry time (security feature)</li>
-                    <li>🔹 Bulk invite multiple users via CSV upload (Enterprise)</li>
                   </ul>
                 </div>
               </div>
             )}
           </div>
+          )}
 
-          {/* Section 3: How to Accept Invitation */}
+          {!desktop && (
           <div id="section-accept" style={styles.section}>
             <button onClick={() => toggleSection("acceptInvitation")} style={styles.sectionHeader}>
               {expandedSections.acceptInvitation ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <Mail size={20} style={{ color: "#14b8a6" }} />
-              <span style={styles.sectionTitle}>3. How to Accept an Invitation</span>
+              <span style={styles.sectionTitle}>4. How to Accept an Invitation</span>
             </button>
 
             {expandedSections.acceptInvitation && (
@@ -402,14 +580,15 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       <strong>Verify Sender:</strong> Ensure the invitation is from a legitimate source you recognize
                     </li>
                     <li>
-                      <strong>Click Invitation Link:</strong> Click the "Accept Invitation" button in the email
+                      <strong>Click Invitation Link:</strong> Click the invitation link in the email — it will open in
+                      your browser or webview
+                    </li>
+                    <li>
+                      <strong>Login or Sign Up:</strong> If you already have an account, log in; if you're new, create
+                      an account using the same email address the invitation was sent to
                     </li>
                     <li>
                       <strong>Review Details:</strong> Check workspace name, your assigned role, and inviter details
-                    </li>
-                    <li>
-                      <strong>Create Account or Login:</strong> If new user, create account; if existing user, login
-                      with your credentials
                     </li>
                     <li>
                       <strong>Accept & Join:</strong> Click "Accept & Join Workspace" to complete the process
@@ -422,9 +601,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   <div style={styles.example}>
                     <strong>✅ Acceptance Flow:</strong>
                     <div style={styles.exampleContent}>
-                      1. Email notification → 2. Click link → 3. Review workspace info
+                      1. Email notification → 2. Click link (opens in browser/webview)
                       <br />
-                      4. Login/Signup → 5. Accept invitation → 6. Access workspace
+                      3. Login or Sign Up → 4. Review workspace info → 5. Accept invitation → 6. Access workspace
                     </div>
                   </div>
                 </div>
@@ -488,13 +667,14 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
               </div>
             )}
           </div>
+          )}
 
           {/* Section 4: How to Create a Project */}
           <div id="section-project" style={styles.section}>
             <button onClick={() => toggleSection("project")} style={styles.sectionHeader}>
               {expandedSections.project ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <FolderPlus size={20} style={{ color: "#10b981" }} />
-              <span style={styles.sectionTitle}>4. How to Create a Project</span>
+              <span style={styles.sectionTitle}>{desktop ? '1' : '5'}. How to Create a Project</span>
             </button>
 
             {expandedSections.project && (
@@ -521,7 +701,13 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       <strong>Workspace Selection:</strong> Ensure you're creating the project in the correct workspace
                     </li>
                     <li>
-                      <strong>Initial Members:</strong> You can add team members immediately or later
+                      <strong>Share with:</strong> Choose Only me, All Workspace Members, or Specific Members when creating the project
+                    </li>
+                    <li>
+                      <strong>Specific Members:</strong> Select workspace members and set each person's project role (Viewer or Editor) before you create the project
+                    </li>
+                    <li>
+                      <strong>Initial Members:</strong> You can also add or change project members later in Project Settings
                     </li>
                     <li>
                       <strong>Subscription Check:</strong> Verify your workspace plan allows creating more projects
@@ -559,7 +745,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       <strong>Wrong Workspace:</strong> ❌ Creating in wrong workspace requires deletion and recreation
                     </li>
                     <li>
-                      <strong>Missing Access:</strong> ❌ Only workspace members can create projects
+                      <strong>Missing Access:</strong> ❌ Workspace viewers cannot create projects; on Free plan only the workspace owner can create projects
                     </li>
                   </ul>
 
@@ -580,19 +766,19 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   <ul style={styles.list}>
                     <li>🔹 Create multiple projects within workspace limits</li>
                     <li>🔹 Set project visibility and access permissions</li>
-                    <li>🔹 Delete projects (only owners can delete)</li>
+                    <li>🔹 Delete projects (owners and workspace admins can delete)</li>
                   </ul>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Section 5: How to Assign Project Members */}
+          {!desktop && (
           <div id="section-assign" style={styles.section}>
             <button onClick={() => toggleSection("assignMembers")} style={styles.sectionHeader}>
               {expandedSections.assignMembers ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <Users size={20} style={{ color: "#3b82f6" }} />
-              <span style={styles.sectionTitle}>5. How to Assign Project Members</span>
+              <span style={styles.sectionTitle}>6. How to Assign Project Members</span>
             </button>
 
             {expandedSections.assignMembers && (
@@ -613,10 +799,10 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       <strong>Add Existing Members:</strong> Select from workspace members dropdown
                     </li>
                     <li>
-                      <strong>Role Assignment:</strong> Choose appropriate role (Owner/Editor/Viewer)
+                      <strong>Role Assignment:</strong> Choose Viewer or Editor when adding a member. The project creator is Owner.
                     </li>
                     <li>
-                      <strong>Bulk Assignment:</strong> Add multiple members at once for efficiency
+                      <strong>Per-Member Roles:</strong> Each project member keeps their own role; changing one member does not change others
                     </li>
                     <li>
                       <strong>Role Clarity:</strong> Ensure roles match actual responsibilities
@@ -627,13 +813,16 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                     <strong>Role Permissions:</strong>
                     <ul style={styles.roleList}>
                       <li>
-                        <strong>Owner:</strong> Full control - edit, delete, manage members
+                        <strong>Owner:</strong> Project creator with full control over the project
                       </li>
                       <li>
-                        <strong>Editor:</strong> Can edit ontology and create files
+                        <strong>Admin:</strong> Can manage project settings and members
                       </li>
                       <li>
-                        <strong>Viewer:</strong> Read-only access to project
+                        <strong>Editor:</strong> Can edit ontology content in the project
+                      </li>
+                      <li>
+                        <strong>Viewer:</strong> Read-only access to the project
                       </li>
                     </ul>
                   </div>
@@ -650,7 +839,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       them first
                     </li>
                     <li>
-                      <strong>Insufficient Permissions:</strong> ❌ Only project owners can manage members
+                      <strong>Insufficient Permissions:</strong> ❌ Only the project owner/admin or workspace owner/admin can manage project members
                     </li>
                     <li>
                       <strong>Wrong Role:</strong> ❌ Giving editor access to viewers creates security risks
@@ -688,13 +877,14 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
               </div>
             )}
           </div>
+          )}
 
           {/* Section 6: How to Create a New File */}
           <div id="section-file" style={styles.section}>
             <button onClick={() => toggleSection("createFile")} style={styles.sectionHeader}>
               {expandedSections.createFile ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <FileText size={20} style={{ color: "#8b5cf6" }} />
-              <span style={styles.sectionTitle}>6. How to Create a New File</span>
+              <span style={styles.sectionTitle}>{desktop ? '2' : '7'}. How to Create a New File</span>
             </button>
 
             {expandedSections.createFile && (
@@ -705,13 +895,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                     Positive Cases (Recommended) - Multiple Ways to Create Files
                   </h4>
 
-                  <p style={{ marginBottom: "16px", fontSize: "14px", color: "#6b7280" }}>
-                    OntoCode provides three different methods to create new files depending on your workflow:
-                  </p>
-
                   <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #3b82f6" }}>
                     <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
-                      📁 Method 1: From Project Library
+                      📁 From Project Library
                     </h5>
                     <ul style={styles.list}>
                       <li>
@@ -730,75 +916,32 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                         <strong>Auto-Open:</strong> File is created and automatically opens in the editor
                       </li>
                     </ul>
-                    <div style={styles.example}>
-                      <strong>✅ Best For:</strong> Quick file creation while browsing project files
-                    </div>
                   </div>
 
                   <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #10b981" }}>
                     <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
-                      ✏️ Method 2: From Project Dashboard
+                      ✏️ From Within the Editor
                     </h5>
                     <ul style={styles.list}>
                       <li>
-                        <strong>Open Editor:</strong> Click "Editor" button from project dashboard
+                        <strong>Open a File:</strong> Click "File" → "Open" — the dialog lists all files in your
+                        current project. Select a file to open it in the editor
                       </li>
                       <li>
-                        <strong>Open File Dialog:</strong> In the editor, click "File" → "Open" or use the "Open File"
-                        button
+                        <strong>Upload a File:</strong> Use the upload option in the file dialog to upload a file from
+                        your computer — it is added directly to the current project
                       </li>
                       <li>
-                        <strong>Browse View:</strong> The file browser dialog appears showing existing files
-                      </li>
-                      <li>
-                        <strong>Create New File:</strong> At the bottom of the dialog, click "Create New File" button
-                      </li>
-                      <li>
-                        <strong>Enter Details:</strong> Enter filename and click create - file is added to current
-                        folder
-                      </li>
-                      <li>
-                        <strong>Immediate Access:</strong> File opens automatically after creation
+                        <strong>Create New File:</strong> Click "File" → "New File" to create a new file — it is added
+                        to the current project and opens automatically in the editor
                       </li>
                     </ul>
-                    <div style={styles.example}>
-                      <strong>✅ Best For:</strong> Creating files after opening the editor from dashboard
-                    </div>
-                  </div>
-
-                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #f59e0b" }}>
-                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
-                      �️ Method 3: From Open File Menu
-                    </h5>
-                    <ul style={styles.list}>
-                      <li>
-                        <strong>Open File Dialog:</strong> While already in the editor, click "File" → "Open" or use the
-                        "Open File" button
-                      </li>
-                      <li>
-                        <strong>Browse View:</strong> The file browser dialog appears showing existing files
-                      </li>
-                      <li>
-                        <strong>New File Option:</strong> At the bottom of the dialog, click "Create New File Instead"
-                        button
-                      </li>
-                      <li>
-                        <strong>Quick Create:</strong> Enter filename and click create - file is added to current folder
-                      </li>
-                      <li>
-                        <strong>Immediate Access:</strong> File opens automatically after creation
-                      </li>
-                    </ul>
-                    <div style={styles.example}>
-                      <strong>✅ Best For:</strong> Quick creation when you're already working in the editor and
-                      browsing files
-                    </div>
                   </div>
 
                   <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#f0f9ff", borderRadius: "6px" }}>
                     <p style={{ fontSize: "13px", color: "#075985", margin: 0 }}>
-                      <strong>💡 Pro Tip:</strong> All methods create files in the currently active project. Always
-                      verify you're in the correct project before creating files.
+                      <strong>💡 Pro Tip:</strong> Files are created in the currently active project. Always verify
+                      you're in the correct project before creating files.
                     </p>
                   </div>
                 </div>
@@ -852,7 +995,6 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   <ul style={styles.list}>
                     <li>🔹 Create unlimited files per project (based on storage limits)</li>
                     <li>🔹 Support for multiple file formats: .owl, .rdf, .ttl, .omn, .json (JSON-LD)</li>
-                    <li>🔹 Three convenient creation methods - library, editor, and open dialog</li>
                     <li>🔹 Create files in specific folders within project structure</li>
                     <li>🔹 Filename uniqueness validation prevents overwrites</li>
                   </ul>
@@ -868,8 +1010,8 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   >
                     <p style={{ fontSize: "13px", color: "#065f46", margin: 0 }}>
                       <strong>🎯 Recommendation:</strong> Use <strong>Project Library</strong> for quick file creation
-                      while browsing, <strong>Editor File button</strong> for convenience while working in the editor,
-                      and <strong>Open File dialog</strong> when already browsing for files.
+                      while browsing projects. Once in the editor, use <strong>File → Open</strong> to open existing
+                      files or <strong>File → New File</strong> to create new ones.
                     </p>
                   </div>
                 </div>
@@ -882,7 +1024,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             <button onClick={() => toggleSection("collaboration")} style={styles.sectionHeader}>
               {expandedSections.collaboration ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <Share2 size={20} style={{ color: "#8b5cf6" }} />
-              <span style={styles.sectionTitle}>7. Collaboration</span>
+              <span style={styles.sectionTitle}>{desktop ? '3' : '8'}. Collaboration</span>
             </button>
 
             {expandedSections.collaboration && (
@@ -997,7 +1139,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       re-syncs your collaboration session
                     </li>
                     <li>
-                      <strong>Multi-User Scaling:</strong> Multiple team members can work on the same ontology project
+                      <strong>Multi-User Scaling:</strong> Multiple workspace members can work on the same ontology project
                       simultaneously with real-time visibility
                     </li>
                     <li>
@@ -1034,7 +1176,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             <button onClick={() => toggleSection("reportIssue")} style={styles.sectionHeader}>
               {expandedSections.reportIssue ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <Bug size={20} style={{ color: "#ef4444" }} />
-              <span style={styles.sectionTitle}>8. How to Report an Issue</span>
+              <span style={styles.sectionTitle}>{desktop ? '4' : '9'}. How to Report an Issue</span>
             </button>
 
             {expandedSections.reportIssue && (
@@ -1072,7 +1214,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                     <ul style={styles.list}>
                       <li>
                         <strong>Issue Type:</strong> Choose <strong>Bug</strong> for something broken or{" "}
-                        <strong>Task</strong> for a feature request or improvement
+                        <strong>Feature Request</strong> for a new feature or improvement
                       </li>
                       <li>
                         <strong>Priority:</strong> Select from Highest, High, Medium, Low, or Lowest to indicate urgency
@@ -1207,7 +1349,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             <button onClick={() => toggleSection("codeView")} style={styles.sectionHeader}>
               {expandedSections.codeView ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
               <Code size={20} style={{ color: "#06b6d4" }} />
-              <span style={styles.sectionTitle}>9. Code View</span>
+              <span style={styles.sectionTitle}>{desktop ? '5' : '10'}. Code View</span>
             </button>
 
             {expandedSections.codeView && (
@@ -1446,6 +1588,10 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
           <div style={styles.quickReference}>
             <h3 style={styles.quickRefTitle}>Quick Reference</h3>
             <div style={styles.quickRefGrid}>
+              <div style={styles.quickRefCard}>
+                <strong>Billing</strong>
+                <p style={styles.quickRefText}>Workspace Settings → Billing — manage plan, card &amp; invoices</p>
+              </div>
               <div style={styles.quickRefCard}>
                 <strong>📧 Need Help?</strong>
                 <p style={styles.quickRefText}>Help → Report Issue</p>

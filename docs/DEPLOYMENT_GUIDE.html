@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OntoCode Deployment Guide (overview)</title>
+  <style>
+    body { background: #ffffff; color: #000000; font-family: system-ui, sans-serif; line-height: 1.5; margin: 0; padding: 1.5rem; max-width: 52rem; }
+    h1 { font-size: 1.5rem; margin-top: 0; }
+    h2 { font-size: 1.15rem; margin-top: 1.75rem; border-bottom: 1px solid #000000; padding-bottom: 0.25rem; }
+    h3 { font-size: 1rem; margin-top: 1.25rem; }
+    p, li { font-size: 0.95rem; }
+    ul { padding-left: 1.25rem; }
+    code, pre { font-family: ui-monospace, monospace; font-size: 0.85rem; background: #ffffff; border: 1px solid #000000; }
+    pre { padding: 0.75rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+    code { padding: 0.1rem 0.25rem; border: 1px solid #000000; }
+    table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.9rem; }
+    th, td { border: 1px solid #000000; padding: 0.4rem 0.5rem; text-align: left; vertical-align: top; }
+    th { font-weight: 600; }
+    .note { border: 1px solid #000000; padding: 0.75rem; margin: 0.75rem 0; }
+    a { color: #000000; text-decoration: underline; }
+    hr { border: none; border-top: 1px solid #000000; margin: 2rem 0; }
+  </style>
+</head>
+<body>
+
+<h1>OntoCode deployment guide (overview)</h1>
+<p>This document summarizes how to deploy OntoCode with Docker Compose. For environment-specific runbooks use <a href="DEPLOYMENT_UAT.html">UAT deployment guide</a> and <a href="DEPLOYMENT_PRODUCTION.html">Production deployment guide</a>. For a complete EC2 walk-through (Docker only, no Kubernetes), see <a href="DEPLOYMENT_PRODUCTION_EC2_DOCKER.html">EC2 Docker production runbook</a>. Adjust hostnames, secrets, and image registry for your environment.</p>
+
+<h2>1. Architecture overview</h2>
+<p>A typical stack includes:</p>
+<ul>
+  <li><strong>MongoDB</strong> — application data and users.</li>
+  <li><strong>GraphDB</strong> — RDF triple store for ontologies.</li>
+  <li><strong>Auth service</strong> — authentication, workspaces, billing integration.</li>
+  <li><strong>API gateway</strong> — routes HTTP traffic to backend services.</li>
+  <li><strong>Ontology editor (owl-editor)</strong> — ontology upload, SPARQL, mutations.</li>
+  <li><strong>SWRL service</strong> — rule execution.</li>
+  <li><strong>Plugin service</strong> — plugin API.</li>
+</ul>
+<p>Compose files in the repository root orchestrate these services. Use <code>docker-compose.yml</code> for local development. Use <code>docker-compose.production.yml</code> for UAT and production parity (larger GraphDB heap and memory); see the UAT and production HTML guides for which env file and Stripe mode to use.</p>
+
+<h2>2. Prerequisites</h2>
+<ul>
+  <li>Docker and Docker Compose v2.</li>
+  <li>GraphDB license file (see repository <code>.env.example</code> for <code>GDB_LICENSE_FILE</code> / <code>GDB_LICENSE_PATH</code>).</li>
+  <li>Strong <code>JWT_SECRET</code> and unique MongoDB root credentials for production.</li>
+  <li>Optional: Stripe keys and price IDs for billing; SMTP for email.</li>
+</ul>
+
+<h2>3. Environment configuration</h2>
+<p>Copy <code>.env.example</code> to <code>.env</code> at the repository root and set values. Important groups:</p>
+<table>
+  <thead>
+    <tr><th>Area</th><th>Variables (examples)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>MongoDB</td><td><code>MONGODB_URI</code>, <code>MONGODB_DATABASE</code>; compose may use <code>MONGO_ROOT_USER</code>, <code>MONGO_ROOT_PASSWORD</code>.</td></tr>
+    <tr><td>GraphDB</td><td><code>GRAPHDB_URL</code>, <code>GRAPHDB_REPOSITORY</code>, license paths in compose for GraphDB image.</td></tr>
+    <tr><td>URLs</td><td><code>BASE_URL</code>, <code>AUTH_SERVICE_URL</code>, <code>GATEWAY_URL</code> — must match how clients reach the stack.</td></tr>
+    <tr><td>Security</td><td><code>JWT_SECRET</code> — required; never commit real secrets.</td></tr>
+    <tr><td>Large uploads</td><td><code>GATEWAY_HTTP_RESPONSE_TIMEOUT</code>, <code>ONTOLOGY_HTTP_TIMEOUT_MS</code> / seconds for up to large file uploads through gateway and editor.</td></tr>
+    <tr><td>Stripe</td><td><code>STRIPE_SECRET_KEY</code>, <code>STRIPE_PUBLISHABLE_KEY</code>, <code>STRIPE_WEBHOOK_SECRET</code>, <code>STRIPE_PRICE_*</code> price IDs, <code>STRIPE_TRIAL_PERIOD_DAYS</code>.</td></tr>
+    <tr><td>Email</td><td><code>EMAIL_ENABLED</code>, SMTP or Gmail-style variables as documented in <code>.env.example</code>.</td></tr>
+    <tr><td>Billing jobs</td><td><code>BILLING_REMINDER_*</code>, <code>BILLING_EXPIRY_CHECK_*</code>, <code>BILLING_AUTORENEWAL_*</code>, <code>INVITATION_CLEANUP_CRON</code>.</td></tr>
+  </tbody>
+</table>
+<div class="note">
+  <p><strong>UAT and production:</strong> Use long random <code>JWT_SECRET</code>, restrict MongoDB and GraphDB to internal networks where possible, and set <code>BASE_URL</code> to your public HTTPS origin so email links and redirects are correct. See the environment-specific guides for Stripe test versus live keys.</p>
+</div>
+
+<h2>4. Build or pull images</h2>
+<p>Compose references images such as <code>${DOCKER_REGISTRY}/ontocode-auth:${VERSION}</code>, <code>ontocode-gateway</code>, <code>ontocode-editor</code>, <code>ontocode-swrl</code>, <code>ontocode-plugin</code>, and optionally a custom GraphDB image.</p>
+<ul>
+  <li>Set <code>DOCKER_REGISTRY</code> and <code>VERSION</code> in <code>.env</code> to match your registry and tag.</li>
+  <li>Build services locally if you maintain Dockerfiles in-repo (e.g. GraphDB in production compose).</li>
+</ul>
+
+<h2>5. Start the stack (Docker Compose)</h2>
+<p>From the repository root:</p>
+<pre>docker compose --env-file .env up -d</pre>
+<p>For an alternate file:</p>
+<pre>docker compose -f docker-compose.production.yml --env-file .env up -d</pre>
+<p>Wait for health checks: MongoDB, GraphDB, then <code>graphdb-init</code> creates the <code>ontocode</code> repository if missing. Editor and SWRL depend on GraphDB and MongoDB.</p>
+
+<h2>6. Default ports (development compose)</h2>
+<p>Typical published ports (verify in your compose file):</p>
+<table>
+  <thead><tr><th>Service</th><th>Port</th></tr></thead>
+  <tbody>
+    <tr><td>Gateway</td><td>80 (host) to gateway container</td></tr>
+    <tr><td>Auth</td><td>8086</td></tr>
+    <tr><td>Ontology editor</td><td>8083</td></tr>
+    <tr><td>SWRL</td><td>8084</td></tr>
+    <tr><td>Plugin</td><td>8087</td></tr>
+    <tr><td>MongoDB</td><td>27017</td></tr>
+    <tr><td>GraphDB</td><td>7200</td></tr>
+  </tbody>
+</table>
+<p>Point the web client or VS Code extension at <code>GATEWAY_URL</code> or the appropriate host for API calls.</p>
+
+<h2>7. Health and operations</h2>
+<ul>
+  <li>Editor liveness: <code>GET http://&lt;editor-host&gt;:8083/actuator/health/liveness</code></li>
+  <li>GraphDB: <code>GET http://&lt;graphdb-host&gt;:7200/rest/repositories</code></li>
+  <li>Logs: compose maps host paths such as <code>/var/log/ontocode/auth</code>, <code>gateway</code>, <code>editor</code>, <code>swrl</code> — create these directories or adjust volumes.</li>
+</ul>
+
+<h2>8. Stripe webhooks</h2>
+<p>Configure Stripe to send webhooks to your auth service billing endpoint (path is under the auth service in this project, e.g. <code>/api/billing/webhook</code> on the host that reaches auth). Set <code>STRIPE_WEBHOOK_SECRET</code> to the signing secret from the Stripe Dashboard. For local testing, Stripe CLI can forward events to your machine.</p>
+
+<h2>9. Kubernetes (optional)</h2>
+<p>The repository includes <code>k8s/ingress.yaml</code> as an example: TLS hosts, nginx ingress class, large body size and long proxy timeouts for uploads. Map <code>backend.service</code> names and ports to your actual Services. Review paths and ports for each microservice before applying to a cluster.</p>
+
+<h2>10. Upgrades</h2>
+<ol>
+  <li>Back up MongoDB and GraphDB volumes.</li>
+  <li>Pull new images or rebuild with a new <code>VERSION</code> tag.</li>
+  <li>Run <code>docker compose up -d</code> to recreate containers.</li>
+  <li>Run smoke tests: login, open project, run a SPARQL query, billing webhook test if applicable.</li>
+</ol>
+
+<h2>11. Troubleshooting</h2>
+<ul>
+  <li><strong>GraphDB not ready:</strong> Check license mount and heap; wait for <code>graphdb-init</code> logs.</li>
+  <li><strong>Auth fails or 401:</strong> Verify <code>JWT_SECRET</code> matches across gateway and services; check token expiry.</li>
+  <li><strong>Upload timeouts:</strong> Increase gateway and ontology timeout environment variables consistently.</li>
+  <li><strong>Billing out of sync:</strong> Confirm webhook URL and secret; inspect auth logs for Stripe handler errors.</li>
+</ul>
+
+<hr>
+<p>Document generated for the OntoCode repository. Update service names, ports, and paths when your fork diverges.</p>
+
+</body>
+</html>

@@ -82,6 +82,12 @@ public class IssueReportController {
     /**
      * Submit an issue report
      * Accepts multipart form data with issue details and optional attachments
+     * 
+     * NOTE: This endpoint is OPEN TO ALL AUTHENTICATED USERS (free and paid)
+     * No subscription plan restrictions apply - anyone with a valid JWT can report issues
+     * Issues are saved locally to MongoDB regardless of plan
+     * Jira ticket creation attempts may fail if Jira integration is unavailable,
+     * but the local issue report is always saved and returned with success: true
      */
     @PostMapping(value = "/report", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<Map<String, Object>> reportIssue(
@@ -153,6 +159,9 @@ public class IssueReportController {
             }
             if (result.getJiraIssueUrl() != null) {
                 response.put("jiraIssueUrl", result.getJiraIssueUrl());
+            }
+            if (result.getJiraFailureReason() != null) {
+                response.put("jiraFailureReason", result.getJiraFailureReason());
             }
             
             if (result.isSuccess()) {

@@ -1,0 +1,88 @@
+# Memory sizing override — t2.xlarge (16 GB RAM, 4 vCPU burstable)
+# Total container limits ≈ 15.5 GB | leaves ~500 MB for OS + Docker overhead
+# Actual steady-state usage (GO loaded): ~11-12 GB
+#
+# ⚠️  t2 CPU BURST WARNING: heavy OWL parses drain CPU credits fast.
+#     At zero credits, CPU is throttled to 40% (t2.xlarge baseline).
+#     Use for light-to-moderate load. Switch to r6i.xlarge for sustained heavy use.
+#
+# Usage:
+#   docker compose -f docker-compose.production.yml -f docker-compose.t2-xlarge.yml up -d
+
+services:
+  mongo:
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.3", "--auth"]
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  fuseki:
+    environment:
+      JVM_ARGS: "-Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+    deploy:
+      resources:
+        limits:
+          memory: 5g
+
+  auth:
+    environment:
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx640m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  gateway:
+    environment:
+      JAVA_OPTS: -Xms128m -Xmx512m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  owl-editor:
+    environment:
+      JAVA_OPTS: "-Xms512m -Xmx2500m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000 -XX:G1PeriodicGCInterval=300000 -XX:MaxHeapFreeRatio=30 -XX:MinHeapFreeRatio=10"
+      ONTOCODE_IMPORT_MAX_CONCURRENT: 1
+      ONTOCODE_DLQUERY_MAX_CONCURRENT: 1
+      ONTOCODE_DLQUERY_SLOT_BUDGET: 1
+      ONTOCODE_REASONER_WORKER_ENABLED: "true"
+      ONTOCODE_REASONER_MAX_TRIPLES: 5000000
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+
+  reasoner-worker:
+    environment:
+      JAVA_OPTS: "-Xms512m -Xmx3g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof"
+      ONTOCODE_REASONING_MAX_CONCURRENT: 1
+      ONTOCODE_REASONING_SLOT_BUDGET: 1
+      ONTOCODE_REASONER_MAX_TRIPLES: 5000000
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  swrl-service:
+    environment:
+      JAVA_OPTS: "-Xms128m -Xmx640m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof"
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  plugin-service:
+    environment:
+      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 320m
+
+  webapp:
+    deploy:
+      resources:
+        limits:
+          memory: 256m

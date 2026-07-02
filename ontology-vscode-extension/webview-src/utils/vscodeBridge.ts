@@ -28,6 +28,9 @@ import { notificationService } from '../services/notificationService';
 import { openOntologyFile, fileContentToBase64 } from './fileAccess';
 import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
 import { getGatewayUrl } from '../config/deploymentConfig';
+import { uploadFormDataWithProgress } from './uploadWithProgress';
+
+let browserZoteroLibrarySessionCounter = 0;
 
 // ── Helper: dispatch a synthetic MessageEvent so listener code sees it ──────
 function postToSelf(data: Record<string, any>) {
@@ -43,6 +46,21 @@ function getOwnerEmailFromToken(): string | undefined {
         if (parts.length !== 3) return undefined;
         const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
         return payload.email || undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/** JWT workspaceId — must be duplicated on upload URL query for FREE-plan owner checks (see extension upload URL). */
+function getWorkspaceIdFromToken(): string | undefined {
+    try {
+        const token = localStorage.getItem('authToken');
+        if (!token) return undefined;
+        const parts = token.split('.');
+        if (parts.length !== 3) return undefined;
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const ws = payload.workspaceId;
+        return typeof ws === 'string' && ws.trim() ? ws.trim() : undefined;
     } catch {
         return undefined;
     }
@@ -280,25 +298,47 @@ function handleBrowserMessage(message: any) {
                 if (!fileData) return;
 
                 if (message.projectId) {
-                    // Project context is known — hand off directly to the uploadOntology
-                    // handler so the full upload + GraphDB polling flow runs immediately.
-                    // (Without this, projectId is dropped and the upload never starts when
-                    // the user is already inside a project dashboard.)
-                    handleBrowserMessage({
-                        type: 'uploadOntology',
-                        projectId: message.projectId,
-                        fileName: fileData.fileName,
-                        fileContent: fileContentToBase64(fileData.fileContent),
-                        importMode: message.importMode,
-                        partition: message.partition,
-                    });
+                    // Workspace flow: save to project library (GridFS) first, then let
+                    // handleLoadProjectFile handle the GraphDB import via fileReady.
+                    try {
+                        const fileContent = fileData.isBase64 ? fileData.fileContent : fileContentToBase64(fileData.fileContent);
+                        let contentStr = fileContent;
+                        if (/^[A-Za-z0-9+/=]+$/.test(contentStr)) {
+                            const binaryStr = atob(contentStr);
+                            const bytes = new Uint8Array(binaryStr.length);
+                            for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+                            contentStr = new TextDecoder().decode(bytes);
+                        }
+                        const fileBlob = new Blob([contentStr], { type: 'application/rdf+xml' });
+                        const formData = new FormData();
+                        formData.append('file', fileBlob, fileData.fileName);
+                        formData.append('fileName', fileData.fileName);
+                        formData.append('fileType', 'owl');
+                        const respData: any = await apiClient.post(`/api/projects/${message.projectId}/files`, formData);
+                        const uploadedFileId = respData?.fileId || respData?.id;
+                        const uploadedFileName = respData?.filename || fileData.fileName;
+                        postToSelf({
+                            type: 'fileReady',
+                            projectId: message.projectId,
+                            uploadedFileId,
+                            uploadedFileName,
+                        });
+                    } catch (err: any) {
+                        const errData = err?.data || err?.response?.data;
+                        if (err?.status === 413 || err?.response?.status === 413) {
+                            const detail = errData?.message || errData?.error || 'Storage limit exceeded. Please upgrade your plan or delete existing files.';
+                            notificationService.error('Storage Limit Exceeded', detail);
+                        } else {
+                            notificationService.error('Upload Failed', errData?.error || err?.message || 'File upload to project failed');
+                        }
+                    }
                 } else {
                     // No project context yet — store as pending so the user can pick
                     // a project and the upload will trigger via handleProjectSelected.
                     postToSelf({
                         type: 'pendingFileUpload',
                         fileName: fileData.fileName,
-                        fileContent: fileContentToBase64(fileData.fileContent),
+                        fileContent: fileData.isBase64 ? fileData.fileContent : fileContentToBase64(fileData.fileContent),
                         fileSize: fileData.fileSize,
                         importMode: message.importMode,
                         partition: message.partition,
@@ -317,7 +357,7 @@ function handleBrowserMessage(message: any) {
                     postToSelf({
                         type: 'pendingFileUpload',
                         fileName: fileData.fileName,
-                        fileContent: fileContentToBase64(fileData.fileContent),
+                        fileContent: fileData.isBase64 ? fileData.fileContent : fileContentToBase64(fileData.fileContent),
                         fileSize: fileData.fileSize,
                     });
                 }
@@ -624,8 +664,8 @@ function handleBrowserMessage(message: any) {
                 console.log(`[BrowserBridge] [PERF] ⏱️ Upload pipeline started at ${new Date().toISOString()}`);
 
                 // Hoist so the catch block can reference it for error reporting
-                const uploadProjectId = message.projectId
-                    || (message.fileName || '').replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
+                    const uploadProjectId = message.projectId
+                    || (message.fileName || '').replace(/\.(owl|rdf|ttl|n3|nt|jsonld|zip)$/i, '');
 
                 // ── Notify Dashboard to open progress dialog immediately (but allow cancellation if duplicate) ──
                 // (mirrors what the VS Code extension sends right after file selection)
@@ -634,6 +674,8 @@ function handleBrowserMessage(message: any) {
                 try {
                     const token = localStorage.getItem('authToken');
                     const baseUrl = getGatewayUrl();
+                    const resolvedOwnerEmail = message.ownerEmail || getOwnerEmailFromToken();
+                    const resolvedWorkspaceId = message.workspaceId || getWorkspaceIdFromToken();
 
                     // ── FAST PATH: Check if file already exists in GraphDB (skip upload entirely) ──
                     // Skip this when forceUpload is set — caller already confirmed GraphDB is empty
@@ -665,7 +707,7 @@ function handleBrowserMessage(message: any) {
                     if (!message.skipDuplicateCheck) {
                         console.log('[BrowserBridge] Checking for duplicate file before upload:', message.fileName);
                         try {
-                            const checkUrl = `${baseUrl}/api/ontology/check-duplicate?filename=${encodeURIComponent(message.fileName)}${message.ownerEmail ? `&ownerEmail=${encodeURIComponent(message.ownerEmail)}` : ''}`;
+                            const checkUrl = `${baseUrl}/api/ontology/check-duplicate?filename=${encodeURIComponent(message.fileName)}${resolvedOwnerEmail ? `&ownerEmail=${encodeURIComponent(resolvedOwnerEmail)}` : ''}`;
                             const checkResp = await fetch(checkUrl, {
                                 headers: token ? { Authorization: `Bearer ${token}` } : {},
                             });
@@ -725,9 +767,10 @@ function handleBrowserMessage(message: any) {
 
                     let blob: Blob;
                     const decodeStart = Date.now();
-                    if (base64Length > LARGE_FILE_THRESHOLD) {
+                    const isOntologyPackage = (message.fileName || '').toLowerCase().endsWith('.zip');
+                    if (isOntologyPackage || base64Length > LARGE_FILE_THRESHOLD) {
                         // FAST PATH: chunked base64→binary without text decode or namespace injection
-                        console.log(`[BrowserBridge] Large file (${(base64Length / (1024 * 1024)).toFixed(0)} MB base64), using fast binary upload`);
+                        console.log(`[BrowserBridge] ${isOntologyPackage ? 'Ontology package' : 'Large file'} (${(base64Length / (1024 * 1024)).toFixed(0)} MB base64), using fast binary upload`);
                         const CHUNK = 1024 * 1024; // decode 1 MB at a time
                         const chunks: Uint8Array[] = [];
                         for (let offset = 0; offset < base64Length; offset += CHUNK) {
@@ -737,7 +780,7 @@ function handleBrowserMessage(message: any) {
                             for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
                             chunks.push(buf);
                         }
-                        blob = new Blob(chunks as BlobPart[], { type: 'application/octet-stream' });
+                        blob = new Blob(chunks as BlobPart[], { type: isOntologyPackage ? 'application/zip' : 'application/octet-stream' });
                         console.log(`[BrowserBridge] [PERF] Large file base64→binary decode: ${Date.now() - decodeStart}ms`);
                     } else {
                         // SMALL FILE PATH: full text decode + namespace injection
@@ -758,22 +801,21 @@ function handleBrowserMessage(message: any) {
                     formData.append('file', blob, message.fileName);
 
                     const query = new URLSearchParams();
-                    if (message.ownerEmail) query.set('ownerEmail', message.ownerEmail);
+                    if (resolvedOwnerEmail) query.set('ownerEmail', resolvedOwnerEmail);
+                    if (resolvedWorkspaceId) query.set('workspaceId', resolvedWorkspaceId);
                     if (message.importMode) query.set('importMode', message.importMode);
                     if (message.partition) query.set('partition', message.partition);
                     if (message.skipDuplicateCheck) query.set('action', 'replace');
 
                     const httpPostStart = Date.now();
-                    const resp = await fetch(
-                        `${baseUrl}/api/ontology/upload/${encodeURIComponent(uploadProjectId)}?${query.toString()}`,
-                        {
-                            method: 'POST',
-                            headers: token ? { Authorization: `Bearer ${token}` } : {},
-                            body: formData,
-                        }
-                    );
-
-                    const responseText = await resp.text();
+                    const uploadUrl = `${baseUrl}/api/ontology/upload/${encodeURIComponent(uploadProjectId)}?${query.toString()}`;
+                    const uploadResult = await uploadFormDataWithProgress(uploadUrl, formData, {
+                        headers: token ? { Authorization: `Bearer ${token}` } : {},
+                        timeoutMs: 7_200_000,
+                        projectId: uploadProjectId,
+                    });
+                    const resp = { ok: uploadResult.ok, status: uploadResult.status };
+                    const responseText = uploadResult.text;
                     console.log(`[BrowserBridge] [PERF] HTTP POST upload: ${Date.now() - httpPostStart}ms`);
 
                     let responseData: any = {};
@@ -794,7 +836,10 @@ function handleBrowserMessage(message: any) {
                         // Poll /api/ontology/status until COMPLETED (GraphDB processes async)
                         // Time-based timeout: 15 min baseline + 1 min per 50MB
                         const fileSizeMB = base64Length > 0 ? (base64Length * 3 / 4) / (1024 * 1024) : 50; // actual file size (base64 is 4/3x)
-                        const timeoutMs = Math.max(15 * 60 * 1000, Math.ceil(fileSizeMB / 50) * 60 * 1000 + 15 * 60 * 1000); // 15 min + 1 min per 50MB
+                        const timeoutMs = Math.min(
+                            7_200_000,
+                            Math.max(60 * 60 * 1000, Math.ceil(fileSizeMB / 50) * 60 * 1000 + 30 * 60 * 1000),
+                        );
                         console.log(`[BrowserBridge] File ~${fileSizeMB.toFixed(0)}MB, poll timeout: ${(timeoutMs / 60000).toFixed(1)} min`);
                         const getDelay = (att: number) => {
                             if (att <= 3) return 2000;
@@ -889,7 +934,7 @@ function handleBrowserMessage(message: any) {
                                         return;
                                     }
                                     if (status === 'FAILED' || status === 'ERROR') {
-                                        postToSelf({ type: 'importFailed', projectId: actualProjectId, error: payload?.statusMessage || 'Import failed in GraphDB' });
+                                        postToSelf({ type: 'importFailed', projectId: actualProjectId, error: payload?.statusMessage || 'Import failed' });
                                         return;
                                     }
 
@@ -915,7 +960,7 @@ function handleBrowserMessage(message: any) {
                                 }
                             }
                             // Timeout
-                            postToSelf({ type: 'importFailed', projectId: actualProjectId, error: 'Import timed out waiting for GraphDB processing' });
+                            postToSelf({ type: 'importFailed', projectId: actualProjectId, error: 'Import timed out waiting for processing to complete' });
                         };
                         pollStatus();
                     } else if (responseData.isDuplicate) {
@@ -960,11 +1005,33 @@ function handleBrowserMessage(message: any) {
                     formData.append('file', fileBlob, message.fileName);
                     formData.append('fileName', message.fileName);
                     formData.append('fileType', 'owl');
-                    await apiClient.post(`/api/projects/${message.projectId}/files`, formData);
+                    await apiClient.post(`/api/projects/${message.projectId}/files`, formData, {
+                        onUploadProgress: (progressEvent) => {
+                            if (progressEvent.total) {
+                                const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+                                postToSelf({
+                                    type: 'uploadProgress',
+                                    projectId: message.projectId,
+                                    percent,
+                                    loaded: progressEvent.loaded,
+                                    total: progressEvent.total,
+                                    message: percent >= 100
+                                        ? 'Upload complete. Processing on server...'
+                                        : `Uploading: ${percent}%`,
+                                });
+                            }
+                        },
+                    });
                     console.log('[BrowserBridge] uploadFileToProject success');
                 } catch (err: any) {
                     console.error('[BrowserBridge] uploadFileToProject error:', err);
-                    notificationService.error('Upload Failed', err?.message || 'File upload failed');
+                    const errData = err?.data || err?.response?.data;
+                    if (err?.status === 413 || err?.response?.status === 413) {
+                        const detail = errData?.message || errData?.error || 'Storage limit exceeded. Please upgrade your plan or delete existing files.';
+                        notificationService.error('Storage Limit Exceeded', detail);
+                    } else {
+                        notificationService.error('Upload Failed', errData?.error || err?.message || 'File upload failed');
+                    }
                 }
             })();
             break;
@@ -1032,45 +1099,71 @@ function handleBrowserMessage(message: any) {
 
         case 'requestZoteroLibrary': {
             (async () => {
+                const librarySessionId = ++browserZoteroLibrarySessionCounter;
                 try {
                     if (!sci2CodeBrowserService.isConfigured()) {
                         postToSelf({
                             type: 'zoteroLibraryError',
-                            error: 'ZOTERO_NOT_CONFIGURED'
+                            error: 'ZOTERO_NOT_CONFIGURED',
+                            librarySessionId,
                         });
                         return;
                     }
 
-                    const batchSize = 100;
+                    const PAGE_SIZE = 100;
                     let start = 0;
-                    let batch = await sci2CodeBrowserService.fetchLibrary(batchSize, start);
+                    let totalResults = Infinity; // will be set after first page
 
-                    postToSelf({
-                        type: 'zoteroLibraryData',
-                        items: batch || [],
-                        hasMore: batch.length === batchSize
-                    });
+                    const qRaw =
+                        typeof (message as Record<string, unknown>).searchQuery === 'string'
+                            ? String((message as Record<string, unknown>).searchQuery).trim()
+                            : '';
+                    const pageOpts = qRaw ? { q: qRaw } : undefined;
 
-                    start += batch.length;
+                    while (start < totalResults) {
+                        const { items, totalResults: total } = await sci2CodeBrowserService.fetchLibraryPage(
+                            start,
+                            PAGE_SIZE,
+                            pageOpts
+                        );
 
-                    while (batch.length === batchSize) {
-                        batch = await sci2CodeBrowserService.fetchLibrary(batchSize, start);
-                        if (!batch || batch.length === 0) {
-                            break;
+                        // Lock in the real total from the first response
+                        if (start === 0) {
+                            totalResults = total;
                         }
 
-                        postToSelf({
-                            type: 'zoteroLibraryDataAppend',
-                            items: batch,
-                            hasMore: batch.length === batchSize
-                        });
+                        if (!items || items.length === 0) break;
 
-                        start += batch.length;
+                        if (start === 0) {
+                            // First batch — send as initial payload so the UI can show results fast
+                            postToSelf({
+                                type: 'zoteroLibraryData',
+                                items,
+                                hasMore: start + items.length < totalResults,
+                                librarySessionId,
+                            });
+                        } else {
+                            postToSelf({
+                                type: 'zoteroLibraryDataAppend',
+                                items,
+                                hasMore: start + items.length < totalResults,
+                                librarySessionId,
+                            });
+                        }
+
+                        start += items.length;
+
+                        // Stop if we got the last page
+                        if (items.length < PAGE_SIZE || start >= totalResults) break;
                     }
 
-                    postToSelf({ type: 'zoteroLibraryDataComplete' });
+                    postToSelf({ type: 'zoteroLibraryDataComplete', librarySessionId });
                 } catch (err: any) {
-                    postToSelf({ type: 'zoteroLibraryError', error: err?.message || 'Zotero unavailable' });
+                    postToSelf({
+                        type: 'zoteroLibraryError',
+                        error: err?.message || 'Zotero unavailable',
+                        librarySessionId,
+                    });
                 }
             })();
             break;
@@ -1205,11 +1298,38 @@ function handleBrowserMessage(message: any) {
         }
 
         case 'getQueueStatus': {
-            // No background queue in browser mode; signal completed
-            postToSelf({
-                type: 'queueStatusUpdate',
-                status: { projectId: message.projectId, status: 'COMPLETED', position: 0 },
-            });
+            (async () => {
+                try {
+                    const positionData: any = await apiClient.get(`/api/import-queue/position/${message.projectId}`);
+                    if (!positionData?.inQueue) {
+                        postToSelf({
+                            type: 'queueStatusUpdate',
+                            status: {
+                                projectId: message.projectId,
+                                status: 'COMPLETED',
+                                queuePosition: 0,
+                                totalInQueue: 0,
+                                estimatedWaitTimeMs: 0,
+                                message: positionData?.message || 'Not in queue',
+                            },
+                        });
+                        return;
+                    }
+                    postToSelf({
+                        type: 'queueStatusUpdate',
+                        status: {
+                            projectId: message.projectId,
+                            status: positionData.status || 'QUEUED',
+                            queuePosition: positionData.position ?? 0,
+                            totalInQueue: positionData.totalInQueue ?? 0,
+                            estimatedWaitTimeMs: positionData.estimatedWaitMs ?? 0,
+                            message: positionData.message,
+                        },
+                    });
+                } catch (err) {
+                    console.warn('[BrowserBridge] getQueueStatus failed:', err);
+                }
+            })();
             break;
         }
 

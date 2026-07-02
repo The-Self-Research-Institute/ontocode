@@ -1,6 +1,8 @@
 // ManualCitationDialog.tsx
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { X, BookOpen, Save } from 'lucide-react';
+import { isValidDoiFormat, normalizeDoi as normalizeDoiUtil } from '../utils/doi';
+import { validateDoiOnline } from '../services/doiValidationService';
 
 interface ManualCitationDialogProps {
   isOpen: boolean;
@@ -13,7 +15,7 @@ interface ManualCitationDialogProps {
     url?: string;
     itemType: string;
     publicationTitle?: string;
-  }) => void;
+  }) => Promise<void> | void;
 }
 
 const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({ 
@@ -25,34 +27,88 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
   const [authors, setAuthors] = useState('');
   const [year, setYear] = useState('');
   const [doi, setDoi] = useState('');
+  const [doiError, setDoiError] = useState('');
+  const [doiChecking, setDoiChecking] = useState(false);
   const [url, setUrl] = useState('');
   const [itemType, setItemType] = useState('journalArticle');
   const [publicationTitle, setPublicationTitle] = useState('');
 
-  const handleSubmit = () => {
+  const resetForm = useCallback(() => {
+    setTitle('');
+    setAuthors('');
+    setYear('');
+    setDoi('');
+    setDoiError('');
+    setDoiChecking(false);
+    setUrl('');
+    setItemType('journalArticle');
+    setPublicationTitle('');
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      resetForm();
+    }
+  }, [isOpen, resetForm]);
+
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
+
+  const handleSubmit = async () => {
     if (!title.trim() || !authors.trim() || !year.trim()) {
       alert('Please fill in Title, Authors, and Year (required fields)');
       return;
     }
 
-    onSubmit({
+    // Validate DOI if provided. Both manual and Zotero-picker flows now go
+    // through the same `validateDoiOnline` service so behavior, caching,
+    // and error envelopes stay consistent.
+    let cleanDoi: string | undefined = undefined;
+    if (doi.trim()) {
+      const normalized = normalizeDoiUtil(doi);
+      if (!isValidDoiFormat(normalized)) {
+        setDoiError('Invalid DOI format. Expected format: 10.XXXX/suffix');
+        return;
+      }
+      setDoiChecking(true);
+      try {
+        const validation = await validateDoiOnline({
+          doi: normalized,
+          title: title.trim(),
+          publicationTitle: publicationTitle.trim() || undefined,
+          year: year.trim(),
+        });
+
+        if (!validation.valid) {
+          setDoiError(validation.error || 'DOI could not be validated.');
+          return;
+        }
+
+        if (validation.relevant === false) {
+          setDoiError(validation.error || 'DOI is real but does not match this citation.');
+          return;
+        }
+
+        cleanDoi = validation.normalizedDoi || normalized;
+        setDoiError('');
+      } finally {
+        setDoiChecking(false);
+      }
+    }
+
+    await onSubmit({
       title: title.trim(),
       authors: authors.trim(),
       year: year.trim(),
-      doi: doi.trim() || undefined,
+      doi: cleanDoi,
       url: url.trim() || undefined,
       itemType,
       publicationTitle: publicationTitle.trim() || undefined
     });
 
-    // Reset form
-    setTitle('');
-    setAuthors('');
-    setYear('');
-    setDoi('');
-    setUrl('');
-    setItemType('journalArticle');
-    setPublicationTitle('');
+    resetForm();
   };
 
   if (!isOpen) return null;
@@ -67,7 +123,7 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
             <h2 className="text-xl font-bold text-gray-800">Add Citation Manually</h2>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
           >
             <X size={20} className="text-gray-500" />
@@ -163,10 +219,19 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
               <input
                 type="text"
                 value={doi}
-                onChange={(e) => setDoi(e.target.value)}
-                placeholder="e.g., 10.1000/xyz123"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                onChange={(e) => { setDoi(e.target.value); setDoiError(''); }}
+                placeholder="e.g., 10.1000/xyz123  or  https://doi.org/10.1000/xyz123"
+                className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 ${
+                  doiError ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                }`}
               />
+          {doiError && (
+            <p className="text-xs text-red-500 mt-1">{doiError}</p>
+          )}
+          {doiChecking && (
+            <p className="text-xs text-purple-600 mt-1">Validating DOI...</p>
+          )}
+          <p className="text-xs text-gray-400 mt-1">You can paste a full DOI URL — it will be normalised automatically.</p>
             </div>
 
             {/* URL */}
@@ -188,17 +253,19 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
         {/* Footer */}
         <div className="p-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
           <button
-            onClick={onClose}
+            onClick={handleClose}
+            disabled={doiChecking}
             className="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleSubmit}
-            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+            disabled={doiChecking}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <Save size={18} />
-            <span>Insert Citation</span>
+            <span>{doiChecking ? 'Validating DOI...' : 'Insert Citation'}</span>
           </button>
         </div>
       </div>

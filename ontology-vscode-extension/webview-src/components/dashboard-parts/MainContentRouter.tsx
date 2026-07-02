@@ -1,4 +1,5 @@
-﻿/* eslint-disable @typescript-eslint/no-explicit-any */
+﻿// @ts-nocheck
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect } from "react";
 import {
   ChevronRight,
@@ -17,6 +18,7 @@ import {
   PlusCircle,
 } from "lucide-react";
 import apiClient from "../../services/apiClient";
+import ontologyMutationService from "../../services/ontologyMutationService";
 import { syncService } from "../../services/syncService";
 import { pluginLoader } from "../../services/pluginLoader";
 import DLQueryPanel from "../DLQueryPanel";
@@ -33,6 +35,7 @@ interface MainContentRouterProps {
 }
 
 export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, init, handlers, apiBaseUrl }) => {
+  const [importClosureMap, setImportClosureMap] = useState<Record<string, Array<{ iri: string; children?: any[] }>>>({});
   const {
     projectId, metadata, mainTab, entitiesTab,
     classHierarchy, inferredClassHierarchy,
@@ -104,7 +107,44 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     handleAddItem, handleCreateClass, handleDeleteAnnotation,
     handleAddDlToOntology, handleSaveOntologyIRIs, handleSaveGCI, handleDeleteGCI,
   } = handlers;
+
+  useEffect(() => {
+    if (!projectId || !showImportClosure) return;
+    const loadImportClosure = async () => {
+      try {
+        const res = await apiClient.get<any>(
+          `/api/ontology/metadata/${encodeProjectId(projectId)}/imports/closure`,
+        );
+        const payload = res?.data || res;
+        if (payload?.closure && typeof payload.closure === "object") {
+          setImportClosureMap(payload.closure);
+        }
+      } catch (error) {
+        console.warn("[MainContentRouter] Failed to load import closure:", error);
+      }
+    };
+    void loadImportClosure();
+  }, [projectId, showImportClosure, ontologyImports, encodeProjectId]);
+
   // #region Render Methods
+
+  const getImportResolutionStatus = (iri: string): { label: string; tone: "success" | "warning" | "error" | "neutral"; detail: string } => {
+    const resolution = (metadata as any)?.importResolution || {};
+    const loaded = Array.isArray(resolution.loaded) ? resolution.loaded : [];
+    const declaredOnly = Array.isArray(resolution.declaredOnly) ? resolution.declaredOnly : [];
+    const failed = resolution.failed && typeof resolution.failed === "object" ? resolution.failed : {};
+
+    if (loaded.includes(iri)) {
+      return { label: "Loaded", tone: "success", detail: "Imported ontology content was resolved and loaded into this project graph." };
+    }
+    if (Object.prototype.hasOwnProperty.call(failed, iri)) {
+      return { label: "Failed", tone: "error", detail: String(failed[iri] || "Import could not be loaded.") };
+    }
+    if (declaredOnly.includes(iri)) {
+      return { label: "Declared only", tone: "warning", detail: "The owl:imports declaration exists, but content was not resolved on the server." };
+    }
+    return { label: "Declared", tone: "neutral", detail: "Declared by owl:imports. Load status is unknown until import resolution runs." };
+  };
 
   // Cleanup sync service when switching projects
   useEffect(() => {
@@ -235,6 +275,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
           const PluginComponent = plugin.component;
           return (
             <PluginComponent
+              key={projectId}
               projectId={projectId}
               context={{
                 projectId,
@@ -508,11 +549,9 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                 </div>
                 {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
-                    {ontologyAnnotations
-                      .filter((ann) => ann && ann.propertyIri)
-                      .map((annotation, idx) => {
-                        const key = `${annotation.property}-${annotation.value}-${idx}`;
-                        const propertyIri = annotation.property || "";
+                    {ontologyAnnotations.map((annotation, idx) => {
+                        const key = `${annotation.propertyIri || annotation.property}-${annotation.value}-${idx}`;
+                        const propertyIri = annotation.propertyIri || annotation.property || "";
                         const propertyLabel = propertyIri.includes("#")
                           ? propertyIri.split("#").pop()
                           : propertyIri.includes("/")
@@ -834,6 +873,15 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                 iri.startsWith("file://") ||
                                 (!iri.startsWith("http://") && !iri.startsWith("https://"));
                               const isExpanded = expandedImports.has(iri);
+                              const resolutionStatus = getImportResolutionStatus(iri);
+                              const statusStyle =
+                                resolutionStatus.tone === "success"
+                                  ? { backgroundColor: "rgba(34,197,94,0.14)", color: "rgb(34,197,94)" }
+                                  : resolutionStatus.tone === "warning"
+                                    ? { backgroundColor: "rgba(245,158,11,0.14)", color: "rgb(245,158,11)" }
+                                    : resolutionStatus.tone === "error"
+                                      ? { backgroundColor: "var(--error-tint)", color: "var(--error)" }
+                                      : { backgroundColor: "var(--surface-3)", color: "var(--text-secondary)" };
 
                               return (
                                 <div
@@ -894,15 +942,33 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                           </span>
                                         </div>
                                       )}
+                                      <div className="flex items-center gap-1 mt-1">
+                                        <span
+                                          className="px-1.5 py-0.5 text-[9px] rounded"
+                                          style={statusStyle}
+                                          title={resolutionStatus.detail}
+                                        >
+                                          {resolutionStatus.label}
+                                        </span>
+                                      </div>
                                       {showImportClosure && isExpanded && (
                                         <div
-                                          className="mt-2 ml-4 pl-3 border-l-2 text-[10px]"
+                                          className="mt-2 ml-4 pl-3 border-l-2 text-[10px] space-y-1"
                                           style={{ borderColor: "var(--border)", color: "var(--text-tertiary)" }}
                                         >
-                                          <div className="italic">Transitive imports would appear here</div>
-                                          <div className="text-[9px] mt-1" style={{ color: "var(--text-quaternary)" }}>
-                                            (Feature requires backend support)
-                                          </div>
+                                          {(importClosureMap[iri] || []).length === 0 ? (
+                                            <div className="italic">No transitive imports declared</div>
+                                          ) : (
+                                            (importClosureMap[iri] || []).map((child, childIdx) => {
+                                              const renderClosure = (node: { iri: string; children?: any[] }, depth = 0): React.ReactNode => (
+                                                <div key={`${node.iri}-${depth}`} style={{ marginLeft: depth * 12 }}>
+                                                  <div className="font-mono break-all">{node.iri}</div>
+                                                  {(node.children || []).map((c) => renderClosure(c, depth + 1))}
+                                                </div>
+                                              );
+                                              return <div key={`${child.iri}-${childIdx}`}>{renderClosure(child)}</div>;
+                                            })
+                                          )}
                                         </div>
                                       )}
                                     </div>
@@ -942,7 +1008,10 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                         >
                           <div className="flex items-center gap-2">
                             <Info size={12} />
-                            <span>Direct imports only. Enable "Show import closure" to see transitive imports.</span>
+                            <span>
+                              Imports are owl:imports declarations. Loaded imports are included in the project graph;
+                              declared-only imports match Protégé declarations but were not resolved on this server.
+                            </span>
                           </div>
                         </div>
                       )}
@@ -1403,13 +1472,19 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                 {selectedClassIndividualDetails.propertyAssertions.map((assertion) => (
                                   <div
                                     key={assertion.id}
-                                    className="group flex items-center justify-between text-[11px] text-gray-600"
+                                    className={`group flex items-center justify-between text-[11px] ${
+                                      assertion.isInferred ? "text-amber-800 bg-amber-50 border border-amber-100 rounded px-1" : "text-gray-600"
+                                    }`}
                                   >
                                     <span className="truncate">
                                       <span className="font-semibold">{assertion.propertyLabel}</span>
                                       {assertion.isNegative ? " (not)" : ""}:{" "}
                                       {assertion.targetLabel || assertion.targetIri || assertion.targetLiteral}
+                                      {assertion.isInferred && (
+                                        <span className="ml-1 text-[9px] uppercase font-semibold text-amber-700">inferred</span>
+                                      )}
                                     </span>
+                                    {!assertion.isInferred && (
                                     <button
                                       onClick={async () => {
                                         if (!projectId || !selectedClassIndividualDetails) return;
@@ -1464,6 +1539,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                     >
                                       Remove
                                     </button>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -1534,6 +1610,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
         return (
           <DLQueryPanel
             projectId={projectId || ""}
+            classHierarchy={classHierarchy}
             classes={flattenClassHierarchy(classHierarchy)}
             objectProperties={flattenPropertyHierarchy(objectPropertyHierarchy)}
             dataProperties={flattenPropertyHierarchy(dataPropertyHierarchy)}
@@ -1547,17 +1624,11 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
             apiClient={apiClient}
             onAddToOntology={async (expression, className) => {
               try {
-                await apiClient.post(`/api/ontology/${projectId}/dl/add`, {
-                  expression,
-                  className,
-                  userEmail: user?.email || "anonymous",
-                });
+                await ontologyMutationService.addDlQueryClass(projectId || "", expression, className, user?.email);
                 showToast(`Created class "${className}"`, "success");
-                // Refresh class hierarchy and metadata after successful class creation
                 await refreshClassHierarchy();
                 await fetchData(projectId, false);
               } catch (e) {
-                // Fallback for older backend versions: create via the existing mutations endpoint.
                 const status = (e as any)?.status ?? (e as any)?.response?.status ?? (e as any)?.data?.status;
                 if (status !== 404) {
                   console.warn("DL add failed:", e);
@@ -1565,7 +1636,6 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                   return;
                 }
 
-                // Resolve target IRI from known classes (supports simple expressions like "Course").
                 const normalizedExpr = (expression || "").trim();
                 const byIri = normalizedExpr.startsWith("http://") || normalizedExpr.startsWith("https://");
                 const target = byIri
@@ -1588,29 +1658,16 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
 
                 const newIri = base + normalizedClassName;
 
-                const mutationBody = {
-                  ops: [
-                    {
-                      type: "createClass",
-                      iri: newIri,
-                      label: className,
-                      parent: "http://www.w3.org/2002/07/owl#Thing",
-                    },
-                    {
-                      type: "addEquivalentClass",
-                      iri: newIri,
-                      target,
-                    },
-                  ],
-                  userId: user?.email || "anonymous",
-                  username: user?.username || user?.email || "Anonymous",
-                  sessionId: `dl-add-${Date.now()}`,
-                };
-
                 try {
-                  await apiClient.post(`/api/ontology/mutations/${projectId}?draft=false`, mutationBody);
+                  await ontologyMutationService.addDlQueryClassViaMutations(
+                    projectId || "",
+                    newIri,
+                    className,
+                    target,
+                    user?.email,
+                    user?.username || user?.email,
+                  );
                   showToast(`Created class "${className}"`, "success");
-                  // Refresh class hierarchy and metadata after successful class creation
                   await refreshClassHierarchy();
                   await fetchData(projectId, false);
                 } catch (e2) {

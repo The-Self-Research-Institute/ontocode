@@ -1,45 +1,36 @@
 {
   "name": "ontocode-desktop",
-  "version": "1.0.0",
-  "description": "OntoCode Ontology Editor – Desktop (Electron)",
+  "version": "1.1.0-beta.13",
+  "description": "OntoCode Ontology Editor – Desktop (Electron + bundled backend)",
+  "homepage": "https://ontocode.selfresearch.org",
+  "author": "OntoCode",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build-web": "cd ../ontology-vscode-extension/webview-src && npm run build",
+    "start:dev": "cross-env ELECTRON_IS_DEV=1 electron .",
+    "start:dev:win": "set ELECTRON_IS_DEV=1 && electron .",
+    "build-web": "cd ../ontology-vscode-extension/webview-src && npm run build:electron",
+    "prepare-resources": "node scripts/prepare-resources.js",
     "dist": "npm run build-web && electron-builder",
-    "pack": "npm run build-web && electron-builder --dir"
+    "dist:win": "npm run build-web && electron-builder --win",
+    "dist:mac": "npm run build-web && electron-builder --mac",
+    "dist:linux": "npm run build-web && electron-builder --linux",
+    "pack": "electron-builder --dir"
   },
-  "keywords": ["ontology", "owl", "editor"],
-  "author": "OntoCode",
-  "license": "GPL-3.0-or-later",
+  "keywords": [
+    "ontology",
+    "owl",
+    "editor",
+    "desktop",
+    "offline"
+  ],
+  "license": "MIT",
   "devDependencies": {
     "electron": "^29.0.0",
     "electron-builder": "^24.0.0"
   },
   "dependencies": {
-    "electron-store": "^8.1.0"
-  },
-  "build": {
-    "appId": "com.ontocode.desktop",
-    "productName": "OntoCode",
-    "directories": {
-      "output": "dist-electron"
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "../ontology-vscode-extension/webview-src/dist/**"
-    ],
-    "win": {
-      "target": "nsis",
-      "icon": "../ontology-vscode-extension/webview-src/dist/favicon.ico"
-    },
-    "mac": {
-      "target": "dmg",
-      "icon": "../ontology-vscode-extension/webview-src/dist/favicon.ico"
-    },
-    "linux": {
-      "target": "AppImage"
-    }
+    "electron-store": "^8.1.0",
+    "electron-updater": "^6.8.9"
   }
 }

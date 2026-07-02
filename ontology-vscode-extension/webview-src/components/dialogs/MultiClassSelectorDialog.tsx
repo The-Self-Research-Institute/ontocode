@@ -3,6 +3,7 @@ import { X, Check, Package, ChevronRight, ChevronDown } from 'lucide-react';
 import type { TreeNode } from '../../types';
 import apiClient from '../../services/apiClient';
 import EntityHierarchy from '../EntityHierarchy';
+import { notificationService } from '../../services/notificationService';
 
 interface MultiClassSelectorDialogProps {
   isOpen: boolean;
@@ -252,7 +253,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
 
   const handleConfirm = () => {
     if (selectedClasses.length < minSelection) {
-      alert(`Please select at least ${minSelection} class${minSelection > 1 ? 'es' : ''}.`);
+      notificationService.warning('Selection Required', `Please select at least ${minSelection} class${minSelection > 1 ? 'es' : ''}.`);
       return;
     }
     onConfirm(selectedClasses);
@@ -265,7 +266,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 flex flex-col h-[80vh] overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b flex justify-between items-center bg-gray-50">
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -349,7 +350,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
           )}
 
           {/* Class tree with EntityHierarchy component */}
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-hidden">
             <EntityHierarchy
               entitiesTab="Classes"
               filteredData={treeData}

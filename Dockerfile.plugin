@@ -3,15 +3,20 @@ FROM maven:3.9-eclipse-temurin-21 AS build
 
 WORKDIR /build
 
-# Copy entire plugin service directory (it's standalone)
-COPY ontology-plugin-service/ .
+COPY pom.xml .
+COPY shared/ ./shared/
+COPY ontology-auth/ ./ontology-auth/
+COPY ontology-gateway/ ./ontology-gateway/
+COPY ontology-editor/ ./ontology-editor/
+COPY ontology-swrl/ ./ontology-swrl/
+COPY ontology-plugin-service/ ./ontology-plugin-service/
+COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
 
-# Build the application - package goal includes spring-boot:repackage automatically
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -Dhttp.keepAlive=false \
         -Dmaven.wagon.http.retryHandler.count=10 \
         -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
-        clean package -DskipTests -B -ntp
+        clean install -pl shared/common-utils,ontology-plugin-service -DskipTests -B -ntp
 
 # Runtime stage
 FROM eclipse-temurin:21-jre
@@ -28,7 +33,7 @@ RUN mkdir -p /app/storage && \
     chown -R 1000:1000 /app
 
 # Copy the built JAR (spring-boot:repackage creates executable JAR)
-COPY --from=build /build/target/*.jar app.jar
+COPY --from=build /build/ontology-plugin-service/target/*-exec.jar app.jar
 
 USER 1000
 

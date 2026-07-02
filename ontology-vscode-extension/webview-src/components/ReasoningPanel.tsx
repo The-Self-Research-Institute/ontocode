@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Play, RefreshCw, CheckCircle, XCircle, AlertTriangle, Clock, Loader2, ChevronDown, ChevronRight, Brain, ListTree } from 'lucide-react';
 import apiClient from '../services/apiClient';
 
@@ -18,6 +18,10 @@ interface ReasonerResult {
   realizationMs?: number;
   consistencyCheckMs?: number;
   totalDurationMs?: number;
+  downgradedWarning?: string;
+  tooLargeForReasoner?: boolean;
+  suggestedReasoner?: string;
+  tripleCount?: number;
 }
 
 interface InferredAxiom {
@@ -38,12 +42,15 @@ interface ReasonerStats {
 }
 
 const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
-  const [reasonerType, setReasonerType] = useState<'HERMIT' | 'STRUCTURAL' | 'PELLET'>('HERMIT');
+  const [reasonerType, setReasonerType] = useState<'HERMIT' | 'ELK' | 'STRUCTURAL' | 'PELLET'>('HERMIT');
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<ReasonerResult | null>(null);
   const [inferredAxioms, setInferredAxioms] = useState<InferredAxiom[]>([]);
   const [stats, setStats] = useState<ReasonerStats | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary']));
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastPathRef = useRef<string | null>(null);
 
   const toggleSection = (section: string) => {
     const newExpanded = new Set(expandedSections);
@@ -55,102 +62,147 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
     setExpandedSections(newExpanded);
   };
 
+  const startTimer = () => {
+    setElapsedSeconds(0);
+    elapsedRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+  };
+
+  const stopTimer = () => {
+    if (elapsedRef.current) {
+      clearInterval(elapsedRef.current);
+      elapsedRef.current = null;
+    }
+  };
+
+  useEffect(() => () => stopTimer(), []);
+
+  const formatElapsed = (s: number) => {
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return rem > 0 ? `${m}m ${rem}s` : `${m}m`;
+  };
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const extractErrorMessage = (error: any): string => {
+    // Try to get the friendly message from the response body first (backend sets it there)
+    const fromBody = error?.response?.data?.message || error?.response?.data?.error;
+    if (fromBody) return fromBody;
+    // Network / timeout errors
+    if (error?.code === 'ECONNABORTED' || error?.message?.toLowerCase().includes('timeout')) {
+      return 'Reasoning timed out. Try ELK for large ontologies.';
+    }
+    if (error?.code === 'ERR_NETWORK' || error?.message?.toLowerCase().includes('network')) {
+      return 'Cannot reach the reasoning service. Please check your connection.';
+    }
+    return error?.message || 'Reasoning failed — please try again.';
+  };
+
+  const pollReasoningJob = async (jobId: string, timeoutMs = 30 * 60 * 1000): Promise<ReasonerResult> => {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const job: any = await apiClient.get(`/api/dl-query/jobs/${jobId}`);
+      const status = String(job?.status || '').toUpperCase();
+      if (status === 'COMPLETED') {
+        return { ...job, success: job.success !== false };
+      }
+      if (status === 'FAILED') {
+        return {
+          success: false,
+          message: job.error || job.message || 'Reasoning failed',
+        };
+      }
+      await sleep(status === 'QUEUED' ? 2000 : 1500);
+    }
+    return { success: false, message: 'Reasoning timed out. Try again later.' };
+  };
+
+  const postReasoningTask = async (path: string, overrideReasonerType?: string): Promise<ReasonerResult> => {
+    const rt = overrideReasonerType ?? reasonerType;
+    const response: any = await apiClient.post(path, null, { params: { reasonerType: rt } });
+    if (response?.async && response?.jobId) {
+      return pollReasoningJob(response.jobId);
+    }
+    return response;
+  };
+
   // Run full reasoning
   const runFullReasoning = async () => {
+    const path = `/api/ontology/${projectId}/reasoner/run`;
+    lastPathRef.current = path;
     setIsRunning(true);
     setResult(null);
     setInferredAxioms([]);
-    
+    startTimer();
+
     try {
-      const response = await apiClient.post<ReasonerResult>(
-        `/api/ontology/${projectId}/reasoner/run`,
-        null,
-        { params: { reasonerType } }
-      );
-      
+      const response = await postReasoningTask(path);
       setResult(response);
-      
-      // If successful, fetch inferred axioms
       if (response.success) {
         fetchInferredAxioms();
       }
-      
     } catch (error: any) {
-      setResult({
-        success: false,
-        message: error.message || 'Reasoning failed'
-      });
+      setResult({ success: false, message: extractErrorMessage(error) });
     } finally {
+      stopTimer();
       setIsRunning(false);
     }
   };
 
   // Check consistency only
   const checkConsistency = async () => {
+    const path = `/api/ontology/${projectId}/reasoner/consistency`;
+    lastPathRef.current = path;
     setIsRunning(true);
     setResult(null);
-    
+    startTimer();
+
     try {
-      const response = await apiClient.post<ReasonerResult>(
-        `/api/ontology/${projectId}/reasoner/consistency`,
-        null,
-        { params: { reasonerType } }
-      );
-      
+      const response = await postReasoningTask(path);
       setResult(response);
-      
     } catch (error: any) {
-      setResult({
-        success: false,
-        message: error.message || 'Consistency check failed'
-      });
+      setResult({ success: false, message: extractErrorMessage(error) });
     } finally {
+      stopTimer();
       setIsRunning(false);
     }
   };
 
   // Classify ontology
   const classify = async () => {
+    const path = `/api/ontology/${projectId}/reasoner/classify`;
+    lastPathRef.current = path;
     setIsRunning(true);
-    
+    setResult(null);
+    startTimer();
+
     try {
-      const response = await apiClient.post<ReasonerResult>(
-        `/api/ontology/${projectId}/reasoner/classify`,
-        null,
-        { params: { reasonerType } }
-      );
-      
+      const response = await postReasoningTask(path);
       setResult(response);
-      
     } catch (error: any) {
-      setResult({
-        success: false,
-        message: error.message || 'Classification failed'
-      });
+      setResult({ success: false, message: extractErrorMessage(error) });
     } finally {
+      stopTimer();
       setIsRunning(false);
     }
   };
 
   // Realize ontology
   const realize = async () => {
+    const path = `/api/ontology/${projectId}/reasoner/realize`;
+    lastPathRef.current = path;
     setIsRunning(true);
-    
+    setResult(null);
+    startTimer();
+
     try {
-      const response = await apiClient.post<ReasonerResult>(
-        `/api/ontology/${projectId}/reasoner/realize`,
-        null,
-        { params: { reasonerType } }
-      );
-      
+      const response = await postReasoningTask(path);
       setResult(response);
-      
     } catch (error: any) {
-      setResult({
-        success: false,
-        message: error.message || 'Realization failed'
-      });
+      setResult({ success: false, message: extractErrorMessage(error) });
     } finally {
+      stopTimer();
       setIsRunning(false);
     }
   };
@@ -205,6 +257,34 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
       fetchStats();
     }
   }, [projectId, reasonerType]);
+
+  // Auto-expand results section whenever a new result arrives
+  useEffect(() => {
+    if (result) {
+      setExpandedSections(s => new Set([...s, 'summary']));
+    }
+  }, [result]);
+
+  const switchToElkAndRetry = async () => {
+    if (!lastPathRef.current) return;
+    setReasonerType('ELK');
+    setResult(null);
+    setInferredAxioms([]);
+    setIsRunning(true);
+    startTimer();
+    try {
+      const response = await postReasoningTask(lastPathRef.current, 'ELK');
+      setResult(response);
+      if (response.success) {
+        fetchInferredAxioms();
+      }
+    } catch (error: any) {
+      setResult({ success: false, message: extractErrorMessage(error) });
+    } finally {
+      stopTimer();
+      setIsRunning(false);
+    }
+  };
 
   const Section: React.FC<{
     id: string;
@@ -270,7 +350,8 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
             disabled={isRunning}
             className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
           >
-            <option value="HERMIT">HermiT (Hypertableau)</option>
+            <option value="HERMIT">HermiT (Complete, slow on large files)</option>
+            <option value="ELK">ELK (Fast, OWL EL profile)</option>
             <option value="PELLET">Pellet/Openllet</option>
             <option value="STRUCTURAL">Structural (Fast, No Inference)</option>
           </select>
@@ -334,14 +415,51 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
           </Section>
         )}
 
+        {/* Too-large-for-reasoner blocking banner */}
+        {result?.tooLargeForReasoner && (
+          <div className="rounded-xl border-2 border-orange-300 bg-orange-50 p-5 space-y-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={24} className="text-orange-600 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-semibold text-orange-900 text-base">
+                  {reasonerType} cannot handle this ontology
+                </h3>
+                <p className="text-sm text-orange-800 mt-1">
+                  {result.tripleCount
+                    ? `This ontology has ${result.tripleCount.toLocaleString()} triples — `
+                    : 'This ontology is too large — '}
+                  {reasonerType} will not complete at this scale.
+                  Only <strong>ELK</strong> is supported for large ontologies.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={switchToElkAndRetry}
+              disabled={isRunning}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-orange-300 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              <Play size={14} />
+              Switch to ELK and retry
+            </button>
+          </div>
+        )}
+
         {/* Result Summary */}
-        {result && (
+        {result && !result.tooLargeForReasoner && (
           <Section id="summary" title="Reasoning Results" icon={
             result.success ? 
               <CheckCircle size={20} className="text-green-600" /> : 
               <XCircle size={20} className="text-red-600" />
           }>
             <div className="space-y-4">
+              {/* ELK auto-downgrade warning */}
+              {result.downgradedWarning && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-300 flex items-start gap-2">
+                  <AlertTriangle size={16} className="text-amber-600 mt-0.5 shrink-0" />
+                  <p className="text-sm text-amber-800">{result.downgradedWarning}</p>
+                </div>
+              )}
+
               {/* Status */}
               <div className={`p-4 rounded-lg ${result.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
                 <div className="flex items-center gap-2 mb-2">
@@ -365,7 +483,7 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
                 </div>
                 
                 <p className="text-sm text-gray-700 ml-7">
-                  {result.message || `Reasoner: ${result.reasonerType || reasonerType}`}
+                  {result.message || (result as any).error || `Reasoner: ${result.reasonerType || reasonerType}`}
                 </p>
               </div>
 
@@ -420,6 +538,46 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
                 </div>
               )}
 
+              {/* Inconsistency Issues */}
+              {(result.inconsistent || result.consistent === false) && (
+                <div className="p-4 bg-orange-50 rounded-lg border border-orange-300">
+                  <div className="flex items-center gap-2 mb-3">
+                    <AlertTriangle size={20} className="text-orange-600" />
+                    <h4 className="font-semibold text-orange-800">
+                      Ontology is Inconsistent
+                      {result.issues && result.issues.length > 0 && ` — ${result.issues.length} issue${result.issues.length === 1 ? '' : 's'} found`}
+                    </h4>
+                  </div>
+                  {result.issues && result.issues.length > 0 ? (
+                    <div className="space-y-2 max-h-72 overflow-y-auto">
+                      {result.issues.map((issue: any, idx: number) => (
+                        <div key={idx} className="p-3 bg-white rounded-lg border border-orange-200">
+                          <div className="flex items-start gap-2">
+                            <span className="mt-0.5 shrink-0 text-xs font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">
+                              {issue.type === 'complement_conflict' ? 'Complement' : 'Disjoint'}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-sm text-gray-800">{issue.message}</p>
+                              {issue.conflictingTypes && (
+                                <p className="text-xs text-gray-500 mt-1">
+                                  Conflicting types: <span className="font-mono">{issue.conflictingTypes.join(' ⊕ ')}</span>
+                                </p>
+                              )}
+                              <p className="text-xs text-gray-400 font-mono mt-1 truncate">{issue.iri}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-orange-700">
+                      The conflict may involve property restrictions or complex class expressions.
+                      Check your <span className="font-semibold">disjoint constraints</span> and <span className="font-semibold">complement definitions</span> in the editor.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Unsatisfiable Classes */}
               {result.unsatisfiableClasses && result.unsatisfiableClasses.length > 0 && (
                 <div className="p-4 bg-red-50 rounded-lg border border-red-200">
@@ -461,13 +619,36 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
           </Section>
         )}
 
-        {/* Loading State */}
+        {/* Loading State — TSRI-161 */}
         {isRunning && !result && (
           <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <Loader2 size={48} className="animate-spin text-purple-600 mx-auto mb-4" />
-              <p className="text-gray-600">Running {reasonerType} reasoner...</p>
-              <p className="text-sm text-gray-700 mt-2">This may take a few moments for large ontologies</p>
+            <div className="text-center space-y-3">
+              <Loader2 size={48} className="animate-spin text-purple-600 mx-auto" />
+              <p className="text-gray-800 font-semibold">Running {reasonerType} reasoner…</p>
+              <div className="flex items-center justify-center gap-2 text-purple-700 font-mono text-lg">
+                <Clock size={18} />
+                <span>{formatElapsed(elapsedSeconds)}</span>
+              </div>
+              {elapsedSeconds >= 30 && (
+                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 max-w-sm mx-auto">
+                  Still running — this is normal.{' '}
+                  {reasonerType === 'HERMIT' || reasonerType === 'PELLET'
+                    ? 'HermiT/Pellet can take 15–40 minutes on large ontologies (100MB+).'
+                    : reasonerType === 'ELK'
+                    ? 'ELK is classifying the ontology. Large ontologies (5M+ triples) can take several minutes.'
+                    : 'Processing is active.'}
+                </p>
+              )}
+              {elapsedSeconds >= 120 && reasonerType === 'ELK' && (
+                <p className="text-xs text-gray-500 max-w-sm mx-auto">
+                  ELK covers the OWL EL profile. Cardinality restrictions, allValuesFrom, and complement/union axioms are not inferred.
+                </p>
+              )}
+              {elapsedSeconds >= 120 && (reasonerType === 'HERMIT' || reasonerType === 'PELLET') && (
+                <p className="text-xs text-gray-500 max-w-sm mx-auto">
+                  Tip: For large ontologies, ELK is significantly faster if your ontology uses the OWL EL profile.
+                </p>
+              )}
             </div>
           </div>
         )}

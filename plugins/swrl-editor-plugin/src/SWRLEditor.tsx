@@ -13,60 +13,96 @@ import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionRespo
 // CONSTANTS & HELPERS
 // ============================================================================
 
+function parseSwrlError(raw: string): { title: string; detail: string; hint?: string } {
+  const builtInMatch = raw.match(/built-in (swrlb:\w+)/);
+  const builtIn = builtInMatch ? builtInMatch[1] : null;
+
+  // Plain literal type mismatch — most common: property has no xsd datatype
+  const plainLiteralMatch = raw.match(/got "([^"]+)"\^\^rdf:PlainLiteral/);
+  if (plainLiteralMatch) {
+    return {
+      title: `Type error${builtIn ? ` in ${builtIn}` : ''}`,
+      detail: `Value "${plainLiteralMatch[1]}" has no datatype (stored as plain literal).`,
+      hint: 'The property\'s range is declared as xsd:string or has no range. Change it to xsd:integer or xsd:decimal for numeric comparisons, and re-save the individual\'s value.',
+    };
+  }
+
+  // xsd:string where numeric expected
+  const stringTypeMatch = raw.match(/got "([^"]+)"\^\^xsd:string/);
+  if (stringTypeMatch) {
+    return {
+      title: `Type error${builtIn ? ` in ${builtIn}` : ''}`,
+      detail: `Value "${stringTypeMatch[1]}" is a string but a numeric type is required.`,
+      hint: 'Change the property\'s range from xsd:string to xsd:integer or xsd:decimal.',
+    };
+  }
+
+  // Generic unsupported argument type
+  const unsupportedMatch = raw.match(/unsupported argument type[^:]*expecting ([^,\]]+(?:,\s*[^,\]]+)*?)(?:,\s*or\s+[^,\]]+)?,?\s*got ([^\]]+)/);
+  if (unsupportedMatch) {
+    return {
+      title: `Type mismatch${builtIn ? ` in ${builtIn}` : ''}`,
+      detail: `Got ${unsupportedMatch[2].trim()}. Expected: ${unsupportedMatch[1].trim()}.`,
+      hint: 'Check that the property\'s range declaration matches the type expected by the built-in.',
+    };
+  }
+
+  // Syntax / parse error
+  if (raw.toLowerCase().includes('parse') || raw.toLowerCase().includes('syntax')) {
+    return {
+      title: 'Rule syntax error',
+      detail: raw.split(':').pop()?.trim() ?? raw,
+      hint: 'Check your SWRL expression for typos. Use the Templates panel for valid examples.',
+    };
+  }
+
+  // Fallback: strip the deeply-nested Drools wrapper, show only the innermost message
+  const inner = raw
+    .replace(/^.*?TargetSWRLRuleEngineException[^:]*:\s*/i, '')
+    .replace(/^.*?error running Drools rule engine[^:]*:\s*/i, '')
+    .replace(/\[Error:.*?built-in exception thrown[^:]*:[^:]*:\s*/i, '')
+    .replace(/\[Near\s*:\s*\{.*$/s, '')
+    .replace(/\^\s*\[Line:.*$/s, '')
+    .trim();
+  return {
+    title: 'Execution failed',
+    detail: inner || raw.slice(0, 300),
+  };
+}
+
+// Syntax-reference templates only — replace ClassName / propertyName with names from YOUR ontology.
+// These show SWRL patterns; they will not run as-is against your data.
 const RULE_TEMPLATES = [
-  // Basic Classification
-  { name: 'Class Membership', template: 'Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThanOrEqual(?age, 18) -> Adult(?p)', description: 'Classify individuals based on property values' },
-  { name: 'Property Transfer', template: 'hasParent(?x, ?y) ^ hasBrother(?y, ?z) -> hasUncle(?x, ?z)', description: 'Infer a relationship based on a chain of properties' },
-  
-  // Math & Calculations
-  { name: 'Tax Calculation', template: 'Item(?i) ^ hasPrice(?i, ?p) ^ swrlb:multiply(?tax, ?p, 0.08) -> hasTax(?i, ?tax)', description: 'Calculate tax using multiplication' },
-  { name: 'Total Price', template: 'Item(?i) ^ hasPrice(?i, ?p) ^ hasTax(?i, ?t) ^ swrlb:add(?total, ?p, ?t) -> hasTotalPrice(?i, ?total)', description: 'Sum multiple values' },
-  { name: 'Discount Price', template: 'Item(?i) ^ hasPrice(?i, ?p) ^ hasDiscount(?i, ?d) ^ swrlb:multiply(?off, ?p, ?d) ^ swrlb:subtract(?final, ?p, ?off) -> hasDiscountedPrice(?i, ?final)', description: 'Calculate discount with multiple operations' },
-  { name: 'Distance Formula', template: 'Point(?p1) ^ Point(?p2) ^ hasX(?p1, ?x1) ^ hasX(?p2, ?x2) ^ hasY(?p1, ?y1) ^ hasY(?p2, ?y2) ^ swrlb:subtract(?dx, ?x2, ?x1) ^ swrlb:subtract(?dy, ?y2, ?y1) ^ swrlb:pow(?dx2, ?dx, 2) ^ swrlb:pow(?dy2, ?dy, 2) ^ swrlb:add(?sum, ?dx2, ?dy2) ^ swrlm:sqrt(?dist, ?sum) -> hasDistance(?p1, ?p2, ?dist)', description: 'Euclidean distance calculation' },
-  { name: 'BMI Calculation', template: 'Person(?p) ^ hasWeight(?p, ?w) ^ hasHeight(?p, ?h) ^ swrlb:pow(?h2, ?h, 2) ^ swrlb:divide(?bmi, ?w, ?h2) -> hasBMI(?p, ?bmi)', description: 'Body Mass Index calculation' },
-  { name: 'Average Score', template: 'Student(?s) ^ hasScore1(?s, ?s1) ^ hasScore2(?s, ?s2) ^ hasScore3(?s, ?s3) ^ swrlb:add(?sum, ?s1, ?s2, ?s3) ^ swrlb:divide(?avg, ?sum, 3) -> hasAverageScore(?s, ?avg)', description: 'Calculate average of multiple values' },
-  
-  // String Operations
-  { name: 'String Prefix Match', template: 'Person(?p) ^ hasName(?p, ?name) ^ swrlb:startsWith(?name, "Dr.") -> Doctor(?p)', description: 'Classify based on string prefix' },
-  { name: 'String Suffix Match', template: 'Person(?p) ^ hasEmail(?p, ?email) ^ swrlb:endsWith(?email, ".edu") -> Student(?p)', description: 'Classify based on string suffix' },
-  { name: 'String Contains', template: 'Document(?d) ^ hasContent(?d, ?text) ^ swrlb:contains(?text, "urgent") -> UrgentDocument(?d)', description: 'Match substring in text' },
-  { name: 'Email Validation', template: 'Person(?p) ^ hasEmail(?p, ?email) ^ swrlb:matches(?email, "^[a-zA-Z0-9+_.-]+@[a-zA-Z0-9.-]+$") -> hasValidEmail(?p, true)', description: 'Validate format with regex' },
-  { name: 'Name Concatenation', template: 'Person(?p) ^ hasFirstName(?p, ?f) ^ hasLastName(?p, ?l) ^ swrlb:stringConcat(?full, ?f, " ", ?l) -> hasFullName(?p, ?full)', description: 'Combine multiple strings' },
-  { name: 'Uppercase Conversion', template: 'Person(?p) ^ hasName(?p, ?name) ^ swrlb:upperCase(?upper, ?name) -> hasUppercaseName(?p, ?upper)', description: 'Convert string to uppercase' },
-  
-  // Date & Time
-  { name: 'Date Comparison', template: 'Event(?e) ^ hasDate(?e, ?d) ^ swrlb:date(?today, 2024, 12, 17, "") ^ swrlb:greaterThan(?d, ?today) -> FutureEvent(?e)', description: 'Compare dates' },
-  { name: 'Age from Birth Year', template: 'Person(?p) ^ hasBirthYear(?p, ?y) ^ swrlb:subtract(?age, 2024, ?y) -> hasAge(?p, ?age)', description: 'Calculate age from year' },
-  { name: 'Duration Check', template: 'Event(?e) ^ hasStartTime(?e, ?start) ^ hasEndTime(?e, ?end) ^ swrlb:subtract(?duration, ?end, ?start) ^ swrlb:greaterThan(?duration, 60) -> LongEvent(?e)', description: 'Check event duration' },
-  
-  // Temporal Relations
-  { name: 'Temporal Ordering', template: 'Event(?e1) ^ Event(?e2) ^ hasTime(?e1, ?t1) ^ hasTime(?e2, ?t2) ^ temporal:before(?t1, ?t2) -> Precedes(?e1, ?e2)', description: 'Infer temporal order using Allen relations' },
-  { name: 'Overlapping Events', template: 'Event(?e1) ^ Event(?e2) ^ hasInterval(?e1, ?i1) ^ hasInterval(?e2, ?i2) ^ temporal:overlaps(?i1, ?i2) -> Concurrent(?e1, ?e2)', description: 'Find overlapping time intervals' },
-  
-  // Comparisons & Conditions
-  { name: 'Equality Check', template: 'Person(?p) ^ hasAge(?p, ?age) ^ swrlb:equal(?age, 18) -> NewAdult(?p)', description: 'Test equality' },
-  { name: 'Range Check', template: 'Product(?p) ^ hasPrice(?p, ?price) ^ swrlb:greaterThanOrEqual(?price, 100) ^ swrlb:lessThanOrEqual(?price, 500) -> MidRangeProduct(?p)', description: 'Value within range' },
-  { name: 'Multi-Condition', template: 'Person(?p) ^ hasAge(?p, ?age) ^ hasIncome(?p, ?income) ^ swrlb:greaterThan(?age, 25) ^ swrlb:greaterThan(?income, 50000) -> QualifiedBuyer(?p)', description: 'Multiple conditions with AND logic' },
-  
-  // Advanced Math
-  { name: 'Square Root', template: 'Square(?s) ^ hasArea(?s, ?a) ^ swrlm:sqrt(?side, ?a) -> hasSideLength(?s, ?side)', description: 'Calculate square root' },
-  { name: 'Trigonometry', template: 'Triangle(?t) ^ hasAngle(?t, ?degrees) ^ swrlm:toRadians(?rad, ?degrees) ^ swrlm:sin(?sine, ?rad) -> hasSine(?t, ?sine)', description: 'Trigonometric calculation' },
-  { name: 'Exponential Growth', template: 'Investment(?i) ^ hasPrincipal(?i, ?p) ^ hasRate(?i, ?r) ^ hasYears(?i, ?y) ^ swrlb:multiply(?rt, ?r, ?y) ^ swrlm:exp(?e, ?rt) ^ swrlb:multiply(?value, ?p, ?e) -> hasFinalValue(?i, ?value)', description: 'Compound interest calculation' },
-  
-  // SQWRL Queries
-  { name: 'Select & Count', template: 'Person(?p) -> sqwrl:select(?p) ^ sqwrl:count(?p)', description: 'Count matching individuals' },
-  { name: 'Min/Max Values', template: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age) ^ sqwrl:min(?age)', description: 'Find minimum value' },
-  { name: 'Order Results', template: 'Person(?p) ^ hasName(?p, ?name) ^ hasAge(?p, ?age) -> sqwrl:select(?name, ?age) ^ sqwrl:orderBy(?age)', description: 'Sort query results' },
-  { name: 'Average Aggregation', template: 'Student(?s) ^ hasScore(?s, ?score) -> sqwrl:select(?s) ^ sqwrl:avg(?score)', description: 'Calculate average in query' },
-  
-  // Property Chains
-  { name: 'Uncle Relation', template: 'hasParent(?x, ?y) ^ hasBrother(?y, ?z) -> hasUncle(?x, ?z)', description: 'Infer uncle through parent and sibling' },
-  { name: 'Grandparent', template: 'hasParent(?x, ?y) ^ hasParent(?y, ?z) -> hasGrandparent(?x, ?z)', description: 'Two-level ancestry relation' },
-  { name: 'Colleague Relation', template: 'worksFor(?p1, ?org) ^ worksFor(?p2, ?org) ^ swrlb:notEqual(?p1, ?p2) -> hasColleague(?p1, ?p2)', description: 'Same organization implies colleague' },
-  
-  // Domain-Specific
-  { name: 'Course Prerequisites', template: 'Course(?c1) ^ Course(?c2) ^ hasCourseCode(?c1, ?code1) ^ hasCourseCode(?c2, ?code2) ^ swrlb:lessThan(?code1, ?code2) -> isPrerequisiteFor(?c1, ?c2)', description: 'Infer prerequisites from course codes' },
-  { name: 'Sibling Inference', template: 'Person(?p1) ^ Person(?p2) ^ hasParent(?p1, ?parent) ^ hasParent(?p2, ?parent) ^ swrlb:notEqual(?p1, ?p2) -> hasSibling(?p1, ?p2)', description: 'Same parent implies sibling' },
+  {
+    name: 'Class Membership (numeric)',
+    template: 'ClassName(?x) ^ dataProperty(?x, ?val) ^ swrlb:greaterThan(?val, 18) -> TargetClass(?x)',
+    description: 'Classify by numeric data property — replace ClassName, dataProperty, TargetClass',
+  },
+  {
+    name: 'Class Membership (string)',
+    template: 'ClassName(?x) ^ dataProperty(?x, ?val) ^ swrlb:startsWith(?val, "prefix") -> TargetClass(?x)',
+    description: 'Classify by string data property prefix — replace ClassName, dataProperty, TargetClass',
+  },
+  {
+    name: 'Property chain (2 hops)',
+    template: 'objProperty1(?x, ?y) ^ objProperty2(?y, ?z) -> inferredProperty(?x, ?z)',
+    description: 'Infer a relationship through two object property hops',
+  },
+  {
+    name: 'Sibling / co-member',
+    template: 'objProperty(?x, ?shared) ^ objProperty(?y, ?shared) ^ swrlb:notEqual(?x, ?y) -> inferredProperty(?x, ?y)',
+    description: 'Infer a relationship between two individuals that share a common value',
+  },
+  {
+    name: 'Arithmetic on data property',
+    template: 'ClassName(?x) ^ dataProperty(?x, ?a) ^ dataProperty2(?x, ?b) ^ swrlb:add(?result, ?a, ?b) -> resultProperty(?x, ?result)',
+    description: 'Compute sum of two numeric properties — property range must be xsd:integer or xsd:decimal',
+  },
+  {
+    name: 'String concat',
+    template: 'ClassName(?x) ^ firstName(?x, ?f) ^ lastName(?x, ?l) ^ swrlb:stringConcat(?full, ?f, " ", ?l) -> fullName(?x, ?full)',
+    description: 'Combine two string data properties into one',
+  },
 ];
 
 const SWRL_BUILTINS_QUICK = [
@@ -199,6 +235,45 @@ const extractLocalName = (uri: string): string => {
   const slashIndex = cleanUri.lastIndexOf('/');
   if (slashIndex !== -1) return cleanUri.substring(slashIndex + 1);
   return uri;
+};
+
+type OntologySchemaNames = {
+  classes: Set<string>;
+  objectProperties: Set<string>;
+  dataProperties: Set<string>;
+};
+
+const BUILT_IN_PREFIXES = new Set(['swrlb', 'swrlm', 'sqwrl', 'temporal']);
+const isBuiltinPredicate = (predicate: string) => {
+  const prefix = predicate.includes(':') ? predicate.split(':')[0] : '';
+  return BUILT_IN_PREFIXES.has(prefix);
+};
+
+const predicateLocalName = (predicate: string) => extractLocalName(predicate.split(':').pop() || predicate);
+
+const extractTemplatePredicates = (template: string): string[] => {
+  const predicates = new Set<string>();
+  const atomRegex = /([A-Za-z_][\w:.-]*)\s*\(/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = atomRegex.exec(template)) !== null) {
+    const predicate = match[1];
+    if (!predicate.startsWith('?') && !isBuiltinPredicate(predicate)) {
+      predicates.add(predicateLocalName(predicate));
+    }
+  }
+
+  return Array.from(predicates);
+};
+
+const templateMatchesOntology = (template: string, schema: OntologySchemaNames) => {
+  const validPredicates = new Set([
+    ...schema.classes,
+    ...schema.objectProperties,
+    ...schema.dataProperties,
+  ]);
+
+  return extractTemplatePredicates(template).every(predicate => validPredicates.has(predicate));
 };
 
 // Debounce hook
@@ -343,16 +418,21 @@ interface QuickInsertProps {
   onInsert: (text: string) => void;
   disabled?: boolean;
   dynamicTemplates?: typeof RULE_TEMPLATES;
+  generalTemplates?: typeof RULE_TEMPLATES;
+  schemaLoaded?: boolean;
 }
 
-const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dynamicTemplates = [] }) => {
+const QuickInsertPanel: React.FC<QuickInsertProps> = ({
+  onInsert,
+  disabled,
+  dynamicTemplates = [],
+  generalTemplates = RULE_TEMPLATES,
+  schemaLoaded = false
+}) => {
   const [expanded, setExpanded] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showGeneralTemplates, setShowGeneralTemplates] = useState(false);
   
-  // Combine static and dynamic templates
-  const allTemplates = [...dynamicTemplates, ...RULE_TEMPLATES];
-
   return (
     <div className="bg-gray-50 border-t border-gray-200">
       {/* Quick symbols */}
@@ -416,12 +496,12 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dyna
                   onClick={() => setShowGeneralTemplates(!showGeneralTemplates)}
                   className="w-full text-[10px] font-semibold text-purple-700 uppercase tracking-wide px-2 py-1 bg-purple-50 rounded flex items-center justify-between hover:bg-purple-100 transition-colors"
                 >
-                  <span>General Templates ({RULE_TEMPLATES.length})</span>
+                  <span>Syntax Patterns ({generalTemplates.length})</span>
                   {showGeneralTemplates ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                 </button>
                 {showGeneralTemplates && (
                   <div className="grid grid-cols-1 gap-1 mt-1">
-                    {RULE_TEMPLATES.map((t, i) => (
+                    {generalTemplates.length > 0 ? generalTemplates.map((t, i) => (
                       <button
                         key={i}
                         onClick={() => { onInsert(t.template); setShowTemplates(false); }}
@@ -431,7 +511,11 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dyna
                         <div className="font-medium text-gray-700 group-hover:text-purple-700">{t.name}</div>
                         <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
                       </button>
-                    ))}
+                    )) : (
+                      <div className="px-3 py-2 text-xs text-gray-500 bg-white border border-gray-200 rounded">
+                        No general templates match this ontology schema yet.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -439,10 +523,13 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dyna
           ) : (
             <div>
               <div className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide px-2 py-1 bg-purple-50 rounded">
-                General Templates ({RULE_TEMPLATES.length})
+                Syntax Patterns ({generalTemplates.length})
+              </div>
+              <div className="px-2 py-1.5 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded mt-1">
+                ⚠ These are syntax blueprints. Replace <code className="bg-amber-100 px-0.5 rounded">ClassName</code>, <code className="bg-amber-100 px-0.5 rounded">dataProperty</code> etc. with names from your ontology before running.
               </div>
               <div className="grid grid-cols-1 gap-1 mt-1">
-                {RULE_TEMPLATES.map((t, i) => (
+                {generalTemplates.map((t, i) => (
                   <button
                     key={i}
                     onClick={() => { onInsert(t.template); setShowTemplates(false); }}
@@ -578,11 +665,23 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
             </div>
           ) : !results.success ? (
             <div className="p-4 bg-red-50 text-red-700">
-              <div className="flex items-center gap-2 font-semibold mb-2">
-                <AlertCircle size={18} />
-                Query Failed
-              </div>
-              <pre className="text-sm bg-red-100 p-2 rounded overflow-x-auto">{results.errorMessage}</pre>
+              {(() => {
+                const err = parseSwrlError(results.errorMessage || 'Query execution failed');
+                return (
+                  <>
+                    <div className="flex items-center gap-2 font-semibold mb-1">
+                      <AlertCircle size={18} />
+                      {err.title}
+                    </div>
+                    <div className="text-sm mb-1">{err.detail}</div>
+                    {err.hint && (
+                      <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 mt-2">
+                        💡 {err.hint}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           ) : results.rows.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-500 p-4">
@@ -1151,17 +1250,25 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
       )}
 
       {/* Error Message */}
-      {!results.success && results.errorMessage && (
-        <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4">
-          <div className="flex items-start gap-3">
-            <AlertCircle size={24} className="text-red-600 mt-0.5 flex-shrink-0" />
-            <div>
-              <div className="font-bold text-red-800 text-lg">Execution Failed</div>
-              <div className="text-sm text-red-700 mt-2 font-mono bg-red-100 p-2 rounded">{results.errorMessage}</div>
+      {!results.success && results.errorMessage && (() => {
+        const err = parseSwrlError(results.errorMessage);
+        return (
+          <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle size={24} className="text-red-600 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-red-800 text-lg">{err.title}</div>
+                <div className="text-sm text-red-700 mt-1">{err.detail}</div>
+                {err.hint && (
+                  <div className="text-sm text-amber-800 mt-2 bg-amber-50 border border-amber-200 rounded p-2">
+                    💡 {err.hint}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Inferred Axioms Section */}
       {results.success && results.inferredAxioms.length > 0 && (
@@ -1409,6 +1516,22 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   // Debounced validation
   const debouncedRuleText = useDebounce(editForm.ruleText, 500);
 
+  const schemaNames = useMemo<OntologySchemaNames | null>(() => {
+    if (!ontologySchema) return null;
+    return {
+      classes: new Set(ontologySchema.classes.map(extractLocalName)),
+      objectProperties: new Set(ontologySchema.objectProperties.map(extractLocalName)),
+      dataProperties: new Set(ontologySchema.dataProperties.map(extractLocalName)),
+    };
+  }, [ontologySchema]);
+
+  const validGeneralTemplates = useMemo(
+    () => schemaNames
+      ? RULE_TEMPLATES.filter(t => templateMatchesOntology(t.template, schemaNames))
+      : [],
+    [schemaNames]
+  );
+
   // Load ontology schema and generate dynamic templates
   const loadOntologySchema = useCallback(async () => {
     try {
@@ -1417,12 +1540,17 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         `/api/ontology/${projectId}/schema`
       );
       console.log('[SWRL] Schema loaded:', res);
-      setOntologySchema(res);
       
       // Generate dynamic templates based on actual ontology
       const classes = res.classes.map(c => extractLocalName(c)).filter(c => c && !c.startsWith('owl:') && !c.startsWith('rdf:'));
       const objProps = res.objectProperties.map(p => extractLocalName(p)).filter(p => p && !p.startsWith('owl:') && !p.startsWith('rdf:'));
       const dataProps = res.dataProperties.map(p => extractLocalName(p)).filter(p => p && !p.startsWith('owl:') && !p.startsWith('rdf:'));
+      const schemaNames: OntologySchemaNames = {
+        classes: new Set(classes),
+        objectProperties: new Set(objProps),
+        dataProperties: new Set(dataProps),
+      };
+      setOntologySchema({ classes, objectProperties: objProps, dataProperties: dataProps });
       
       const generated: typeof RULE_TEMPLATES = [];
       
@@ -1549,9 +1677,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
       }
       
       // Limit templates to avoid overwhelming UI
-      console.log('[SWRL] Generated', generated.length, 'dynamic templates');
-      setDynamicTemplates(generated.slice(0, 20));
-      console.log('[SWRL] Set', Math.min(generated.length, 20), 'dynamic templates');
+      const validGenerated = generated.filter(t => templateMatchesOntology(t.template, schemaNames));
+      console.log('[SWRL] Generated', generated.length, 'dynamic templates;', validGenerated.length, 'match ontology schema');
+      setDynamicTemplates(validGenerated.slice(0, 20));
+      console.log('[SWRL] Set', Math.min(validGenerated.length, 20), 'dynamic templates');
     } catch (e) {
       console.error('[SWRL] Failed to load ontology schema:', e);
       setDynamicTemplates([]);
@@ -2102,11 +2231,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                                 </button>
                               ))}
                               <div className="px-3 py-2 text-[10px] font-semibold text-purple-700 bg-purple-50 border-b border-purple-200">
-                                General Templates
+                                General Templates ({validGeneralTemplates.length})
                               </div>
                             </div>
                           )}
-                          {RULE_TEMPLATES.map((t, i) => (
+                          {validGeneralTemplates.length > 0 ? validGeneralTemplates.map((t, i) => (
                             <button
                               key={i}
                               onClick={() => setEditForm(prev => ({ ...prev, ruleText: t.template }))}
@@ -2115,7 +2244,13 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                               <div className="font-medium text-gray-800">{t.name}</div>
                               <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
                             </button>
-                          ))}
+                          )) : (
+                            <div className="px-3 py-3 text-xs text-gray-500">
+                              {ontologySchema
+                                ? 'No templates match this ontology schema. Add the needed classes/properties first.'
+                                : 'Loading ontology schema before showing templates...'}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2140,7 +2275,13 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                     )}
 
                     {/* Quick Insert */}
-                    <QuickInsertPanel onInsert={insertAtCursor} disabled={!isEditing} dynamicTemplates={dynamicTemplates} />
+                    <QuickInsertPanel
+                      onInsert={insertAtCursor}
+                      disabled={!isEditing}
+                      dynamicTemplates={dynamicTemplates}
+                      generalTemplates={validGeneralTemplates}
+                      schemaLoaded={!!ontologySchema}
+                    />
                   </div>
 
                   {/* Description */}

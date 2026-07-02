@@ -109,6 +109,31 @@ public class WebSocketEventListener {
     }
 
     /**
+     * Get all active sessions across all projects — used by admin active-users view.
+     * Returns list of maps: { userId, username, sessionId, projectId, lastActivity }
+     */
+    public java.util.List<java.util.Map<String, Object>> getAllActiveSessions() {
+        java.util.List<java.util.Map<String, Object>> result = new java.util.ArrayList<>();
+        projectSessions.forEach((projectId, sessions) ->
+            sessions.forEach((sessionId, ws) -> {
+                java.util.Map<String, Object> entry = new java.util.HashMap<>();
+                entry.put("userId", ws.getUserId());
+                entry.put("username", ws.getUsername());
+                entry.put("sessionId", sessionId);
+                entry.put("projectId", projectId);
+                entry.put("lastActivity", ws.getLastActivity());
+                result.add(entry);
+            })
+        );
+        return result;
+    }
+
+    /** Total number of live WebSocket connections. */
+    public int getTotalConnectionCount() {
+        return sessionProjects.size();
+    }
+
+    /**
      * Inner class to represent a user session.
      */
     public static class UserSession {

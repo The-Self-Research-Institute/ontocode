@@ -1,7 +1,50 @@
 import React, { useState, useEffect } from 'react';
-import { Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
+import { Mail, Lock, User, Eye, EyeOff, Wrench, Clock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { OntoCodeLogo } from './OntoCodeLogo';
+import { getAppVersion } from '../utils/appVersion';
+
+const MaintenancePage: React.FC = () => (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 via-slate-900 to-gray-900 p-6">
+        <div className="max-w-lg w-full text-center">
+            <div className="inline-flex items-center justify-center w-20 h-20 bg-yellow-500/20 border border-yellow-500/30 rounded-full mb-6">
+                <Wrench className="w-10 h-10 text-yellow-400" />
+            </div>
+            <h1 className="text-3xl font-bold text-white mb-3">Under Maintenance</h1>
+            <p className="text-slate-300 text-lg mb-2">
+                OntoCode is currently undergoing scheduled maintenance.
+            </p>
+            <p className="text-slate-400 mb-8">
+                We're working hard to improve your experience. The system will be back online shortly.
+            </p>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-6 mb-8 text-left space-y-3">
+                <div className="flex items-start gap-3">
+                    <Clock className="w-5 h-5 text-yellow-400 mt-0.5 shrink-0" />
+                    <div>
+                        <p className="text-white font-medium text-sm">Estimated downtime</p>
+                        <p className="text-slate-400 text-sm">This maintenance window is temporary. Please check back soon.</p>
+                    </div>
+                </div>
+                <div className="flex items-start gap-3">
+                    <Mail className="w-5 h-5 text-blue-400 mt-0.5 shrink-0" />
+                    <div>
+                        <p className="text-white font-medium text-sm">Need access?</p>
+                        <p className="text-slate-400 text-sm">
+                            Contact us at{' '}
+                            <a href="mailto:support@coretopia.com" className="text-blue-400 hover:text-blue-300 underline">
+                                support@coretopia.com
+                            </a>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <p className="text-slate-500 text-sm">
+                We apologise for the inconvenience and appreciate your patience.
+            </p>
+        </div>
+    </div>
+);
 
 const Login: React.FC = () => {
     const [isSignup, setIsSignup] = useState(false);
@@ -11,6 +54,8 @@ const Login: React.FC = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [maintenanceMode, setMaintenanceMode] = useState(false);
+    const [appVersion, setAppVersion] = useState('');
 
     const { login } = useAuth();
     const location = useLocation();
@@ -18,6 +63,10 @@ const Login: React.FC = () => {
 
     const inviteToken = new URLSearchParams(location.search).get('invite');
     const inviteEmail = new URLSearchParams(location.search).get('email');
+
+    useEffect(() => {
+        getAppVersion().then(setAppVersion).catch(() => setAppVersion(''));
+    }, []);
 
     useEffect(() => {
         if (inviteEmail) {
@@ -46,21 +95,27 @@ const Login: React.FC = () => {
                 navigate('/');
             }
         } catch (err: any) {
-            setError(err.response?.data?.error || err.message || 'Authentication failed');
+            if (err.response?.status === 403) {
+                setMaintenanceMode(true);
+            } else {
+                setError(err.response?.data?.error || err.message || 'Authentication failed');
+            }
         } finally {
             setLoading(false);
         }
     };
 
+    if (maintenanceMode) {
+        return <MaintenancePage />;
+    }
+
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-50 p-6">
+        <div className="min-h-screen overflow-y-auto flex items-center justify-center bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-50 p-6">
             <div className="max-w-md w-full">
                 {/* Header */}
                 <div className="text-center mb-8">
-                    <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-600 to-blue-600 rounded-2xl mb-4">
-                        <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                        </svg>
+                    <div className="inline-flex items-center justify-center mb-4">
+                        <OntoCodeLogo size={64} rounded className="shadow-lg" />
                     </div>
                     <h1 className="text-3xl font-bold text-gray-900 mb-2">
                         {inviteToken ? 'Join OntoCode' : 'OntoCode Editor'}
@@ -177,6 +232,8 @@ const Login: React.FC = () => {
 
                 {/* Footer */}
                 <p className="text-center text-xs text-gray-500 mt-6">
+                    {appVersion ? `OntoCode v${appVersion}` : 'OntoCode'}
+                    <span className="mx-2">·</span>
                     By continuing, you agree to our Terms of Service and Privacy Policy
                 </p>
             </div>

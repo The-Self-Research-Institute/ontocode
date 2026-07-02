@@ -1,9 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Search, ExternalLink, AlertCircle, Edit3, User } from 'lucide-react';
-import { Panel, AnnotationsDisplay, AxiomSubsection } from './common';
+import { Panel, AnnotationsDisplay, AxiomSubsection, CollaboratorPresenceBar } from './common';
 import { ClassExpressionDialog, MultiClassSelectorDialog, MultiPropertySelectorDialog, IRIEditorDialog, IndividualSelectorDialog, RestrictionData } from '../dialogs';
+import GCIEditorDialog from '../dialogs/GCIEditorDialog';
+import expressionService from '../../services/expressionService';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { notificationService } from '../../services/notificationService';
+import { friendlyApiErrorMessage } from '../../utils/apiErrors';
+import { isDesktop } from '../../utils/desktop';
 import { useAuth } from '../../custom-hook/useAuth';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual } from '../../types';
 
@@ -18,13 +23,14 @@ interface UsageItem {
   context?: string;
 }
 
-const UsageTab: React.FC<{ 
-  classIri: string; 
+const UsageTab: React.FC<{
+  classIri: string;
   projectId: string;
   label: string;
 }> = ({ classIri, projectId, label }) => {
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
   const [usages, setUsages] = useState<UsageItem[]>([]);
   const [filter, setFilter] = useState('');
   const [showTypes, setShowTypes] = useState({
@@ -42,30 +48,44 @@ const UsageTab: React.FC<{
     annotation_on_class: true
   });
 
-  // Reset loaded state when class changes so the user must explicitly
-  // load usage for each class (this query is very expensive on large graphs).
+  // Reset state when class changes so the user must explicitly load usage
+  // for each class (this SPARQL query is expensive on large graphs).
   useEffect(() => {
     setLoaded(false);
+    setTimedOut(false);
     setUsages([]);
     setFilter('');
   }, [classIri, projectId]);
 
   const loadUsages = async () => {
     setLoading(true);
+    setTimedOut(false);
+    const controller = new AbortController();
+    const watchdog = setTimeout(() => {
+      controller.abort();
+      setLoading(false);
+      setTimedOut(true);
+    }, 30_000);
     try {
-      // Query for all usages of this class
-      const response = await apiClient.get<any>(`/api/ontology/classes/usage/${projectId}?classIri=${encodeURIComponent(classIri)}`);
-      // Backend returns {success: true, data: [...]}
-      // apiClient might wrap it in {data: {...}}
+      const response = await apiClient.get<any>(
+        `/api/ontology/classes/usage/${projectId}?classIri=${encodeURIComponent(classIri)}`,
+        undefined,
+        { signal: controller.signal },
+      );
       const usageData = response?.data?.data || response?.data || response || [];
       console.log('[UsageTab] Loaded usages:', usageData);
       setUsages(Array.isArray(usageData) ? usageData : []);
       setLoaded(true);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'AbortError' || controller.signal.aborted) {
+        // watchdog already set timedOut=true
+        return;
+      }
       console.error('Failed to load usage data:', error);
       setUsages([]);
       setLoaded(true);
     } finally {
+      clearTimeout(watchdog);
       setLoading(false);
     }
   };
@@ -92,16 +112,35 @@ const UsageTab: React.FC<{
 
   if (!loaded && !loading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-        <div className="text-sm text-gray-600 mb-3">
-          Usage lookup for <span className="font-semibold">{label}</span> can be slow on large ontologies.
-        </div>
-        <button
-          onClick={loadUsages}
-          className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700"
-        >
-          Load usage
-        </button>
+      <div className="flex flex-col items-center justify-center min-h-[200px] py-12 p-6 text-center">
+        {timedOut ? (
+          <>
+            <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 max-w-sm">
+              Usage query timed out — the server is under load. Wait a moment, then try again.
+            </div>
+            <button
+              onClick={loadUsages}
+              data-testid="load-usage-btn"
+              className="px-4 py-2 text-sm rounded bg-amber-600 text-white hover:bg-amber-700"
+            >
+              Retry
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="text-sm text-gray-600 mb-3">
+              Usage lookup for <span className="font-semibold">{label}</span> runs a full-graph
+              SPARQL scan — this can take 30–60 s on large ontologies.
+            </div>
+            <button
+              onClick={loadUsages}
+              data-testid="load-usage-btn"
+              className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700"
+            >
+              Load usage
+            </button>
+          </>
+        )}
       </div>
     );
   }
@@ -236,12 +275,18 @@ const ClassEditor: React.FC<{
   onAddIndividual?: (name: string, classIri: string) => Promise<void>;
   onDeleteIndividual?: (id: string) => Promise<void>;
   onRefreshIndividuals?: () => void;
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals }) => {
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction }) => {
   // Get current user for tracking mutations
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<"annotations" | "usage" | "description">("annotations");
+  const [loadingAnnotations, setLoadingAnnotations] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [loadingDetailsElapsed, setLoadingDetailsElapsed] = useState(0);
+  const [axiomsLoaded, setAxiomsLoaded] = useState(false);
+  const [descriptionTimedOut, setDescriptionTimedOut] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
 
   // Manchester Syntax Editor State
@@ -250,10 +295,17 @@ const ClassEditor: React.FC<{
   const [editorTitle, setEditorTitle] = useState("");
   const [editorExistingValue, setEditorExistingValue] = useState<string | undefined>();
   const [editorExistingId, setEditorExistingId] = useState<string | undefined>();
+  const [editorInitialClassIri, setEditorInitialClassIri] = useState<string | undefined>();
   const [editorInitialTab, setEditorInitialTab] = useState<
     "hierarchy" | "objectRestriction" | "dataRestriction" | "classExpression" | undefined
   >();
   const [editorInitialRestrictionData, setEditorInitialRestrictionData] = useState<any>();
+  const [editorAllowedTabs, setEditorAllowedTabs] = useState<("hierarchy" | "objectRestriction" | "dataRestriction" | "classExpression")[] | undefined>();
+  /** When editing an anonymous-ancestor axiom, mutations apply to the ancestor class, not the selected class. */
+  const [editorSubjectClassIri, setEditorSubjectClassIri] = useState<string | undefined>();
+  // Flat label→IRI lookup for resolving Manchester expressions (all classes, not just loaded tree)
+  const [allClassesLookup, setAllClassesLookup] = useState<Map<string, string>>(new Map());
+  const allClassesLookupProjectRef = useRef<string | null>(null);
 
   // Properties for restriction creators - use props if available, otherwise local state
   const [properties, setProperties] = useState<any[]>(propObjectProperties || []);
@@ -314,12 +366,16 @@ const ClassEditor: React.FC<{
   // Instances State
   const [isInstancesOpen, setIsInstancesOpen] = useState(false);
   const [classInstances, setClassInstances] = useState<Individual[]>([]);
-  const [loadingInstances, setLoadingInstances] = useState(false);
+  const descriptionAbortRef = useRef<AbortController | null>(null);
+  const detailsLoadGenRef = useRef(0);
+  const isSavingAxiomRef = useRef(false);
   const [editingInstanceId, setEditingInstanceId] = useState<string | undefined>();
 
   // General Class Axioms State (GCAs - SubClassOf with anonymous subclass)
   const [isGCAEditorOpen, setIsGCAEditorOpen] = useState(false);
   const [editingGCAId, setEditingGCAId] = useState<string | undefined>();
+
+  const [isSavingAxiom, setIsSavingAxiom] = useState(false);
 
   // IRI Editor State
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
@@ -337,11 +393,11 @@ const ClassEditor: React.FC<{
       // TODO: Add backend support for IRI renaming
       if (newIRI !== item.id) {
         console.warn("IRI renaming requires backend support - not yet implemented");
-        alert("IRI renaming is not yet supported. Only label changes are saved.");
+        notificationService.warning("Not Supported", "IRI renaming is not yet supported. Only label changes are saved.");
       }
     } catch (error) {
       console.error("Failed to update entity:", error);
-      alert("Failed to update entity. See console for details.");
+      notificationService.error("Update Failed", "Failed to update entity. See console for details.");
     }
   };
 
@@ -359,19 +415,31 @@ const ClassEditor: React.FC<{
 
     let alive = true;
 
+    // AbortController cancels in-flight HTTP requests when the user clicks a
+    // different class. Without this, the previous 40-second SPARQL query keeps
+    // running on the server even after the user has moved on.
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
     // Reset visible state immediately so we never paint with the previous
     // entity's data while the new request is in flight.
     setClassDetails(null);
     setClassInstances([]);
-    setLoadingDetails(true);
-    setLoadingInstances(true);
+    setAxiomsLoaded(false);
+    setDescriptionTimedOut(false);
+    setLoadingAnnotations(true);
+    setLoadingDetails(false);
+    // Clear the class lookup when the project changes so the editor dialog
+    // doesn't offer classes from the previous project.
+    if (allClassesLookupProjectRef.current !== projectId) {
+      setAllClassesLookup(new Map());
+    }
 
-    // Watchdog: if backend hangs, clear the spinner after 30s so the UI
-    // does not appear permanently "Loading class details...".
+    // Watchdog: if backend hangs, clear all loading spinners after 30s.
     const watchdog = setTimeout(() => {
       if (alive) {
+        setLoadingAnnotations(false);
         setLoadingDetails(false);
-        setLoadingInstances(false);
       }
     }, 30000);
 
@@ -382,163 +450,84 @@ const ClassEditor: React.FC<{
     }, 200);
 
     const runLoad = () => {
-
     const currentId = item.id;
-    const currentViewMode = viewMode;
-
-    // ─── PERF TIMING ──────────────────────────────────────────────────────
-    // Each stage logs its own start/end wall-clock ms. Compare these in the
-    // browser console to locate the slow link (network vs. backend query vs.
-    // React render). Look for `[perf][ClassEditor] …` lines.
-    const tStart = performance.now();
     const shortIri = currentId.split(/[#/]/).pop() || currentId;
-    console.log(`[perf][ClassEditor] ▶ select "${shortIri}" t0=0ms`);
+    console.log(`[perf][ClassEditor] ▶ select "${shortIri}" — annotations only (axioms on Description tab)`);
 
-    // Stage 1 (FAST, ~100ms): fetch ONLY annotations so the panel paints
-    // immediately. The slower full-details call continues in stage 2 for
-    // axiom lists. Annotations are what users glance at first.
+    // Stage 1 (~100ms): annotations only — browsing the tree should not fire heavy SPARQL.
     (async () => {
       const t1 = performance.now();
       try {
+        const annUserId = user?.email || user?.userId;
+        const annUserParam = annUserId ? `&userId=${encodeURIComponent(annUserId)}` : '';
         const annResp = await apiClient.get<any>(
-          `/api/ontology/classes/annotations/${projectId}?classIri=${encodeURIComponent(currentId)}`,
-        );
-        const t1Net = performance.now();
-        console.log(
-          `[perf][ClassEditor] ✓ stage-1 annotations network=${(t1Net - t1).toFixed(0)}ms total=${(t1Net - tStart).toFixed(0)}ms`,
+          `/api/ontology/classes/annotations/${projectId}?classIri=${encodeURIComponent(currentId)}${annUserParam}`,
+          undefined,
+          { signal },
         );
         if (!alive || currentId !== item.id) return;
         const annData = annResp?.data?.data || annResp?.data || annResp;
         if (annData && typeof annData === "object") {
-          // Merge functionally so stage-2 full details will overwrite on arrival.
           setClassDetails((prev: any) => ({ ...(prev || {}), ...annData }));
-          // Also surface annotations to the rendered item so the Annotations
-          // panel paints without waiting for full details. Stage 2 will merge
-          // axioms into the same item when it resolves.
           if (annData.annotations) {
             onUpdate({ ...item, annotations: annData.annotations } as TreeNode);
           }
-          // Hide the top "Loading … details…" banner — annotations are visible
-          // now. Edit handlers call loadClassDetails() which re-toggles the
-          // spinner only when full data is actually needed.
-          setLoadingDetails(false);
-          console.log(
-            `[perf][ClassEditor] ✓ stage-1 painted at ${(performance.now() - tStart).toFixed(0)}ms (annotations visible)`,
-          );
+          console.log(`[perf][ClassEditor] ✓ annotations in ${(performance.now() - t1).toFixed(0)}ms`);
         }
       } catch (e) {
-        console.warn(`[perf][ClassEditor] ✗ stage-1 failed at ${(performance.now() - tStart).toFixed(0)}ms`, e);
-        // Non-fatal: stage 2 will still populate annotations.
-      }
-    })();
-
-    (async () => {
-      const t2 = performance.now();
-      try {
-        // Fire both details and (if needed) inferred details IN PARALLEL.
-        // Previously inferred was awaited serially after details, doubling
-        // perceived latency in Inferred view mode.
-        const detailsPromise = apiClient.get<any>(
-          `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(currentId)}`,
-        );
-        const inferredPromise = currentViewMode === "inferred"
-          ? apiClient.get<any>(
-              `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(currentId)}`,
-            ).catch((err) => {
-              console.warn("[ClassEditor] Failed to load inferred details:", err);
-              return null;
-            })
-          : Promise.resolve(null);
-
-        const [detailsResponse, inferredResponse] = await Promise.all([detailsPromise, inferredPromise]);
-        const t2Net = performance.now();
-        console.log(
-          `[perf][ClassEditor] ✓ stage-2 full details network=${(t2Net - t2).toFixed(0)}ms total=${(t2Net - tStart).toFixed(0)}ms (inferred=${currentViewMode === "inferred"})`,
-        );
-        if (!alive || currentId !== item.id) return;
-        let details = detailsResponse?.data?.data || detailsResponse?.data || detailsResponse;
-
-        if (currentViewMode === "inferred" && inferredResponse) {
-          const inferredData = (inferredResponse as any)?.data?.data || (inferredResponse as any)?.data || {};
-          details = {
-            ...details,
-            inferredSubClassOfAxioms: inferredData.inferredSubClassOfAxioms || [],
-            inferredEquivalentClassesAxioms: inferredData.inferredEquivalentClassesAxioms || [],
-            isUnsatisfiable: inferredData.isUnsatisfiable || false,
-          };
-        }
-
-        if (!alive || currentId !== item.id) return;
-        setClassDetails(details);
-
-        const updatedItem: TreeNode = {
-          ...item,
-          annotations: details.annotations || item.annotations,
-          subClassOfAxioms: details.subClassOfAxioms || item.subClassOfAxioms,
-          equivalentClassesAxioms: details.equivalentClassesAxioms || item.equivalentClassesAxioms,
-          disjointClassesAxioms: details.disjointClassesAxioms || item.disjointClassesAxioms,
-          disjointUnionAxioms: details.disjointUnionAxioms || item.disjointUnionAxioms,
-          hasKeyAxioms: details.hasKeyAxioms || item.hasKeyAxioms,
-          inferredSubClassOfAxioms: details.inferredSubClassOfAxioms,
-          inferredEquivalentClassesAxioms: details.inferredEquivalentClassesAxioms,
-          isUnsatisfiable: details.isUnsatisfiable,
-        };
-        onUpdate(updatedItem);
-        console.log(
-          `[perf][ClassEditor] ✓ stage-2 painted at ${(performance.now() - tStart).toFixed(0)}ms (full axioms visible)`,
-        );
-      } catch (error) {
-        if (alive && currentId === item.id) {
-          console.error(
-            `[perf][ClassEditor] ✗ stage-2 failed at ${(performance.now() - tStart).toFixed(0)}ms`,
-            error,
-          );
-        }
+        console.warn(`[perf][ClassEditor] ✗ annotations failed`, e);
       } finally {
-        if (alive && currentId === item.id) setLoadingDetails(false);
+        if (alive && currentId === item.id) setLoadingAnnotations(false);
       }
     })();
 
-    (async () => {
-      const t3 = performance.now();
-      try {
-        const response = await apiClient.get<any>(
-          `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(currentId)}`,
-        );
-        console.log(
-          `[perf][ClassEditor] ✓ instances network=${(performance.now() - t3).toFixed(0)}ms total=${(performance.now() - tStart).toFixed(0)}ms`,
-        );
-        if (!alive || currentId !== item.id) return;
-        const instances = response?.data?.data || response?.data || response || [];
-        setClassInstances(Array.isArray(instances) ? instances : []);
-      } catch (error) {
-        if (alive && currentId === item.id) {
-          console.error("Failed to load class instances:", error);
-          setClassInstances([]);
-        }
-      } finally {
-        if (alive && currentId === item.id) setLoadingInstances(false);
-      }
-    })();
-
-    // Properties (object/data) are not entity-scoped; load lazily on first mount.
-    loadProperties();
+    // Only fetch properties if the parent hasn't already provided them — avoids
+    // a duplicate GET /api/ontology/properties on every class selection when
+    // Dashboard already loads and passes objectProperties/dataProperties as props.
+    if (!propObjectProperties?.length && !propDataProperties?.length) {
+      loadProperties();
+    }
     }; // end runLoad
 
     return () => {
       alive = false;
+      abortController.abort(); // cancels in-flight HTTP requests immediately
+      descriptionAbortRef.current?.abort(); // cancel any pending description load when class changes
       clearTimeout(watchdog);
       clearTimeout(debounceTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, projectId, viewMode]);
 
-  // Load instances only when the Instances panel is opened (lazy loading for better performance)
-  // useEffect(() => {
-  //   if (isInstancesOpen && item.id && projectId && classInstances.length === 0) {
-  //     loadInstances();
-  //   }
-  // }, [isInstancesOpen, item.id, projectId]);
+  // Pre-load all-classes lookup when editor dialog opens so Manchester expressions can resolve labels
+  useEffect(() => {
+    if (isEditorOpen || isGCAEditorOpen) loadAllClassesLookup();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditorOpen, isGCAEditorOpen]);
+
+  // Auto-reload when a collaborator modifies this class
+  useEffect(() => {
+    const handleRemoteEdit = (e: Event) => {
+      const edit = (e as CustomEvent).detail;
+      if (!edit || edit.nodeId !== item.id) return;
+      // Ignore collaboration echoes from our own in-flight save; handleAddAxiom reloads after success.
+      if (isSavingAxiomRef.current) return;
+      // Any change targeting this class IRI should refresh the details panel
+      const CLASS_CHANGE_TYPES = new Set([
+        "CLASS_MODIFIED", "CLASS_RENAMED",
+        "EQUIVALENT_ADDED", "EQUIVALENT_REMOVED",
+        "SUBCLASS_ADDED", "SUBCLASS_REMOVED",
+        "DISJOINT_ADDED", "DISJOINT_REMOVED",
+        "ANNOTATION_ADDED", "ANNOTATION_MODIFIED", "ANNOTATION_DELETED",
+      ]);
+      if (CLASS_CHANGE_TYPES.has(edit.type)) {
+        loadClassDetails();
+      }
+    };
+    window.addEventListener("remoteEditReceived", handleRemoteEdit);
+    return () => window.removeEventListener("remoteEditReceived", handleRemoteEdit);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
 
   const loadProperties = async () => {
     try {
@@ -641,21 +630,77 @@ const ClassEditor: React.FC<{
     }
   };
 
-  const loadClassDetails = async () => {
-    setLoadingDetails(true);
+  const loadAllClassesLookup = async () => {
+    // Reuse the lookup only if it was loaded for this same project.
+    if (allClassesLookup.size > 0 && allClassesLookupProjectRef.current === projectId) return;
     try {
+      const resp = await apiClient.get<any>(`/api/ontology/classes/all/${projectId}?limit=5000`);
+      const classes: any[] = resp?.data?.classes ?? resp?.data ?? resp?.classes ?? (Array.isArray(resp) ? resp : []);
+      const lookup = new Map<string, string>();
+      for (const c of classes) {
+        if (!c?.id) continue;
+        if (c.label) lookup.set(c.label, c.id);
+        const fragment = c.id.split(/[#\/]/).pop();
+        if (fragment && fragment !== c.id) lookup.set(fragment, c.id);
+        lookup.set(c.id, c.id);
+      }
+      allClassesLookupProjectRef.current = projectId;
+      setAllClassesLookup(lookup);
+    } catch (e) {
+      console.warn("[ClassEditor] Failed to load all-classes lookup:", e);
+    }
+  };
+
+  const loadClassDetails = async (signal?: AbortSignal): Promise<any | null> => {
+    const loadGen = ++detailsLoadGenRef.current;
+    setLoadingDetails(true);
+    setLoadingDetailsElapsed(0);
+    const elapsedTimer = setInterval(() => {
+      setLoadingDetailsElapsed((s) => s + 1);
+    }, 1000);
+    try {
+      // Pass userId so the backend includes the user's draft graph in SPARQL reads.
+      // SparqlQueryContextInterceptor reads it from the request param; buildFromClause
+      // then adds FROM <draftGraph> to every execSelect, making draft additions visible.
+      const userId = user?.email || user?.userId;
+      const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
+      // Bust any intermediary cache after mutations so new restrictions appear immediately.
       const response = await apiClient.get<any>(
-        `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}`,
+        `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}&_=${Date.now()}`,
+        undefined,
+        signal ? { signal } : undefined,
       );
+      if (loadGen !== detailsLoadGenRef.current) {
+        console.log("[ClassEditor] Discarding stale class details response");
+        return null;
+      }
       // Backend returns {success: true, data: {...}}
       let details = response?.data?.data || response?.data || response;
-      console.log("[ClassEditor] Class details loaded:", details);
+      const equivAxioms = details?.equivalentClassesAxioms || [];
+      const restrictionEquivs = equivAxioms.filter(
+        (a: Axiom) => a.isRestriction === true || a.isRestriction === "true",
+      );
+      console.log("[ClassEditor] Class details loaded:", {
+        id: details?.id,
+        equivalentCount: equivAxioms.length,
+        restrictionEquivCount: restrictionEquivs.length,
+        restrictionEquivs: restrictionEquivs.map((a: Axiom) => a.definition),
+        full: details,
+      });
 
-      // If in inferred mode, fetch inferred details from reasoner
-      if (viewMode === "inferred") {
+      // Desktop / OWLAPI fast-open already embeds structural-reasoner inferred axioms
+      // (~5ms). Do NOT call Openllet here — it precomputes the whole ontology and
+      // can hang for minutes, freezing the UI.
+      const hasOwlApiInferred =
+        details?.inferredFromOwlApi === true ||
+        (details != null && "inferredEquivalentClassesAxioms" in details);
+
+      if (viewMode === "inferred" && !hasOwlApiInferred) {
         try {
           const inferredResponse = await apiClient.get<any>(
-            `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}`,
+            `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}&reasonerType=STRUCTURAL`,
+            undefined,
+            { signal, timeout: isDesktop() ? 15_000 : 45_000 },
           );
           const inferredData = inferredResponse?.data?.data || inferredResponse?.data || {};
           console.log("[ClassEditor] Inferred class details loaded:", inferredData);
@@ -664,26 +709,22 @@ const ClassEditor: React.FC<{
             ...details,
             inferredSubClassOfAxioms: inferredData.inferredSubClassOfAxioms || [],
             inferredEquivalentClassesAxioms: inferredData.inferredEquivalentClassesAxioms || [],
+            inferredDisjointClassesAxioms: inferredData.inferredDisjointClassesAxioms || [],
             isUnsatisfiable: inferredData.isUnsatisfiable || false,
           };
         } catch (err) {
           console.warn("[ClassEditor] Failed to load inferred details:", err);
+          if (viewMode === "inferred") {
+            notificationService.warning(
+              "Inferred axioms unavailable",
+              friendlyApiErrorMessage(err, "Reasoner timed out — showing asserted axioms only."),
+            );
+          }
         }
       }
 
       setClassDetails(details);
-
-      // Update the item with all loaded details (annotations, axioms, etc.)
-      // Debug logging for axioms
-      console.log("[ClassEditor] Axioms from backend:", {
-        subClassOf: details.subClassOfAxioms?.length || 0,
-        equivalentTo: details.equivalentClassesAxioms?.length || 0,
-        disjointWith: details.disjointClassesAxioms?.length || 0,
-        disjointUnion: details.disjointUnionAxioms?.length || 0,
-        hasKey: details.hasKeyAxioms?.length || 0,
-        inferredSubClassOf: details.inferredSubClassOfAxioms?.length || 0,
-        inferredEquivalentTo: details.inferredEquivalentClassesAxioms?.length || 0,
-      });
+      setAxiomsLoaded(true);
 
       const updatedItem: TreeNode = {
         ...item,
@@ -699,18 +740,98 @@ const ClassEditor: React.FC<{
       };
       console.log("[ClassEditor] Updated item:", updatedItem);
       onUpdate(updatedItem);
+      return details;
     } catch (error) {
+      if (loadGen !== detailsLoadGenRef.current) return null;
       console.error("Failed to load class details:", error);
+      notificationService.error(
+        "Description not ready",
+        friendlyApiErrorMessage(error, "Could not load class axioms"),
+      );
     } finally {
+      clearInterval(elapsedTimer);
+      if (loadGen === detailsLoadGenRef.current) {
+        setLoadingDetails(false);
+        setLoadingDetailsElapsed(0);
+      }
+    }
+    return null;
+  };
+
+  const axiomListForType = (details: any, axiomType: AxiomType): Axiom[] | undefined => {
+    if (!details) return undefined;
+    if (axiomType === "EquivalentTo") return details.equivalentClassesAxioms;
+    if (axiomType === "SubClassOf") return details.subClassOfAxioms;
+    return details.disjointClassesAxioms;
+  };
+
+  const restrictionMatchesAxiom = (
+    axiom: Axiom,
+    restrictionData: RestrictionData,
+    axiomType: AxiomType,
+  ): boolean => {
+    const isRestriction = axiom.isRestriction === true || axiom.isRestriction === "true";
+    if (!isRestriction) return false;
+    if (axiom.type !== axiomType) return false;
+    if (axiom.propertyIri !== restrictionData.propertyIri) return false;
+    if (axiom.restrictionType !== restrictionData.restrictionType) return false;
+    if (axiom.fillerIri !== restrictionData.fillerIri) return false;
+    if (restrictionData.cardinality != null) {
+      const card = typeof axiom.cardinality === "string" ? parseInt(axiom.cardinality, 10) : axiom.cardinality;
+      if (card !== restrictionData.cardinality) return false;
+    }
+    return true;
+  };
+
+  const reloadDetailsUntilRestrictionVisible = async (
+    restrictionData: RestrictionData,
+    axiomType: AxiomType,
+    maxAttempts = 6,
+    delayMs = 500,
+  ): Promise<void> => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const details = await loadClassDetails();
+      const axioms = axiomListForType(details, axiomType) || [];
+      const found = axioms.some((a) => restrictionMatchesAxiom(a, restrictionData, axiomType));
+      if (found) {
+        console.log(`[ClassEditor] Restriction visible after attempt ${attempt}`);
+        return;
+      }
+      if (attempt < maxAttempts) {
+        console.log(`[ClassEditor] Restriction not visible yet (attempt ${attempt}/${maxAttempts}), retrying...`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    console.warn("[ClassEditor] Restriction not found in class details after retries");
+    notificationService.warning(
+      "Restriction may not be visible yet",
+      "The save succeeded but the new restriction is not showing. Refresh the Description tab or reload the project.",
+    );
+  };
+
+  const loadDescription = async () => {
+    descriptionAbortRef.current?.abort();
+    const controller = new AbortController();
+    descriptionAbortRef.current = controller;
+    setDescriptionTimedOut(false);
+    const watchdog = setTimeout(() => {
+      controller.abort();
       setLoadingDetails(false);
+      setDescriptionTimedOut(true);
+    }, isDesktop() ? 45_000 : 90_000);
+    try {
+      await Promise.all([loadClassDetails(controller.signal), loadInstances(controller.signal)]);
+    } finally {
+      clearTimeout(watchdog);
     }
   };
 
-  const loadInstances = async () => {
-    setLoadingInstances(true);
+  const loadInstances = async (signal?: AbortSignal) => {
     try {
       const response = await apiClient.get<any>(
         `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(item.id)}`,
+        undefined,
+        signal ? { signal } : undefined,
       );
       // Backend returns {success: true, data: [...]} or just the array
       const instances = response?.data?.data || response?.data || response || [];
@@ -719,8 +840,6 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("Failed to load class instances:", error);
       setClassInstances([]);
-    } finally {
-      setLoadingInstances(false);
     }
   };
 
@@ -795,281 +914,194 @@ const ClassEditor: React.FC<{
     existingId?: string,
     initialTab?: "hierarchy" | "objectRestriction" | "dataRestriction" | "classExpression",
     restrictionData?: any,
+    subjectClassIri?: string,
   ) => {
     console.log("[ClassEditor] openEditor called:", { type, title, classHierarchyLength: classHierarchy.length });
     setEditorType(type);
     // Update title to indicate edit mode
     if (existingValue && existingId) {
       setEditorTitle(`Edit ${title}`);
-      // For hierarchy tab (simple class axioms), pass the IRI as initialValue so it can be pre-selected
-      // For other tabs (restrictions, expressions), pass the definition/label
-      setEditorExistingValue(initialTab === "hierarchy" ? existingId : existingValue);
+      // Keep the expression text visible in the class expression editor, while
+      // passing the IRI separately so the hierarchy tab can pre-select it.
+      setEditorExistingValue(existingValue);
       setEditorExistingId(existingId);
+      setEditorInitialClassIri(initialTab === "hierarchy" ? existingId : undefined);
     } else {
       setEditorTitle(`Add ${title}`);
       setEditorExistingValue(undefined);
       setEditorExistingId(undefined);
+      setEditorInitialClassIri(undefined);
     }
     setEditorInitialTab(initialTab);
     setEditorInitialRestrictionData(restrictionData);
+    setEditorSubjectClassIri(subjectClassIri);
+
+    // Add mode shows the full Protégé-style builder set. Edit mode shows the
+    // expression editor plus only the builder that matches the existing axiom.
+    if (existingValue && existingId) {
+      if (initialTab === "dataRestriction" || restrictionData?.isDataProperty) {
+        setEditorAllowedTabs(["dataRestriction", "classExpression"]);
+      } else if (initialTab === "objectRestriction" || (restrictionData && !restrictionData.isDataProperty)) {
+        setEditorAllowedTabs(["objectRestriction", "classExpression"]);
+      } else if (initialTab === "hierarchy") {
+        setEditorAllowedTabs(["hierarchy", "classExpression"]);
+      } else {
+        setEditorAllowedTabs(["classExpression"]);
+      }
+    } else {
+      setEditorAllowedTabs(undefined);
+    }
+
     setIsEditorOpen(true);
   };
 
+  const normalizeSingleClassExpressionForSave = (expression: string, restrictionData?: RestrictionData): string => {
+    const trimmed = expression.trim();
+    if (!trimmed || restrictionData) return expression;
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("urn:")) return trimmed;
+    if (/\s+(and|or)\s+/i.test(trimmed)) return expression;
+    return findClassIriByLabelOrIri(trimmed, classHierarchy) || expression;
+  };
+
   const handleEditorConfirm = async (expression: string, restrictionData?: RestrictionData) => {
-    console.log("[ClassEditor] handleEditorConfirm called:", {
-      expression,
-      restrictionData,
-      editorType,
-      editorExistingId,
-      classIri: item.id,
-    });
+    const expressionToSave = normalizeSingleClassExpressionForSave(expression, restrictionData);
 
     if (!editorType) {
-      console.error("[ClassEditor] handleEditorConfirm - editorType is null!");
-      alert("Error: Editor type not set. Please try again.");
+      notificationService.error("Editor Error", "Editor type not set. Please try again.");
       return;
     }
 
+    const subjectClassIri = editorSubjectClassIri || item.id;
+
     try {
-      // If we have an existing axiom ID, this is an edit operation
       if (editorExistingId) {
-        console.log("[ClassEditor] Edit operation - deleting old axiom:", {
-          editorExistingId,
-          editorType,
-          newExpression: expression,
-          classIri: item.id,
-          editorInitialRestrictionData,
-          restrictionData,
-        });
+        // ── EDIT: single replaceAxiom call — delete + add in one HTTP request ──
+        const axiomType = editorType as "SubClassOf" | "EquivalentTo" | "DisjointWith";
 
-        // For edit, we need to delete the old one first, then add the new one
-        // Check if the old axiom was a restriction that needs special handling
-        if (editorInitialRestrictionData) {
-          // Delete the old restriction
-          const axiomType = editorType === "EquivalentTo" ? "EquivalentTo" : "SubClassOf";
+        // Build old axiom descriptor
+        const oldDesc: Parameters<typeof ontologyMutationService.replaceAxiom>[3] =
+          editorInitialRestrictionData
+            ? {
+                restriction: {
+                  property: editorInitialRestrictionData.propertyIri!,
+                  restrictionType: editorInitialRestrictionData.restrictionType!,
+                  filler: editorInitialRestrictionData.fillerIri!,
+                  cardinality: editorInitialRestrictionData.cardinality,
+                  isData: editorInitialRestrictionData.type === 'dataRestriction',
+                },
+              }
+            : { iri: editorExistingId };
 
-          console.log("[ClassEditor] Deleting old restriction:", editorInitialRestrictionData);
-          if (editorInitialRestrictionData.isDataProperty) {
-            await ontologyMutationService.deleteDataRestriction(
-              projectId,
-              item.id,
-              axiomType,
-              editorInitialRestrictionData.propertyIri!,
-              editorInitialRestrictionData.restrictionType!,
-              editorInitialRestrictionData.fillerIri!,
-            );
-          } else {
-            await ontologyMutationService.deleteObjectRestriction(
-              projectId,
-              item.id,
-              axiomType,
-              editorInitialRestrictionData.propertyIri!,
-              editorInitialRestrictionData.restrictionType!,
-              editorInitialRestrictionData.fillerIri!,
-            );
-          }
-          // Wait for GraphDB to process the deletion - increased delay for restrictions
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          console.log("[ClassEditor] Waited 1000ms after restriction deletion");
-        } else {
-          // Delete old simple class axiom (not a restriction)
-          // The editorExistingId should be the IRI of the target class
-          console.log("[ClassEditor] Editing simple class axiom - using UPDATE instead of DELETE+ADD:", {
-            editorExistingId,
-            editorType,
-            classIri: item.id,
-            oldTarget: editorExistingId,
-            newTarget: expression,
-          });
+        // Build new axiom descriptor
+        const isNewIRI =
+          expressionToSave.startsWith("http://") ||
+          expressionToSave.startsWith("https://") ||
+          expressionToSave.startsWith("urn:");
 
-          // Use UPDATE operations to replace in a single transaction
-          // This prevents creating duplicates
-          const isNewSimpleIRI =
-            expression.startsWith("http://") || expression.startsWith("https://") || expression.startsWith("urn:");
-
-          if (isNewSimpleIRI) {
-            switch (editorType) {
-              case "EquivalentTo":
-                console.log("[ClassEditor] Calling updateEquivalentClass with:", {
-                  projectId,
-                  classIri: item.id,
-                  oldTarget: editorExistingId,
-                  newTarget: expression,
-                });
-                await ontologyMutationService.updateEquivalentClass(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  expression,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                console.log("[ClassEditor] updateEquivalentClass completed");
-                break;
-              case "SubClassOf":
-                console.log("[ClassEditor] Calling updateSubClassOf with:", {
-                  projectId,
-                  classIri: item.id,
-                  oldTarget: editorExistingId,
-                  newTarget: expression,
-                });
-                await ontologyMutationService.updateSubClassOf(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  expression,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                console.log("[ClassEditor] updateSubClassOf completed");
-                break;
-              case "DisjointWith":
-                console.log("[ClassEditor] Calling updateDisjointWith with:", {
-                  projectId,
-                  classIri: item.id,
-                  oldTarget: editorExistingId,
-                  newTarget: expression,
-                });
-                await ontologyMutationService.updateDisjointWith(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  expression,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                console.log("[ClassEditor] updateDisjointWith completed");
-                break;
-            }
-            // Wait for GraphDB to process the update
-            await new Promise((resolve) => setTimeout(resolve, 500));
-            console.log("[ClassEditor] Waited 500ms after update operation");
-
-            // Reload details to reflect the changes
-            console.log("[ClassEditor] Reloading class details after edit");
-            await loadClassDetails();
-            console.log("[ClassEditor] Class details reloaded");
-
-            // Close the dialog
-            // Close the dialog
-            setIsEditorOpen(false);
-            setEditorExistingId(undefined);
-            return;
-          } else {
-            // For complex expressions, still use delete+add
-            console.log("[ClassEditor] Complex expression detected, using delete+add approach");
-            switch (editorType) {
-              case "EquivalentTo":
-                await ontologyMutationService.deleteEquivalentClass(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                break;
-              case "SubClassOf":
-                await ontologyMutationService.deleteSubClassOf(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                break;
-              case "DisjointWith":
-                await ontologyMutationService.deleteDisjointWith(
-                  projectId,
-                  item.id,
-                  editorExistingId,
-                  user?.email,
-                  user?.displayName || user?.email,
-                );
-                break;
-            }
-            // Wait for GraphDB to process the deletion
-            await new Promise((resolve) => setTimeout(resolve, 500));
-
-            // Add the new complex expression axiom
-            await ontologyMutationService.addAxiom(projectId, item.id, editorType, expression);
-
-            // Reload details to reflect the changes
-            console.log("[ClassEditor] Reloading class details after complex expression edit");
-            await loadClassDetails();
-            console.log("[ClassEditor] Class details reloaded");
-
-            // Close the dialog
-            setIsEditorOpen(false);
-            setEditorExistingId(undefined);
-            return;
-          }
-        }
-
-        // For restriction edits, continue with the delete+add flow
-        console.log("[ClassEditor] Adding new restriction axiom after deletion:", {
-          expression,
-          restrictionData,
-          editorType,
-        });
-
-        // SAFETY CHECK: If this is a restriction edit, verify that we're not adding a duplicate
-        // Check if an axiom with the same property and filler already exists
         if (restrictionData) {
-          // Get the correct axiom array based on axiom type
-          let existingAxioms: any[] = [];
-          if (editorType === "SubClassOf") {
-            existingAxioms = classDetails?.subClassOfAxioms || item.subClassOfAxioms || [];
-          } else if (editorType === "EquivalentTo") {
-            existingAxioms = classDetails?.equivalentClassesAxioms || item.equivalentClassesAxioms || [];
-          } else if (editorType === "DisjointWith") {
-            existingAxioms = classDetails?.disjointWithAxioms || item.disjointWithAxioms || [];
-          }
-
-          const isDuplicate = existingAxioms.some((axiom: any) => {
-            // Check if axiom has the same property and filler
-            return (
-              axiom.propertyIri === restrictionData.propertyIri &&
-              axiom.fillerIri === restrictionData.fillerIri &&
-              axiom.restrictionType === restrictionData.restrictionType
+          const newDesc: Parameters<typeof ontologyMutationService.replaceAxiom>[4] = {
+            restriction: {
+              property: restrictionData.propertyIri!,
+              restrictionType: restrictionData.restrictionType!,
+              filler: restrictionData.fillerIri!,
+              cardinality: restrictionData.cardinality,
+              isData: restrictionData.type === 'dataRestriction',
+            },
+          };
+          await ontologyMutationService.replaceAxiom(
+            projectId, subjectClassIri, axiomType, oldDesc, newDesc,
+            user?.email, user?.username || user?.email,
+          );
+        } else if (isNewIRI) {
+          await ontologyMutationService.replaceAxiom(
+            projectId, subjectClassIri, axiomType, oldDesc, { iri: expressionToSave },
+            user?.email, user?.username || user?.email,
+          );
+        } else {
+          const parsed = parseManchesterExpression(expressionToSave);
+          if (parsed && axiomType !== "DisjointWith") {
+            const newDesc: Parameters<typeof ontologyMutationService.replaceAxiom>[4] =
+              parsed.expressionType === "intersection"
+                ? { intersection: parsed.iris }
+                : { union: parsed.iris };
+            await ontologyMutationService.replaceAxiom(
+              projectId, subjectClassIri, axiomType, oldDesc, newDesc,
+              user?.email, user?.username || user?.email,
             );
-          });
-
-          if (isDuplicate) {
-            console.warn(
-              "[ClassEditor] ⚠️  DUPLICATE DETECTED - Not adding axiom that already exists with same restriction:",
-              {
-                editorType,
-                propertyIri: restrictionData.propertyIri,
-                fillerIri: restrictionData.fillerIri,
-                restrictionType: restrictionData.restrictionType,
-                existingAxiomsCount: existingAxioms.length,
-              },
+          } else {
+            await handleDeleteAxiom(axiomType, editorExistingId, subjectClassIri);
+            await expressionService.addClassExpressionAxiom(
+              projectId, subjectClassIri, axiomType, expressionToSave,
+              user?.email, user?.username || user?.email,
             );
-            // Skip the add operation - the axiom already exists
-            setIsEditorOpen(false);
-            setEditorExistingId(undefined);
-            return;
           }
         }
 
-        // Add the new restriction axiom
-        await handleAddAxiom(editorType, expression, restrictionData);
+        await loadClassDetails();
       } else {
-        // Otherwise it's an add operation
-        console.log("[ClassEditor] Add operation:", { expression, restrictionData });
-        await handleAddAxiom(editorType, expression, restrictionData);
+        // ── ADD ──
+        await handleAddAxiom(editorType, expressionToSave, restrictionData);
       }
     } catch (error) {
       console.error("[ClassEditor] handleEditorConfirm failed:", error);
-      alert(`Failed to save axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Save Failed", `Failed to save axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      throw error;
     } finally {
       setIsEditorOpen(false);
       setEditorType(null);
       setEditorExistingValue(undefined);
       setEditorExistingId(undefined);
+      setEditorInitialClassIri(undefined);
       setEditorInitialTab(undefined);
       setEditorInitialRestrictionData(undefined);
+      setEditorSubjectClassIri(undefined);
     }
+  };
+
+  // Recursively search for a class by exact IRI or label in the hierarchy tree
+  const findClassIriByLabelOrIri = (labelOrIri: string, nodes: TreeNode[]): string | null => {
+    for (const node of nodes) {
+      if (node.id === labelOrIri || node.label === labelOrIri) return node.id;
+      if (node.children?.length) {
+        const found = findClassIriByLabelOrIri(labelOrIri, node.children);
+        if (found) return found;
+      }
+    }
+    // Fallback: flat lookup covers classes not yet lazily loaded into the tree
+    return allClassesLookup.get(labelOrIri) ?? null;
+  };
+
+  // Parse a simple Manchester intersection ("A and B") or union ("A or B") expression.
+  // Each operand must be either a full IRI or a class label resolvable in the hierarchy.
+  // Returns null when the expression cannot be reliably parsed.
+  const parseManchesterExpression = (
+    expr: string,
+  ): { expressionType: "intersection" | "union"; iris: string[] } | null => {
+    const trimmed = expr.trim();
+    const andParts = trimmed.split(/\s+and\s+/i);
+    const orParts = trimmed.split(/\s+or\s+/i);
+
+    const tryResolve = (parts: string[]): string[] | null => {
+      const iris: string[] = [];
+      for (const part of parts) {
+        const p = part.trim();
+        if (!p) return null;
+        const iri = findClassIriByLabelOrIri(p, classHierarchy);
+        if (!iri) return null;
+        iris.push(iri);
+      }
+      return iris.length >= 2 ? iris : null;
+    };
+
+    if (andParts.length >= 2) {
+      const iris = tryResolve(andParts);
+      if (iris) return { expressionType: "intersection", iris };
+    }
+    if (orParts.length >= 2) {
+      const iris = tryResolve(orParts);
+      if (iris) return { expressionType: "union", iris };
+    }
+    return null;
   };
 
   const handleAddAxiom = async (type: AxiomType, definition: string, restrictionData?: RestrictionData) => {
@@ -1079,6 +1111,8 @@ const ClassEditor: React.FC<{
       restrictionData,
       classHierarchyLength: classHierarchy.length,
     });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       // If we have structured restriction data, use the specific restriction methods
       // NOTE: DisjointWith does NOT support restrictions - it's only for class-to-class disjointness
@@ -1087,6 +1121,18 @@ const ClassEditor: React.FC<{
         restrictionData.axiomType = type;
 
         if (restrictionData.type === "objectRestriction") {
+          if (!restrictionData.propertyIri || !restrictionData.fillerIri) {
+            console.error("[ClassEditor] Object restriction missing propertyIri or fillerIri:", restrictionData);
+            notificationService.error("Save Failed", "Restriction is missing required property or filler class.");
+            return;
+          }
+          console.log("[ClassEditor] Adding object restriction:", {
+            axiomType: restrictionData.axiomType,
+            propertyIri: restrictionData.propertyIri,
+            restrictionType: restrictionData.restrictionType,
+            fillerIri: restrictionData.fillerIri,
+            cardinality: restrictionData.cardinality,
+          });
           await ontologyMutationService.addObjectRestriction(
             projectId,
             item.id,
@@ -1095,26 +1141,49 @@ const ClassEditor: React.FC<{
             restrictionData.restrictionType,
             restrictionData.fillerIri,
             restrictionData.cardinality,
+            user?.email,
+            user?.username || user?.email,
           );
         } else if (restrictionData.type === "dataRestriction") {
+          if (!restrictionData.propertyIri || !restrictionData.fillerIri) {
+            console.error("[ClassEditor] Data restriction missing propertyIri or fillerIri:", restrictionData);
+            notificationService.error("Save Failed", "Restriction is missing required property or datatype.");
+            return;
+          }
           // Only allow valid restrictionType values for data restrictions
           const validDataRestrictionTypes = ["some", "only", "min", "max", "exactly"];
-          if (validDataRestrictionTypes.includes(restrictionData.restrictionType)) {
-            await ontologyMutationService.addDataRestriction(
-              projectId,
-              item.id,
-              restrictionData.axiomType,
-              restrictionData.propertyIri,
-              restrictionData.restrictionType as "some" | "only" | "min" | "max" | "exactly",
-              restrictionData.fillerIri,
-              restrictionData.cardinality,
-            );
-          } else {
-            console.warn("Invalid restrictionType for data restriction:", restrictionData.restrictionType);
+          if (!validDataRestrictionTypes.includes(restrictionData.restrictionType)) {
+            console.warn("[ClassEditor] Invalid restrictionType for data restriction:", restrictionData.restrictionType);
+            return;
           }
+          console.log("[ClassEditor] Adding data restriction:", {
+            axiomType: restrictionData.axiomType,
+            propertyIri: restrictionData.propertyIri,
+            restrictionType: restrictionData.restrictionType,
+            fillerIri: restrictionData.fillerIri,
+            cardinality: restrictionData.cardinality,
+          });
+          await ontologyMutationService.addDataRestriction(
+            projectId,
+            item.id,
+            restrictionData.axiomType,
+            restrictionData.propertyIri,
+            restrictionData.restrictionType as "some" | "only" | "min" | "max" | "exactly",
+            restrictionData.fillerIri,
+            restrictionData.cardinality,
+            user?.email,
+            user?.username || user?.email,
+          );
         }
-        // Reload details to get the updated axioms
-        await loadClassDetails();
+        // Allow GraphDB to index the new restriction before reloading
+        const isCardinalityRestriction = ["min", "max", "exactly"].includes(restrictionData.restrictionType);
+        await new Promise((resolve) => setTimeout(resolve, isCardinalityRestriction ? 1500 : 400));
+        await reloadDetailsUntilRestrictionVisible(restrictionData, type);
+        return;
+      }
+
+      if (!item.id) {
+        notificationService.warning("Not Ready", "Cannot add axiom: class IRI is not yet available. Please wait for the class to finish loading.");
         return;
       }
 
@@ -1138,7 +1207,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 definition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               console.log("[ClassEditor] addEquivalentClass completed successfully");
               break;
@@ -1153,7 +1222,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 definition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               console.log("[ClassEditor] addSubClassOf completed successfully");
               break;
@@ -1168,7 +1237,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 definition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               console.log("[ClassEditor] addDisjointWith completed successfully");
               break;
@@ -1178,8 +1247,30 @@ const ClassEditor: React.FC<{
           throw mutationError;
         }
       } else {
-        // For complex Manchester Syntax expressions, use addAxiom (requires backend Manchester parser)
-        await ontologyMutationService.addAxiom(projectId, item.id, type, definition);
+        if (!definition.trim()) {
+          notificationService.warning("Empty Expression", "Cannot add axiom: expression is empty.");
+          return;
+        }
+        // Try fast path for simple intersection/union of named classes
+        const parsed = parseManchesterExpression(definition);
+        if (parsed && type !== "DisjointWith") {
+          console.log(`[ClassEditor] Parsed ${parsed.expressionType} expression:`, parsed.iris);
+          if (parsed.expressionType === "intersection") {
+            await ontologyMutationService.addIntersection(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
+          } else {
+            await ontologyMutationService.addUnion(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
+          }
+        } else {
+          // Full Manchester via OWLAPI (not, restrictions, oneOf, nested expressions, disjoint expressions)
+          await expressionService.addClassExpressionAxiom(
+            projectId,
+            item.id,
+            type,
+            definition,
+            user?.email,
+            user?.username || user?.email,
+          );
+        }
       }
       // Wait for GraphDB to index the new axiom (increased delay for SPARQL consistency)
       console.log("[ClassEditor] Waiting 800ms for GraphDB to index...");
@@ -1192,12 +1283,19 @@ const ClassEditor: React.FC<{
       // onUpdate(item); // We might not need this if we reload details
     } catch (error) {
       console.error("[ClassEditor] Failed to add axiom:", error);
-      alert(`Failed to add axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Axiom Failed", `Failed to add axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
-  const handleDeleteAxiom = async (type: AxiomType, id: string) => {
-    console.log("[ClassEditor] handleDeleteAxiom called:", { type, id, classIri: item.id });
+  const handleDeleteAxiom = async (type: AxiomType, id: string, classIriOverride?: string) => {
+    if (isSavingAxiomRef.current) return;
+    const ownerIri = classIriOverride || item.id;
+    console.log("[ClassEditor] handleDeleteAxiom called:", { type, id, classIri: ownerIri });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       // Find the axiom object to check if it's a restriction
       // Use classDetails if available (most recent data), otherwise fall back to item
@@ -1214,7 +1312,7 @@ const ClassEditor: React.FC<{
 
       if (isRestriction && axiom?.propertyIri && axiom?.restrictionType && axiom?.fillerIri) {
         // Delete restriction - map type to axiomType parameter
-        const axiomType = type === "EquivalentTo" ? "EquivalentTo" : "SubClassOf";
+        const axiomType = type === "EquivalentTo" ? "EquivalentTo" : type === "DisjointWith" ? "DisjointWith" : "SubClassOf";
 
         // Check if it's a data property restriction
         const isDataProperty =
@@ -1222,7 +1320,7 @@ const ClassEditor: React.FC<{
           dataProperties.some((p) => p.id === axiom.propertyIri);
 
         console.log("[ClassEditor] Deleting restriction:", {
-          classIri: item.id,
+          classIri: ownerIri,
           axiomType,
           propertyIri: axiom.propertyIri,
           restrictionType: axiom.restrictionType,
@@ -1230,23 +1328,32 @@ const ClassEditor: React.FC<{
           isDataProperty,
         });
 
+        const restrictionCardinality =
+          axiom.cardinality != null
+            ? typeof axiom.cardinality === "string"
+              ? parseInt(axiom.cardinality, 10)
+              : axiom.cardinality
+            : undefined;
+
         if (isDataProperty) {
           await ontologyMutationService.deleteDataRestriction(
             projectId,
-            item.id,
+            ownerIri,
             axiomType,
             axiom.propertyIri,
             axiom.restrictionType as "some" | "only" | "min" | "max" | "exactly",
             axiom.fillerIri,
+            restrictionCardinality,
           );
         } else {
           await ontologyMutationService.deleteObjectRestriction(
             projectId,
-            item.id,
+            ownerIri,
             axiomType,
             axiom.propertyIri,
             axiom.restrictionType as "some" | "only" | "min" | "max" | "exactly" | "value",
             axiom.fillerIri,
+            restrictionCardinality,
           );
         }
         // Wait for GraphDB to process the deletion
@@ -1255,31 +1362,31 @@ const ClassEditor: React.FC<{
       } else {
         // The id is usually the IRI of the related class
         // Always attempt to delete - the backend will handle validation
-        console.log("[ClassEditor] Deleting simple class axiom:", { type, classIri: item.id, targetIri: id });
+        console.log("[ClassEditor] Deleting simple class axiom:", { type, classIri: ownerIri, targetIri: id });
 
         switch (type) {
           case "EquivalentTo":
             console.log("[ClassEditor] Calling deleteEquivalentClass");
             await ontologyMutationService.deleteEquivalentClass(
               projectId,
-              item.id,
+              ownerIri,
               id,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             break;
           case "SubClassOf":
             console.log("[ClassEditor] Calling deleteSubClassOf with params:", {
               projectId,
-              classIri: item.id,
+              classIri: ownerIri,
               superClassIri: id,
             });
             await ontologyMutationService.deleteSubClassOf(
               projectId,
-              item.id,
+              ownerIri,
               id,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             console.log("[ClassEditor] deleteSubClassOf completed");
             break;
@@ -1287,10 +1394,10 @@ const ClassEditor: React.FC<{
             console.log("[ClassEditor] Calling deleteDisjointWith");
             await ontologyMutationService.deleteDisjointWith(
               projectId,
-              item.id,
+              ownerIri,
               id,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             break;
         }
@@ -1303,12 +1410,18 @@ const ClassEditor: React.FC<{
       }
     } catch (error) {
       console.error("[ClassEditor] Failed to delete axiom:", error);
-      console.error("[ClassEditor] Delete axiom details:", { type, id, classIri: item.id });
-      alert(`Failed to delete axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      console.error("[ClassEditor] Delete axiom details:", { type, id, classIri: ownerIri });
+      notificationService.error("Delete Failed", `Failed to delete axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
   const handleEditAxiom = async (type: AxiomType, oldId: string, newDefinition: string) => {
+    if (isSavingAxiom) return;
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       console.log("[ClassEditor] handleEditAxiom called:", { type, oldId, newDefinition });
 
@@ -1328,7 +1441,7 @@ const ClassEditor: React.FC<{
               oldId,
               newDefinition,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             break;
           case "SubClassOf":
@@ -1338,7 +1451,7 @@ const ClassEditor: React.FC<{
               oldId,
               newDefinition,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             break;
           case "DisjointWith":
@@ -1348,7 +1461,7 @@ const ClassEditor: React.FC<{
               oldId,
               newDefinition,
               user?.email,
-              user?.displayName || user?.email,
+              user?.username || user?.email,
             );
             break;
         }
@@ -1365,7 +1478,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 oldId,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
             case "SubClassOf":
@@ -1374,7 +1487,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 oldId,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
             case "DisjointWith":
@@ -1383,7 +1496,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 oldId,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
           }
@@ -1401,7 +1514,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 newDefinition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
             case "SubClassOf":
@@ -1410,7 +1523,7 @@ const ClassEditor: React.FC<{
                 item.id,
                 newDefinition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
             case "DisjointWith":
@@ -1419,13 +1532,24 @@ const ClassEditor: React.FC<{
                 item.id,
                 newDefinition,
                 user?.email,
-                user?.displayName || user?.email,
+                user?.username || user?.email,
               );
               break;
           }
         } else {
-          // For complex Manchester Syntax expressions
-          await ontologyMutationService.addAxiom(projectId, item.id, type, newDefinition);
+          const parsed = parseManchesterExpression(newDefinition);
+          if (parsed && type !== "DisjointWith") {
+            if (parsed.expressionType === "intersection") {
+              await ontologyMutationService.addIntersection(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
+            } else {
+              await ontologyMutationService.addUnion(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
+            }
+          } else {
+            await expressionService.addClassExpressionAxiom(
+              projectId, item.id, type, newDefinition,
+              user?.email, user?.username || user?.email,
+            );
+          }
         }
       }
 
@@ -1436,22 +1560,28 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] Edit completed successfully");
     } catch (error) {
       console.error("[ClassEditor] Failed to edit axiom:", error);
-      alert(`Failed to edit axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Edit Failed", `Failed to edit axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
   // Handler for Disjoint With - adds owl:disjointWith for each selected class
   const handleDisjointWithConfirm = async (nodes: TreeNode[]) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleDisjointWithConfirm called:", {
       nodes: nodes.map((n) => ({ id: n.id, label: n.label })),
       isEditing: !!editingDisjointWithId,
     });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       const classIris = nodes.map((n) => n.id);
 
       if (classIris.length < 1) {
         console.warn("[ClassEditor] Please select at least 1 class");
-        alert("Please select at least 1 class");
+        notificationService.warning("Selection Required", "Please select at least 1 class.");
         return;
       }
 
@@ -1475,8 +1605,10 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] loadClassDetails completed after disjoint with");
     } catch (error) {
       console.error("[ClassEditor] Failed to add disjoint with:", error);
-      alert(`Failed to add disjoint with: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Failed", `Failed to add disjoint with: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
       setIsDisjointWithOpen(false);
       setEditingDisjointWithId(undefined);
       setEditingDisjointWithTarget(undefined);
@@ -1521,8 +1653,10 @@ const ClassEditor: React.FC<{
         restrictionData,
       );
     } else if (isSimpleIri) {
-      // Simple class axiom - open hierarchy tab
-      openEditor("DisjointWith", "Disjoint Class Expression", axiom.definition, axiomId, "hierarchy");
+      // Simple named class — use class selector (openEditor rejects plain IRIs for DisjointWith)
+      setEditingDisjointWithId(axiomId);
+      setEditingDisjointWithTarget(axiomId);
+      setIsDisjointWithOpen(true);
     } else {
       // Complex expression - open class expression editor
       openEditor("DisjointWith", "Disjoint Class Expression", axiom.definition, axiomId, "classExpression");
@@ -1530,17 +1664,20 @@ const ClassEditor: React.FC<{
   };
 
   const handleDisjointUnionConfirm = async (nodes: TreeNode[]) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleDisjointUnionConfirm called:", {
       nodes: nodes.map((n) => ({ id: n.id, label: n.label })),
       isEditing: !!editingDisjointUnionId,
     });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       // Get the IRIs of the selected classes
       const memberIris = nodes.map((n) => n.id);
 
       if (memberIris.length < 2) {
         console.warn("[ClassEditor] Disjoint Union requires at least 2 classes");
-        alert("Please select at least 2 classes for the disjoint union.");
+        notificationService.warning("Selection Required", "Please select at least 2 classes for the disjoint union.");
         return;
       }
 
@@ -1563,8 +1700,10 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] loadClassDetails completed after disjoint union");
     } catch (error) {
       console.error("[ClassEditor] Failed to add disjoint union:", error);
-      alert(`Failed to add disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Failed", `Failed to add disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
       setIsDisjointUnionOpen(false);
       setEditingDisjointUnionId(undefined);
       setEditingDisjointUnionMembers([]);
@@ -1594,7 +1733,10 @@ const ClassEditor: React.FC<{
   };
 
   const handleDeleteDisjointUnion = async (listNodeId: string) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleDeleteDisjointUnion called:", { classIri: item.id, listNodeId });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       await ontologyMutationService.deleteDisjointUnion(projectId, item.id, listNodeId);
       console.log("[ClassEditor] deleteDisjointUnion completed");
@@ -1606,7 +1748,10 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] loadClassDetails completed after delete disjoint union");
     } catch (error) {
       console.error("[ClassEditor] Failed to delete disjoint union:", error);
-      alert(`Failed to delete disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Delete Failed", `Failed to delete disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
@@ -1630,7 +1775,10 @@ const ClassEditor: React.FC<{
   };
 
   const handleDeleteHasKey = async (listNodeId: string) => {
+    if (isSavingAxiomRef.current) return;
     console.log("[ClassEditor] handleDeleteHasKey called:", { classIri: item.id, listNodeId });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       await ontologyMutationService.deleteHasKey(projectId, item.id, listNodeId);
       console.log("[ClassEditor] deleteHasKey completed");
@@ -1642,20 +1790,26 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] loadClassDetails completed after delete has key");
     } catch (error) {
       console.error("[ClassEditor] Failed to delete has key:", error);
-      alert(`Failed to delete has key: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Delete Failed", `Failed to delete has key: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
   const handleAddHasKey = async (propertyIris: string[]) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleAddHasKey called:", {
       classIri: item.id,
       propertyIris,
       isEditing: !!editingHasKeyId,
     });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       if (propertyIris.length < 1) {
         console.warn("[ClassEditor] HasKey requires at least 1 property");
-        alert("Please select at least 1 property for the key.");
+        notificationService.warning("Selection Required", "Please select at least 1 property for the key.");
         return;
       }
 
@@ -1677,8 +1831,10 @@ const ClassEditor: React.FC<{
       console.log("[ClassEditor] loadClassDetails completed after has key");
     } catch (error) {
       console.error("[ClassEditor] Failed to add has key:", error);
-      alert(`Failed to add has key: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Failed", `Failed to add has key: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
       setIsHasKeyOpen(false);
       setEditingHasKeyId(undefined);
       setEditingHasKeyProperties([]);
@@ -1687,7 +1843,10 @@ const ClassEditor: React.FC<{
 
   // Instance handlers
   const handleAddInstance = async (name: string) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleAddInstance called:", { name, classIri: item.id });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       if (onAddIndividual) {
         await onAddIndividual(name, item.id);
@@ -1707,28 +1866,29 @@ const ClassEditor: React.FC<{
       }
     } catch (error) {
       console.error("[ClassEditor] Failed to add instance:", error);
-      alert(`Failed to add instance: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Failed", `Failed to add instance: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
   const handleDeleteInstance = async (individualIri: string) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleDeleteInstance called:", { individualIri, classIri: item.id });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
-      // Remove the class assertion (type) from the individual
-      await ontologyMutationService.removeClassAssertion(projectId, individualIri, item.id);
-
-      // Small delay to allow GraphDB to process the mutation
+      await ontologyMutationService.deleteIndividual(projectId, individualIri, user?.email || user?.userId, user?.username);
       await new Promise((resolve) => setTimeout(resolve, 300));
-      console.log("[ClassEditor] Reloading instances after removing class assertion");
       await loadInstances();
-
-      // Refresh individuals in parent if callback provided
-      if (onRefreshIndividuals) {
-        onRefreshIndividuals();
-      }
+      if (onRefreshIndividuals) onRefreshIndividuals();
     } catch (error) {
-      console.error("[ClassEditor] Failed to remove instance:", error);
-      alert(`Failed to remove instance: ${error instanceof Error ? error.message : "Unknown error"}`);
+      console.error("[ClassEditor] Failed to delete instance:", error);
+      notificationService.error("Delete Failed", `Failed to delete instance: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
@@ -1751,98 +1911,120 @@ const ClassEditor: React.FC<{
     setIsGCAEditorOpen(true);
   };
 
-  const handleDeleteGCA = async (axiomId: string) => {
-    console.log("[ClassEditor] Deleting GCA:", axiomId);
+  const handleDeleteGCA = async (axiomId: string, ancestorIri?: string) => {
+    if (isSavingAxiom) return;
+    console.log("[ClassEditor] Deleting GCA:", axiomId, ancestorIri ? `(ancestor: ${ancestorIri})` : '');
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       // GCAs are stored as SubClassOf axioms with blank node subjects
       // Delete the axiom by its blank node ID
-      await ontologyMutationService.deleteAxiom(projectId, axiomId);
+      await ontologyMutationService.deleteAxiom(projectId, axiomId, ancestorIri);
       await new Promise((resolve) => setTimeout(resolve, 500));
       await loadClassDetails();
     } catch (error) {
       console.error("[ClassEditor] Failed to delete GCA:", error);
-      alert(`Failed to delete general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Delete Failed", `Failed to delete general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
     }
   };
 
-  const handleGCAConfirm = async (expression: string) => {
-    console.log("[ClassEditor] GCA confirm:", { expression, editing: editingGCAId });
+  const handleGCAConfirm = async (subExpr: string, superExpr: string) => {
+    if (isSavingAxiom) return;
+    console.log("[ClassEditor] GCA confirm:", { subExpr, superExpr, editing: editingGCAId });
+    setIsSavingAxiom(true);
+    isSavingAxiomRef.current = true;
     try {
       if (editingGCAId) {
-        // Edit existing GCA - delete old and add new
         await ontologyMutationService.deleteAxiom(projectId, editingGCAId);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      // Add the new GCA - the expression should be in format "AnonymousExpression SubClassOf ClassName"
-      // For now, we'll add it as a SubClassOf axiom mentioning this class
-      await ontologyMutationService.addAxiom(projectId, item.id, "GeneralClassAxiom", expression);
+      const superIri = findClassIriByLabelOrIri(superExpr, classHierarchy) || superExpr;
+      const parsedSub = parseManchesterExpression(subExpr);
+      if (parsedSub?.expressionType === "intersection") {
+        await ontologyMutationService.addGCAIntersection(projectId, superIri, parsedSub.iris);
+      } else if (parsedSub?.expressionType === "union") {
+        await ontologyMutationService.addGCAUnion(projectId, superIri, parsedSub.iris);
+      } else {
+        await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/expression/add-gca`, {
+          subClassExpression: subExpr.trim(),
+          superClassExpression: superIri,
+        });
+      }
 
       await new Promise((resolve) => setTimeout(resolve, 500));
       await loadClassDetails();
     } catch (error) {
       console.error("[ClassEditor] Failed to save GCA:", error);
-      alert(`Failed to save general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Save Failed", `Failed to save general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setIsSavingAxiom(false);
+      isSavingAxiomRef.current = false;
       setIsGCAEditorOpen(false);
       setEditingGCAId(undefined);
     }
   };
 
   const handleInstancesConfirm = async (selectedIndividuals: Individual[]) => {
+    if (isSavingAxiom) return;
     console.log("[ClassEditor] handleInstancesConfirm called:", {
       selectedCount: selectedIndividuals.length,
       classIri: item.id,
       isEditing: !!editingInstanceId,
     });
-    // This handles adding existing individuals as instances of this class
+    setIsSavingAxiom(true);
     try {
-      // If editing, remove the old instance first
       if (editingInstanceId) {
-        console.log("[ClassEditor] Editing instance - removing old:", editingInstanceId);
         await ontologyMutationService.removeClassAssertion(projectId, editingInstanceId, item.id);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      // Add class assertions for selected individuals
       for (const individual of selectedIndividuals) {
-        // Check if this individual is already an instance of this class
         if (!classInstances.some((i) => i.id === individual.id)) {
-          // Add class assertion for this existing individual (not creating a new one)
-          console.log("[ClassEditor] Adding class assertion:", { individualIri: individual.id, classIri: item.id });
           await ontologyMutationService.addClassAssertion(projectId, individual.id, item.id);
-          console.log("[ClassEditor] Class assertion added successfully");
         }
       }
 
-      // Small delay to allow GraphDB to process the mutations
-      console.log("[ClassEditor] Waiting for GraphDB to process...");
       await new Promise((resolve) => setTimeout(resolve, 500));
-      console.log("[ClassEditor] Reloading instances...");
       await loadInstances();
-      console.log("[ClassEditor] Instances reloaded");
 
-      if (onRefreshIndividuals) {
-        onRefreshIndividuals();
-      }
+      if (onRefreshIndividuals) onRefreshIndividuals();
     } catch (error) {
       console.error("[ClassEditor] Failed to add instances:", error);
-      alert(`Failed to add instances: ${error instanceof Error ? error.message : "Unknown error"}`);
+      notificationService.error("Add Failed", `Failed to add instances: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setIsSavingAxiom(false);
       setIsInstancesOpen(false);
       setEditingInstanceId(undefined);
     }
   };
 
   const annotationCount = Object.keys(item.annotations || {}).length;
-  const displayAnnotations = loadingDetails ? {} : item.annotations || {};
+  const displayAnnotations = item.annotations || {};
+
+  const editingGCADefinition = editingGCAId
+    ? (classDetails?.generalClassAxioms?.find((a: Axiom) => a.id === editingGCAId)?.definition ?? '')
+    : '';
+  const gcaSubClassOfParts = editingGCADefinition.match(/^(.+?)\s+SubClassOf\s+(.+)$/i);
+  const gcaInitialSubClass = gcaSubClassOfParts ? gcaSubClassOfParts[1] : editingGCADefinition;
+  const gcaInitialSuperClass = gcaSubClassOfParts ? gcaSubClassOfParts[2] : (editingGCAId ? '' : item.label);
+  const gcaAvailableClasses = [...allClassesLookup.entries()].map(([label, id]) => ({ id, label }));
 
   return (
     <div className="flex flex-col h-full bg-white">
-      {loadingDetails && (
-        <div className="sticky top-0 left-0 right-0 bg-blue-50 border-b border-blue-200 text-xs text-blue-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm">
+      {loadingAnnotations && (
+        <div className="sticky top-0 left-0 right-0 bg-blue-50 border-b border-blue-200 text-xs text-blue-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm pointer-events-none">
           <div className="animate-spin mr-2 h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-          Loading <span className="font-semibold mx-1">{item.label || "class"}</span> details…
+          Loading annotations for <span className="font-semibold mx-1">{item.label || "class"}</span>…
+        </div>
+      )}
+      {loadingDetails && (
+        <div className="sticky top-0 left-0 right-0 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm pointer-events-none">
+          <div className="animate-spin mr-2 h-3 w-3 border-2 border-amber-600 border-t-transparent rounded-full"></div>
+          Loading description for <span className="font-semibold mx-1">{item.label || "class"}</span>…
         </div>
       )}
 
@@ -1863,6 +2045,7 @@ const ClassEditor: React.FC<{
           <Edit3 size={16} />
         </button>
       </div>
+      <CollaboratorPresenceBar entityId={item.id} />
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 bg-gray-50">
@@ -1888,7 +2071,11 @@ const ClassEditor: React.FC<{
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
-        {activeTab === "usage" && <UsageTab classIri={item.id} projectId={projectId} label={item.label} />}
+        {/* UsageTab is always mounted so its loaded/usages state survives tab switches.
+            Conditional rendering would unmount it on every switch, causing the button to reappear. */}
+        <div className={activeTab !== "usage" ? "hidden" : ""}>
+          <UsageTab classIri={item.id} projectId={projectId} label={item.label} />
+        </div>
 
         {activeTab === "annotations" && (
           <div className="space-y-0">
@@ -1896,9 +2083,9 @@ const ClassEditor: React.FC<{
             <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5 flex items-center justify-between">
               <span className="text-xs font-medium text-stone-700">Annotations: {item.label}</span>
               <button
-                onClick={onAddAnnotation}
+                onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation}
                 className="p-1 hover:bg-stone-200 rounded text-stone-500 hover:text-stone-700"
-                title="Add annotation"
+                title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}
               >
                 <Plus size={14} />
               </button>
@@ -1909,6 +2096,8 @@ const ClassEditor: React.FC<{
                 annotations={displayAnnotations}
                 onDelete={onDeleteAnnotation}
                 onEdit={onEditAnnotation}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
               />
             </div>
           </div>
@@ -1916,15 +2105,82 @@ const ClassEditor: React.FC<{
 
         {activeTab === "description" && (
           <div className="space-y-0">
-            {/* Description Panel Header - Clean minimal style */}
             <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5">
               <span className="text-xs font-medium text-stone-700">Description: {item.label}</span>
             </div>
-            {/* Description Content */}
-            <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-4">
+
+            {!axiomsLoaded && !loadingDetails && (
+              <div className="flex flex-col items-center justify-center min-h-[220px] py-10 px-6 text-center bg-white border border-t-0 border-gray-200 rounded-b-sm">
+                {descriptionTimedOut ? (
+                  <>
+                    <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 max-w-sm">
+                      Description load timed out — the server is under load or the ontology is very large.
+                      Switch to <strong>Asserted</strong> mode for faster results, or try again.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void loadDescription()}
+                      data-testid="load-description-btn"
+                      className="px-4 py-2 text-sm rounded bg-amber-600 text-white hover:bg-amber-700 shadow-sm"
+                    >
+                      Retry
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-600 mb-1">
+                      Full class description (SubClassOf, EquivalentTo, restrictions, instances)
+                      matches Protégé once loaded.
+                    </p>
+                    <p className="text-xs text-gray-500 mb-4">
+                      On large ontologies this can take up to a minute — annotations are already available in the other tab.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void loadDescription()}
+                      data-testid="load-description-btn"
+                      className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700 shadow-sm"
+                    >
+                      Load description
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {loadingDetails && !axiomsLoaded && (
+              <div className="flex flex-col items-center justify-center min-h-[160px] py-8 bg-white border border-t-0 border-gray-200 rounded-b-sm text-sm text-gray-500 gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full" />
+                  <span>
+                    Loading axioms and restrictions
+                    {loadingDetailsElapsed > 0 && (
+                      <span className="ml-1 text-gray-400">({loadingDetailsElapsed}s)</span>
+                    )}
+                    …
+                  </span>
+                </div>
+                {loadingDetailsElapsed >= 15 && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 max-w-sm text-center">
+                    Still running — querying a large ontology via SPARQL. First load can take up to 90 seconds; subsequent loads are cached.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {isSavingAxiom && (
+              <div className="flex items-center gap-2 px-4 py-2 text-sm text-purple-700 bg-purple-50 border border-purple-200 rounded">
+                <div className="animate-spin h-3.5 w-3.5 border-2 border-purple-600 border-t-transparent rounded-full flex-shrink-0" />
+                Saving…
+              </div>
+            )}
+
+            {axiomsLoaded && (
+            <div className={`bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-4 transition-opacity duration-150 ${isSavingAxiom ? "opacity-50 pointer-events-none" : ""}`}>
               {/* Equivalent To Section */}
               <AxiomSubsection
                 title="Equivalent To"
+                viewMode={viewMode}
                 axioms={classDetails?.equivalentClassesAxioms || item.equivalentClassesAxioms}
                 inferredAxioms={classDetails?.inferredEquivalentClassesAxioms}
                 onAdd={(def) => handleAddAxiom("EquivalentTo", def)}
@@ -1932,24 +2188,22 @@ const ClassEditor: React.FC<{
                 onDelete={(id) => handleDeleteAxiom("EquivalentTo", id)}
                 onAddClick={() => openEditor("EquivalentTo", "Equivalent Class Expression")}
                 onEditClick={(axiom, initialTab, restrictionData) =>
-                  openEditor(
-                    "EquivalentTo",
-                    "Equivalent Class Expression",
-                    axiom.definition,
-                    axiom.id,
-                    initialTab,
-                    restrictionData,
-                  )
+                  openEditor("EquivalentTo", "Equivalent Class Expression", axiom.definition, axiom.id, initialTab, restrictionData)
                 }
                 properties={properties}
                 dataProperties={dataProperties}
                 themeColor="yellow"
                 onNavigate={handleNavigate}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* SubClass Of Section */}
               <AxiomSubsection
                 title="SubClass Of"
+                viewMode={viewMode}
                 axioms={classDetails?.subClassOfAxioms || item.subClassOfAxioms}
                 inferredAxioms={classDetails?.inferredSubClassOfAxioms}
                 onAdd={(def) => handleAddAxiom("SubClassOf", def)}
@@ -1957,62 +2211,110 @@ const ClassEditor: React.FC<{
                 onDelete={(id) => handleDeleteAxiom("SubClassOf", id)}
                 onAddClick={() => openEditor("SubClassOf", "SubClass Expression")}
                 onEditClick={(axiom, initialTab, restrictionData) =>
-                  openEditor(
-                    "SubClassOf",
-                    "SubClass Expression",
-                    axiom.definition,
-                    axiom.id,
-                    initialTab,
-                    restrictionData,
-                  )
+                  openEditor("SubClassOf", "SubClass Expression", axiom.definition, axiom.id, initialTab, restrictionData)
                 }
                 properties={properties}
                 dataProperties={dataProperties}
                 themeColor="yellow"
                 onNavigate={handleNavigate}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
-              {/* General Class Axioms Section - GCIs mentioning this class */}
+              {/* General Class Axioms Section */}
               <AxiomSubsection
                 title="General class axioms"
                 axioms={classDetails?.generalClassAxioms || []}
-                onAdd={(def) => handleGCAConfirm(def)}
-                onEdit={(id, newDef) => handleGCAConfirm(newDef)}
+                onAdd={(def) => handleGCAConfirm(def, item.id)}
+                onEdit={(id, newDef) => handleGCAConfirm(newDef, item.id)}
                 onDelete={(id) => handleDeleteGCA(id)}
                 onAddClick={handleAddGCA}
                 onEditClick={(axiom) => handleEditGCA(axiom.id)}
                 emptyMessage=""
                 themeColor="yellow"
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
-              {/* SubClass Of (Anonymous Ancestor) - Inherited restrictions */}
+              {/* SubClass Of (Anonymous Ancestor) */}
               <AxiomSubsection
                 title="SubClass Of (Anonymous Ancestor)"
-                axioms={classDetails?.inheritedAnonymousAxioms || []}
+                axioms={classDetails?.anonymousAncestorAxioms || []}
                 onAdd={() => {}}
-                onDelete={() => {}}
+                onDelete={(id) => {
+                  const anc = (classDetails?.anonymousAncestorAxioms || []).find((a: any) => a.id === id);
+                  handleDeleteGCA(id, (anc as any)?.ancestorIri);
+                }}
+                onEditClick={(axiom) => {
+                  const target = axiom.id || '';
+                  if (target.startsWith('http://') || target.startsWith('https://') || target.startsWith('urn:')) {
+                    handleNavigate(target, 'class');
+                    return;
+                  }
+                  const ancestorIri = (axiom as { ancestorIri?: string }).ancestorIri;
+                  const manchester =
+                    (axiom as { manchester?: string }).manchester ||
+                    (axiom.definition && axiom.definition !== 'Anonymous superclass'
+                      ? axiom.definition
+                      : undefined);
+                  if (manchester && ancestorIri) {
+                    openEditor(
+                      'SubClassOf',
+                      'Anonymous Ancestor Expression',
+                      manchester,
+                      target,
+                      'classExpression',
+                      undefined,
+                      ancestorIri,
+                    );
+                  } else if (target.startsWith('_:') || target.includes('genid')) {
+                    handleEditGCA(target);
+                  }
+                }}
+                onNavigate={handleNavigate}
                 themeColor="yellow"
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Instances Section */}
-              <AxiomSubsection
-                title="Instances"
-                axioms={classInstances.map((instance) => ({
-                  id: instance.id,
-                  type: "Instance",
-                  definition: instance.label,
-                }))}
-                onAdd={() => {}}
-                onEdit={(id, newDef) => handleEditInstance(id)}
-                onDelete={(id) => handleDeleteInstance(id)}
-                onAddClick={() => {
-                  setEditingInstanceId(undefined);
-                  setIsInstancesOpen(true);
-                }}
-                onEditClick={(axiom) => handleEditInstance(axiom.id)}
-                emptyMessage=""
-                themeColor="yellow"
-              />
+              <div className="relative">
+                <AxiomSubsection
+                  title="Instances"
+                  viewMode={viewMode}
+                  axioms={classInstances
+                    .filter((instance) => !(instance as { isInferred?: boolean }).isInferred)
+                    .map((instance) => ({
+                      id: instance.id,
+                      type: "Instance",
+                      definition: instance.label,
+                    }))}
+                  inferredAxioms={classInstances
+                    .filter((instance) => (instance as { isInferred?: boolean }).isInferred)
+                    .map((instance) => ({
+                      id: instance.id,
+                      type: "Instance",
+                      definition: instance.label,
+                    }))}
+                  onAdd={() => {}}
+                  onEdit={(id, newDef) => { if (!isSavingAxiom) handleEditInstance(id); }}
+                  onDelete={(id) => { if (!isSavingAxiom) handleDeleteInstance(id); }}
+                  onAddClick={() => { if (!isSavingAxiom) { setEditingInstanceId(undefined); setIsInstancesOpen(true); } }}
+                  onEditClick={(axiom) => { if (!isSavingAxiom) handleEditInstance(axiom.id); }}
+                  emptyMessage=""
+                  themeColor="yellow"
+                  isViewOnly={isViewOnly}
+                  onViewOnlyAction={onViewOnlyAction}
+                  projectId={projectId}
+                  parentEntityIri={item.id}
+                />
+              </div>
 
               {/* Target for Key Section */}
               <AxiomSubsection
@@ -2027,11 +2329,16 @@ const ClassEditor: React.FC<{
                 themeColor="yellow"
                 properties={properties}
                 dataProperties={dataProperties}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Disjoint With Section */}
               <AxiomSubsection
                 title="Disjoint With"
+                viewMode={viewMode}
                 axioms={classDetails?.disjointClassesAxioms || item.disjointClassesAxioms}
                 inferredAxioms={classDetails?.inferredDisjointClassesAxioms}
                 onAdd={(def) => handleAddAxiom("DisjointWith", def)}
@@ -2044,6 +2351,10 @@ const ClassEditor: React.FC<{
                 dataProperties={dataProperties}
                 themeColor="yellow"
                 onNavigate={handleNavigate}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
 
               {/* Disjoint Union Of Section */}
@@ -2059,8 +2370,13 @@ const ClassEditor: React.FC<{
                 themeColor="yellow"
                 properties={properties}
                 dataProperties={dataProperties}
+                isViewOnly={isViewOnly}
+                onViewOnlyAction={onViewOnlyAction}
+                projectId={projectId}
+                parentEntityIri={item.id}
               />
             </div>
+            )}
           </div>
         )}
       </div>
@@ -2072,14 +2388,19 @@ const ClassEditor: React.FC<{
           setIsEditorOpen(false);
           setEditorExistingValue(undefined);
           setEditorExistingId(undefined);
+          setEditorInitialClassIri(undefined);
           setEditorInitialTab(undefined);
           setEditorInitialRestrictionData(undefined);
+          setEditorAllowedTabs(undefined);
         }}
         onConfirm={handleEditorConfirm}
+        axiomType={editorType === 'EquivalentTo' ? 'EquivalentTo' : editorType === 'DisjointWith' ? 'DisjointWith' : 'SubClassOf'}
         title={editorTitle}
         initialValue={editorExistingValue}
+        initialClassIri={editorInitialClassIri}
         initialTab={editorInitialTab}
         initialRestrictionData={editorInitialRestrictionData}
+        allowedTabs={editorAllowedTabs}
         classHierarchy={classHierarchy}
         objectProperties={properties}
         dataProperties={dataProperties}
@@ -2182,33 +2503,19 @@ const ClassEditor: React.FC<{
         onDeleteIndividual={onDeleteIndividual}
       />
 
-      {/* General Class Axiom (GCA) Editor Dialog - Simple text area like Protégé */}
-      <ClassExpressionDialog
+      {/* General Class Axiom (GCA) Editor Dialog - two separate fields */}
+      <GCIEditorDialog
         isOpen={isGCAEditorOpen}
         onClose={() => {
           setIsGCAEditorOpen(false);
           setEditingGCAId(undefined);
         }}
-        onConfirm={handleGCAConfirm}
-        title={editingGCAId ? "Edit General Class Axiom" : "Add General Class Axiom"}
-        classHierarchy={classHierarchy}
-        expandedNodes={expandedNodes}
-        onToggleNode={onToggleNode}
-        objectProperties={properties || []}
-        dataProperties={dataProperties || []}
-        objectPropertiesTree={objectPropertyHierarchy}
-        dataPropertiesTree={dataPropertyHierarchy}
+        onSave={handleGCAConfirm}
+        editMode={!!editingGCAId}
         projectId={projectId}
-        onAddClass={onAddClass}
-        onDeleteClass={onDeleteClass}
-        onRefreshClasses={onRefreshClasses}
-        initialTab="classExpression"
-        allowedTabs={["classExpression"]}
-        initialValue={
-          editingGCAId
-            ? classDetails?.generalClassAxioms?.find((a: Axiom) => a.id === editingGCAId)?.definition
-            : undefined
-        }
+        availableClasses={gcaAvailableClasses}
+        initialSubClass={gcaInitialSubClass}
+        initialSuperClass={gcaInitialSuperClass}
       />
 
       {/* IRI Editor Dialog */}

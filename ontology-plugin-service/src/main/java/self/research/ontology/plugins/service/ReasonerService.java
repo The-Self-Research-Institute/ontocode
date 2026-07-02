@@ -1,11 +1,12 @@
 package self.research.ontology.plugins.service;
 
+import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
 import openllet.owlapi.OpenlletReasonerFactory;
 import org.semanticweb.HermiT.ReasonerFactory;
-// import org.semanticweb.elk.owlapi.ElkReasonerFactory; // Temporarily disabled
+import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import uk.ac.manchester.cs.jfact.JFactFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,10 +18,18 @@ import java.util.stream.Collectors;
  * Service for ontology reasoning operations.
  * Supports multiple reasoners: HermiT, Pellet (Openllet), FaCT++, ELK, and Structural.
  */
-@Service
+@Service("pluginReasonerService")
 public class ReasonerService {
 
     private static final Logger log = LoggerFactory.getLogger(ReasonerService.class);
+
+    // Shared data factory — independent of any per-ontology OWLOntologyManager.
+    // OWLAPI 5.x OWLOntologyImpl holds its manager via a WeakReference; if that
+    // manager is collected, ontology.getOWLOntologyManager() returns null. Using
+    // a separate shared factory ensures basic axiom/entity creation never fails
+    // due to a collected manager.
+    private static final OWLDataFactory DATA_FACTORY =
+            OWLManager.createOWLOntologyManager().getOWLDataFactory();
 
     private final Map<String, OWLReasoner> reasonerCache = new HashMap<>();
     
@@ -70,20 +79,13 @@ public class ReasonerService {
                     log.info("Using FaCT++ (JFact) reasoner");
                     return new JFactFactory().createReasoner(ontology, config);
                     
-                // Temporarily disabled ELK reasoner due to compatibility issues
-                // case ELK:
-                //     // ELK - Fast and scalable EL reasoner
-                //     // Note: ELK only supports EL profile of OWL, not full OWL 2 DL
-                //     log.info("Using ELK (Consequence-based) reasoner - Note: EL profile only");
-                //     try {
-                //         OWLReasoner elkReasoner = new ElkReasonerFactory().createReasoner(ontology, config);
-                //         log.info("ELK reasoner created successfully");
-                //         return elkReasoner;
-                //     } catch (Exception e) {
-                //         log.error("Failed to create ELK reasoner - may be due to unsupported OWL constructs", e);
-                //         throw e; // Will be caught by outer try-catch and fallback to Structural
-                //     }
-                    
+                case ELK:
+                    // ELK - Fast EL++ reasoner; best choice for large biomedical ontologies
+                    // (MONDO, GO, HP, etc.) that conform to the OWL EL profile.
+                    // Note: ELK only supports EL profile of OWL 2, not full OWL 2 DL.
+                    log.info("Using ELK (Consequence-based EL++) reasoner");
+                    return new ElkReasonerFactory().createReasoner(ontology, config);
+
                 case STRUCTURAL:
                 default:
                     log.info("Using Structural reasoner (basic)");
@@ -126,10 +128,9 @@ public class ReasonerService {
             
             Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
             Set<OWLClass> unsatisfiable = bottomNode.getEntities();
-            
+
             // Remove owl:Nothing from results
-            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
-            unsatisfiable.remove(df.getOWLNothing());
+            unsatisfiable.remove(DATA_FACTORY.getOWLNothing());
             
             log.info("Found {} unsatisfiable classes", unsatisfiable.size());
             return unsatisfiable;
@@ -166,36 +167,32 @@ public class ReasonerService {
                     // Some ELK versions might have issues, continue anyway
                 }
             } else {
-                // Full precomputation for other reasoners
-                reasoner.precomputeInferences(
-                    InferenceType.CLASS_HIERARCHY,
-                    InferenceType.OBJECT_PROPERTY_HIERARCHY,
-                    InferenceType.DATA_PROPERTY_HIERARCHY
-                );
+                // Precompute each inference type separately so a failure in property hierarchy
+                // (e.g. NPE on malformed OWLObjectPropertyRangeAxiom) doesn't abort class classification.
+                try {
+                    reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
+                } catch (Exception e) {
+                    log.warn("{}: CLASS_HIERARCHY precomputation failed: {}", type.getDisplayName(), e.getMessage());
+                }
+                try {
+                    reasoner.precomputeInferences(InferenceType.OBJECT_PROPERTY_HIERARCHY);
+                } catch (Exception e) {
+                    log.warn("{}: OBJECT_PROPERTY_HIERARCHY precomputation failed (will use asserted): {}", type.getDisplayName(), e.getMessage());
+                }
+                try {
+                    reasoner.precomputeInferences(InferenceType.DATA_PROPERTY_HIERARCHY);
+                } catch (Exception e) {
+                    log.warn("{}: DATA_PROPERTY_HIERARCHY precomputation failed (will use asserted): {}", type.getDisplayName(), e.getMessage());
+                }
             }
             
             long duration = System.currentTimeMillis() - startTime;
             log.info("Classification completed in {} ms", duration);
         } catch (Exception e) {
-            log.error("Error during classification with {}", type.getDisplayName(), e);
-            // Check if it's due to inconsistency
-            try {
-                if (!reasoner.isConsistent()) {
-                    log.warn("Classification failed due to inconsistent ontology");
-                    // Don't throw exception - let getClassificationResults handle it
-                    return;
-                }
-            } catch (Exception consistencyCheckError) {
-                log.error("Could not check consistency", consistencyCheckError);
-            }
-            
-            // For ELK, gracefully degrade instead of failing completely
-            if (type == ReasonerType.ELK) {
-                log.warn("ELK classification failed, but continuing with available inferences");
-                return; // Don't throw - let caller work with partial results
-            }
-            
-            throw new RuntimeException("Classification failed: " + e.getMessage(), e);
+            // Catches failures from isConsistent() or any other unexpected path.
+            // Individual precompute failures are already handled inline above.
+            log.warn("Unexpected error during classification setup with {}: {} — continuing with partial results",
+                type.getDisplayName(), e.getMessage());
         }
     }
 
@@ -207,8 +204,7 @@ public class ReasonerService {
         Map<String, Object> results = new HashMap<>();
         
         try {
-            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
-            OWLClass owlThing = df.getOWLThing();
+            OWLClass owlThing = DATA_FACTORY.getOWLThing();
             
             // Check consistency first
             boolean isConsistent = true;
@@ -278,7 +274,7 @@ public class ReasonerService {
                 try {
                     Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
                     Set<OWLClass> unsatisfiable = new HashSet<>(bottomNode.getEntities());
-                    unsatisfiable.remove(df.getOWLNothing());
+                    unsatisfiable.remove(DATA_FACTORY.getOWLNothing());
                     
                     unsatisfiableList = unsatisfiable.stream()
                         .map(cls -> Map.of(
@@ -314,7 +310,7 @@ public class ReasonerService {
                 }
             } else {
                 try {
-                    OWLObjectProperty topObjectProp = df.getOWLTopObjectProperty();
+                    OWLObjectProperty topObjectProp = DATA_FACTORY.getOWLTopObjectProperty();
                     Set<OWLObjectProperty> processedObjProps = new HashSet<>();
                     buildObjectPropertyHierarchy(reasoner, ontology, topObjectProp, objectPropertyHierarchy, processedObjProps, 0);
                     
@@ -365,7 +361,7 @@ public class ReasonerService {
                 }
             } else {
                 try {
-                    OWLDataProperty topDataProp = df.getOWLTopDataProperty();
+                    OWLDataProperty topDataProp = DATA_FACTORY.getOWLTopDataProperty();
                     Set<OWLDataProperty> processedDataProps = new HashSet<>();
                     buildDataPropertyHierarchy(reasoner, ontology, topDataProp, dataPropertyHierarchy, processedDataProps, 0);
                     
@@ -749,20 +745,14 @@ public class ReasonerService {
                 Set<OWLClass> superClasses = getInferredSuperClasses(ontology, owlClass, type);
                 for (OWLClass superClass : superClasses) {
                     if (!superClass.isOWLThing()) {
-                        OWLAxiom axiom = ontology.getOWLOntologyManager()
-                            .getOWLDataFactory()
-                            .getOWLSubClassOfAxiom(owlClass, superClass);
-                        inferredAxioms.add(axiom);
+                        inferredAxioms.add(DATA_FACTORY.getOWLSubClassOfAxiom(owlClass, superClass));
                     }
                 }
-                
+
                 // Inferred instance axioms
                 Set<OWLNamedIndividual> instances = getInferredInstances(ontology, owlClass, type);
                 for (OWLNamedIndividual individual : instances) {
-                    OWLAxiom axiom = ontology.getOWLOntologyManager()
-                        .getOWLDataFactory()
-                        .getOWLClassAssertionAxiom(owlClass, individual);
-                    inferredAxioms.add(axiom);
+                    inferredAxioms.add(DATA_FACTORY.getOWLClassAssertionAxiom(owlClass, individual));
                 }
             }
             
@@ -856,7 +846,7 @@ public class ReasonerService {
             try {
                 Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
                 Set<OWLClass> unsatisfiable = new HashSet<>(bottomNode.getEntities());
-                unsatisfiable.remove(ontology.getOWLOntologyManager().getOWLDataFactory().getOWLNothing());
+                unsatisfiable.remove(DATA_FACTORY.getOWLNothing());
                 
                 if (!unsatisfiable.isEmpty()) {
                     Map<String, Object> cause = new HashMap<>();

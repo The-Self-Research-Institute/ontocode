@@ -73,6 +73,10 @@ function extractExtension(fileName: string): string {
 }
 
 function isSupportedOntologyExtension(fileName: string): boolean {
+    return /\.(owl|rdf|ttl|n3|nt|jsonld|zip)$/i.test(fileName);
+}
+
+function isSupportedNewOntologyExtension(fileName: string): boolean {
     return /\.(owl|rdf|ttl|n3|nt|jsonld)$/i.test(fileName);
 }
 
@@ -208,10 +212,10 @@ type WebviewMessage =
     | { type: 'uploadProgress'; projectId: string; percent: number; loaded: number; total: number; message: string }
     | { type: 'showSubscriptionPlans' }
     // Citation messages
-    | { type: 'zoteroLibraryData'; items: any[]; hasMore?: boolean }
-    | { type: 'zoteroLibraryDataAppend'; items: any[]; hasMore?: boolean }
-    | { type: 'zoteroLibraryDataComplete' }
-    | { type: 'zoteroLibraryError'; error: string }
+    | { type: 'zoteroLibraryData'; items: any[]; hasMore?: boolean; totalResults?: number; loadedSoFar?: number; librarySessionId?: number }
+    | { type: 'zoteroLibraryDataAppend'; items: any[]; hasMore?: boolean; totalResults?: number; loadedSoFar?: number; librarySessionId?: number }
+    | { type: 'zoteroLibraryDataComplete'; librarySessionId?: number }
+    | { type: 'zoteroLibraryError'; error: string; librarySessionId?: number }
     | { type: 'citationFormatted'; citation: string; metadata: any; projectId: string }
     | { type: 'uploadOntologyContentDone'; success: boolean; projectId: string }; // Navigate to subscription plans page
 
@@ -241,11 +245,13 @@ type ExtensionMessage =
     | { type: 'cursorMoved'; nodeId: string; nodeName: string } // User moved cursor to a node
     | { type: 'broadcastCursor'; projectId: string; userId: string; userName: string; position: { x: number; y: number }; timestamp: number } // User cursor position
     | { type: 'importLocalFile'; filePath: string; currentProjectId: string } // Import local OWL file
-    | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string; skipDuplicateCheck?: boolean; importMode?: string; partition?: string } // Upload ontology from webview (admin flow)
+    | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string; workspaceId?: string; skipDuplicateCheck?: boolean; importMode?: string; partition?: string } // Upload ontology from webview (admin flow)
     | { type: 'uploadFileToProject'; projectId: string; fileName: string; fileContent: string; fileSize: number }
     | { type: 'showSubscriptionPlans' } // Request to show subscription plans page
     | { type: 'setApiBaseUrl'; url: string; deploymentType?: 'self-hosted' | 'cloud' }
-    | { type: 'requestZoteroLibrary' } // Request Zotero library
+    | { type: 'clearLastProjectState' }
+    | { type: 'requestZoteroLibrary'; searchQuery?: string } // Zotero quick search (`q`), optional — empty = whole library
+    | { type: 'requestZoteroLibraryMore' } // Request next Zotero page (infinite scroll)
     | { type: 'insertCitation'; citationKey: string; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert citation from Zotero
     | { type: 'insertManualCitation'; citation: any; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert manual citation
     | { type: 'insertCitationToGraphDB'; citation: string; format: string; projectId: string; metadata: any } // Insert citation directly to GraphDB
@@ -397,7 +403,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     canSelectMany: false,
                     openLabel: 'Open Ontology File',
                     filters: {
-                        'Ontology Files': ['owl', 'ttl', 'rdf'],
+                        'Ontology Files': ['owl', 'ttl', 'rdf', 'n3', 'nt', 'jsonld', 'zip'],
                         'All Files': ['*']
                     }
                 });
@@ -411,7 +417,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     console.log('[OntoCode] User cancelled file selection');
                     // Only show message in desktop mode - web users understand file picker cancellation
                     if (!isWeb) {
-                        vscode.window.showInformationMessage('Please select an ontology file (.owl, .ttl, or .rdf) to edit.');
+                        vscode.window.showInformationMessage('Please select an ontology file or package (.owl, .ttl, .rdf, .zip) to edit.');
                     }
                 }
             }
@@ -671,6 +677,19 @@ class OntoCodePanel {
     public _pendingInvitationToken: string | null = null; // Track pending invitation token
     private _pendingDuplicatePrompts = new Map<string, { resolve: (result: DuplicatePromptResult | null) => void; timeout: ReturnType<typeof setTimeout> }>();
 
+    // Zotero infinite-scroll paging state (per webview session)
+    private _zoteroPaging: {
+        start: number;
+        totalResults: number;
+        pageSize: number;
+        loading: boolean;
+        done: boolean;
+        searchQuery?: string;
+        sessionId: number;
+    } | null = null;
+    /** Monotonic session id per library/search request — webview ignores stale paging events */
+    private _zoteroLibrarySessionSeq = 0;
+
     // Collaborative editing
     private collaborationManager: ICollaborationManager | null = null;
     private editCapture: EditCapture;
@@ -780,6 +799,9 @@ class OntoCodePanel {
                         break;
                     case 'error':
                         vscode.window.showErrorMessage(message.value);
+                        break;
+                    case 'clearLastProjectState':
+                        this._lastProjectId = null;
                         break;
                     case 'saveAuthToken':
                         if (message.token) {
@@ -933,9 +955,14 @@ class OntoCodePanel {
                             console.error('[OntoCode] ❌ Failed to save deployment type:', err);
                         });
                         break;
-                    case 'requestZoteroLibrary':
-                        // Handle request for Zotero library from webview
-                        await this.handleRequestZoteroLibrary();
+                    case 'requestZoteroLibrary': {
+                        const raw = (message as { searchQuery?: string }).searchQuery?.trim();
+                        await this.handleRequestZoteroLibrary(raw || undefined);
+                        break;
+                    }
+                    case 'requestZoteroLibraryMore':
+                        // Load the next page of Zotero citations (infinite scroll)
+                        await this.handleRequestZoteroLibraryMore();
                         break;
                     case 'insertCitation':
                         // Handle citation insertion from Zotero
@@ -1091,7 +1118,7 @@ class OntoCodePanel {
             canSelectMany: false,
             openLabel: 'Open Ontology File',
             filters: {
-                'Ontology Files': ['owl', 'rdf', 'ttl', 'n3', 'nt', 'jsonld'],
+                'Ontology Files': ['owl', 'rdf', 'ttl', 'n3', 'nt', 'jsonld', 'zip'],
                 'All Files': ['*']
             }
         });
@@ -1306,7 +1333,7 @@ class OntoCodePanel {
         console.log(`[OntoCode] 📝 Creating new file with name: ${fileName} (Web mode: ${isWeb}, Project ID: ${projectId || 'none'})`);
 
         // Validate filename
-        if (!fileName || !isSupportedOntologyExtension(fileName)) {
+        if (!fileName || !isSupportedNewOntologyExtension(fileName)) {
             console.error('[OntoCode] ❌ Invalid filename provided:', fileName);
             vscode.window.showErrorMessage('Invalid ontology filename. Must have a valid extension (.owl, .rdf, .ttl, .n3, .nt, .jsonld)');
             return;
@@ -1435,7 +1462,7 @@ class OntoCodePanel {
             validateInput: (value) => {
                 const trimmed = value.trim();
                 if (!trimmed) return 'File name is required.';
-                if (!isSupportedOntologyExtension(trimmed)) {
+                if (!isSupportedNewOntologyExtension(trimmed)) {
                     return 'File must have a valid ontology extension (.owl, .rdf, .ttl, .n3, .nt, .jsonld)';
                 }
                 return null;
@@ -1576,6 +1603,10 @@ class OntoCodePanel {
         const isPublicEndpoint =
             url.includes('/api/auth/login') ||
             url.includes('/api/auth/signup') ||
+            url.includes('/api/auth/verify') ||
+            url.includes('/api/auth/resend-verification') ||
+            url.includes('/api/auth/forgot-password') ||
+            url.includes('/api/auth/reset-password') ||
             url.includes('/api/invitations/details/') ||
             url.includes('/api/invitations/request-resend/');
 
@@ -1603,8 +1634,40 @@ class OntoCodePanel {
             const fullUrl = `${GATEWAY_URL}${url}`;
             console.log(`[Proxy] ${type.replace('api', '').toUpperCase()}: ${fullUrl}`, isPublicEndpoint ? '(public)' : '(authenticated)');
 
-            // Set a timeout for requests (600 seconds for large file uploads)
-            const axiosConfig: any = { headers, timeout: 600_000 };
+            // Set a timeout for requests (10 minutes default; 2 hours for ontology uploads up to 1GB)
+            const requestTimeoutMs = url.includes('/api/ontology/upload/') || /\/api\/projects\/[^/]+\/files/.test(url)
+                ? 7_200_000
+                : 600_000;
+            const axiosConfig: any = { headers, timeout: requestTimeoutMs };
+
+            const extractUploadProjectId = (requestUrl: string): string | undefined => {
+                const uploadMatch = requestUrl.match(/\/api\/ontology\/upload\/([^/?]+)/);
+                if (uploadMatch) return decodeURIComponent(uploadMatch[1]);
+                const filesMatch = requestUrl.match(/\/api\/projects\/([^/]+)\/files/);
+                if (filesMatch) return decodeURIComponent(filesMatch[1]);
+                return undefined;
+            };
+
+            const isUploadUrl = url.includes('/api/ontology/upload/') || /\/api\/projects\/[^/]+\/files/.test(url);
+            const uploadProjectId = isUploadUrl ? extractUploadProjectId(url) : undefined;
+            if (uploadProjectId && type === 'apiPost') {
+                axiosConfig.onUploadProgress = (progressEvent: any) => {
+                    const percentCompleted = progressEvent.total
+                        ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
+                        : 0;
+                    const statusMsg = percentCompleted >= 100
+                        ? 'Upload complete. Processing on server...'
+                        : `Uploading: ${percentCompleted}%`;
+                    this.postMessage({
+                        type: 'uploadProgress',
+                        projectId: uploadProjectId,
+                        percent: percentCompleted,
+                        loaded: progressEvent.loaded,
+                        total: progressEvent.total ?? 0,
+                        message: statusMsg,
+                    });
+                };
+            }
 
             // Detect multipart upload requests reconstructed from webview FormData
             const body = (message as any).body;
@@ -1649,12 +1712,6 @@ class OntoCodePanel {
                     break;
                 case 'apiPatch':
                     response = await axios.patch(fullUrl, (message as any).body, axiosConfig);
-                    break;
-                case 'apiPut':
-                    response = await axios.put(fullUrl, message.body, axiosConfig);
-                    break;
-                case 'apiPatch':
-                    response = await axios.patch(fullUrl, message.body, axiosConfig);
                     break;
                 case 'apiDelete':
                     response = await axios.delete(fullUrl, { ...axiosConfig, params: (message as any).params });
@@ -1939,7 +1996,7 @@ class OntoCodePanel {
         // Use filename (without extension) as projectId unless explicitly preserved
         // (e.g., admin flow passes a stable ID from the webview)
         if (!preserveProjectId) {
-            projectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
+            projectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld|zip)$/i, '');
         }
         console.log(`[OntoCode] Using projectId: ${projectId} (preserved: ${!!preserveProjectId})`);
 
@@ -2421,6 +2478,8 @@ class OntoCodePanel {
             };
 
             // 4. Upload to gateway endpoint
+            // workspaceId MUST be on the query string: FreeViewOnlyInterceptor runs before multipart
+            // is parsed, so request.getParameter("workspaceId") only sees URL params, not FormData.
             const query = new URLSearchParams();
             if (importMode) {
                 query.set('importMode', importMode);
@@ -2428,8 +2487,11 @@ class OntoCodePanel {
             if (partition) {
                 query.set('partition', partition);
             }
+            if (workspaceId) {
+                query.set('workspaceId', workspaceId);
+            }
             const queryString = query.toString();
-            const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${projectId}${queryString ? `?${queryString}` : ''}`;
+            const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${encodeURIComponent(projectId)}${queryString ? `?${queryString}` : ''}`;
             const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
 
             console.log(`[OntoCode] Uploading to: ${uploadUrl}`);
@@ -2440,7 +2502,7 @@ class OntoCodePanel {
             // Base: 10 min, add 1 min per 10MB for GraphDB processing
             const baseTimeout = 10 * 60 * 1000; // 10 minutes
             const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000; // 1 min per 10MB
-            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 60 * 60 * 1000); // Max 60 minutes
+            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 7_200_000); // Max 2 hours for uploads up to 1GB
 
             console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes (includes GraphDB processing time)`);
 
@@ -2998,7 +3060,7 @@ class OntoCodePanel {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    timeout: 300000, // 5 minute timeout for large files
+                    timeout: 7_200_000, // 2 hours for large ontology uploads (up to 1GB)
                     onUploadProgress: (progressEvent) => {
                         if (progressEvent.total) {
                             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -3352,7 +3414,7 @@ class OntoCodePanel {
             // Dynamic timeout based on file size
             const baseTimeout = 10 * 60 * 1000;
             const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000;
-            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 60 * 60 * 1000);
+            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 7_200_000);
 
             console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes`);
 
@@ -3674,7 +3736,12 @@ class OntoCodePanel {
             console.log('[OntoCode] ========================================');
 
             // Create collaboration manager (connects to OWL Editor WebSocket)
-            this.collaborationManager = new CollaborationManager(OWL_EDITOR_URL, userId, username);
+            this.collaborationManager = new CollaborationManager(
+                OWL_EDITOR_URL,
+                userId,
+                username,
+                async () => (await (this._context as any).secrets.get(TOKEN_KEY)) ?? null,
+            );
             this.editCapture.setCollaborationManager(this.collaborationManager);
 
             // Set up event handlers
@@ -3837,11 +3904,15 @@ class OntoCodePanel {
     }
 
     /**
-     * Handle request for Zotero library from webview
+     * Handle request for Zotero library from webview.
+     * @param searchQuery When set, Zotero `/items?q=` quick search scope; otherwise paginate entire library.
      */
-    private async handleRequestZoteroLibrary(): Promise<void> {
+    private async handleRequestZoteroLibrary(searchQuery?: string): Promise<void> {
+        const trimmed = typeof searchQuery === 'string' && searchQuery.trim() ? searchQuery.trim() : undefined;
+        const sid = ++this._zoteroLibrarySessionSeq;
+
         try {
-            console.log('[OntoCode] Handling Zotero library request');
+            console.log('[OntoCode] Handling Zotero library request', trimmed ? `(q="${trimmed}")` : '(full library)');
 
             // Check if Zotero is configured
             if (!zoteroApiService.isConfigured()) {
@@ -3855,49 +3926,126 @@ class OntoCodePanel {
                     console.log('[OntoCode] User cancelled Zotero configuration');
                     this.postMessage({
                         type: 'zoteroLibraryError',
-                        error: 'Zotero configuration cancelled. Please configure Zotero to use citations.'
+                        error: 'Zotero configuration cancelled. Please configure Zotero to use citations.',
+                        librarySessionId: sid
                     });
                     return;
                 }
             }
 
-            const batchSize = 100;
-            let start = 0;
-            let batch: any[] = [];
+            // Reset paging session and fetch only the first page.
+            const PAGE_SIZE = 100;
+            this._zoteroPaging = {
+                start: 0,
+                totalResults: Infinity,
+                pageSize: PAGE_SIZE,
+                loading: true,
+                done: false,
+                sessionId: sid,
+                ...(trimmed ? { searchQuery: trimmed } : {})
+            };
 
-            // Load an initial page quickly so the UI can render immediately.
-            batch = await zoteroApiService.fetchLibrary(batchSize, start, true);
+            const { items, totalResults } = await zoteroApiService.fetchLibraryPage(
+                0,
+                PAGE_SIZE,
+                trimmed ? { q: trimmed } : undefined
+            );
+            this._zoteroPaging.totalResults = totalResults;
+            this._zoteroPaging.start = items?.length || 0;
+            this._zoteroPaging.loading = false;
+            this._zoteroPaging.done = !items || items.length === 0 || this._zoteroPaging.start >= totalResults;
+
+            const knownTotal =
+                Number.isFinite(totalResults) && totalResults >= 0 && totalResults < Number.MAX_SAFE_INTEGER
+                    ? Math.floor(totalResults)
+                    : undefined;
+
             this.postMessage({
                 type: 'zoteroLibraryData',
-                items: batch,
-                hasMore: batch.length === batchSize
+                items: items || [],
+                hasMore: !this._zoteroPaging.done,
+                librarySessionId: sid,
+                ...(knownTotal !== undefined ? { totalResults: knownTotal, loadedSoFar: this._zoteroPaging.start } : {})
             });
 
-            start += batch.length;
-
-            while (batch.length === batchSize) {
-                batch = await zoteroApiService.fetchLibrary(batchSize, start, true);
-                if (!batch || batch.length === 0) {
-                    break;
-                }
-
-                this.postMessage({
-                    type: 'zoteroLibraryDataAppend',
-                    items: batch,
-                    hasMore: batch.length === batchSize
-                });
-
-                start += batch.length;
+            if (this._zoteroPaging.done) {
+                this.postMessage({ type: 'zoteroLibraryDataComplete', librarySessionId: sid });
             }
-
-            this.postMessage({
-                type: 'zoteroLibraryDataComplete'
-            });
         } catch (error) {
             console.error('[OntoCode] Failed to load Zotero library:', error);
             this.postMessage({
                 type: 'zoteroLibraryError',
-                error: error instanceof Error ? error.message : 'Failed to load Zotero library'
+                error: error instanceof Error ? error.message : 'Failed to load Zotero library',
+                librarySessionId: sid
+            });
+        }
+    }
+
+    /**
+     * Fetch the next page of Zotero library items (triggered by webview scroll).
+     */
+    private async handleRequestZoteroLibraryMore(): Promise<void> {
+        try {
+            if (!this._zoteroPaging) {
+                // If the webview asks for more before initial load, just start fresh.
+                await this.handleRequestZoteroLibrary(undefined);
+                return;
+            }
+
+            if (this._zoteroPaging.done || this._zoteroPaging.loading) {
+                return;
+            }
+
+            this._zoteroPaging.loading = true;
+            const start = this._zoteroPaging.start;
+            const pageSize = this._zoteroPaging.pageSize;
+            const pq = this._zoteroPaging.searchQuery?.trim();
+
+            const { items, totalResults } = await zoteroApiService.fetchLibraryPage(
+                start,
+                pageSize,
+                pq ? { q: pq } : undefined
+            );
+            // totalResults can be 0 if header missing; keep the best-known value
+            if (Number.isFinite(totalResults) && totalResults > 0) {
+                this._zoteroPaging.totalResults = totalResults;
+            }
+
+            const got = items?.length || 0;
+            this._zoteroPaging.start = start + got;
+            this._zoteroPaging.loading = false;
+
+            const done = got === 0 || this._zoteroPaging.start >= this._zoteroPaging.totalResults || got < pageSize;
+            this._zoteroPaging.done = done;
+
+            const sidActive = this._zoteroPaging.sessionId;
+
+            if (got > 0) {
+                const pt = this._zoteroPaging;
+                const knownTotal =
+                    pt && Number.isFinite(pt.totalResults) && pt.totalResults < Number.MAX_SAFE_INTEGER
+                        ? Math.floor(pt.totalResults)
+                        : undefined;
+                this.postMessage({
+                    type: 'zoteroLibraryDataAppend',
+                    items,
+                    hasMore: !done,
+                    librarySessionId: sidActive,
+                    ...(knownTotal !== undefined && pt ? { totalResults: knownTotal, loadedSoFar: pt.start } : {})
+                });
+            }
+
+            if (done) {
+                this.postMessage({ type: 'zoteroLibraryDataComplete', librarySessionId: sidActive });
+            }
+        } catch (error) {
+            const sidErr = this._zoteroPaging?.sessionId;
+            if (this._zoteroPaging) this._zoteroPaging.loading = false;
+            console.error('[OntoCode] Failed to load more Zotero items:', error);
+            this.postMessage({
+                type: 'zoteroLibraryError',
+                error: error instanceof Error ? error.message : 'Failed to load more Zotero items',
+                ...(sidErr !== undefined ? { librarySessionId: sidErr } : {})
             });
         }
     }

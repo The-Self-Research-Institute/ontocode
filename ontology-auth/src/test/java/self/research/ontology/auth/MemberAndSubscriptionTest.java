@@ -106,7 +106,7 @@ public class MemberAndSubscriptionTest {
 
         AddMemberRequest request = new AddMemberRequest();
         request.setEmail("newmember@example.com");
-        request.setRole("EDITOR");
+        request.setRole("MEMBER");
 
         mockMvc.perform(post("/api/workspaces/" + testWorkspaceId + "/members")
                 .header("Authorization", "Bearer " + authToken)
@@ -115,7 +115,7 @@ public class MemberAndSubscriptionTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message", containsString("added")))
                 .andExpect(jsonPath("$.member.email").value("newmember@example.com"))
-                .andExpect(jsonPath("$.member.role").value("EDITOR"));
+                .andExpect(jsonPath("$.member.role").value("MEMBER"));
     }
 
     @Test
@@ -177,16 +177,16 @@ public class MemberAndSubscriptionTest {
         workspace.addMember(member.getId(), member.getUsername(), member.getEmail(), Workspace.WorkspaceRole.VIEWER);
         workspaceRepository.save(workspace);
 
-        // Update role to EDITOR
+        // Update role to MEMBER
         UpdateMemberRoleRequest request = new UpdateMemberRoleRequest();
-        request.setRole("EDITOR");
+        request.setRole("MEMBER");
 
         mockMvc.perform(put("/api/workspaces/" + testWorkspaceId + "/members/" + member.getId())
                 .header("Authorization", "Bearer " + authToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.member.role").value("EDITOR"));
+                .andExpect(jsonPath("$.member.role").value("MEMBER"));
     }
 
     @Test
@@ -268,7 +268,7 @@ public class MemberAndSubscriptionTest {
         // Try to add again
         AddMemberRequest request = new AddMemberRequest();
         request.setEmail("duplicate@example.com");
-        request.setRole("EDITOR");
+        request.setRole("MEMBER");
 
         mockMvc.perform(post("/api/workspaces/" + testWorkspaceId + "/members")
                 .header("Authorization", "Bearer " + authToken)
@@ -461,9 +461,9 @@ public class MemberAndSubscriptionTest {
 
     @Test
     @Order(31)
-    @DisplayName("TC-AC-002: EDITOR Role Permissions")
+    @DisplayName("TC-AC-002: MEMBER Role Permissions")
     public void testEditorRolePermissions() throws Exception {
-        // Create editor
+        // Create workspace member (MEMBER)
         User editor = new User();
         editor.setUsername("editoraccess");
         editor.setEmail("editoraccess@example.com");

@@ -1,9 +1,12 @@
 package self.research.ontology.auth.controller;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -34,11 +37,24 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
-@RestController
+@RestController("authProjectController")
 @RequestMapping("/api/projects")
 public class ProjectController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectController.class);
+
+    private static final java.net.http.HttpClient HTTP_CLIENT = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(10))
+            .build();
+
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
+    @Value("${storage.limit.free.gb:10}")
+    private double storageLimitFreeGb;
+
+    @Value("${storage.limit.pro.gb:100}")
+    private double storageLimitProGb;
 
     private final ProjectService projectService;
     private final UserRepository userRepository;
@@ -48,8 +64,10 @@ public class ProjectController {
     private final self.research.ontology.auth.repository.ProjectRepository projectRepository;
     private final GridFsTemplate gridFsTemplate;
     private final org.springframework.web.client.RestTemplate restTemplate;
+    private final self.research.ontology.auth.service.EmailService emailService;
+    private final self.research.ontology.auth.service.SystemSettingsService systemSettingsService;
 
-    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, GridFsTemplate gridFsTemplate) {
+    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, GridFsTemplate gridFsTemplate, self.research.ontology.auth.service.EmailService emailService, self.research.ontology.auth.service.SystemSettingsService systemSettingsService) {
         this.projectService = projectService;
         this.userRepository = userRepository;
         this.fileMetadataRepository = fileMetadataRepository;
@@ -58,14 +76,70 @@ public class ProjectController {
         this.projectRepository = projectRepository;
         this.gridFsTemplate = gridFsTemplate;
         this.restTemplate = new org.springframework.web.client.RestTemplate();
+        this.emailService = emailService;
+        this.systemSettingsService = systemSettingsService;
     }
 
     /**
      * Get current authenticated username
      */
-    private String getCurrentUsername() {
+    private String getCurrentUserEmail() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         return authentication.getName();
+    }
+
+    private String normalizeSharedMemberRole(String memberRole) {
+        if (memberRole == null || memberRole.isBlank()) {
+            return "VIEWER";
+        }
+        String normalizedRole = memberRole.trim().toUpperCase();
+        if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
+            return "VIEWER";
+        }
+        return normalizedRole;
+    }
+
+    private List<SharedProjectMemberAccess> resolveRequestedMemberAccess(CreateProjectRequest request) {
+        LinkedHashMap<String, SharedProjectMemberAccess> byEmail = new LinkedHashMap<>();
+
+        if (request.memberAccess != null) {
+            for (SharedProjectMemberAccess access : request.memberAccess) {
+                if (access == null || access.email == null) {
+                    continue;
+                }
+                String email = access.email.trim();
+                if (email.isEmpty()) {
+                    continue;
+                }
+                SharedProjectMemberAccess normalized = new SharedProjectMemberAccess();
+                normalized.email = email;
+                normalized.role = normalizeSharedMemberRole(access.role);
+                byEmail.put(email.toLowerCase(Locale.ROOT), normalized);
+            }
+        }
+
+        if (byEmail.isEmpty() && request.memberEmails != null) {
+            String fallbackRole = normalizeSharedMemberRole(request.memberRole);
+            for (String memberEmail : request.memberEmails) {
+                if (memberEmail == null) {
+                    continue;
+                }
+                String email = memberEmail.trim();
+                if (email.isEmpty()) {
+                    continue;
+                }
+                String key = email.toLowerCase(Locale.ROOT);
+                if (byEmail.containsKey(key)) {
+                    continue;
+                }
+                SharedProjectMemberAccess normalized = new SharedProjectMemberAccess();
+                normalized.email = email;
+                normalized.role = fallbackRole;
+                byEmail.put(key, normalized);
+            }
+        }
+
+        return new ArrayList<>(byEmail.values());
     }
 
     /**
@@ -76,11 +150,17 @@ public class ProjectController {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
             try {
-                return jwtUtil.extractClaim(token, claims -> claims.get("workspaceId", String.class));
+                String workspaceId = jwtUtil.extractClaim(token, claims -> claims.get("workspaceId", String.class));
+                if (workspaceId != null && !workspaceId.isEmpty()) {
+                    return workspaceId;
+                }
             } catch (Exception e) {
                 log.error("Error extracting workspaceId from token", e);
-                return null;
             }
+        }
+        // Desktop build sends no JWT — scope everything to the single local workspace.
+        if (desktopMode) {
+            return "desktop-workspace-local";
         }
         return null;
     }
@@ -92,8 +172,8 @@ public class ProjectController {
     @GetMapping
     public ResponseEntity<?> getAllProjects(@RequestParam(required = false) String userEmail) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -141,8 +221,8 @@ public class ProjectController {
             @RequestParam String name,
             @RequestParam String workspaceId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -183,18 +263,32 @@ public class ProjectController {
     @PostMapping
     public ResponseEntity<?> createProject(@Valid @RequestBody CreateProjectRequest request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
+            String username = user.getUsername();
             
             log.info("[createProject] User: {}, userId: {}, email: {}, workspaceId: {}", 
                 username, user.getId(), user.getEmail(), request.workspaceId);
             
+            // Workspace VIEWERs cannot create projects
+            Optional<self.research.ontology.auth.model.Workspace> wsForRoleCheck = workspaceService.getWorkspace(request.workspaceId);
+            if (wsForRoleCheck.isPresent()) {
+                self.research.ontology.auth.model.Workspace.WorkspaceMember wsm = wsForRoleCheck.get().getMember(user.getId());
+                if (wsm != null && wsm.getRole() == self.research.ontology.auth.model.Workspace.WorkspaceRole.VIEWER) {
+                    return ResponseEntity.status(403).body(Map.of("error", "Workspace viewers cannot create projects"));
+                }
+            }
+
+            // FREE plan workspace — only the owner can create projects
+            var viewOnlyBlock = checkFreeViewOnly(request.workspaceId, user.getId());
+            if (viewOnlyBlock.isPresent()) return viewOnlyBlock.get();
+
             // Check for duplicate project name in workspace
             List<Project> workspaceProjects = projectService.getWorkspaceProjects(request.workspaceId);
             boolean nameExists = workspaceProjects.stream()
@@ -204,7 +298,7 @@ public class ProjectController {
                     "error", "A project with this name already exists in the workspace"
                 ));
             }
-            
+
             Project project = projectService.createProject(
                 request.workspaceId,
                 user.getId(),
@@ -213,57 +307,91 @@ public class ProjectController {
                 request.name,
                 request.description
             );
-            
+
+            // Persist visibility so invitation acceptance can make the right auto-add decision
+            if ("all".equals(request.shareWith)) {
+                project.setVisibility("WORKSPACE");
+            } else if ("specific".equals(request.shareWith)) {
+                project.setVisibility("SPECIFIC");
+            } else {
+                project.setVisibility("PRIVATE");
+            }
+
             // Handle member sharing - add members before final save
             boolean membersAdded = false;
-            
-            // If creator is not workspace owner, add workspace owner as ADMIN
-            Optional<self.research.ontology.auth.model.Workspace> workspaceOpt = 
+
+            Optional<self.research.ontology.auth.model.Workspace> workspaceOpt =
                 projectService.getWorkspace(request.workspaceId);
-            if (workspaceOpt.isPresent()) {
-                self.research.ontology.auth.model.Workspace workspace = workspaceOpt.get();
-                String wsOwnerId = workspace.getOwnerId();
-                if (wsOwnerId != null && !wsOwnerId.equals(user.getId())) {
-                    Optional<User> wsOwnerOpt = userRepository.findById(wsOwnerId);
-                    if (wsOwnerOpt.isPresent()) {
-                        User wsOwner = wsOwnerOpt.get();
-                        project.addMember(wsOwner.getId(), wsOwner.getUsername(), wsOwner.getEmail(), "ADMIN");
-                        membersAdded = true;
-                    }
-                }
-            }
-            
+            String sharedMemberRole = normalizeSharedMemberRole(request.memberRole);
+
             if ("all".equals(request.shareWith)) {
-                // Add all active workspace members as viewers (matching UI: "All members will have view access")
-                // Workspace owner is already added as ADMIN above; skip project creator and ws owner
+                // Add all active workspace members with the requested project role.
+                // Skip the project creator — they are already added as OWNER
                 if (workspaceOpt.isPresent()) {
                     self.research.ontology.auth.model.Workspace workspace = workspaceOpt.get();
                     for (self.research.ontology.auth.model.Workspace.WorkspaceMember member : workspace.getMembers()) {
-                        if (member.getUserId() != null 
+                        if (member.getUserId() != null
                                 && !member.getUserId().equals(user.getId())
-                                && !member.getUserId().equals(workspace.getOwnerId())
                                 && member.getStatus() == self.research.ontology.auth.model.Workspace.MemberStatus.ACTIVE) {
-                            // Use the role from request if provided, otherwise default to VIEWER
-                            String memberRole = request.memberRole != null ? request.memberRole : "VIEWER";
-                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), memberRole);
+                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), sharedMemberRole);
                             membersAdded = true;
                         }
                     }
                 }
-            } else if ("specific".equals(request.shareWith) && request.memberUsernames != null) {
-                // Add specific members with the role specified in the request (default: VIEWER)
-                String memberRole = request.memberRole != null ? request.memberRole : "VIEWER";
-                for (String memberUsername : request.memberUsernames) {
-                    Optional<User> memberOpt = userRepository.findByUsername(memberUsername);
-                    if (memberOpt.isPresent() && !memberOpt.get().getId().equals(user.getId())) {
-                        User member = memberOpt.get();
-                        project.addMember(member.getId(), member.getUsername(), member.getEmail(), memberRole);
-                        membersAdded = true;
+            } else if ("specific".equals(request.shareWith)) {
+                List<SharedProjectMemberAccess> requestedMembers = resolveRequestedMemberAccess(request);
+                Workspace workspace = workspaceOpt.orElse(null);
+
+                List<String> skippedMembers = new ArrayList<>();
+                for (SharedProjectMemberAccess requestedMember : requestedMembers) {
+                    String memberEmail = requestedMember.email;
+                    String memberRole = requestedMember.role;
+                    boolean added = false;
+
+                    if (workspace != null) {
+                        Workspace.WorkspaceMember workspaceMember = workspace.getMemberByEmail(memberEmail);
+                        if (workspaceMember != null
+                                && workspaceMember.getUserId() != null
+                                && !workspaceMember.getUserId().equals(user.getId())
+                                && workspaceMember.getStatus() == Workspace.MemberStatus.ACTIVE) {
+                            project.addMember(
+                                    workspaceMember.getUserId(),
+                                    workspaceMember.getUsername(),
+                                    workspaceMember.getEmail(),
+                                    memberRole);
+                            membersAdded = true;
+                            added = true;
+                        }
+                    }
+
+                    if (!added) {
+                        Optional<User> memberOpt = userRepository.findByEmail(memberEmail);
+                        if (memberOpt.isPresent()
+                                && !memberOpt.get().getId().equals(user.getId())
+                                && (workspace == null || workspace.isMember(memberOpt.get().getId()))) {
+                            User member = memberOpt.get();
+                            project.addMember(member.getId(), member.getUsername(), member.getEmail(), memberRole);
+                            membersAdded = true;
+                        } else {
+                            skippedMembers.add(memberEmail);
+                        }
                     }
                 }
+
+                if (!requestedMembers.isEmpty() && !membersAdded) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                            "error", "None of the selected members could be added to this project.",
+                            "skippedMembers", skippedMembers
+                    ));
+                }
             }
-            
-            if (membersAdded) {
+
+            boolean implicitTouched = false;
+            if (!isPrivateProjectShare(request) && workspaceOpt.isPresent()) {
+                implicitTouched = projectService.applyImplicitWorkspaceLeadershipEditors(project, workspaceOpt.get());
+            }
+
+            if (membersAdded || implicitTouched) {
                 projectService.updateProject(project);
             }
 
@@ -286,8 +414,8 @@ public class ProjectController {
     @GetMapping("/workspace/{workspaceId}")
     public ResponseEntity<?> getWorkspaceProjects(@PathVariable String workspaceId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -296,20 +424,23 @@ public class ProjectController {
             User user = userOpt.get();
             List<Project> projects = projectService.getWorkspaceProjects(workspaceId);
             
-            // Filter projects based on workspace role and project privacy:
-            // Workspace owners and admins see all projects EXCEPT private projects they don't own.
-            // A private project is one where the only member is the project owner.
+            // Role-based project visibility:
+            // OWNER: sees all projects including private (restricted access indicator set below)
+            // ADMIN: sees shared (>1 member) projects plus own
+            // MEMBER/VIEWER: sees only projects explicitly added to
             Optional<Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
-            boolean isOwnerOrAdmin = false;
+            boolean isWsOwner = false;
+            boolean isWsAdmin = false;
             if (wsOpt.isPresent()) {
                 Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
                 if (wsMember != null) {
-                    Workspace.WorkspaceRole wsRole = wsMember.getRole();
-                    isOwnerOrAdmin = wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
+                    isWsOwner = wsMember.getRole() == Workspace.WorkspaceRole.OWNER;
+                    isWsAdmin = wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
                 }
             }
-            if (isOwnerOrAdmin) {
-                // Admins/Owners see all projects except other users' private projects
+            if (isWsOwner) {
+                // Owner sees all projects (no filter)
+            } else if (isWsAdmin) {
                 projects = projects.stream()
                         .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
                         .collect(Collectors.toList());
@@ -318,9 +449,16 @@ public class ProjectController {
                         .filter(p -> p.hasMember(user.getId()))
                         .collect(Collectors.toList());
             }
-            
+
+            final boolean isOwner = isWsOwner;
+            final String callerId = user.getId();
             List<Map<String, Object>> projectDTOs = projects.stream()
-                    .map(this::convertToDTO)
+                    .map(p -> {
+                        Map<String, Object> dto = convertToDTO(p);
+                        boolean restricted = isOwner && !p.hasMember(callerId) && p.getMembers().size() <= 1;
+                        dto.put("isPrivateRestricted", restricted);
+                        return dto;
+                    })
                     .collect(Collectors.toList());
 
             return ResponseEntity.ok(Map.of(
@@ -339,8 +477,8 @@ public class ProjectController {
     @GetMapping("/workspace/{workspaceId}/deleted")
     public ResponseEntity<?> getDeletedProjects(@PathVariable String workspaceId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -387,14 +525,15 @@ public class ProjectController {
     public ResponseEntity<?> getMyProjects(HttpServletRequest request,
                                            @RequestParam(required = false) String workspaceId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
+            String username = user.getUsername();
             
             // Get workspace ID: prefer JWT token claim, fallback to query parameter
             String tokenWorkspaceId = getWorkspaceIdFromToken(request);
@@ -408,7 +547,8 @@ public class ProjectController {
             
             // Check if user has no workspace - use user-based storage
             boolean hasNoWorkspace = effectiveWorkspaceId == null || effectiveWorkspaceId.isEmpty();
-            
+            boolean isWsOwnerForDTO = false; // set inside workspace branch if user is workspace owner
+
             if (hasNoWorkspace) {
                 log.info("[getMyProjects] User {} has no workspace - fetching user-based projects", username);
                 // Get user's own projects (not workspace-based)
@@ -445,33 +585,47 @@ public class ProjectController {
                         p.getProjectId(), p.getName(), p.getOwnerId(), p.getMembers().size(), p.getActiveFiles().size());
                 }
                 
-                // Filter projects based on workspace role and project privacy:
-                // Workspace owners and admins see all projects EXCEPT other users' private projects.
+                // Role-based project visibility:
+                // OWNER: sees all projects including private (restricted access indicator set below)
+                // ADMIN: sees shared (>1 member) projects plus own
+                // MEMBER/VIEWER: sees only projects explicitly added to
                 Optional<Workspace> wsOpt = workspaceService.getWorkspace(effectiveWorkspaceId);
-                boolean isOwnerOrAdmin = false;
+                boolean isWsOwner = false;
+                boolean isWsAdmin = false;
                 if (wsOpt.isPresent()) {
                     Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
                     if (wsMember != null) {
-                        Workspace.WorkspaceRole wsRole = wsMember.getRole();
-                        isOwnerOrAdmin = wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
+                        isWsOwner = wsMember.getRole() == Workspace.WorkspaceRole.OWNER;
+                        isWsAdmin = wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
                     }
                 }
-                if (isOwnerOrAdmin) {
-                    // Admins/Owners see all projects except other users' private projects
+                isWsOwnerForDTO = isWsOwner;
+                if (isWsOwner) {
+                    // Owner sees all projects (no filter)
+                    log.info("[getMyProjects] No filter for workspace owner {}, showing all {} projects", username, projects.size());
+                } else if (isWsAdmin) {
                     projects = projects.stream()
                             .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
                             .collect(Collectors.toList());
-                    log.info("[getMyProjects] Filtered to {} projects for owner/admin user {} (excluding others' private projects)", projects.size(), username);
+                    log.info("[getMyProjects] Filtered to {} projects for admin {}", projects.size(), username);
                 } else {
                     projects = projects.stream()
                             .filter(p -> p.hasMember(user.getId()))
                             .collect(Collectors.toList());
-                    log.info("[getMyProjects] Filtered to {} projects for non-owner/admin user {}", projects.size(), username);
+                    log.info("[getMyProjects] Filtered to {} projects for member {}", projects.size(), username);
                 }
             }
-            
+
+            final boolean isOwnerForDTO = isWsOwnerForDTO;
+            final String callerUserId = user.getId();
             List<Map<String, Object>> projectDTOs = projects.stream()
-                    .map(this::convertToDTO)
+                    .map(p -> {
+                        Map<String, Object> dto = convertToDTO(p);
+                        // Private projects the workspace owner can see metadata but cannot enter
+                        boolean restricted = isOwnerForDTO && !p.hasMember(callerUserId) && p.getMembers().size() <= 1;
+                        dto.put("isPrivateRestricted", restricted);
+                        return dto;
+                    })
                     .collect(Collectors.toList());
 
             return ResponseEntity.ok(Map.of(
@@ -491,8 +645,8 @@ public class ProjectController {
     @GetMapping("/{projectId}")
     public ResponseEntity<?> getProject(@PathVariable String projectId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -527,8 +681,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @Valid @RequestBody UpdateProjectRequest request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -564,8 +718,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestParam String email) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String currentUserEmail = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(currentUserEmail);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -619,8 +773,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @Valid @RequestBody AddMemberRequest request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -629,7 +783,7 @@ public class ProjectController {
             User user = userOpt.get();
             
             // Find target user
-            Optional<User> targetUserOpt = userRepository.findByUsername(request.username);
+            Optional<User> targetUserOpt = userRepository.findByEmail(request.email);
             if (targetUserOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Target user not found"));
             }
@@ -644,6 +798,31 @@ public class ProjectController {
                 targetUser.getEmail(),
                 request.role
             );
+
+            // When the project transitions from private (1 member) to shared (>1 members),
+            // apply implicit workspace leadership editors so owner/admin are always present
+            // in non-private projects. Also idempotently re-applies for already-shared projects
+            // in case new workspace admins were promoted after project creation.
+            Optional<Workspace> wsOpt = workspaceService.getWorkspace(project.getWorkspaceId());
+            if (wsOpt.isPresent() && project.getMembers().size() > 1) {
+                boolean touched = projectService.applyImplicitWorkspaceLeadershipEditors(project, wsOpt.get());
+                if (touched) {
+                    project = projectService.updateProject(project);
+                }
+            }
+
+            // Notify the new member via email (best-effort — never block the response)
+            try {
+                emailService.sendProjectAccessEmail(
+                    targetUser.getEmail(),
+                    targetUser.getUsername(),
+                    project.getName(),
+                    request.role,
+                    user.getUsername()
+                );
+            } catch (Exception emailEx) {
+                log.warn("Failed to send project access email to {}: {}", targetUser.getEmail(), emailEx.getMessage());
+            }
 
             return ResponseEntity.ok(Map.of(
                 "message", "Member added successfully",
@@ -667,8 +846,8 @@ public class ProjectController {
             @PathVariable String memberId,
             @Valid @RequestBody UpdateMemberRoleRequest request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
 
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -704,8 +883,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @PathVariable String userId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -734,14 +913,21 @@ public class ProjectController {
     @PostMapping("/{projectId}/archive")
     public ResponseEntity<?> archiveProject(@PathVariable String projectId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
+
+            Optional<Project> projectForCheck = projectService.getProject(projectId);
+            if (projectForCheck.isPresent()) {
+                var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
+                if (writeBlock.isPresent()) return writeBlock.get();
+            }
+
             projectService.archiveProject(projectId, user.getId());
 
             return ResponseEntity.ok(Map.of("message", "Project archived successfully"));
@@ -760,8 +946,8 @@ public class ProjectController {
     @DeleteMapping("/{projectId}")
     public ResponseEntity<?> deleteProject(@PathVariable String projectId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -769,9 +955,15 @@ public class ProjectController {
 
             User user = userOpt.get();
 
+            Optional<Project> projectForCheck = projectRepository.findAllByProjectId(projectId).stream().findFirst();
+            if (projectForCheck.isPresent()) {
+                var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
+                if (writeBlock.isPresent()) return writeBlock.get();
+            }
+
             // Delete from GraphDB first (best-effort) for each file in the project
             try {
-                Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+                Optional<Project> projectOpt = projectForCheck;
                 if (projectOpt.isPresent()) {
                     Project project = projectOpt.get();
                     String editorServiceUrl = System.getenv().getOrDefault("ONTOLOGY_EDITOR_URL", "http://localhost:8083");
@@ -806,7 +998,27 @@ public class ProjectController {
                 log.warn("⚠️ GraphDB cleanup failed during project delete (continuing with soft delete): {}", e.getMessage());
             }
 
+            // Capture workspace ID before deletion for broadcast
+            String workspaceIdForBroadcast = projectForCheck.map(p -> p.getWorkspaceId()).orElse(null);
+
             projectService.deleteProject(projectId, user.getId());
+
+            // Notify all workspace members via WebSocket (best-effort)
+            if (workspaceIdForBroadcast != null) {
+                try {
+                    String editorServiceUrl = System.getenv().getOrDefault("ONTOLOGY_EDITOR_URL", "http://localhost:8083");
+                    String eventUrl = editorServiceUrl + "/api/internal/workspace/" + workspaceIdForBroadcast + "/event";
+                    Map<String, Object> event = Map.of(
+                        "type", "PROJECT_DELETED",
+                        "projectId", projectId,
+                        "deletedBy", user.getUsername()
+                    );
+                    restTemplate.postForObject(eventUrl, event, Map.class);
+                    log.info("[deleteProject] Broadcast PROJECT_DELETED for {} to workspace {}", projectId, workspaceIdForBroadcast);
+                } catch (Exception broadcastEx) {
+                    log.warn("[deleteProject] Failed to broadcast PROJECT_DELETED event: {}", broadcastEx.getMessage());
+                }
+            }
 
             return ResponseEntity.ok(Map.of("message", "Project deleted successfully"));
         } catch (SecurityException e) {
@@ -826,14 +1038,21 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestParam(defaultValue = "true") boolean restoreFiles) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
+
+            Optional<Project> projectForCheck = projectService.getProject(projectId);
+            if (projectForCheck.isPresent()) {
+                var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
+                if (writeBlock.isPresent()) return writeBlock.get();
+            }
+
             projectService.restoreProject(projectId, user.getId(), restoreFiles);
 
             return ResponseEntity.ok(Map.of(
@@ -850,6 +1069,17 @@ public class ProjectController {
             log.error("Error restoring project", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
+    }
+
+    /**
+     * "Only me" / legacy null shareWith — no implicit workspace owner/admin editors.
+     */
+    private static boolean isPrivateProjectShare(CreateProjectRequest request) {
+        if (request == null || request.shareWith == null) {
+            return true;
+        }
+        String sw = request.shareWith.trim();
+        return sw.isEmpty() || "none".equalsIgnoreCase(sw);
     }
 
     /**
@@ -872,6 +1102,7 @@ public class ProjectController {
         dto.put("updatedAt", project.getUpdatedAt().toString());
         dto.put("fileIds", project.getFileIds()); // Keep for backward compatibility
         dto.put("files", project.getActiveFiles()); // Only include non-deleted files
+        dto.put("visibility", project.getVisibility() != null ? project.getVisibility() : "PRIVATE");
         return dto;
     }
 
@@ -881,8 +1112,8 @@ public class ProjectController {
     @GetMapping("/{projectId}/files")
     public ResponseEntity<?> getProjectFiles(@PathVariable String projectId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -981,8 +1212,8 @@ public class ProjectController {
             @PathVariable String fileId,
             HttpServletResponse httpResponse) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1102,8 +1333,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestParam String fileName) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1153,15 +1384,13 @@ public class ProjectController {
                 
                 log.debug("Checking GraphDB for duplicates at: {}", graphdbCheckUrl);
                 
-                // Make HTTP call to editor service to check GraphDB
-                java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
                 java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(graphdbCheckUrl))
                     .GET()
                     .timeout(java.time.Duration.ofSeconds(5))
                     .build();
-                
-                java.net.http.HttpResponse<String> response = httpClient.send(request, 
+
+                java.net.http.HttpResponse<String> response = HTTP_CLIENT.send(request,
                     java.net.http.HttpResponse.BodyHandlers.ofString());
                 
                 if (response.statusCode() == 200) {
@@ -1194,8 +1423,8 @@ public class ProjectController {
             @RequestParam(value = "replaceFileId", required = false) String replaceFileId,
             @RequestParam(value = "fileType", required = false, defaultValue = "application/rdf+xml") String fileType) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1226,13 +1455,16 @@ public class ProjectController {
             }
             
             Project project = projectOpt.get();
-            
-            // Check user's project role - viewers cannot upload files
-            Project.ProjectMember projectMember = project.getMember(user.getId());
-            if (projectMember != null && "VIEWER".equals(projectMember.getRole())) {
-                return ResponseEntity.status(403).body(Map.of("error", "Viewers cannot upload files to this project"));
+
+            // Access check: non-members and non-workspace-admins are denied early
+            if (!projectService.hasAccess(projectId, user.getId())) {
+                return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
             }
-            
+
+            // Write-permission check (VIEWER role + FREE plan) — must run BEFORE any storage write
+            var writeBlock = checkProjectWriteAccess(project.getWorkspaceId(), projectId, user.getId());
+            if (writeBlock.isPresent()) return writeBlock.get();
+
             // Check GraphDB for duplicate data BEFORE uploading
             // This prevents loading the same ontology data multiple times into the same project graph
             // Skip for small files (< 10KB) as they are typically new empty ontologies
@@ -1249,14 +1481,13 @@ public class ProjectController {
                     
                     log.info("Checking GraphDB for duplicate data before upload: {}", graphdbCheckUrl);
                     
-                    java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
                     java.net.http.HttpRequest checkRequest = java.net.http.HttpRequest.newBuilder()
                         .uri(java.net.URI.create(graphdbCheckUrl))
                         .GET()
                         .timeout(java.time.Duration.ofSeconds(5))
                         .build();
-                    
-                    java.net.http.HttpResponse<String> checkResponse = httpClient.send(checkRequest, 
+
+                    java.net.http.HttpResponse<String> checkResponse = HTTP_CLIENT.send(checkRequest,
                         java.net.http.HttpResponse.BodyHandlers.ofString());
                     
                     if (checkResponse.statusCode() == 200) {
@@ -1296,11 +1527,12 @@ public class ProjectController {
             
             Workspace workspace = workspaceOpt.get();
             String subscriptionPlan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
-            
-            // Calculate current storage usage for workspace
-            long currentStorageBytes = calculateWorkspaceStorageUsage(workspaceId);
+            String ownerId = workspace.getOwnerId();
+
+            // Storage quota is shared across ALL workspaces owned by the same account.
+            long currentStorageBytes = calculateOwnerStorageUsage(ownerId);
             long newFileSize = file.getSize();
-            
+
             // If replacing, subtract old file size
             if (replaceFileId != null && !replaceFileId.isEmpty()) {
                 Optional<FileMetadata> oldFile = fileMetadataRepository.findById(replaceFileId);
@@ -1308,27 +1540,27 @@ public class ProjectController {
                     currentStorageBytes -= oldFile.get().getFileSize();
                 }
             }
-            
+
             // Get storage limit for subscription plan (convert GB to bytes)
             double storageLimitGB = getStorageLimitForPlan(subscriptionPlan);
             long storageLimitBytes = (long) (storageLimitGB * 1024 * 1024 * 1024);
-            
+
             // Check if upload would exceed limit
             if (currentStorageBytes + newFileSize > storageLimitBytes) {
                 double currentStorageMB = currentStorageBytes / (1024.0 * 1024.0);
                 double newFileSizeMB = newFileSize / (1024.0 * 1024.0);
                 double limitMB = storageLimitGB * 1024;
-                
-                log.warn("Storage limit exceeded for workspace {}. Current: {:.2f} MB, New file: {:.2f} MB, Limit: {:.2f} MB",
-                    workspaceId, currentStorageMB, newFileSizeMB, limitMB);
-                
+
+                log.warn("Storage limit exceeded for owner {}. Current: {} MB, New file: {} MB, Limit: {} MB",
+                    ownerId, String.format("%.2f", currentStorageMB), String.format("%.2f", newFileSizeMB), String.format("%.2f", limitMB));
+
                 return ResponseEntity.status(413).body(Map.of(
                     "error", "Storage limit exceeded for " + subscriptionPlan + " plan",
                     "currentStorageMB", String.format("%.2f", currentStorageMB),
                     "newFileSizeMB", String.format("%.2f", newFileSizeMB),
                     "storageLimitMB", String.format("%.2f", limitMB),
                     "plan", subscriptionPlan,
-                    "message", String.format("Your workspace has used %.2f MB of %.2f MB. This file (%.2f MB) would exceed your storage limit. Please upgrade your plan or delete existing files.",
+                    "message", String.format("Your account has used %.2f MB of %.2f MB across all workspaces. This file (%.2f MB) would exceed your storage limit. Please upgrade your plan or delete existing files.",
                         currentStorageMB, limitMB, newFileSizeMB)
                 ));
             }
@@ -1417,15 +1649,21 @@ public class ProjectController {
             @PathVariable String projectId,
             @PathVariable String fileId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
-            
+
+            Optional<Project> projectForCheck = projectService.getProject(projectId);
+            if (projectForCheck.isPresent()) {
+                var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
+                if (writeBlock.isPresent()) return writeBlock.get();
+            }
+
             // DELETE FROM GRAPHDB FIRST (hierarchical project ID: parentProject/fileId)
             // This removes all RDF triples for this file from the GraphDB named graph
             String graphDbProjectId = projectId + "/" + fileId;
@@ -1486,15 +1724,21 @@ public class ProjectController {
             @PathVariable String projectId,
             @PathVariable String fileId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
-            
+
+            Optional<Project> projectForCheck = projectService.getProject(projectId);
+            if (projectForCheck.isPresent()) {
+                var writeBlock = checkProjectWriteAccess(projectForCheck.get().getWorkspaceId(), projectId, user.getId());
+                if (writeBlock.isPresent()) return writeBlock.get();
+            }
+
             // Restore file metadata
             Optional<FileMetadata> fileMetaOpt = fileMetadataRepository.findByFileId(fileId);
             if (fileMetaOpt.isPresent()) {
@@ -1535,8 +1779,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestBody Map<String, String> request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
 
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1551,6 +1795,10 @@ public class ProjectController {
             }
 
             Project project = projectOpt.get();
+
+            var writeBlock = checkProjectWriteAccess(project.getWorkspaceId(), projectId, user.getId());
+            if (writeBlock.isPresent()) return writeBlock.get();
+
             if (!project.getOwnerId().equals(user.getId())) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only project owner can update project settings"));
             }
@@ -1581,8 +1829,8 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestBody Map<String, String> request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -1602,10 +1850,26 @@ public class ProjectController {
             }
             
             Project project = projectOpt.get();
-            if (!project.getOwnerId().equals(user.getId())) {
-                return ResponseEntity.status(403).body(Map.of("error", "Only project owner can rename"));
+
+            var writeBlock = checkProjectWriteAccess(project.getWorkspaceId(), projectId, user.getId());
+            if (writeBlock.isPresent()) return writeBlock.get();
+
+            // Project owner can always rename; workspace owner/admin can rename any project
+            boolean isProjectOwner = project.getOwnerId().equals(user.getId());
+            boolean isWsOwnerOrAdmin = false;
+            if (!isProjectOwner && project.getWorkspaceId() != null) {
+                Optional<Workspace> wsOpt = workspaceService.getWorkspace(project.getWorkspaceId());
+                if (wsOpt.isPresent()) {
+                    Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
+                    isWsOwnerOrAdmin = wsMember != null &&
+                        (wsMember.getRole() == Workspace.WorkspaceRole.OWNER ||
+                         wsMember.getRole() == Workspace.WorkspaceRole.ADMIN);
+                }
             }
-            
+            if (!isProjectOwner && !isWsOwnerOrAdmin) {
+                return ResponseEntity.status(403).body(Map.of("error", "Only project owner or workspace owner/admin can rename"));
+            }
+
             // Update project name
             project.setName(newName.trim());
             project.setUpdatedAt(java.time.LocalDateTime.now());
@@ -1628,9 +1892,15 @@ public class ProjectController {
         public String workspaceId;
         public String name;
         public String description;
-        public String shareWith; // "all" or "specific"
-        public List<String> memberUsernames; // List of usernames when shareWith="specific"
-        public String memberRole; // Role for shared members: VIEWER (default), EDITOR, ADMIN
+        public String shareWith; // "none", "all", "specific"
+        public List<String> memberEmails; // Legacy list of emails when shareWith="specific"
+        public String memberRole; // Legacy default role for shared members
+        public List<SharedProjectMemberAccess> memberAccess; // Preferred per-member access
+    }
+
+    public static class SharedProjectMemberAccess {
+        public String email;
+        public String role; // VIEWER (default), EDITOR, ADMIN
     }
 
     public static class UpdateProjectRequest {
@@ -1639,14 +1909,163 @@ public class ProjectController {
     }
 
     public static class AddMemberRequest {
-        public String username;
-        public String role; // EDITOR, VIEWER
+        @NotBlank(message = "Email is required")
+        public String email;
+
+        /** Project-level role: ADMIN, EDITOR, or VIEWER */
+        @NotBlank(message = "Role is required")
+        @Pattern(
+            regexp = "^(ADMIN|EDITOR|VIEWER)$",
+            message = "Invalid role. Must be ADMIN, EDITOR, or VIEWER"
+        )
+        public String role;
     }
 
     public static class UpdateMemberRoleRequest {
-        public String role; // ADMIN, EDITOR, VIEWER
+        @NotBlank(message = "Role is required")
+        @Pattern(
+            regexp = "^(ADMIN|EDITOR|DRAFT_EDITOR|VIEWER)$",
+            message = "Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER"
+        )
+        public String role; // ADMIN, EDITOR, DRAFT_EDITOR, VIEWER
     }
     
+    /**
+     * Returns 403 if the workspace is FREE and the caller is not the owner.
+     * FREE plan members get view-only access — they cannot create, modify, or delete content.
+     */
+    private Optional<ResponseEntity<?>> checkFreeViewOnly(String workspaceId, String userId) {
+        if (workspaceId == null) return Optional.empty();
+        Optional<self.research.ontology.auth.model.Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
+        if (wsOpt.isEmpty()) return Optional.empty();
+        String ownerId = wsOpt.get().getOwnerId();
+        // Workspace owner is always allowed on any plan
+        if (userId.equals(ownerId)) return Optional.empty();
+        // Members operate under the workspace owner's subscription plan
+        Optional<User> ownerOpt = userRepository.findById(ownerId);
+        // Enterprise domain bypass owners have full collaboration enabled
+        if (ownerOpt.isPresent() && systemSettingsService.isEnterpriseBypass(ownerOpt.get().getEmail())) {
+            return Optional.empty();
+        }
+        String ownerPlan = ownerOpt.map(User::getSubscriptionPlanName).orElse(null);
+        if (ownerPlan == null || "FREE".equalsIgnoreCase(ownerPlan)) {
+            return Optional.of(ResponseEntity.status(403).body(Map.of(
+                "error", "This workspace is on the Free plan. The workspace owner needs to upgrade to Pro to enable collaboration.",
+                "requiresUpgrade", true
+            )));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Returns 403 for project-scoped write operations when the caller is a project VIEWER
+     * (unless they are a workspace OWNER/ADMIN, who override project role), or when the
+     * FREE-plan check fails. Use this instead of bare checkFreeViewOnly for any endpoint
+     * that mutates a specific project.
+     */
+    private Optional<ResponseEntity<?>> checkProjectWriteAccess(String workspaceId, String projectId, String userId) {
+        // 1. Project VIEWER role check — workspace OWNER/ADMIN override project role
+        if (projectId != null) {
+            Optional<Project> projectOpt = projectService.getProject(projectId);
+            if (projectOpt.isPresent()) {
+                Project.ProjectMember member = projectOpt.get().getMember(userId);
+                if (member != null && "VIEWER".equalsIgnoreCase(member.getRole())) {
+                    String wsId = workspaceId != null ? workspaceId : projectOpt.get().getWorkspaceId();
+                    boolean isWsAdmin = workspaceService.getWorkspace(wsId)
+                        .map(ws -> {
+                            self.research.ontology.auth.model.Workspace.WorkspaceMember wm = ws.getMember(userId);
+                            return wm != null && (wm.getRole() == self.research.ontology.auth.model.Workspace.WorkspaceRole.OWNER
+                                               || wm.getRole() == self.research.ontology.auth.model.Workspace.WorkspaceRole.ADMIN);
+                        }).orElse(false);
+                    if (!isWsAdmin) {
+                        return Optional.of(ResponseEntity.status(403).body(Map.of(
+                            "error", "You have view-only access to this project. Contact the project owner to request edit permissions.",
+                            "viewOnly", true
+                        )));
+                    }
+                }
+            }
+        }
+        // 2. FREE plan check
+        String effectiveWorkspaceId = workspaceId != null ? workspaceId
+            : (projectId != null ? projectService.getProject(projectId)
+                .map(Project::getWorkspaceId).orElse(null) : null);
+        return checkFreeViewOnly(effectiveWorkspaceId, userId);
+    }
+
+    /**
+     * GET /api/projects/storage-usage
+     * Returns the authenticated user's account-level storage usage and plan limit.
+     */
+    @GetMapping("/storage-usage")
+    public ResponseEntity<?> getStorageUsage(@RequestParam(required = false) String workspaceId) {
+        try {
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmailIgnoreCase(email);
+            if (userOpt.isEmpty()) {
+                log.warn("storage-usage: no user for principal email={}", email);
+                return ResponseEntity.status(404).body(Map.of("error", "User not found"));
+            }
+            User user = userOpt.get();
+            String ownerId = user.getId();
+            String plan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "FREE";
+            long usedBytes = calculateOwnerStorageUsage(ownerId);
+
+            if (workspaceId != null && !workspaceId.isBlank()) {
+                if (!workspaceService.hasAccess(workspaceId, user.getId())) {
+                    return ResponseEntity.status(403).body(Map.of(
+                        "error", "You don't have access to this workspace"
+                    ));
+                }
+
+                Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
+                if (workspaceOpt.isPresent()) {
+                    Workspace workspace = workspaceOpt.get();
+                    ownerId = workspace.getOwnerId();
+                    Optional<User> ownerOpt = userRepository.findById(ownerId);
+                    if (ownerOpt.isPresent()) {
+                        User owner = ownerOpt.get();
+                        plan = owner.getSubscriptionPlanName() != null ? owner.getSubscriptionPlanName() : "FREE";
+                    } else {
+                        plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+                    }
+                    usedBytes = calculateWorkspaceStorageUsage(workspaceId);
+                }
+            }
+            double limitGB = getStorageLimitForPlan(plan);
+            long limitBytes = limitGB == Double.MAX_VALUE ? Long.MAX_VALUE : (long) (limitGB * 1024 * 1024 * 1024);
+            double usedMB = usedBytes / (1024.0 * 1024.0);
+            double usagePercent = limitBytes == Long.MAX_VALUE ? 0 : Math.min(100.0, (usedBytes * 100.0) / limitBytes);
+
+            return ResponseEntity.ok(Map.of(
+                "usedBytes", usedBytes,
+                "usedMB", String.format("%.2f", usedMB),
+                "limitGB", limitGB == Double.MAX_VALUE ? -1 : limitGB,
+                "limitBytes", limitBytes == Long.MAX_VALUE ? -1 : limitBytes,
+                "planName", plan,
+                "usagePercent", String.format("%.1f", usagePercent)
+            ));
+        } catch (Exception e) {
+            log.error("Error fetching storage usage", e);
+            return ResponseEntity.status(500).body(Map.of("error", "Failed to fetch storage usage"));
+        }
+    }
+
+    /**
+     * Calculate total storage used across all workspaces owned by this user (in bytes).
+     * Storage quota is account-wide, not per-workspace.
+     */
+    private long calculateOwnerStorageUsage(String ownerId) {
+        try {
+            return workspaceService.getOwnedWorkspaces(ownerId).stream()
+                .mapToLong(ws -> calculateWorkspaceStorageUsage(ws.getWorkspaceId()))
+                .sum();
+        } catch (Exception e) {
+            log.error("Error calculating owner storage usage for {}", ownerId, e);
+            return 0;
+        }
+    }
+
     /**
      * Calculate total storage usage for a workspace (in bytes)
      */
@@ -1682,10 +2101,10 @@ public class ProjectController {
      */
     private double getStorageLimitForPlan(String plan) {
         return switch (plan.toUpperCase()) {
-            case "FREE" -> 10.0;              // 10 GB
-            case "PRO" -> 100.0;              // 100 GB
-            case "ENTERPRISE" -> Double.MAX_VALUE;  // Unlimited
-            default -> 10.0;                  // Default to FREE plan
+            case "FREE" -> storageLimitFreeGb;
+            case "PRO" -> storageLimitProGb;
+            case "ENTERPRISE" -> Double.MAX_VALUE;
+            default -> storageLimitFreeGb;
         };
     }
 }

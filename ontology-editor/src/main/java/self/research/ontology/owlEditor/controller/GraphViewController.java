@@ -42,7 +42,7 @@ public class GraphViewController {
     private final GraphGeneratingService graphGeneratingService;
     private final GridFsTemplate gridfs;
     private final CollaborativeEditService collaborativeEditService;
-    private final self.research.ontology.owlEditor.service.GraphDBDatasetService graphDBDatasetService;
+    private final self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
     private final java.util.Map<String, OWLOntology> ontologyCache = new HashMap<>();
 
     /**
@@ -90,24 +90,25 @@ public class GraphViewController {
             SELECT DISTINCT ?entity ?type ?label WHERE {
                 ?entity a ?type .
                 OPTIONAL { ?entity rdfs:label ?label }
-                FILTER(?type IN (owl:Class, owl:ObjectProperty, owl:DatatypeProperty, owl:NamedIndividual))
+                FILTER(?type IN (owl:Class, owl:ObjectProperty, owl:DatatypeProperty, owl:NamedIndividual, owl:AnnotationProperty))
             }
             LIMIT """ + maxNodes;
-        
+
         List<GraphGeneratingService.Node> nodes = new ArrayList<>();
         List<GraphGeneratingService.Edge> edges = new ArrayList<>();
-        
+
         try {
-            var result = graphDBDatasetService.execSelect(projectId, sparql);
-            
+            var result = datasetService.execSelect(projectId, sparql);
+
             while (result.hasNext()) {
                 var binding = result.next();
                 String entityIri = binding.getValue("entity").stringValue();
                 String type = binding.getValue("type").stringValue();
-                String label = binding.hasBinding("label") ? 
+                String label = binding.hasBinding("label") ?
                     binding.getValue("label").stringValue() : getLocalName(entityIri);
-                
-                String nodeType = type.contains("Class") ? "class" :
+
+                String nodeType = type.contains("AnnotationProperty") ? "annotationProperty" :
+                                type.contains("Class") ? "class" :
                                 type.contains("ObjectProperty") ? "objectProperty" :
                                 type.contains("DatatypeProperty") ? "dataProperty" :
                                 "individual";
@@ -170,7 +171,7 @@ public class GraphViewController {
                 }
                 """;
             
-            result = graphDBDatasetService.execSelect(projectId, edgeSparql);
+            result = datasetService.execSelect(projectId, edgeSparql);
             
             while (result.hasNext()) {
                 var binding = result.next();

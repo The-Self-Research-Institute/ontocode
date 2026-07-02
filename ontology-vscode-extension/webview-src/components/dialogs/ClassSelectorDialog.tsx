@@ -33,6 +33,7 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
 }) => {
   const [selectedClass, setSelectedClass] = useState<TreeNode | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [treeData, setTreeData] = useState<TreeNode[]>(classHierarchy);
   
   // Inline class creation state
@@ -45,8 +46,6 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
     console.log('[ClassSelectorDialog] Class hierarchy updated, nodes:', classHierarchy.length);
     setTreeData(classHierarchy);
   }, [classHierarchy]);
-
-  if (!isOpen) return null;
 
   const loadChildren = useCallback(async (nodeId: string) => {
     if (!projectId) return;
@@ -79,6 +78,8 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
       console.error(`Failed to load children for ${nodeId}`, error);
     }
   }, [projectId]);
+
+  if (!isOpen) return null;
 
   const handleToggleNode = async (nodeId: string) => {
     const isExpanded = (externalExpandedNodes || expandedNodes).includes(nodeId);
@@ -233,8 +234,8 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
                 filteredData={treeData}
                 selectedItem={selectedClass}
                 expandedNodes={externalExpandedNodes || expandedNodes}
-                searchQuery=""
-                onSearchQueryChange={() => {}}
+                searchQuery={searchQuery}
+                onSearchQueryChange={setSearchQuery}
                 onSelectItem={(item) => setSelectedClass(item as TreeNode)}
                 onToggleNode={handleToggleNode}
                 onAddItem={projectId && onAddClass ? handleInlineAddClass : undefined}

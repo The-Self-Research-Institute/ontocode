@@ -30,20 +30,25 @@ services:
       retries: 5
       start_period: 40s
 
-  # GraphDB (RDF Triple Store) - with embedded license
-  graphdb:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-graphdb:${VERSION:-latest}
-    container_name: ontocode-graphdb
+  # Fuseki (Apache Jena Fuseki + TDB2 triple store)
+  # Admin UI: http://localhost:3030 (user: admin, password: admin)
+  # SPARQL query: http://localhost:3030/ontocode/query
+  fuseki:
+    build:
+      context: ./fuseki-docker
+      dockerfile: Dockerfile
+    image: ontocode-fuseki:6.1.0
+    container_name: ontocode-fuseki
     restart: unless-stopped
+    user: root
     ports:
-      - "7200:7200"
+      - "3030:3030"
     environment:
-      GDB_HEAP_SIZE: 2560m
-      GDB_LICENSE_PATH: /opt/graphdb
-      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=8m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+      ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
+      JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xmx2g -XX:+UseG1GC}"
     volumes:
-      - graphdb-data:/opt/graphdb/home/data
-      - graphdb-import:/opt/graphdb/home/graphdb-import
+      - fuseki-data:/fuseki/databases
+      - ./fuseki-config.ttl:/fuseki/configuration/ontocode.ttl:ro
     networks:
       - ontology-net
     deploy:
@@ -51,92 +56,66 @@ services:
         limits:
           memory: 3g
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7200/rest/repositories"]
+      test: ["CMD-SHELL", "curl -sf -u admin:${FUSEKI_ADMIN_PASSWORD:-admin} http://localhost:3030/$/ping || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 180s
-
-  # GraphDB Repository Initializer - Creates 'ontocode' repository with inference DISABLED
-  graphdb-init:
-    image: curlimages/curl:latest
-    container_name: ontocode-graphdb-init
-    depends_on:
-      graphdb:
-        condition: service_healthy
-    networks:
-      - ontology-net
-    restart: "no"
-    command:
-      - sh
-      - -c
-      - |
-        echo "=== GraphDB Repository Init ==="
-        for i in $$(seq 1 30); do
-          curl -sf http://graphdb:7200/rest/repositories >/dev/null 2>&1 && break
-          echo "Waiting for GraphDB... attempt $$i/30"
-          sleep 5
-        done
-        
-        if curl -s http://graphdb:7200/rest/repositories | grep -q "ontocode"; then
-          echo "[OK] Repository ontocode already exists"
-        else
-          echo "Creating ontocode repository with inference DISABLED..."
-          cat > /tmp/repo.ttl << 'EOFCONFIG'
-        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-        @prefix rep: <http://www.openrdf.org/config/repository#> .
-        @prefix sr: <http://www.openrdf.org/config/repository/sail#> .
-        @prefix sail: <http://www.openrdf.org/config/sail#> .
-        @prefix graphdb: <http://www.ontotext.com/config/graphdb#> .
-        [] a rep:Repository ;
-            rep:repositoryID "ontocode" ;
-            rdfs:label "OntoCode Repository - No Inference" ;
-            rep:repositoryImpl [
-                rep:repositoryType "graphdb:SailRepository" ;
-                sr:sailImpl [
-                    sail:sailType "graphdb:Sail" ;
-                    graphdb:ruleset "empty" ;
-                    graphdb:disable-sameAs "true" ;
-                    graphdb:check-for-inconsistencies "false" ;
-                    graphdb:in-memory-literal-properties "true" ;
-                    graphdb:enable-literal-index "true" ;
-                    graphdb:entity-index-size "10000000" ;
-                    graphdb:enable-context-index "true" ;
-                    graphdb:enablePredicateList "true" ;
-                    graphdb:read-only "false" ;
-                ]
-            ] .
-        EOFCONFIG
-          curl -v -X POST -H "Content-Type: multipart/form-data" -F "config=@/tmp/repo.ttl" http://graphdb:7200/rest/repositories
-          echo "[OK] Repository created successfully"
-        fi
-        
-        echo "Setting ontocode as active repository..."
-        if curl -sf http://graphdb:7200/rest/repositories/ontocode/size >/dev/null 2>&1; then
-          echo "[OK] Repository ontocode is ACTIVE and accessible"
-          echo "[OK] Active Repository: ontocode"
-          echo "[OK] Inference: DISABLED (ruleset: empty)"
-        else
-          echo "[ERROR] Repository not accessible"
-        fi
-        echo "=== Init Complete ==="
+      start_period: 30s
 
   # Authentication Service
   auth:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-auth:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-auth:${VERSION:-latest}
     container_name: ontocode-auth
     restart: unless-stopped
+    user: root
     ports:
       - "8086:8086"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
-      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      BASE_URL: ${BASE_URL:-http://localhost:3000}
+      BILLING_REMINDER_ENABLED: ${BILLING_REMINDER_ENABLED:-true}
+      BILLING_REMINDER_DAYS_BEFORE_LIST: ${BILLING_REMINDER_DAYS_BEFORE_LIST:-15,7,1}
+      BILLING_REMINDER_CRON: ${BILLING_REMINDER_CRON:-0 0 9 * * *}
+      BILLING_EXPIRY_CHECK_ENABLED: ${BILLING_EXPIRY_CHECK_ENABLED:-true}
+      BILLING_EXPIRY_CHECK_INTERVAL_MS: ${BILLING_EXPIRY_CHECK_INTERVAL_MS:-21600000}
+      BILLING_AUTORENEWAL_ENABLED: ${BILLING_AUTORENEWAL_ENABLED:-true}
+      BILLING_AUTORENEWAL_CRON: ${BILLING_AUTORENEWAL_CRON:-0 0 2 * * ?}
+      INVITATION_CLEANUP_CRON: ${INVITATION_CLEANUP_CRON:-0 0 2 * * *}
+      STORAGE_LIMIT_FREE_GB: ${STORAGE_LIMIT_FREE_GB:-10}
+      STORAGE_LIMIT_PRO_GB: ${STORAGE_LIMIT_PRO_GB:-100}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO_MONTHLY: ${STRIPE_PRICE_PRO_MONTHLY:-}
+      STRIPE_PRICE_PRO_YEARLY: ${STRIPE_PRICE_PRO_YEARLY:-}
+      STRIPE_PRICE_ENTERPRISE_MONTHLY: ${STRIPE_PRICE_ENTERPRISE_MONTHLY:-}
+      STRIPE_PRICE_ENTERPRISE_YEARLY: ${STRIPE_PRICE_ENTERPRISE_YEARLY:-}
+      STRIPE_TRIAL_PERIOD_DAYS: ${STRIPE_TRIAL_PERIOD_DAYS:-14}
+      PLAN_PRO_MONTHLY_PRICE: ${PLAN_PRO_MONTHLY_PRICE:-29}
+      PLAN_PRO_ANNUAL_DISCOUNT_PERCENT: ${PLAN_PRO_ANNUAL_DISCOUNT_PERCENT:-17}
+      PLAN_ENTERPRISE_MONTHLY_PRICE: ${PLAN_ENTERPRISE_MONTHLY_PRICE:-99}
+      PLAN_ENTERPRISE_ANNUAL_DISCOUNT_PERCENT: ${PLAN_ENTERPRISE_ANNUAL_DISCOUNT_PERCENT:-20}
+      PLAN_FREE_MAX_MEMBERS: ${PLAN_FREE_MAX_MEMBERS:-3}
+      PLAN_PRO_MAX_MEMBERS: ${PLAN_PRO_MAX_MEMBERS:-10}
+      PLAN_ENTERPRISE_MAX_MEMBERS: ${PLAN_ENTERPRISE_MAX_MEMBERS:-2147483647}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
       JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
+    volumes:
+      - /var/log/ontocode/auth:/app/logs
     networks:
       - ontology-net
     deploy:
@@ -146,43 +125,58 @@ services:
 
   # API Gateway
   gateway:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-gateway:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-gateway:${VERSION:-latest}
     container_name: ontocode-gateway
     restart: unless-stopped
+    user: root
     ports:
       - "80:80"
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      # Gateway buffers large file uploads (224MB+) in memory - needs generous heap
-      JAVA_OPTS: -Xms256m -Xmx1536m -XX:+UseG1GC
+      LOG_DIR: /app/logs
+      GATEWAY_HTTP_RESPONSE_TIMEOUT: ${GATEWAY_HTTP_RESPONSE_TIMEOUT:-7200s}
+      # Gateway streams file uploads via Netty — does not buffer bodies in heap.
+      # codec buffer reduced to 64MB (application.properties). 768m heap is sufficient.
+      JAVA_OPTS: -Xms128m -Xmx768m -XX:+UseG1GC
     depends_on:
       auth:
         condition: service_started
+    volumes:
+      - /var/log/ontocode/gateway:/app/logs
     networks:
       - ontology-net
     deploy:
       resources:
         limits:
-          memory: 2g
+          memory: 1500m
 
   # Ontology Editor Service
   owl-editor:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-editor:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-editor:${VERSION:-latest}
     container_name: ontocode-editor
     restart: unless-stopped
+    user: root
     ports:
       - "8083:8083"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
-      GRAPHDB_URL: http://graphdb:7200
-      GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
-      GRAPHDB_IMPORT_DIR: /opt/graphdb-import
+      FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
+      FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
+      FUSEKI_GSP_ENDPOINT: http://fuseki:3030/ontocode/data
+      FUSEKI_ADMIN_USER: ${FUSEKI_ADMIN_USER:-admin}
+      FUSEKI_ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
+      DATA_DIR: /app/data
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
+      ONTOLOGY_HTTP_TIMEOUT_MS: ${ONTOLOGY_HTTP_TIMEOUT_MS:-7200000}
+      ONTOLOGY_HTTP_TIMEOUT_SECONDS: ${ONTOLOGY_HTTP_TIMEOUT_SECONDS:-7200s}
       JAVA_OPTS: >-
         -Xms1g -Xmx3g
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
@@ -194,18 +188,19 @@ services:
       JIRA_ENABLED: ${JIRA_ENABLED:-true}
       JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
       JIRA_USER_EMAIL: ${JIRA_USER_EMAIL:-uma@coretopia.com}
-      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-ATATT3xFfGF0fhZLilL7hxxMAXQcjCEQXmkcVVMIk50av6aSqaDwoY6HOqhuriEGAL7uSwL3oFh6p4n9Vssrq6u67kAKi6nxUAICruIUtJDTKyUhM0ibNyq-S3DJVM88v-VkOX5jYc-yCCjIH7hQ9NYNWbQQLnPJngbbCLGOuzii6WkIL9s4G7g=6CEB1011}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
       JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
       JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+      # Import concurrency: 1 on t3.large, 2 on t3.xlarge, 3 on t3.2xlarge
+      ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-1}
     depends_on:
       mongo:
         condition: service_healthy
-      graphdb:
+      fuseki:
         condition: service_healthy
     volumes:
-      - graphdb-import:/opt/graphdb-import
-      - editor-logs:/app/logs
+      - /var/log/ontocode/editor:/app/logs
     networks:
       - ontology-net
     deploy:
@@ -221,15 +216,16 @@ services:
 
   # SWRL Rules Service
   swrl-service:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-swrl:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-swrl:${VERSION:-latest}
     container_name: ontocode-swrl
     restart: unless-stopped
+    user: root
     ports:
       - "8084:8084"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
-      GRAPHDB_URL: http://graphdb:7200
-      GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
+      FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
+      FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
@@ -240,11 +236,11 @@ services:
         -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
         -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m
     volumes:
-      - swrl-logs:/app/logs
+      - /var/log/ontocode/swrl:/app/logs
     depends_on:
       mongo:
         condition: service_healthy
-      graphdb:
+      fuseki:
         condition: service_healthy
     networks:
       - ontology-net
@@ -255,7 +251,7 @@ services:
 
   # Plugin Service
   plugin-service:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-plugin:${VERSION:-latest}
     container_name: ontocode-plugin
     restart: unless-stopped
     ports:
@@ -263,7 +259,7 @@ services:
     environment:
       SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
-      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
@@ -282,7 +278,7 @@ services:
 
   # Plugin Initialization Service
   plugin-init:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin-init:${VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-plugin-init:${VERSION:-latest}
     container_name: ontocode-plugin-init
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
@@ -297,7 +293,7 @@ services:
 
   # VS Code Web Extension (Self-Contained) - DISABLED
   # vscode-web:
-  #   image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-vscode-web:${VERSION:-latest}
+  #   image: ${DOCKER_REGISTRY:-ontocode}/ontocode-vscode-web:${VERSION:-latest}
   #   container_name: ontocode-vscode-web
   #   restart: unless-stopped
   #   ports:
@@ -325,7 +321,10 @@ services:
 
   # Web Application (React Frontend)
   webapp:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-web:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp
+    image: ${DOCKER_REGISTRY:-ontocode}/ontocode-web:${VERSION:-latest}
     container_name: ontocode-web
     restart: unless-stopped
     ports:
@@ -350,10 +349,7 @@ services:
 
 volumes:
   mongo-data:
-  graphdb-data:
-  graphdb-import:
-  editor-logs:
-  swrl-logs:
+  fuseki-data:
 
 networks:
   ontology-net:

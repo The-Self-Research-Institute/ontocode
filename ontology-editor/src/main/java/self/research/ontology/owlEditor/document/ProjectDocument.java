@@ -22,7 +22,9 @@ public class ProjectDocument {
     private Instant createdAt;
     private Instant updatedAt;
     private Map<String, Object> metadata;
-    
+    /** Monotonic counter bumped on every Fuseki write; used to invalidate stale OWLAPI caches. */
+    private Long mutationVersion;
+
     public ProjectDocument() {
     }
     
@@ -129,5 +131,13 @@ public class ProjectDocument {
     
     public void setMetadata(Map<String, Object> metadata) {
         this.metadata = metadata;
+    }
+
+    public Long getMutationVersion() {
+        return mutationVersion;
+    }
+
+    public void setMutationVersion(Long mutationVersion) {
+        this.mutationVersion = mutationVersion;
     }
 }

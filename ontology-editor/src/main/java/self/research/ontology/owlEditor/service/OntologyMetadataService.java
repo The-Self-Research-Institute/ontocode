@@ -4,9 +4,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.model.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * Service for managing ontology-level metadata: annotations, imports, and general class axioms
@@ -23,13 +25,23 @@ public class OntologyMetadataService {
         PREFIX dcterms: <http://purl.org/dc/terms/>
         """;
 
-    private final GraphDBDatasetService datasetService;
+    private static final Pattern AND_SPLIT = Pattern.compile("(?i)\\s+and\\s+");
+    private static final Pattern OR_SPLIT = Pattern.compile("(?i)\\s+or\\s+");
+
+    private final SparqlDatasetService datasetService;
     private final ProjectMetadataService projectMetadataService;
+    private final OntologyMutationService mutationService;
+    private final GeneralClassAxiomService generalClassAxiomService;
     private final Map<String, String> ontologyIriCache = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public OntologyMetadataService(GraphDBDatasetService datasetService, ProjectMetadataService projectMetadataService) {
+    public OntologyMetadataService(SparqlDatasetService datasetService,
+                                   ProjectMetadataService projectMetadataService,
+                                   @Lazy OntologyMutationService mutationService,
+                                   GeneralClassAxiomService generalClassAxiomService) {
         this.datasetService = datasetService;
         this.projectMetadataService = projectMetadataService;
+        this.mutationService = mutationService;
+        this.generalClassAxiomService = generalClassAxiomService;
     }
 
     /**
@@ -124,8 +136,7 @@ public class OntologyMetadataService {
               FILTER(?property != rdf:type || ?value != owl:Ontology)
               FILTER(?property != owl:imports)
               FILTER(?property != owl:versionIRI)
-              FILTER(?property != owl:versionInfo)
-              
+
               # Keep common annotation properties and any other non-owl/rdf internal properties
               FILTER(
                 strstarts(str(?property), str(rdfs:)) ||
@@ -145,7 +156,9 @@ public class OntologyMetadataService {
                 BindingSet sol = rs.next();
                 if (sol.hasBinding("property") && sol.hasBinding("value")) {
                     Map<String, String> ann = new LinkedHashMap<>();
-                    ann.put("property", sol.getValue("property").stringValue());
+                    String propertyValue = sol.getValue("property").stringValue();
+                    ann.put("property", propertyValue);
+                    ann.put("propertyIri", propertyValue);
                     Value valueNode = sol.getValue("value");
                     String value = valueNode.isLiteral() ? valueNode.stringValue() : valueNode.toString();
                     ann.put("value", value);
@@ -324,6 +337,59 @@ public class OntologyMetadataService {
     }
 
     /**
+     * Transitive import closure for each direct import of the active ontology.
+     * Keys are direct import IRIs; values are nested child import trees.
+     */
+    public Map<String, List<Map<String, Object>>> getImportClosure(String projectId) {
+        Map<String, List<String>> importGraph = loadImportGraph(projectId);
+        Map<String, List<Map<String, Object>>> closure = new LinkedHashMap<>();
+        for (String directImport : getOntologyImports(projectId)) {
+            closure.put(directImport, buildImportSubtree(directImport, importGraph, new HashSet<>()));
+        }
+        return closure;
+    }
+
+    private Map<String, List<String>> loadImportGraph(String projectId) {
+        String query = PREFIXES + """
+            SELECT ?subject ?import WHERE {
+              ?subject owl:imports ?import .
+            }
+            """;
+        Map<String, List<String>> graph = new HashMap<>();
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, query);
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                if (!sol.hasBinding("subject") || !sol.hasBinding("import")) {
+                    continue;
+                }
+                String subject = sol.getValue("subject").stringValue();
+                String importIri = sol.getValue("import").stringValue();
+                graph.computeIfAbsent(subject, ignored -> new ArrayList<>()).add(importIri);
+            }
+        } catch (Exception e) {
+            log.error("Error loading import graph for project {}", projectId, e);
+        }
+        return graph;
+    }
+
+    private List<Map<String, Object>> buildImportSubtree(String iri,
+                                                         Map<String, List<String>> graph,
+                                                         Set<String> visited) {
+        if (!visited.add(iri)) {
+            return List.of();
+        }
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        for (String childIri : graph.getOrDefault(iri, List.of())) {
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("iri", childIri);
+            node.put("children", buildImportSubtree(childIri, graph, new HashSet<>(visited)));
+            nodes.add(node);
+        }
+        return nodes;
+    }
+
+    /**
      * Add an ontology import
      */
     public void addOntologyImport(String projectId, String importIri) {
@@ -408,53 +474,89 @@ public class OntologyMetadataService {
     }
 
     /**
+     * One-time migration: convert legacy {@code ontocode.org/resource/gci} string literals into real OWL GCIs.
+     */
+    private void migrateLegacyGciStrings(String projectId) {
+        String ontologyIri = getOntologyIri(projectId);
+        if (ontologyIri == null) return;
+        String formattedOntologyIri = formatResource(ontologyIri);
+        String query = PREFIXES + String.format("""
+            SELECT ?gci WHERE {
+              %s <http://ontocode.org/resource/gci> ?gci .
+            }
+            """, formattedOntologyIri);
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, query);
+            List<String> legacy = new ArrayList<>();
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                if (sol.hasBinding("gci")) {
+                    legacy.add(sol.getValue("gci").stringValue());
+                }
+            }
+            for (String value : legacy) {
+                if (!value.contains(" SubClassOf ")) {
+                    deleteLegacyGciLiteral(projectId, formattedOntologyIri, value);
+                    continue;
+                }
+                String[] parts = value.split(" SubClassOf ", 2);
+                try {
+                    addGCI(projectId, parts[0].trim(), parts[1].trim());
+                    deleteLegacyGciLiteral(projectId, formattedOntologyIri, value);
+                    log.info("Migrated legacy GCI string to real axiom for project {}", projectId);
+                } catch (Exception e) {
+                    log.warn("Could not migrate legacy GCI '{}': {}", value, e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Legacy GCI migration skipped for {}: {}", projectId, e.getMessage());
+        }
+    }
+
+    private void deleteLegacyGciLiteral(String projectId, String formattedOntologyIri, String legacyValue) {
+        String update = PREFIXES + String.format("""
+            DELETE {
+              %s <http://ontocode.org/resource/gci> "%s" .
+            }
+            WHERE {
+              %s <http://ontocode.org/resource/gci> "%s" .
+            }
+            """, formattedOntologyIri, escapeString(legacyValue),
+                formattedOntologyIri, escapeString(legacyValue));
+        datasetService.execUpdate(projectId, update);
+    }
+
+    /**
      * Get all General Class Axioms (GCIs)
      */
     public List<Map<String, Object>> getGeneralClassAxioms(String projectId) {
+        migrateLegacyGciStrings(projectId);
+
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) return new ArrayList<>();
-        String formattedOntologyIri = formatResource(ontologyIri);
 
-        // We look for both real RDF GCIs (blank node subjects) and our custom stored GCIs
-        String query = PREFIXES + String.format("""
-            SELECT ?gci ?sub ?super WHERE {
-              {
-                %s <http://ontocode.org/resource/gci> ?gci .
-              }
-              UNION
-              {
-                ?sub rdfs:subClassOf ?super .
-                FILTER(isBlank(?sub))
-                BIND(CONCAT(STR(?sub), " SubClassOf ", STR(?super)) AS ?gci)
-              }
+        // Real OWL GCIs only: blank-node subjects in SubClassOf axioms
+        String query = PREFIXES + """
+            SELECT ?sub ?super WHERE {
+              ?sub rdfs:subClassOf ?super .
+              FILTER(isBlank(?sub))
             }
-            """, formattedOntologyIri);
+            """;
 
         List<Map<String, Object>> gcis = new ArrayList<>();
         try {
             TupleQueryResult rs = datasetService.execSelect(projectId, query);
             while (rs.hasNext()) {
                 BindingSet sol = rs.next();
-                if (sol.hasBinding("gci")) {
-                    Map<String, Object> gci = new LinkedHashMap<>();
-                    String value = sol.getValue("gci").stringValue();
-                    gci.put("value", value);
-                    
-                    // Try to extract sub and super if they exist as bindings
-                    if (sol.hasBinding("sub")) gci.put("subClass", sol.getValue("sub").stringValue());
-                    if (sol.hasBinding("super")) gci.put("superClass", sol.getValue("super").stringValue());
-                    
-                    // If sub/super are missing (custom GCI string), parse the value
-                    if (!gci.containsKey("subClass") && value.contains(" SubClassOf ")) {
-                        String[] parts = value.split(" SubClassOf ");
-                        if (parts.length == 2) {
-                            gci.put("subClass", parts[0]);
-                            gci.put("superClass", parts[1]);
-                        }
-                    }
-                    
-                    gcis.add(gci);
-                }
+                if (!sol.hasBinding("sub") || !sol.hasBinding("super")) continue;
+                String subId = sol.getValue("sub").stringValue();
+                String superId = sol.getValue("super").stringValue();
+                Map<String, Object> gci = new LinkedHashMap<>();
+                gci.put("id", subId);
+                gci.put("subClass", subId);
+                gci.put("superClass", superId);
+                gci.put("value", subId + " SubClassOf " + superId);
+                gcis.add(gci);
             }
         } catch (Exception e) {
             log.error("Error fetching general class axioms for project " + projectId, e);
@@ -463,46 +565,139 @@ public class OntologyMetadataService {
     }
 
     /**
-     * Add a General Class Axiom (GCI)
+     * Add a General Class Axiom (GCI) as a real OWL blank-node SubClassOf axiom.
      */
     public void addGCI(String projectId, String subClassExpr, String superClassExpr) {
-        String ontologyIri = getOntologyIri(projectId);
-        if (ontologyIri == null) {
-            ontologyIri = "http://ontocode.org/resource/ontology/" + projectId;
-            datasetService.execUpdate(projectId, PREFIXES + String.format("INSERT DATA { <%s> a owl:Ontology . }", ontologyIri));
-            ontologyIri = "<" + ontologyIri + ">";
-        } else {
-            ontologyIri = formatResource(ontologyIri);
+        if (subClassExpr == null || subClassExpr.isBlank()) {
+            throw new IllegalArgumentException("GCA sub-class expression is required");
+        }
+        if (superClassExpr == null || superClassExpr.isBlank()) {
+            throw new IllegalArgumentException("GCA super-class is required");
         }
 
-        String gciValue = subClassExpr + " SubClassOf " + superClassExpr;
-        String update = PREFIXES + String.format("""
-            INSERT DATA {
-              %s <http://ontocode.org/resource/gci> "%s" .
-            }
-            """, ontologyIri, escapeString(gciValue));
+        try {
+            generalClassAxiomService.addGeneralClassAxiom(projectId, subClassExpr.trim(), superClassExpr.trim());
+            return;
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            log.debug("Full Manchester GCA parse failed, trying simple named intersection/union: {}", e.getMessage());
+        }
 
-        datasetService.execUpdate(projectId, update);
+        String superIri = resolveClassIri(projectId, superClassExpr.trim());
+        if (superIri == null || superIri.isBlank()) {
+            throw new IllegalArgumentException("Cannot resolve super-class: " + superClassExpr);
+        }
+
+        String sub = subClassExpr.trim();
+        OntologyMutationService.MutationOp op;
+        if (AND_SPLIT.split(sub).length >= 2) {
+            String[] parts = AND_SPLIT.split(sub);
+            String members = String.join(",", resolveClassIris(projectId, parts));
+            op = new OntologyMutationService.MutationOp(
+                    "addGCAIntersection", superIri, null, null, null, members,
+                    null, null, null, null, null, null, null, null, null);
+        } else if (OR_SPLIT.split(sub).length >= 2) {
+            String[] parts = OR_SPLIT.split(sub);
+            String members = String.join(",", resolveClassIris(projectId, parts));
+            op = new OntologyMutationService.MutationOp(
+                    "addGCAUnion", superIri, null, null, null, members,
+                    null, null, null, null, null, null, null, null, null);
+        } else {
+            throw new IllegalArgumentException(
+                    "GCA could not be parsed. Use Manchester syntax (e.g. 'A and (p some B) SubClassOf C')");
+        }
+        mutationService.apply(projectId, List.of(op));
     }
 
     /**
-     * Delete a General Class Axiom (GCI)
+     * Delete a General Class Axiom — supports legacy string literals and real blank-node GCIs.
      */
     public void deleteGCI(String projectId, String gciValue) {
-        String ontologyIri = getOntologyIri(projectId);
-        if (ontologyIri == null) return;
-        ontologyIri = formatResource(ontologyIri);
+        if (gciValue == null || gciValue.isBlank()) return;
 
-        String update = PREFIXES + String.format("""
-            DELETE {
-              %s <http://ontocode.org/resource/gci> "%s" .
+        // Legacy custom-predicate string storage
+        if (gciValue.contains(" SubClassOf ")) {
+            String ontologyIri = getOntologyIri(projectId);
+            if (ontologyIri != null) {
+                String formattedOntologyIri = formatResource(ontologyIri);
+                String legacyValue = gciValue.contains(" SubClassOf ")
+                        ? gciValue
+                        : gciValue;
+                String update = PREFIXES + String.format("""
+                    DELETE {
+                      %s <http://ontocode.org/resource/gci> "%s" .
+                    }
+                    WHERE {
+                      %s <http://ontocode.org/resource/gci> "%s" .
+                    }
+                    """, formattedOntologyIri, escapeString(legacyValue),
+                        formattedOntologyIri, escapeString(legacyValue));
+                datasetService.execUpdate(projectId, update);
             }
-            WHERE {
-              %s <http://ontocode.org/resource/gci> "%s" .
-            }
-            """, ontologyIri, escapeString(gciValue), ontologyIri, escapeString(gciValue));
+        }
 
-        datasetService.execUpdate(projectId, update);
+        // Real blank-node GCI (id is STR(?sub) from queries)
+        String blankNodeId = gciValue;
+        if (gciValue.contains(" SubClassOf ")) {
+            String subPart = gciValue.split(" SubClassOf ", 2)[0].trim();
+            if (looksLikeBlankNodeId(subPart)) {
+                blankNodeId = subPart;
+            }
+        }
+        if (looksLikeBlankNodeId(blankNodeId)) {
+            mutationService.apply(projectId, List.of(
+                    new OntologyMutationService.MutationOp(
+                            "deleteAxiom", blankNodeId, null, null, null, null,
+                            null, null, null, null, null, null, null, null, null)));
+        }
+    }
+
+    private boolean looksLikeBlankNodeId(String value) {
+        if (value == null || value.isBlank()) return false;
+        return value.startsWith("_:")
+                || value.contains("/genid/")
+                || value.contains("/.well-known/genid/");
+    }
+
+    private String resolveClassIri(String projectId, String name) {
+        if (name == null) return null;
+        String trimmed = name.trim();
+        if (trimmed.startsWith("http") || trimmed.startsWith("urn:")) return trimmed;
+        if (trimmed.contains(":") && !trimmed.contains(" ")) {
+            if (trimmed.startsWith("owl:")) {
+                return "http://www.w3.org/2002/07/owl#" + trimmed.substring(4);
+            }
+            if (trimmed.startsWith("rdfs:")) {
+                return "http://www.w3.org/2000/01/rdf-schema#" + trimmed.substring(5);
+            }
+        }
+        String escaped = trimmed.replace("\"", "\\\"");
+        String query = PREFIXES + """
+            SELECT ?iri WHERE {
+              { ?iri rdfs:label "%s" }
+              UNION
+              { ?iri rdfs:label ?lbl . FILTER(LCASE(STR(?lbl)) = LCASE("%s")) }
+            } LIMIT 1
+            """.formatted(escaped, escaped);
+        try {
+            TupleQueryResult result = datasetService.execSelect(projectId, query);
+            if (result.hasNext()) {
+                return result.next().getValue("iri").stringValue();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to resolve class '{}': {}", trimmed, e.getMessage());
+        }
+        return trimmed;
+    }
+
+    private List<String> resolveClassIris(String projectId, String[] parts) {
+        List<String> iris = new ArrayList<>();
+        for (String part : parts) {
+            if (part == null || part.isBlank()) continue;
+            iris.add(resolveClassIri(projectId, part.trim()));
+        }
+        return iris;
     }
 
     /**
@@ -514,28 +709,35 @@ public class OntologyMetadataService {
         String formattedNew = formatResource(newOntologyIri);
 
         StringBuilder update = new StringBuilder(PREFIXES);
-        update.append("DELETE { ");
         if (formattedOld != null) {
-            update.append(formattedOld).append(" a owl:Ontology . ");
-            update.append(formattedOld).append(" owl:versionIRI ?v . ");
+            // Move ALL triples from the old IRI to the new IRI (preserves annotations, imports, etc.)
+            update.append("DELETE { ").append(formattedOld).append(" ?p ?o } ");
+            update.append("INSERT { ").append(formattedNew).append(" ?p ?o } ");
+            update.append("WHERE  { ").append(formattedOld).append(" ?p ?o } ;");
         }
-        update.append(" } INSERT { ");
-        update.append(formattedNew).append(" a owl:Ontology . ");
+        // Ensure the new IRI is declared as owl:Ontology (in case old IRI had no triples)
+        update.append("\nINSERT DATA { ").append(formattedNew).append(" a owl:Ontology . } ;");
         if (newVersionIri != null && !newVersionIri.isEmpty()) {
-            update.append(formattedNew).append(" owl:versionIRI <").append(newVersionIri).append("> . ");
+            // Replace any existing versionIRI with the supplied one
+            update.append("\nDELETE { ").append(formattedNew).append(" owl:versionIRI ?v } ");
+            update.append("WHERE  { ").append(formattedNew).append(" owl:versionIRI ?v } ;");
+            update.append("\nINSERT DATA { ").append(formattedNew).append(" owl:versionIRI <").append(newVersionIri).append("> . }");
         }
-        update.append(" } WHERE { ");
-        if (formattedOld != null) {
-            update.append("OPTIONAL { ").append(formattedOld).append(" owl:versionIRI ?v } ");
-        } else {
-            update.append("BIND(1 as ?dummy) ");
-        }
-        update.append(" }");
 
         datasetService.execUpdate(projectId, update.toString());
         
         // Update cache
         ontologyIriCache.put(projectId, newOntologyIri);
+        projectMetadataService.readMeta(projectId).ifPresent(cached -> {
+            Map<String, Object> meta = new HashMap<>(cached);
+            meta.put("ontologyIRI", newOntologyIri);
+            if (newVersionIri != null && !newVersionIri.isEmpty()) {
+                meta.put("versionIRI", newVersionIri);
+            } else {
+                meta.remove("versionIRI");
+            }
+            projectMetadataService.writeMeta(projectId, meta);
+        });
     }
 
     /**
@@ -822,6 +1024,20 @@ public class OntologyMetadataService {
             log.debug("Using cached prefixes from MongoDB for project {} ({} entries)", projectId, prefixMap.size());
         }
 
+        // Always include the standard OWL/RDF/RDFS/XSD prefixes (like Protégé shows by default).
+        // User-defined prefixes take precedence; we only add a standard one if not already present.
+        Map<String, String> defaults = new java.util.LinkedHashMap<>();
+        defaults.put("owl",   "http://www.w3.org/2002/07/owl#");
+        defaults.put("rdf",   "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+        defaults.put("rdfs",  "http://www.w3.org/2000/01/rdf-schema#");
+        defaults.put("xsd",   "http://www.w3.org/2001/XMLSchema#");
+        defaults.put("dc",    "http://purl.org/dc/elements/1.1/");
+        defaults.put("dcterms", "http://purl.org/dc/terms/");
+        defaults.put("skos",  "http://www.w3.org/2004/02/skos/core#");
+        for (Map.Entry<String, String> e : defaults.entrySet()) {
+            prefixMap.putIfAbsent(e.getKey(), e.getValue());
+        }
+
         // Convert to list of objects for frontend compatibility
         List<Map<String, String>> result = new ArrayList<>();
         for (Map.Entry<String, String> entry : prefixMap.entrySet()) {
@@ -830,10 +1046,10 @@ public class OntologyMetadataService {
             p.put("namespace", entry.getValue());
             result.add(p);
         }
-        
+
         // Sort by prefix name
         result.sort(Comparator.comparing(m -> m.get("prefix")));
-        
+
         return result;
     }
 
@@ -987,8 +1203,17 @@ public class OntologyMetadataService {
 
     private String formatResource(String iri) {
         if (iri == null) return null;
+        if (iri.startsWith("<")) return iri;
         if (iri.startsWith("_:")) return iri;
-        if (iri.contains(":") && !iri.startsWith("http")) return iri; // Prefixed name
+        // A genuine SPARQL prefixed name (owl:Class, rdfs:label) has no ':', '/', or '#' after the colon.
+        // Full URIs with non-http schemes (urn:, file:, urn:uuid:) must be wrapped in < >.
+        int colonIdx = iri.indexOf(':');
+        if (colonIdx > 0) {
+            String localPart = iri.substring(colonIdx + 1);
+            if (!localPart.contains(":") && !localPart.contains("/") && !localPart.contains("#")) {
+                return iri; // genuine CURIE like owl:Class
+            }
+        }
         return "<" + iri + ">";
     }
 

@@ -42,8 +42,12 @@ public class WorkspaceMigration implements CommandLineRunner {
                 
                 if (userWorkspaces.isEmpty()) {
                     // Create a default workspace for this user
+                    String workspaceId = user.getUsername() + "-workspace";
+                    if (workspaceRepository.findByWorkspaceId(workspaceId).isPresent()) {
+                        continue;
+                    }
                     Workspace defaultWorkspace = new Workspace();
-                    defaultWorkspace.setWorkspaceId(user.getUsername() + "-workspace");
+                    defaultWorkspace.setWorkspaceId(workspaceId);
                     defaultWorkspace.setOwnerId(user.getId());
                     defaultWorkspace.setName(user.getUsername() + "'s Workspace");
                     defaultWorkspace.setDescription("Default workspace");
@@ -59,7 +63,7 @@ public class WorkspaceMigration implements CommandLineRunner {
                     // Set default plan
                     defaultWorkspace.setSubscriptionPlan("FREE");
                     defaultWorkspace.setMaxWorkspaces(3);
-                    defaultWorkspace.setMaxMembers(10);
+                    defaultWorkspace.setMaxMembers(3);
                     defaultWorkspace.setCollaborationEnabled(false);
                     
                     workspaceRepository.save(defaultWorkspace);

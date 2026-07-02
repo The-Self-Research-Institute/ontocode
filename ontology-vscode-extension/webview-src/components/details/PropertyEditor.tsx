@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, Trash2, CheckSquare, Square, Edit3, Search } from 'lucide-react';
-import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
+import { Panel, AnnotationsDisplay, MultiSelectSection, CollaboratorPresenceBar } from './common';
 import { ManchesterSyntaxEditor, PropertyChainDialog, IRIEditorDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { notificationService } from '../../services/notificationService';
 import type { Property } from '../../types';
 
 type PropertyUsageItem = {
@@ -139,20 +140,24 @@ const PropertyEditor: React.FC<{
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   projectId: string;
-  onAddDomainClick?: () => void;
-  onAddRangeClick?: () => void;
-  onAddSubPropertyClick?: () => void;
-  onAddInverseClick?: () => void;
-  onAddDisjointClick?: () => void;
-  onAddEquivalentClick?: () => void;
+  onAddDomainClick?: (editingItem?: string) => void;
+  onAddRangeClick?: (editingItem?: string) => void;
+  onAddSubPropertyClick?: (editingItem?: string) => void;
+  onAddInverseClick?: (editingItem?: string) => void;
+  onAddDisjointClick?: (editingItem?: string) => void;
+  onAddEquivalentClick?: (editingItem?: string) => void;
   objectProperties?: Property[];
-}> = ({ 
-    item, 
-    onUpdate, 
+  viewMode?: 'asserted' | 'inferred';
+  isViewOnly?: boolean;
+  onViewOnlyAction?: () => void;
+  onNavigate?: (iri: string, type: string) => void;
+}> = ({
+    item,
+    onUpdate,
     onAddAnnotation,
-    onEditAnnotation, 
-    onDeleteAnnotation, 
-    activeTheme, 
+    onEditAnnotation,
+    onDeleteAnnotation,
+    activeTheme,
     projectId,
     onAddDomainClick,
     onAddRangeClick,
@@ -161,7 +166,10 @@ const PropertyEditor: React.FC<{
     onAddDisjointClick,
     onAddEquivalentClick,
     objectProperties = [],
-    viewMode = 'asserted'
+    viewMode = 'asserted',
+    isViewOnly = false,
+    onViewOnlyAction,
+    onNavigate,
 }) => {
     const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -234,6 +242,7 @@ const PropertyEditor: React.FC<{
         : []; // Annotation properties don't have characteristics
     
     const handleCharacteristicChange = async (char: string, checked: boolean) => {
+        if (isViewOnly) { onViewOnlyAction?.(); return; }
         const currentChars = item.characteristics || [];
         const newChars = checked ? [...currentChars, char] : currentChars.filter(c => c !== char);
         
@@ -277,10 +286,10 @@ const PropertyEditor: React.FC<{
                     onUpdate({ ...item, disjointProperties: [...(item.disjointProperties || []), target] });
                     break;
                 case 'equivalent': {
-                    const currentEq = item.equivalentProperties || [];
-                    const updatedEq = [...currentEq, target];
-                    onUpdate({ ...item, equivalentProperties: updatedEq });
                     await ontologyMutationService.addEquivalentProperty(projectId, item.id, target);
+                    const currentEq = item.equivalentProperties || [];
+                    const updatedEq = [...currentEq, target] as typeof currentEq;
+                    onUpdate({ ...item, equivalentProperties: updatedEq });
                     break;
                 }
             }
@@ -313,9 +322,9 @@ const PropertyEditor: React.FC<{
                     onUpdate({ ...item, disjointProperties: item.disjointProperties?.filter(p => p !== target) });
                     break;
                 case 'equivalent': {
-                    const remaining = item.equivalentProperties?.filter(p => p !== target) || [];
-                    onUpdate({ ...item, equivalentProperties: remaining });
                     await ontologyMutationService.deleteEquivalentProperty(projectId, item.id, target);
+                    const remaining = (item.equivalentProperties?.filter(p => p !== target) || []) as typeof item.equivalentProperties;
+                    onUpdate({ ...item, equivalentProperties: remaining });
                     break;
                 }
             }
@@ -366,11 +375,11 @@ const PropertyEditor: React.FC<{
             }
             if (newIRI !== item.id) {
                 console.warn("IRI renaming requires backend support - not yet implemented");
-                alert("IRI renaming is not yet supported. Only label changes are saved.");
+                notificationService.warning("Not Supported", "IRI renaming is not yet supported. Only label changes are saved.");
             }
         } catch (error) {
             console.error("Failed to update property:", error);
-            alert("Failed to update property. See console for details.");
+            notificationService.error("Update Failed", "Failed to update property. See console for details.");
         }
     };
 
@@ -388,13 +397,14 @@ const PropertyEditor: React.FC<{
                     </div>
                 </div>
                 <button
-                    onClick={() => setIsIRIEditorOpen(true)}
+                    onClick={isViewOnly ? () => onViewOnlyAction?.() : () => setIsIRIEditorOpen(true)}
                     className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
-                    title="Edit IRI and Label"
+                    title={isViewOnly ? "View-only: upgrade to edit" : "Edit IRI and Label"}
                 >
                     <Edit3 size={16} />
                 </button>
             </div>
+            <CollaboratorPresenceBar entityId={item.id} />
 
             {/* Tabs - Protégé style */}
             <div className="flex border-b border-gray-200 bg-gray-50">
@@ -441,14 +451,14 @@ const PropertyEditor: React.FC<{
                         <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
                             <span className="text-sm font-semibold">Annotations: {item.label}</span>
                             <div className="flex items-center gap-1">
-                                <button onClick={onAddAnnotation} className="p-1 hover:bg-white/20 rounded transition-colors" title="Add annotation">
+                                <button onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation} className="p-1 hover:bg-white/20 rounded transition-colors" title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}>
                                     <Plus size={16} />
                                 </button>
                             </div>
                         </div>
                         {/* Annotations Content */}
                         <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm">
-                            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
+                            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} isViewOnly={isViewOnly} onViewOnlyAction={onViewOnlyAction} />
                         </div>
                     </div>
                 )}
@@ -499,12 +509,17 @@ const PropertyEditor: React.FC<{
 
                             <MultiSelectSection
                                 title="Equivalent To"
-                                items={item.equivalentProperties}
+                                items={(item.equivalentProperties as string[] | undefined)}
                                 inferredItems={inferredDetails?.inferredEquivalentPropertiesAxioms || []}
                                 onAddClick={onAddEquivalentClick}
                                 onDelete={prop => handleDeleteRelation('equivalent', prop)}
                                 themeColor={isObjectProperty ? 'blue' : 'green'}
                                 itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                                isViewOnly={isViewOnly}
+                                onViewOnlyAction={onViewOnlyAction}
+                                onNavigate={onNavigate}
+                                projectId={projectId}
+                                parentEntityIri={item.id}
                             />
 
                         <MultiSelectSection
@@ -515,6 +530,11 @@ const PropertyEditor: React.FC<{
                             onDelete={prop => handleDeleteRelation('subProperty', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
                             itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                            isViewOnly={isViewOnly}
+                            onViewOnlyAction={onViewOnlyAction}
+                            onNavigate={onNavigate}
+                            projectId={projectId}
+                            parentEntityIri={item.id}
                         />
 
                         {isObjectProperty && (
@@ -525,6 +545,11 @@ const PropertyEditor: React.FC<{
                                 onDelete={prop => handleDeleteRelation('inverse', prop)}
                                 themeColor="blue"
                                 itemEntityType="objectProperty"
+                                isViewOnly={isViewOnly}
+                                onViewOnlyAction={onViewOnlyAction}
+                                onNavigate={onNavigate}
+                                projectId={projectId}
+                                parentEntityIri={item.id}
                             />
                         )}
 
@@ -536,6 +561,11 @@ const PropertyEditor: React.FC<{
                             onDelete={domain => handleDeleteRelation('domain', domain)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
                             itemEntityType="class"
+                            isViewOnly={isViewOnly}
+                            onViewOnlyAction={onViewOnlyAction}
+                            onNavigate={onNavigate}
+                            projectId={projectId}
+                            parentEntityIri={item.id}
                         />
                         )}
 
@@ -547,6 +577,11 @@ const PropertyEditor: React.FC<{
                             onDelete={range => handleDeleteRelation('range', range)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
                             itemEntityType={isObjectProperty ? 'class' : 'datatype'}
+                            isViewOnly={isViewOnly}
+                            onViewOnlyAction={onViewOnlyAction}
+                            onNavigate={onNavigate}
+                            projectId={projectId}
+                            parentEntityIri={item.id}
                         />
                         )}
 
@@ -557,6 +592,11 @@ const PropertyEditor: React.FC<{
                             onDelete={prop => handleDeleteRelation('disjoint', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
                             itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                            isViewOnly={isViewOnly}
+                            onViewOnlyAction={onViewOnlyAction}
+                            onNavigate={onNavigate}
+                            projectId={projectId}
+                            parentEntityIri={item.id}
                         />
 
                         {isObjectProperty && (
@@ -566,6 +606,11 @@ const PropertyEditor: React.FC<{
                                 onAddClick={openChainEditor}
                                 onDelete={handleDeletePropertyChain}
                                 themeColor="blue"
+                                isViewOnly={isViewOnly}
+                                onViewOnlyAction={onViewOnlyAction}
+                                onNavigate={onNavigate}
+                                projectId={projectId}
+                                parentEntityIri={item.id}
                             />
                         )}
                         </div>
@@ -598,7 +643,7 @@ const PropertyEditor: React.FC<{
                 onClose={() => setIsIRIEditorOpen(false)}
                 currentIRI={item.id}
                 currentLabel={item.label}
-                entityType={isObjectProperty ? 'ObjectProperty' : isDataProperty ? 'DataProperty' : 'Property'}
+                entityType={isObjectProperty ? 'ObjectProperty' : isDataProperty ? 'DataProperty' : 'AnnotationProperty'}
                 onSave={handleSaveIRI}
             />
         </div>

@@ -17,6 +17,7 @@ import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.service.InvitationService;
+import self.research.ontology.auth.service.SystemSettingsService;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -34,7 +35,8 @@ public class InvitationController {
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
     private final ProjectRepository projectRepository;
-    
+    private final SystemSettingsService systemSettingsService;
+
     @Value("${app.base-url:http://localhost:8082}")
     private String baseUrl;
 
@@ -42,18 +44,20 @@ public class InvitationController {
                                InvitationRepository invitationRepository,
                                UserRepository userRepository,
                                WorkspaceRepository workspaceRepository,
-                               ProjectRepository projectRepository) {
+                               ProjectRepository projectRepository,
+                               SystemSettingsService systemSettingsService) {
         this.invitationService = invitationService;
         this.invitationRepository = invitationRepository;
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
         this.projectRepository = projectRepository;
+        this.systemSettingsService = systemSettingsService;
     }
 
     /**
      * Get current authenticated username
      */
-    private String getCurrentUsername() {
+    private String getCurrentUserEmail() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         return authentication.getName();
     }
@@ -64,8 +68,8 @@ public class InvitationController {
     @PostMapping("/send")
     public ResponseEntity<?> sendInvitation(@Valid @RequestBody SendInvitationRequest request) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -88,14 +92,57 @@ public class InvitationController {
             if (wsMember.getRole() != Workspace.WorkspaceRole.OWNER && wsMember.getRole() != Workspace.WorkspaceRole.ADMIN) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only workspace owners and admins can invite members"));
             }
-            
-            // Check if user is already an active member
-            Workspace.WorkspaceMember existingMember = workspace.getMemberByEmail(request.email);
-            if (existingMember != null && existingMember.getStatus() == Workspace.MemberStatus.ACTIVE) {
-                return ResponseEntity.badRequest().body(Map.of(
-                    "error", "This user is already a member of this workspace",
-                    "success", false
+
+            // ── Plan enforcement: collaboration gate ─────────────────────────
+            // FREE plan allows up to 3 members — seat limit enforced below.
+            // Paid plans require collaborationEnabled=true (set on subscription activation).
+            // Enterprise domain bypass owners are always allowed to collaborate.
+            boolean ownerIsEnterpriseDomain = userRepository.findById(workspace.getOwnerId())
+                .map(o -> systemSettingsService.isEnterpriseBypass(o.getEmail()))
+                .orElse(false);
+            if (!ownerIsEnterpriseDomain && !Boolean.TRUE.equals(workspace.getCollaborationEnabled())) {
+                String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+                if (!"FREE".equalsIgnoreCase(plan)) {
+                    return ResponseEntity.status(402).body(Map.of(
+                        "error", "Collaboration is not yet activated for this workspace. Please complete your subscription payment first.",
+                        "requiresPayment", true
+                    ));
+                }
+                // FREE plan: fall through to seat-limit check (3-member cap)
+            }
+
+            // ── Plan enforcement: member seat limit ───────────────────────────
+            // Count both ACTIVE and PENDING to prevent over-inviting before accepts
+            long usedSeats = workspace.getMembers().stream()
+                .filter(m -> m.getStatus() == Workspace.MemberStatus.ACTIVE
+                          || m.getStatus() == Workspace.MemberStatus.PENDING)
+                .count();
+            int maxSeats = maxMembersForPlan(workspace);
+            if (usedSeats >= maxSeats) {
+                return ResponseEntity.status(402).body(Map.of(
+                    "error", "Member limit reached (" + maxSeats + "/" + maxSeats + " seats used). Upgrade your plan to add more members.",
+                    "requiresUpgrade", true,
+                    "currentCount", usedSeats,
+                    "maxAllowed", maxSeats
                 ));
+            }
+
+            // Check if user is already an active or pending member
+            Workspace.WorkspaceMember existingMember = workspace.getMemberByEmail(request.email);
+            if (existingMember != null) {
+                if (existingMember.getStatus() == Workspace.MemberStatus.ACTIVE) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "error", "This user is already a member of this workspace",
+                        "success", false
+                    ));
+                }
+                if (existingMember.getStatus() == Workspace.MemberStatus.PENDING) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "error", "An invitation has already been sent to this email address. Use 'Resend Invitation' if they haven't received it.",
+                        "success", false,
+                        "alreadyPending", true
+                    ));
+                }
             }
             
             Invitation invitation = invitationService.createInvitation(
@@ -105,10 +152,10 @@ public class InvitationController {
                 user.getUsername(),
                 user.getEmail()
             );
-            
+
             // Add pending member to workspace
             workspace.addPendingMember(
-                request.email, 
+                request.email,
                 Workspace.WorkspaceRole.valueOf(request.role),
                 invitation.getInvitationToken()
             );
@@ -155,10 +202,7 @@ public class InvitationController {
             Map<String, Object> response = new HashMap<>();
             response.put("invitation", convertToDTO(invitation));
             
-            if (invitation.isExpired()) {
-                response.put("expired", true);
-                response.put("message", "This invitation has expired");
-            } else if ("ACCEPTED".equals(invitation.getStatus())) {
+            if ("ACCEPTED".equals(invitation.getStatus())) {
                 response.put("alreadyAccepted", true);
                 response.put("message", "This invitation has already been accepted");
             } else if ("CANCELLED".equals(invitation.getStatus())) {
@@ -179,8 +223,8 @@ public class InvitationController {
     @PostMapping("/accept/{token}")
     public ResponseEntity<?> acceptInvitation(@PathVariable String token) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -237,6 +281,18 @@ public class InvitationController {
                 ));
             }
             
+            // Re-validate member limit before activating (guards against concurrent accepts filling the workspace)
+            if (existingMember == null || existingMember.getStatus() != Workspace.MemberStatus.PENDING) {
+                long activeCount = workspace.getMembers().stream()
+                    .filter(m -> m.getStatus() == Workspace.MemberStatus.ACTIVE).count();
+                if (activeCount >= maxMembersForPlan(workspace)) {
+                    return ResponseEntity.status(402).body(Map.of(
+                        "error", "This workspace has reached its member limit. Please ask the workspace owner to upgrade.",
+                        "requiresUpgrade", true
+                    ));
+                }
+            }
+
             // Activate pending member or add new member
             if (existingMember != null && existingMember.getStatus() == Workspace.MemberStatus.PENDING) {
                 // Activate the pending member - change status from PENDING to ACTIVE
@@ -247,25 +303,40 @@ public class InvitationController {
             } else {
                 // Add as new member (this case shouldn't normally happen, but handle it)
                 workspace.addMember(user.getId(), user.getUsername(), user.getEmail(), Workspace.WorkspaceRole.valueOf(invitation.getRole()));
-                log.info("Added user {} to workspace {}", user.getUsername(), workspace.getWorkspaceId());
+                log.info("Added user {} to workspace {}", user.getEmail(), workspace.getWorkspaceId());
             }
             workspaceRepository.save(workspace);
             
             // Accept the invitation (marks it as ACCEPTED)
             Invitation acceptedInvitation = invitationService.acceptInvitation(token, user.getId());
 
-            // Auto-add new member to all active projects in the workspace
+            // Auto-add new member to workspace projects based on the invited role and project visibility:
+            //   ADMIN  → added to every non-private project (WORKSPACE or SPECIFIC, or legacy shared)
+            //   VIEWER → added only to WORKSPACE projects (created with "all workspace members")
+            // Private projects (visibility=PRIVATE or legacy single-owner) are never exposed.
             try {
+                boolean isNewAdmin = "ADMIN".equalsIgnoreCase(invitation.getRole());
                 List<Project> workspaceProjects = projectRepository.findActiveByWorkspaceId(workspace.getWorkspaceId());
                 for (Project project : workspaceProjects) {
                     boolean alreadyMember = project.getMembers().stream()
                             .anyMatch(m -> user.getId().equals(m.getUserId()));
                     boolean isOwner = user.getId().equals(project.getOwnerId());
-                    if (!alreadyMember && !isOwner) {
-                        project.addMember(user.getId(), user.getUsername(), user.getEmail(), "VIEWER");
+                    if (alreadyMember || isOwner) continue;
+
+                    String visibility = project.getVisibility();
+                    boolean isPrivate = "PRIVATE".equals(visibility)
+                            || (visibility == null && (project.getMembers() == null || project.getMembers().size() <= 1));
+                    if (isPrivate) continue;
+
+                    // Only ADMINs are auto-added to all non-private projects.
+                    // MEMBERs and VIEWERs are added manually per-project via Project Settings.
+                    boolean shouldAdd = isNewAdmin;
+                    if (shouldAdd) {
+                        String autoRole = "EDITOR";
+                        project.addMember(user.getId(), user.getUsername(), user.getEmail(), autoRole);
                         projectRepository.save(project);
-                        log.info("Auto-added user {} to project {} in workspace {}",
-                                user.getUsername(), project.getName(), workspace.getWorkspaceId());
+                        log.info("Auto-added {} as {} to project {} (visibility={}) in workspace {}",
+                                user.getUsername(), autoRole, project.getName(), visibility, workspace.getWorkspaceId());
                     }
                 }
             } catch (Exception e) {
@@ -295,8 +366,8 @@ public class InvitationController {
     @GetMapping("/workspace/{workspaceId}")
     public ResponseEntity<?> getWorkspaceInvitations(@PathVariable String workspaceId) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -340,8 +411,8 @@ public class InvitationController {
         try {
             log.info("Resending invitation to {} for workspace {}", request.email, request.workspaceId);
             
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -368,15 +439,15 @@ public class InvitationController {
             }
             
             Invitation invitation = existingInvitation.get();
-            
-            // Create new invitation with fresh token and expiry
-            String newToken = UUID.randomUUID().toString().replace("-", "");
-            invitation.setInvitationToken(newToken);
-            invitation.setExpiresAt(LocalDateTime.now().plusDays(7)); // 7 days validity
+
+            if ("ACCEPTED".equals(invitation.getStatus())) {
+                return ResponseEntity.badRequest().body(Map.of("error", "This user has already accepted the invitation and is a workspace member"));
+            }
+
             invitation.setStatus("PENDING");
             invitation = invitationRepository.save(invitation);
-            
-            // Send email with new token
+
+            // Resend the email with the same (now re-valid) token
             invitationService.sendInvitationEmail(invitation, workspace);
             
             log.info("Invitation resent successfully to {}", request.email);
@@ -397,8 +468,8 @@ public class InvitationController {
     @DeleteMapping("/{token}")
     public ResponseEntity<?> cancelInvitation(@PathVariable String token) {
         try {
-            String username = getCurrentUsername();
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            String email = getCurrentUserEmail();
+            Optional<User> userOpt = userRepository.findByEmail(email);
             
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
@@ -463,10 +534,6 @@ public class InvitationController {
             
             Workspace workspace = workspaceOpt.get();
             
-            // Generate new token and extend expiry
-            String newToken = UUID.randomUUID().toString().replace("-", "");
-            invitation.setInvitationToken(newToken);
-            invitation.setExpiresAt(java.time.LocalDateTime.now().plusDays(7));
             invitation.setStatus("PENDING");
             invitationService.saveInvitation(invitation);
             
@@ -500,7 +567,6 @@ public class InvitationController {
         dto.put("role", invitation.getRole());
         dto.put("status", invitation.getStatus());
         dto.put("createdAt", invitation.getCreatedAt().toString());
-        dto.put("expiresAt", invitation.getExpiresAt().toString());
         if (invitation.getAcceptedAt() != null) {
             dto.put("acceptedAt", invitation.getAcceptedAt().toString());
         }
@@ -528,6 +594,19 @@ public class InvitationController {
         dto.put("subscriptionPlan", workspace.getSubscriptionPlan());
         dto.put("collaborationEnabled", workspace.getCollaborationEnabled());
         return dto;
+    }
+
+    /** Returns the effective member seat cap for a workspace, with plan fallback. */
+    private int maxMembersForPlan(Workspace workspace) {
+        if (workspace.getMaxMembers() != null && workspace.getMaxMembers() > 0) {
+            return workspace.getMaxMembers();
+        }
+        String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+        return switch (plan.toUpperCase()) {
+            case "PRO" -> 10;
+            case "ENTERPRISE" -> Integer.MAX_VALUE;
+            default -> 3; // FREE
+        };
     }
 
     // Request DTOs

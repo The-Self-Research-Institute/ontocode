@@ -5,17 +5,29 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.ImportOptions;
+import self.research.ontology.owlEditor.repository.ProjectRepository;
+import self.research.ontology.owlEditor.service.TopLevelClassCacheService;
 import self.research.ontology.owlEditor.model.ImportQueueItem;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.model.collaboration.ImportStatusMessage;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.lang.Nullable;
 
 import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQueryResult;
+import org.eclipse.rdf4j.rio.RDFHandlerException;
+import org.eclipse.rdf4j.rio.RDFParser;
+import org.eclipse.rdf4j.rio.Rio;
+import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
 
 import java.io.BufferedInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
@@ -23,18 +35,22 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Background job runner that streams uploaded OWL files into TDB2 and refreshes metadata.
@@ -48,9 +64,11 @@ public class ProjectImportService {
 
     // Prevent concurrent imports for the same project (which cause overlapping progress threads and GraphDB clears)
     private final Map<String, AtomicBoolean> importInProgress = new ConcurrentHashMap<>();
+    private final Set<String> importReservations = ConcurrentHashMap.newKeySet();
 
     private final Executor owlParsingExecutor;
-    private final GraphDBDatasetService datasetService;
+    private final Executor metadataExecutor;
+    private final SparqlDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final StorageManager storageManager;
@@ -58,8 +76,44 @@ public class ProjectImportService {
     private final ImportQueueManager queueManager;
     private final ImportTimeEstimator timeEstimator;
 
+    // Desktop-only — null in cloud deployments (optional injection)
+    @Autowired(required = false) @Nullable
+    private DesktopOntologyLoader desktopOntologyLoader;
+
+    @Autowired(required = false) @Nullable
+    private DesktopOpenMetricsService openMetricsService;
+
+    // Evict stale top-level and children caches after import so next open gets fresh SPARQL results
+    @Autowired(required = false) @Nullable
+    private TopLevelClassCacheService topLevelClassCacheService;
+
+    @Autowired(required = false) @Nullable
+    private org.springframework.cache.CacheManager cacheManager;
+
+    @Autowired(required = false) @Nullable
+    private OntologySpringCacheEvictionService cacheEvictionService;
+
+    @Autowired(required = false) @Nullable
+    private HierarchyIndexService hierarchyIndexService;
+
+    @Autowired(required = false) @Nullable
+    private EntityUsageIndexService entityUsageIndexService;
+
+    @Autowired(required = false) @Nullable
+    private ClassDetailCacheService classDetailCacheService;
+
+    @Autowired(required = false) @Nullable
+    private ProjectRepository projectRepository;
+
+    @Autowired(required = false) @Nullable
+    private DesktopFusekiSyncScheduler fusekiSyncScheduler;
+
+    @Value("${ontocode.desktop.owlapi-first:false}")
+    private boolean owlApiFirst;
+
     public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
-                                GraphDBDatasetService datasetService,
+                                @Qualifier("metadataExecutor") Executor metadataExecutor,
+                                SparqlDatasetService datasetService,
                                 OntologyIndexService indexService,
                                 ProjectMetadataService metadataService,
                                 StorageManager storageManager,
@@ -67,6 +121,7 @@ public class ProjectImportService {
                                 ImportQueueManager queueManager,
                                 ImportTimeEstimator timeEstimator) {
         this.owlParsingExecutor = owlParsingExecutor;
+        this.metadataExecutor = metadataExecutor;
         this.datasetService = datasetService;
         this.indexService = indexService;
         this.metadataService = metadataService;
@@ -74,6 +129,38 @@ public class ProjectImportService {
         this.messagingTemplate = messagingTemplate;
         this.queueManager = queueManager;
         this.timeEstimator = timeEstimator;
+    }
+
+    /**
+     * On startup, find any projects stuck in PROCESSING or INDEXING from a previous server run
+     * and mark them as ERROR. The in-memory queue is lost on restart so these will never
+     * complete; showing an error lets users re-import rather than waiting forever.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void recoverStuckImports() {
+        if (projectRepository == null) {
+            return;
+        }
+        try {
+            var stuck = projectRepository.findByStatusIn(List.of("PROCESSING", "INDEXING"));
+            if (stuck.isEmpty()) {
+                return;
+            }
+            log.warn("[Import] Found {} project(s) stuck in PROCESSING/INDEXING from a previous run — resetting to ERROR",
+                    stuck.size());
+            for (var doc : stuck) {
+                try {
+                    metadataService.writeStatus(doc.getId(),
+                            ProjectStatus.error(doc.getFilename(),
+                                    "Import was interrupted (server restarted). Please re-import the file."));
+                    log.info("[Import] Reset stuck import for project {}: {}", doc.getId(), doc.getFilename());
+                } catch (Exception e) {
+                    log.warn("[Import] Failed to reset stuck project {}: {}", doc.getId(), e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[Import] Startup stuck-import recovery failed: {}", e.getMessage());
+        }
     }
 
     public void submitImport(String projectId, Path owlFile) {
@@ -90,6 +177,14 @@ public class ProjectImportService {
         importLog.info("[SUBMIT] project={} file={} size={}", projectId, filename, owlFile.toFile().length());
         log.info("[Import] Submitting import for project {}: {}", projectId, filename);
 
+        if (!reserveImport(projectId)) {
+            log.info("[Import] Import already active or queued for project {}, ignoring duplicate submit", projectId);
+            return;
+        }
+
+        boolean submitted = false;
+        try {
+
         // Write PROCESSING status synchronously BEFORE enqueueing so that any
         // status poll from the frontend sees PROCESSING instead of the stale
         // COMPLETED from the previous import.  This closes the race window
@@ -105,6 +200,10 @@ public class ProjectImportService {
                 .orElse(filename);
         metadataService.writeStatus(projectId, ProjectStatus.processing(displayFilename));
 
+        // Evict any cached binding decision so the next resolveBinding() re-evaluates whether
+        // to use the shared vs. dedicated dataset (the new import will write to dedicated).
+        datasetService.evictPerFileDataset(projectId);
+
         // Fast path for small files: skip queue overhead when no concurrent imports running
         long fileSizeBytes;
         try {
@@ -115,30 +214,10 @@ public class ProjectImportService {
         boolean isSmallFile = fileSizeBytes >= 0 && fileSizeBytes < 100 * 1024; // < 100KB
         
         if (isSmallFile && queueManager.canProcess() && queueManager.isEmpty()) {
-            log.info("[Import] Fast path: small file ({} bytes), processing immediately", fileSizeBytes);
-            final long fSize = fileSizeBytes;
-            owlParsingExecutor.execute(() -> {
-                ImportQueueItem item = ImportQueueItem.builder()
-                        .projectId(projectId)
-                        .filename(filename)
-                        .ownerEmail(ownerEmail)
-                        .owlFile(owlFile)
-                        .importMode(options.getMode())
-                        .partitionStrategy(options.getPartitionStrategy())
-                        .fileSizeBytes(fSize)
-                        .status(ImportQueueItem.ImportStatus.PROCESSING)
-                        .queuedAt(java.time.Instant.now())
-                        .startedAt(java.time.Instant.now())
-                        .build();
-                long startTime = System.currentTimeMillis();
-                try {
-                    runImport(item);
-                    long duration = System.currentTimeMillis() - startTime;
-                    log.info("[Import] Fast path completed in {} ms for project {}", duration, projectId);
-                } catch (Exception e) {
-                    log.error("[Import] Fast path failed for project {}", projectId, e);
-                }
-            });
+            log.info("[Import] Fast path: small file ({} bytes), enqueue + immediate process", fileSizeBytes);
+            queueManager.enqueue(projectId, filename, ownerEmail, owlFile, options);
+            processNextInQueue();
+            submitted = true;
             return;
         }
 
@@ -147,6 +226,37 @@ public class ProjectImportService {
 
         // Try to process next item in queue
         processNextInQueue();
+        submitted = true;
+        } finally {
+            if (!submitted) {
+                importReservations.remove(projectId);
+                releaseImport(projectId);
+            }
+        }
+    }
+
+    public boolean isImportActiveOrQueued(String projectId) {
+        AtomicBoolean guard = importInProgress.get(projectId);
+        if (guard != null && guard.get()) {
+            return true;
+        }
+        return queueManager.getStatus(projectId) != null;
+    }
+
+    private boolean reserveImport(String projectId) {
+        AtomicBoolean guard = importInProgress.computeIfAbsent(projectId, id -> new AtomicBoolean(false));
+        if (!guard.compareAndSet(false, true)) {
+            return false;
+        }
+        importReservations.add(projectId);
+        return true;
+    }
+
+    private void releaseImport(String projectId) {
+        AtomicBoolean guard = importInProgress.get(projectId);
+        if (guard != null) {
+            guard.set(false);
+        }
     }
 
     private void processNextInQueue() {
@@ -168,12 +278,19 @@ public class ProjectImportService {
                 queueManager.markCompleted(item.getProjectId(), duration);
             } catch (Exception e) {
                 log.error("[Import] Failed to process queue item for project {}", item.getProjectId(), e);
-                
+
                 // Check if error is retryable (connection issues, timeouts, etc.)
                 boolean shouldRetry = isRetryableError(e);
                 String errorReason = extractErrorReason(e);
-                
+
                 queueManager.markFailed(item.getProjectId(), errorReason, shouldRetry);
+            } catch (Throwable t) {
+                // StackOverflowError, OutOfMemoryError etc. are Errors not Exceptions —
+                // must catch Throwable or the item is stuck in PROCESSING forever.
+                log.error("[Import] Fatal JVM error for project {}", item.getProjectId(), t);
+                queueManager.markFailed(item.getProjectId(),
+                        t.getClass().getSimpleName() + " during OWL parsing — file may be too large or deeply nested",
+                        false);
             } finally {
                 // Try to process next item in queue
                 processNextInQueue();
@@ -189,15 +306,16 @@ public class ProjectImportService {
         String causeMessage = e.getCause() != null ? e.getCause().getMessage() : "";
         
         // Check for connection-related errors
-        return message != null && (
-                message.contains("SocketException") ||
-                message.contains("Connection aborted") ||
-                message.contains("Connection reset") ||
-                message.contains("Connection timeout") ||
-                message.contains("NonRepeatableRequestException") ||
-                causeMessage.contains("SocketException") ||
-                causeMessage.contains("Connection aborted")
-        );
+        String combined = (message != null ? message : "") + " " + causeMessage;
+        String lower = combined.toLowerCase(Locale.ROOT);
+        return lower.contains("socketexception") ||
+                lower.contains("connection aborted") ||
+                lower.contains("connection reset") ||
+                lower.contains("connection timeout") ||
+                lower.contains("timed out") ||
+                lower.contains("no bytes") ||
+                lower.contains("gsp post failed") ||
+                lower.contains("nonrepeatablerequestexception");
     }
 
     /**
@@ -205,7 +323,7 @@ public class ProjectImportService {
      */
     private String extractErrorReason(Exception e) {
         if (isRetryableError(e)) {
-            return "Connection to GraphDB lost. This usually means GraphDB ran out of memory for large files.";
+            return "Connection lost during import. Large files may need more server memory.";
         }
         
         String message = e.getMessage();
@@ -225,7 +343,8 @@ public class ProjectImportService {
         String projectId = item.getProjectId();
         Path owlFile = item.getOwlFile();
         AtomicBoolean guard = importInProgress.computeIfAbsent(projectId, id -> new AtomicBoolean(false));
-        if (!guard.compareAndSet(false, true)) {
+        boolean reserved = importReservations.remove(projectId);
+        if (!reserved && !guard.compareAndSet(false, true)) {
             log.warn("[Import {}] Import already running, rejecting duplicate request", projectId);
             Map<String, Object> errorMeta = new HashMap<>();
             errorMeta.put("error", "Import already in progress for this project");
@@ -240,6 +359,11 @@ public class ProjectImportService {
         String filename = metadataService.readStatus(projectId)
                 .map(ProjectStatus::filename)
                 .orElse(owlFile.getFileName().toString());
+
+        // Cloud / legacy: warm OWLAPI in parallel with Fuseki. OWLAPI-first desktop handles warm separately.
+        if (desktopOntologyLoader != null && !owlApiFirst) {
+            desktopOntologyLoader.loadAndCacheAsync(projectId, owlFile);
+        }
 
         // Track whether import was marked as COMPLETED (prevents overwriting to ERROR in catch block)
         AtomicBoolean importMarkedCompleted = new AtomicBoolean(false);
@@ -276,6 +400,14 @@ public class ProjectImportService {
                 // Continue anyway - sanitization is best-effort
             }
 
+            // Protégé-style desktop: parse OWLAPI from disk, mark ready immediately, sync Fuseki later.
+            if (owlApiFirst && desktopOntologyLoader != null) {
+                if (completeOwlApiFirstImport(projectId, owlFile, filename, format, importStart, importMarkedCompleted)) {
+                    return;
+                }
+                throw new RuntimeException("OWLAPI failed to load ontology — file may be too large or invalid");
+            }
+
             stage = "bulk-load";
             log.info("[Import {}] Loading data into GraphDB", projectId);
             long fileSizeBytes = Files.size(owlFile);
@@ -290,11 +422,20 @@ public class ProjectImportService {
             Map<String, Object> bulkLoadStartMeta = new HashMap<>();
             bulkLoadStartMeta.put("progress", 60);
             bulkLoadStartMeta.put("stage", "graphdb-loading");
-            bulkLoadStartMeta.put("message", "Loading data into GraphDB (this may take several minutes for large files)...");
+            bulkLoadStartMeta.put("message", "Loading ontology data (large files may take several minutes)…");
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
-                    "PROCESSING", "Loading into GraphDB...", filename, bulkLoadStartMeta);
+                    "PROCESSING", "Loading ontology data…", filename, bulkLoadStartMeta);
             // Also update status.json so polling clients get the progress message
-            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, "Loading into GraphDB..."));
+            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, "Loading ontology data…"));
+            metadataService.writeImportProgress(projectId, 60, "graphdb-loading", "Loading ontology data…");
+
+            // OWLAPI warm competes with Fuseki ingest for heap on large files — defer until after load.
+            if (desktopOntologyLoader != null && fileSizeBytes < 50L * 1024 * 1024) {
+                desktopOntologyLoader.startParallelWarm(projectId, owlFile);
+            } else if (desktopOntologyLoader != null) {
+                log.info("[Import {}] Deferring OWLAPI warm until after Fuseki load ({} MB) — protects editor heap",
+                        projectId, fileSizeBytes / (1024 * 1024));
+            }
             
             ImportOptions options = ImportOptions.builder()
                     .mode(item.getImportMode() != null ? item.getImportMode() : ImportOptions.ImportMode.FULL)
@@ -344,24 +485,71 @@ public class ProjectImportService {
             log.info("[Import {}] Starting import: file={}, format={}, size={} bytes, converted={}",
                     projectId, fileToLoad.getFileName(), format, actualFileSize, converted);
 
-            // ⚡ FAST PATH: Try GraphDB server-side import first (reads file from shared volume — no HTTP overhead)
+            // Large files (≥50 MB): prefer single-shot GSP PUT — chunked GSP POST batches time out on Fuseki.
             boolean serverImportDone = false;
-            try {
-                stageStart = System.nanoTime();
-                serverImportDone = datasetService.serverSideImport(projectId, fileToLoad, format, actualFileSize, options, progress -> {
-                    long totalBytes = progress.getTotalBytes();
-                    long bytesRead = progress.getBytesRead();
-                    long elapsedMs = progress.getElapsedMs();
-                    if (totalBytes <= 0) return;
-                    int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
-                    lastProgressPercent.set(percent);
-                    String message = String.format("Importing... (%d%%)", percent);
-                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
-                            "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
-                    metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
-                });
-            } catch (Exception serverEx) {
-                log.info("[Import {}] [TIMING] Server-side import failed after {} ms: {}", projectId, elapsedMillis(stageStart), serverEx.getMessage());
+            boolean largeFile = actualFileSize >= 50L * 1024 * 1024;
+
+            SparqlDatasetService.ProgressListener importProgressListener = progress -> {
+                long totalBytes = progress.getTotalBytes();
+                long bytesRead = progress.getBytesRead();
+                long elapsedMs = progress.getElapsedMs();
+                int percent;
+                String message;
+                if (totalBytes > 0 && bytesRead > 0) {
+                    percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
+                    message = String.format("Importing... (%d%%)", percent);
+                } else if (elapsedMs > 0) {
+                    long elapsedSec = elapsedMs / 1000;
+                    percent = (int) Math.min(85, 10 + (elapsedSec / 30));
+                    message = String.format("Loading ontology data… (%dm %02ds elapsed)",
+                            elapsedSec / 60, elapsedSec % 60);
+                } else {
+                    percent = 5;
+                    message = "Loading ontology data…";
+                }
+                lastProgressPercent.set(percent);
+                sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                        "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
+                try {
+                    metadataService.writeImportProgress(projectId, percent, "graphdb-loading", message);
+                } catch (Exception mongoEx) {
+                    log.warn("[Import {}] Progress write to MongoDB failed (non-fatal, Fuseki upload continues): {}", projectId, mongoEx.getMessage());
+                }
+            };
+
+            if (largeFile) {
+                try {
+                    stageStart = System.nanoTime();
+                    log.info("[Import {}] Large file ({} MB) — trying direct GSP PUT first", projectId, actualFileSize / (1024 * 1024));
+                    serverImportDone = datasetService.directHttpUpload(projectId, fileToLoad, format, actualFileSize, options, importProgressListener);
+                } catch (Exception directEx) {
+                    log.info("[Import {}] [TIMING] Direct HTTP upload failed after {} ms: {}", projectId, elapsedMillis(stageStart), directEx.getMessage());
+                }
+            }
+
+            // ⚡ FAST PATH: GraphDB server-side import (no-op on Fuseki; kept for GraphDB deployments)
+            if (!serverImportDone && !largeFile) {
+                try {
+                    stageStart = System.nanoTime();
+                    serverImportDone = datasetService.serverSideImport(projectId, fileToLoad, format, actualFileSize, options, progress -> {
+                        long totalBytes = progress.getTotalBytes();
+                        long bytesRead = progress.getBytesRead();
+                        long elapsedMs = progress.getElapsedMs();
+                        if (totalBytes <= 0) return;
+                        int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
+                        lastProgressPercent.set(percent);
+                        String message = String.format("Importing... (%d%%)", percent);
+                        sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                                "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
+                        try {
+                            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                        } catch (Exception mongoEx) {
+                            log.warn("[Import {}] Progress write to MongoDB failed (non-fatal): {}", projectId, mongoEx.getMessage());
+                        }
+                    });
+                } catch (Exception serverEx) {
+                    log.info("[Import {}] [TIMING] Server-side import failed after {} ms: {}", projectId, elapsedMillis(stageStart), serverEx.getMessage());
+                }
             }
 
             // ⚡ MEDIUM PATH: Try direct HTTP upload (single POST, no batch commits)
@@ -377,7 +565,11 @@ public class ProjectImportService {
                         String message = String.format("Importing... (%d%%)", percent);
                         sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
                                 "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
-                        metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                        try {
+                            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                        } catch (Exception mongoEx) {
+                            log.warn("[Import {}] Progress write to MongoDB failed (non-fatal): {}", projectId, mongoEx.getMessage());
+                        }
                     });
                 } catch (Exception directEx) {
                     log.info("[Import {}] [TIMING] Direct HTTP upload failed after {} ms: {}", projectId, elapsedMillis(stageStart), directEx.getMessage());
@@ -444,7 +636,11 @@ public class ProjectImportService {
                                     "PROCESSING", message, filename, progressMeta);
 
                             // Persist progress message for polling clients
-                            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                            try {
+                                metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                            } catch (Exception mongoEx) {
+                                log.warn("[Import {}] Progress write to MongoDB failed (non-fatal, chunked upload continues): {}", projectId, mongoEx.getMessage());
+                            }
                         }
                     }
                 });
@@ -494,8 +690,9 @@ public class ProjectImportService {
                 }
             }
             } // end if (!serverImportDone)
-            log.info("[Import {}] [TIMING] GraphDB bulk load completed in {} ms (total import so far: {} ms)", 
-                    projectId, elapsedMillis(bulkLoadStart), elapsedMillis(importStart));
+            final long bulkLoadDurationMs = elapsedMillis(bulkLoadStart);
+            log.info("[Import {}] [TIMING] GraphDB bulk load completed in {} ms (total import so far: {} ms)",
+                    projectId, bulkLoadDurationMs, elapsedMillis(importStart));
 
             // Copy file to current location
             stage = "persist-copy";
@@ -505,21 +702,97 @@ public class ProjectImportService {
             Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
             log.info("[Import {}] [TIMING] File copy to current: {} ms", projectId, elapsedMillis(stageStart));
 
-            // ⚡ PERFORMANCE OPTIMIZATION: Mark import as COMPLETED immediately after GraphDB load
-            // This allows frontend to start using the ontology without waiting for metadata indexing
+            // Ensure OWLAPI warm is queued from persisted file if parallel parse did not finish
+            if (desktopOntologyLoader != null) {
+                desktopOntologyLoader.startParallelWarm(projectId, current);
+            }
+
+            // GraphDB ingest done — editor may still be building the class tree (OWLAPI warm)
             long durationMs = elapsedMillis(importStart);
             metadataService.writeStatus(projectId, ProjectStatus.completed(filename));
             importMarkedCompleted.set(true);  // Prevent catch block from overwriting to ERROR
             
-            // Send IMPORT_COMPLETED notification NOW so frontend can start working
             Map<String, Object> completionMeta = new HashMap<>();
-            completionMeta.put("stage", "graphdb-load-complete");
+            completionMeta.put("stage", "hierarchy-warming");
             completionMeta.put("durationMs", durationMs);
-            completionMeta.put("message", "Ontology loaded and ready to use. Metadata indexing continues in background.");
+            completionMeta.put("hierarchyReady", false);
+            completionMeta.put("message", "Loading class hierarchy…");
+            sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                    "PROCESSING", "Loading class hierarchy…", filename, completionMeta);
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_COMPLETED,
-                    "COMPLETED", "Ontology loaded successfully", filename, completionMeta);
+                    "COMPLETED", "Loading class hierarchy…", filename, completionMeta);
             
-            log.info("✅ [Import {}] Marked as COMPLETED after {} ms. Metadata indexing continues in background.", 
+            // Evict stale Caffeine + Mongo top-level/children caches so the next
+            // hierarchy request recomputes from fresh Fuseki data (not a cached wrong tree).
+            try {
+                if (topLevelClassCacheService != null) topLevelClassCacheService.evict(projectId);
+                // Evict only this project's entries via the dedicated eviction service,
+                // which iterates Caffeine's native key set with a project prefix.
+                // This avoids the prior chCache.clear() which flushed all projects.
+                if (cacheEvictionService != null) {
+                    cacheEvictionService.evictForProject(projectId);
+                }
+                log.info("[Import {}] Evicted hierarchy caches (topLevelClasses, classChildren, Mongo)", projectId);
+            } catch (Exception cacheEx) {
+                log.warn("[Import {}] Cache eviction failed (non-fatal): {}", projectId, cacheEx.getMessage());
+            }
+
+            // Hierarchy snapshot: own executor, starts immediately — users need the tree right away.
+            if (hierarchyIndexService != null) {
+                try {
+                    hierarchyIndexService.evict(projectId);
+                    hierarchyIndexService.scheduleBuild(projectId);
+                    log.info("[Import {}] Scheduled hierarchy snapshot build", projectId);
+                } catch (Exception hx) {
+                    log.warn("[Import {}] Hierarchy snapshot schedule failed (non-fatal): {}", projectId, hx.getMessage());
+                }
+            }
+
+            // Annotation pre-warm: starts immediately, fast (~60s for Mondo).
+            // Entity usage index: chained to start AFTER annotation pre-warm finishes.
+            // This prevents both from hammering Fuseki at the same time right after import,
+            // ensuring annotations are in MongoDB before the heavier usage-index queries begin.
+            if (classDetailCacheService != null) {
+                try {
+                    classDetailCacheService.dropAll(projectId);
+                    CompletableFuture<Void> annotationsDone = classDetailCacheService.scheduleBuildAnnotations(projectId);
+                    log.info("[Import {}] Scheduled annotation pre-warm (fast path, ~60s)", projectId);
+
+                    if (entityUsageIndexService != null) {
+                        final EntityUsageIndexService usageIndexRef = entityUsageIndexService;
+                        entityUsageIndexService.dropAll(projectId);
+                        annotationsDone.whenCompleteAsync((v, ex) -> {
+                            try {
+                                log.info("[Import {}] Annotation pre-warm done — starting entity usage index build", projectId);
+                                usageIndexRef.scheduleBuild(projectId);
+                            } catch (Exception ux) {
+                                log.warn("[Import {}] Entity usage index schedule failed (non-fatal): {}", projectId, ux.getMessage());
+                            }
+                        }, metadataExecutor);
+                    }
+                } catch (Exception cx) {
+                    log.warn("[Import {}] Annotation pre-warm schedule failed (non-fatal): {}", projectId, cx.getMessage());
+                    // Fall back: start usage index immediately if annotation pre-warm failed to schedule
+                    if (entityUsageIndexService != null) {
+                        try {
+                            entityUsageIndexService.dropAll(projectId);
+                            entityUsageIndexService.scheduleBuild(projectId);
+                        } catch (Exception ux) {
+                            log.warn("[Import {}] Entity usage index fallback schedule failed: {}", projectId, ux.getMessage());
+                        }
+                    }
+                }
+            } else if (entityUsageIndexService != null) {
+                try {
+                    entityUsageIndexService.dropAll(projectId);
+                    entityUsageIndexService.scheduleBuild(projectId);
+                    log.info("[Import {}] Scheduled entity usage index build", projectId);
+                } catch (Exception ux) {
+                    log.warn("[Import {}] Entity usage index schedule failed (non-fatal): {}", projectId, ux.getMessage());
+                }
+            }
+
+            log.info("✅ [Import {}] Marked as COMPLETED after {} ms. Metadata indexing continues in background.",
                     projectId, durationMs);
             importLog.info("[COMPLETED] project={} duration={}ms file={}", projectId, durationMs, filename);
             perfLog.info("[IMPORT] project={} duration={}ms file={}", projectId, durationMs, filename);
@@ -536,8 +809,9 @@ public class ProjectImportService {
                     
                     // Resolve owl:imports BEFORE computing metadata so counts include imported triples.
                     // Wrapped in its own try-catch so a network failure doesn't abort metadata indexing.
+                    Map<String, Object> importResolution = Map.of();
                     try {
-                        resolveOwlImports(projectId, filename);
+                        importResolution = resolveOwlImports(projectId, filename, owlFile.getParent());
                     } catch (Exception importResolutionEx) {
                         log.warn("[Import {}] owl:imports resolution failed (continuing): {}",
                                 projectId, importResolutionEx.getMessage());
@@ -555,14 +829,16 @@ public class ProjectImportService {
                     importMetrics.put("classCount", classCount);
                     importMetrics.put("annotationCount", annotationCount);
                     importMetrics.put("durationMs", totalDurationMs);
+                    importMetrics.put("bulkLoadDurationMs", bulkLoadDurationMs);
                     importMetrics.put("importedAt", java.time.Instant.now().toString());
                     meta.put("importMetrics", importMetrics);
+                    meta.put("importResolution", importResolution);
                     
                     long metadataComputeMs = elapsedMillis(metadataStart);
                     log.info("[Import {}] ✅ Metadata computed in {} ms", projectId, metadataComputeMs);
                     metadataService.writeMeta(projectId, meta);
 
-                    timeEstimator.recordSample(fileSizeBytes, classCount, annotationCount, totalDurationMs);
+                    timeEstimator.recordSample(fileSizeBytes, classCount, annotationCount, bulkLoadDurationMs);
 
                     log.info("✅ [Import {}] Background indexing complete. Total time: {} ms (GraphDB: {} ms, Metadata: {} ms)", 
                             projectId, totalDurationMs, totalDurationMs - metadataComputeMs, metadataComputeMs);
@@ -589,7 +865,7 @@ public class ProjectImportService {
         } catch (Exception e) {
             log.error("Import failed for {} while {}", projectId, stage, e);
             importLog.error("[FAILED] project={} stage={} error={}", projectId, stage, e.getMessage());
-            
+
             // Only set ERROR status if import wasn't already marked as COMPLETED
             // This prevents overwriting COMPLETED -> ERROR after IMPORT_COMPLETED was sent
             if (!importMarkedCompleted.get()) {
@@ -602,11 +878,24 @@ public class ProjectImportService {
                         "ERROR", "Import failed: " + e.getMessage(), filename, errorMeta);
             } else {
                 // Import was already marked COMPLETED - log but don't change status
-                log.warn("[Import {}] Exception occurred after import was marked COMPLETED (status not changed): {}", 
+                log.warn("[Import {}] Exception occurred after import was marked COMPLETED (status not changed): {}",
                         projectId, e.getMessage());
             }
+        } catch (Throwable t) {
+            // StackOverflowError, OutOfMemoryError etc. are Errors, not Exceptions — catch (Exception e) above
+            // does not intercept them, leaving metadata stuck as PROCESSING and the frontend spinner running forever.
+            log.error("[Import {}] Fatal JVM error while {}", projectId, stage, t);
+            importLog.error("[FAILED] project={} stage={} error={}", projectId, stage, t.getClass().getSimpleName());
+            if (!importMarkedCompleted.get()) {
+                String reason = t.getClass().getSimpleName() + " during OWL parsing — file may be too large or deeply nested";
+                metadataService.writeStatus(projectId, ProjectStatus.error(filename, reason));
+                Map<String, Object> errorMeta = new HashMap<>();
+                errorMeta.put("error", reason);
+                sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
+                        "ERROR", "Import failed: " + reason, filename, errorMeta);
+            }
         } finally {
-            guard.set(false);
+            releaseImport(projectId);
         }
     }
 
@@ -832,10 +1121,13 @@ public class ProjectImportService {
      * {@code MAX_IMPORT_DEPTH} levels.  Uses INCREMENTAL mode so the existing graph triples
      * are preserved.  Import failures are logged as warnings and do not abort the import.
      */
-    private void resolveOwlImports(String projectId, String filename) {
+    private Map<String, Object> resolveOwlImports(String projectId, String filename, Path baseDirectory) {
         final int MAX_IMPORT_DEPTH = 3;
         final int MAX_IMPORTS_TOTAL = 20;
         Set<String> loaded = new LinkedHashSet<>();
+        Set<String> attempted = new LinkedHashSet<>();
+        Set<String> declaredOnly = new LinkedHashSet<>();
+        Map<String, String> failed = new HashMap<>();
         Set<String> toProcess = new LinkedHashSet<>();
 
         ImportOptions appendOptions = ImportOptions.builder()
@@ -848,7 +1140,10 @@ public class ProjectImportService {
 
         if (toProcess.isEmpty()) {
             log.info("[Import {}] No owl:imports statements found.", projectId);
-            return;
+            return Map.of(
+                    "loaded", List.of(),
+                    "declaredOnly", List.of(),
+                    "failed", Map.of());
         }
 
         log.info("[Import {}] Resolving {} owl:imports: {}", projectId, toProcess.size(), toProcess);
@@ -856,28 +1151,24 @@ public class ProjectImportService {
         for (int depth = 0; depth < MAX_IMPORT_DEPTH && !toProcess.isEmpty(); depth++) {
             Set<String> nextRound = new LinkedHashSet<>();
             for (String importUri : toProcess) {
-                if (loaded.size() >= MAX_IMPORTS_TOTAL) {
+                if (attempted.size() >= MAX_IMPORTS_TOTAL) {
                     log.warn("[Import {}] Reached max import limit ({}), stopping", projectId, MAX_IMPORTS_TOTAL);
                     break;
                 }
-                if (loaded.contains(importUri)) {
+                if (attempted.contains(importUri)) {
                     continue;
                 }
-                loaded.add(importUri);
-
-                if (!importUri.startsWith("http://") && !importUri.startsWith("https://")) {
-                    log.info("[Import {}] Skipping non-HTTP import: {}", projectId, importUri);
-                    continue;
-                }
+                attempted.add(importUri);
 
                 try {
                     sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
                             "PROCESSING", "Resolving import: " + importUri, filename,
                             Map.of("progress", 96, "stage", "resolving-imports"));
 
-                    log.info("[Import {}] Downloading import (depth {}): {}", projectId, depth, importUri);
-                    Path importTempFile = downloadToTemp(importUri);
+                    log.info("[Import {}] Resolving import (depth {}): {}", projectId, depth, importUri);
+                    Path importTempFile = resolveImportToTemp(projectId, importUri, baseDirectory);
                     if (importTempFile == null) {
+                        declaredOnly.add(importUri);
                         continue; // failed – warning already logged
                     }
                     try {
@@ -895,6 +1186,7 @@ public class ProjectImportService {
                                     importSize, appendOptions, null);
                         }
                         log.info("[Import {}] Loaded import: {}", projectId, importUri);
+                        loaded.add(importUri);
                         // Collect transitive imports from the newly loaded content
                         nextRound.addAll(queryOwlImports(projectId));
                     } finally {
@@ -903,16 +1195,21 @@ public class ProjectImportService {
                 } catch (Exception importEx) {
                     log.warn("[Import {}] Could not load import {}: {}",
                             projectId, importUri, importEx.getMessage());
+                    failed.put(importUri, importEx.getMessage());
                 }
             }
             // Only process imports that weren't already loaded
-            nextRound.removeAll(loaded);
+            nextRound.removeAll(attempted);
             toProcess = nextRound;
         }
 
         if (!loaded.isEmpty()) {
             log.info("[Import {}] Resolved {} owl:imports", projectId, loaded.size());
         }
+        return Map.of(
+                "loaded", new ArrayList<>(loaded),
+                "declaredOnly", new ArrayList<>(declaredOnly),
+                "failed", failed);
     }
 
     /** Query the project graph for all {@code owl:imports} object values. */
@@ -935,6 +1232,209 @@ public class ProjectImportService {
     }
 
     /**
+     * Resolve an import declaration to a temporary file. This supports the
+     * Protégé-style cases that are safe on the server: HTTP(S), file:// paths
+     * inside the project directory, and relative/bare filenames found under the
+     * project directory. Imports outside the project directory remain declared
+     * only; we do not read arbitrary server files.
+     */
+    private Path resolveImportToTemp(String projectId, String importUri, Path baseDirectory) {
+        if (importUri.startsWith("http://") || importUri.startsWith("https://")) {
+            return downloadToTemp(importUri);
+        }
+
+        Path local = resolveLocalImportPath(projectId, importUri, baseDirectory);
+        if (local == null) {
+            log.warn("[Import {}] Declared import is not resolvable on server: {}", projectId, importUri);
+            return null;
+        }
+
+        try {
+            String fileName = local.getFileName() != null ? local.getFileName().toString() : "import.owl";
+            String suffix = fileName.contains(".") ? fileName.substring(fileName.lastIndexOf('.')) : ".owl";
+            Path tmp = Files.createTempFile("owl-import-local-", suffix);
+            Files.copy(local, tmp, StandardCopyOption.REPLACE_EXISTING);
+            log.info("[Import {}] Resolved local import {} -> {} ({} bytes)",
+                    projectId, importUri, local, Files.size(local));
+            return tmp;
+        } catch (Exception e) {
+            log.warn("[Import {}] Failed to copy local import {}: {}", projectId, importUri, e.getMessage());
+            return null;
+        }
+    }
+
+    private Path resolveLocalImportPath(String projectId, String importUri, Path baseDirectory) {
+        Path projectDir = storageManager.projectDir(projectId).toAbsolutePath().normalize();
+        Path base = baseDirectory != null ? baseDirectory.toAbsolutePath().normalize() : projectDir;
+
+        try {
+            if (importUri.startsWith("file://")) {
+                Path filePath = Path.of(URI.create(importUri)).toAbsolutePath().normalize();
+                if (Files.isRegularFile(filePath) && filePath.startsWith(projectDir)) {
+                    return filePath;
+                }
+                log.warn("[Import {}] file:// import is outside project directory or missing: {}", projectId, importUri);
+                return null;
+            }
+
+            Path catalogMatch = resolveFromCatalog(projectId, importUri, projectDir, base);
+            if (catalogMatch != null) {
+                return catalogMatch;
+            }
+
+            Path candidate = base.resolve(importUri).normalize();
+            if (Files.isRegularFile(candidate) && candidate.startsWith(projectDir)) {
+                return candidate;
+            }
+
+            // If the exact relative path is not present, look for the same leaf
+            // filename inside the project directory. This covers uploads where
+            // supporting import files were placed beside/under the project.
+            String leaf = Path.of(importUri).getFileName() != null
+                    ? Path.of(importUri).getFileName().toString()
+                    : importUri;
+            if (leaf == null || leaf.isBlank()) {
+                return null;
+            }
+            try (java.util.stream.Stream<Path> stream = Files.walk(projectDir, 4)) {
+                Path leafMatch = stream
+                        .filter(Files::isRegularFile)
+                        .filter(path -> path.getFileName() != null && leaf.equals(path.getFileName().toString()))
+                        .findFirst()
+                        .orElse(null);
+                if (leafMatch != null) {
+                    return leafMatch;
+                }
+            }
+
+            return findOntologyDocumentByDeclaredIri(projectId, importUri, projectDir);
+        } catch (Exception e) {
+            log.warn("[Import {}] Could not resolve local import {}: {}", projectId, importUri, e.getMessage());
+            return null;
+        }
+    }
+
+    private Path resolveFromCatalog(String projectId, String importUri, Path projectDir, Path baseDirectory) {
+        List<Path> catalogs = new ArrayList<>();
+        catalogs.add(projectDir.resolve("catalog-v001.xml"));
+        if (baseDirectory != null && !baseDirectory.equals(projectDir)) {
+            catalogs.add(baseDirectory.resolve("catalog-v001.xml"));
+        }
+        catalogs.add(projectDir.resolve("ontology-library").resolve("catalog-v001.xml"));
+
+        for (Path catalog : catalogs) {
+            if (!Files.isRegularFile(catalog)) {
+                continue;
+            }
+            try {
+            javax.xml.parsers.DocumentBuilderFactory factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setNamespaceAware(true);
+            org.w3c.dom.Document doc = factory.newDocumentBuilder().parse(catalog.toFile());
+            Path catalogBase = catalog.getParent() != null ? catalog.getParent().toAbsolutePath().normalize() : projectDir;
+            org.w3c.dom.NodeList uriNodes = doc.getElementsByTagNameNS("*", "uri");
+            for (int i = 0; i < uriNodes.getLength(); i++) {
+                org.w3c.dom.Element entry = (org.w3c.dom.Element) uriNodes.item(i);
+                String name = entry.getAttribute("name");
+                String uri = entry.getAttribute("uri");
+                if (!importUri.equals(name) || uri == null || uri.isBlank()) {
+                    continue;
+                }
+
+                Path resolved = uri.startsWith("file:")
+                        ? Path.of(URI.create(uri)).toAbsolutePath().normalize()
+                        : catalogBase.resolve(uri).normalize();
+                if (Files.isRegularFile(resolved) && resolved.startsWith(projectDir)) {
+                    log.info("[Import {}] Catalog resolved {} -> {}", projectId, importUri, resolved);
+                    return resolved;
+                }
+                log.warn("[Import {}] Catalog entry for {} points outside project directory or is missing: {}",
+                        projectId, importUri, uri);
+            }
+            } catch (Exception e) {
+                log.warn("[Import {}] Failed to read catalog-v001.xml at {}: {}", projectId, catalog, e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    private Path findOntologyDocumentByDeclaredIri(String projectId, String importUri, Path projectDir) {
+        try (java.util.stream.Stream<Path> stream = Files.walk(projectDir, 4)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(this::looksLikeOntologyDocument)
+                    .filter(path -> ontologyDocumentDeclaresIri(projectId, path, importUri))
+                    .findFirst()
+                    .orElse(null);
+        } catch (Exception e) {
+            log.warn("[Import {}] Failed while scanning project directory for import {}: {}",
+                    projectId, importUri, e.getMessage());
+            return null;
+        }
+    }
+
+    private boolean looksLikeOntologyDocument(Path path) {
+        String name = path.getFileName() != null ? path.getFileName().toString().toLowerCase(Locale.ROOT) : "";
+        return name.endsWith(".owl")
+                || name.endsWith(".rdf")
+                || name.endsWith(".xml")
+                || name.endsWith(".ttl")
+                || name.endsWith(".nt")
+                || name.endsWith(".jsonld");
+    }
+
+    private boolean ontologyDocumentDeclaresIri(String projectId, Path path, String importUri) {
+        try {
+            if (Files.size(path) > 100L * 1024 * 1024) {
+                log.debug("[Import {}] Skipping ontology IRI scan for large candidate {}", projectId, path);
+                return false;
+            }
+
+            RDFFormat format = detectFormat(path);
+            AtomicReference<String> ontologyIri = new AtomicReference<>();
+            AtomicReference<String> versionIri = new AtomicReference<>();
+            RDFParser parser = Rio.createParser(format);
+            parser.setRDFHandler(new AbstractRDFHandler() {
+                @Override
+                public void handleStatement(org.eclipse.rdf4j.model.Statement st) throws RDFHandlerException {
+                    if (st.getPredicate().equals(org.eclipse.rdf4j.model.vocabulary.RDF.TYPE)
+                            && st.getObject().equals(org.eclipse.rdf4j.model.vocabulary.OWL.ONTOLOGY)
+                            && st.getSubject().isIRI()) {
+                        ontologyIri.set(st.getSubject().stringValue());
+                    } else if (st.getPredicate().equals(org.eclipse.rdf4j.model.vocabulary.OWL.VERSIONIRI)
+                            && st.getObject().isIRI()) {
+                        versionIri.set(st.getObject().stringValue());
+                    }
+
+                    if (importUri.equals(ontologyIri.get()) || importUri.equals(versionIri.get())) {
+                        throw new RDFHandlerException("MATCH");
+                    }
+                }
+            });
+
+            try (InputStream in = Files.newInputStream(path)) {
+                parser.parse(in, path.toUri().toString());
+            } catch (RDFHandlerException match) {
+                if ("MATCH".equals(match.getMessage())) {
+                    log.info("[Import {}] Folder scan resolved {} -> {}", projectId, importUri, path);
+                    return true;
+                }
+                throw match;
+            }
+
+            boolean matched = importUri.equals(ontologyIri.get()) || importUri.equals(versionIri.get());
+            if (matched) {
+                log.info("[Import {}] Folder scan resolved {} -> {}", projectId, importUri, path);
+            }
+            return matched;
+        } catch (Exception e) {
+            log.debug("[Import {}] Candidate {} did not resolve import {}: {}",
+                    projectId, path, importUri, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Download the resource at {@code uri} to a temp file and return its path.
      * Returns {@code null} and logs a warning if the download fails.
      */
@@ -943,7 +1443,7 @@ public class ProjectImportService {
             java.net.URL url = URI.create(uri).toURL();
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(15_000);   // 15 s
-            conn.setReadTimeout(600_000);     // 10 min for large imports
+            conn.setReadTimeout(60_000);      // 60 s max — 10 min was causing hung imports
             conn.setRequestProperty("Accept",
                     "application/rdf+xml, text/turtle, application/n-triples, */*");
             conn.connect();
@@ -990,6 +1490,148 @@ public class ProjectImportService {
 
     private long elapsedMillis(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    /**
+     * Protégé-style import: persist file, warm OWLAPI, complete without blocking on Fuseki.
+     * Fuseki sync runs lazily when SPARQL/graph features need it.
+     */
+    private boolean completeOwlApiFirstImport(String projectId,
+                                             Path owlFile,
+                                             String filename,
+                                             RDFFormat format,
+                                             long importStart,
+                                             AtomicBoolean importMarkedCompleted) throws IOException {
+        log.info("[Import {}] OWLAPI-first desktop import (Protégé-style)", projectId);
+
+        Map<String, Object> warmMeta = new HashMap<>();
+        warmMeta.put("progress", 40);
+        warmMeta.put("stage", "owlapi-loading");
+        warmMeta.put("message", "Opening ontology (OWLAPI)…");
+        sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                "PROCESSING", "Opening ontology (OWLAPI)…", filename, warmMeta);
+        metadataService.writeImportProgress(projectId, 40, "owlapi-loading", "Opening ontology (OWLAPI)…");
+
+        Path current = storageManager.resolveProjectFile(projectId, "ontology.current." + extensionFor(format));
+        Files.createDirectories(current.getParent());
+        Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
+
+        desktopOntologyLoader.startParallelWarm(projectId, current);
+        Map<String, Object> warm = desktopOntologyLoader.warmProject(projectId, 600_000L);
+        boolean ready = Boolean.TRUE.equals(warm.get("ready")) || Boolean.TRUE.equals(warm.get("owlapiReady"));
+
+        if (!ready) {
+            log.warn("[Import {}] OWLAPI-first import failed: {}", projectId, warm.get("error"));
+            return false;
+        }
+
+        markFusekiSyncPending(projectId);
+
+        long durationMs = elapsedMillis(importStart);
+        metadataService.writeStatus(projectId, ProjectStatus.hierarchyReady(filename));
+        importMarkedCompleted.set(true);
+
+        Map<String, Object> completionMeta = new HashMap<>();
+        completionMeta.put("stage", "owlapi-ready");
+        completionMeta.put("durationMs", durationMs);
+        completionMeta.put("hierarchyReady", true);
+        completionMeta.put("fusekiSynced", false);
+        completionMeta.put("message", "Ontology ready — class tree available");
+        sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_COMPLETED,
+                "COMPLETED", "Ontology ready — class tree available", filename, completionMeta);
+
+        log.info("[Import {}] OWLAPI-first import completed in {} ms (Fuseki sync deferred)", projectId, durationMs);
+        if (openMetricsService != null) {
+            openMetricsService.recordImportComplete(projectId, durationMs, true, false);
+        }
+        if (fusekiSyncScheduler != null) {
+            fusekiSyncScheduler.scheduleAfterOpen(projectId);
+        }
+        return true;
+    }
+
+    /** Lazy Fuseki sync for OWLAPI-first desktop (SPARQL tab, graph view, etc.). */
+    public Map<String, Object> syncProjectToFuseki(String projectId) {
+        Map<String, Object> result = new HashMap<>();
+        if (!owlApiFirst) {
+            result.put("synced", true);
+            result.put("skipped", true);
+            return result;
+        }
+        try {
+            Optional<Path> file = storageManager.findCurrentOntology(projectId);
+            if (file.isEmpty() || !Files.exists(file.get())) {
+                result.put("synced", false);
+                result.put("error", "No ontology file on disk");
+                return result;
+            }
+            Path owlFile = file.get();
+            if (datasetService.hasGraphData(projectId) && !isFusekiSyncPending(projectId)) {
+                result.put("synced", true);
+                result.put("alreadyLoaded", true);
+                return result;
+            }
+
+            RDFFormat format = detectFormat(owlFile);
+            long size = Files.size(owlFile);
+            ImportOptions options = ImportOptions.builder()
+                    .mode(ImportOptions.ImportMode.FULL)
+                    .partitionStrategy(ImportOptions.PartitionStrategy.NONE)
+                    .build();
+
+            log.info("[Import {}] Lazy Fuseki sync starting ({} bytes)", projectId, size);
+            boolean done = datasetService.directHttpUpload(projectId, owlFile, format, size, options, null);
+            if (!done) {
+                done = datasetService.serverSideImport(projectId, owlFile, format, size, options, null);
+            }
+            if (!done) {
+                result.put("synced", false);
+                result.put("error", "Fuseki sync failed — is the triple store running?");
+                return result;
+            }
+
+            clearFusekiSyncPending(projectId);
+            if (topLevelClassCacheService != null) {
+                topLevelClassCacheService.evict(projectId);
+            }
+            if (cacheEvictionService != null) {
+                cacheEvictionService.evictForProject(projectId);
+            }
+            result.put("synced", true);
+            return result;
+        } catch (Exception e) {
+            log.warn("[Import {}] Lazy Fuseki sync failed: {}", projectId, e.getMessage());
+            result.put("synced", false);
+            result.put("error", e.getMessage());
+            return result;
+        }
+    }
+
+    public boolean isFusekiSyncPending(String projectId) {
+        return Files.exists(fusekiSyncPendingPath(projectId));
+    }
+
+    public void markFusekiSyncPendingPublic(String projectId) {
+        markFusekiSyncPending(projectId);
+    }
+
+    private void markFusekiSyncPending(String projectId) {
+        try {
+            Files.writeString(fusekiSyncPendingPath(projectId), Instant.now().toString());
+        } catch (IOException e) {
+            log.warn("[Import {}] Could not write fuseki-sync-pending marker: {}", projectId, e.getMessage());
+        }
+    }
+
+    private void clearFusekiSyncPending(String projectId) {
+        try {
+            Files.deleteIfExists(fusekiSyncPendingPath(projectId));
+        } catch (IOException ignored) {
+        }
+    }
+
+    private Path fusekiSyncPendingPath(String projectId) {
+        return storageManager.projectDir(projectId).resolve("fuseki-sync-pending");
     }
 
     private Integer toInteger(Object value) {

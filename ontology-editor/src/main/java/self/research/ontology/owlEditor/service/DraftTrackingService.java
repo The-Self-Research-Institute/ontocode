@@ -5,7 +5,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DraftChange;
+import self.research.ontology.owlEditor.model.DraftCopyStatus;
 import self.research.ontology.owlEditor.model.OntologyChange;
+import self.research.ontology.owlEditor.model.merge.ConflictResolution;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
@@ -32,29 +34,47 @@ public class DraftTrackingService {
     
     private final DraftChangeRepository draftRepository;
     private final OntologyMutationService mutationService;
+    private final SparqlDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final ChangeTrackingService changeTrackingService;
-    private final GraphDBHistoryService graphDBHistoryService;
+    private final OntologyHistoryService historyService;
     private final Executor metadataExecutor;
     private final CollaborativeEditService collaborativeEditService;
-    
+    private final DraftPublishService draftPublishService;
+    private final MainGraphRevisionService mainGraphRevisionService;
+    private final DraftPublishMergeService draftPublishMergeService;
+    private final DraftCopyService draftCopyService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private OntologySpringCacheEvictionService springCacheEviction;
+
     public DraftTrackingService(DraftChangeRepository draftRepository,
                                OntologyMutationService mutationService,
+                               SparqlDatasetService datasetService,
                                OntologyIndexService indexService,
                                ProjectMetadataService metadataService,
                                ChangeTrackingService changeTrackingService,
-                               GraphDBHistoryService graphDBHistoryService,
+                               OntologyHistoryService historyService,
                                @Qualifier("metadataExecutor") Executor metadataExecutor,
-                               CollaborativeEditService collaborativeEditService) {
+                               CollaborativeEditService collaborativeEditService,
+                               DraftPublishService draftPublishService,
+                               MainGraphRevisionService mainGraphRevisionService,
+                               DraftPublishMergeService draftPublishMergeService,
+                               DraftCopyService draftCopyService) {
         this.draftRepository = draftRepository;
         this.mutationService = mutationService;
+        this.datasetService = datasetService;
         this.indexService = indexService;
         this.metadataService = metadataService;
         this.changeTrackingService = changeTrackingService;
-        this.graphDBHistoryService = graphDBHistoryService;
+        this.historyService = historyService;
         this.metadataExecutor = metadataExecutor;
         this.collaborativeEditService = collaborativeEditService;
+        this.draftPublishService = draftPublishService;
+        this.mainGraphRevisionService = mainGraphRevisionService;
+        this.draftPublishMergeService = draftPublishMergeService;
+        this.draftCopyService = draftCopyService;
     }
     
     /**
@@ -89,7 +109,12 @@ public class DraftTrackingService {
                 if (op.value() != null) data.put("value", op.value());
                 if (op.target() != null) data.put("target", op.target());
                 if (op.classIri() != null) data.put("classIri", op.classIri());
+                if (op.restrictionType() != null) data.put("restrictionType", op.restrictionType());
+                if (op.cardinality() != null) data.put("cardinality", op.cardinality());
+                if (op.axiomType() != null) data.put("axiomType", op.axiomType());
                 if (op.oldValue() != null) data.put("oldValue", op.oldValue());
+                if (op.language() != null) data.put("language", op.language());
+                if (op.datatype() != null) data.put("datatype", op.datatype());
                 
                 log.info("[DRAFT CREATION] operationType: {}, iri: {}, value: '{}', oldValue: '{}'", 
                     op.type(), op.iri(), op.value(), op.oldValue());
@@ -108,7 +133,20 @@ public class DraftTrackingService {
     public List<DraftChange> getUnappliedDrafts(String projectId) {
         return draftRepository.findByProjectIdAndAppliedFalseOrderByTimestampAsc(projectId);
     }
-    
+
+    public List<DraftChange> getUnappliedDraftsForUser(String projectId, String userId) {
+        return draftRepository.findByProjectIdAndUserIdAndAppliedFalseOrderByTimestampAsc(projectId, userId);
+    }
+
+    public DraftPublishAnalysis analyzePublish(String projectId, String userId) {
+        return analyzePublish(projectId, userId, false);
+    }
+
+    public DraftPublishAnalysis analyzePublish(String projectId, String userId, boolean enrichAxiomDetail) {
+        List<DraftChange> userDrafts = getUnappliedDraftsForUser(projectId, userId);
+        return draftPublishService.analyze(projectId, userId, userDrafts, enrichAxiomDetail);
+    }
+
     /**
      * Get all drafts (applied and unapplied) for a project
      */
@@ -129,117 +167,227 @@ public class DraftTrackingService {
     private ReentrantLock getProjectLock(String projectId) {
         return projectLocks.computeIfAbsent(projectId, k -> new ReentrantLock());
     }
-    
+
+    public ApplyDraftsResult applyDrafts(String projectId, String userId, boolean force) {
+        return applyDrafts(projectId, userId, force, false, null);
+    }
+
+    public ApplyDraftsResult applyDrafts(String projectId, String userId, boolean force, boolean merge) {
+        return applyDrafts(projectId, userId, force, merge, null);
+    }
+
     /**
-     * Apply all unapplied drafts to GraphDB and mark them as applied
-     * Uses project-level locking to prevent race conditions
+     * Apply unapplied drafts for a single user to the main graph.
      */
-    public ApplyDraftsResult applyDrafts(String projectId) {
-        log.info("[DRAFT] Applying drafts for project {}", projectId);
-        
+    public ApplyDraftsResult applyDrafts(String projectId, String userId, boolean force, boolean merge,
+                                         Map<String, ConflictResolution> resolutions) {
+        log.info("[DRAFT] Applying drafts for project {} user {} (force={}, merge={})",
+                projectId, userId, force, merge);
+
+        if (userId == null || userId.isBlank()) {
+            return new ApplyDraftsResult(false, 0, "userId is required to publish drafts", true, null);
+        }
+
         ReentrantLock lock = getProjectLock(projectId);
-        
-        // Try to acquire lock with timeout to avoid deadlocks
+
         boolean lockAcquired = false;
         try {
             lockAcquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
             if (!lockAcquired) {
                 log.warn("[DRAFT] Could not acquire lock for project {} - another operation in progress", projectId);
-                return new ApplyDraftsResult(false, 0, "Another save operation is in progress. Please try again.");
+                return new ApplyDraftsResult(false, 0, "Another save operation is in progress. Please try again.", false, null);
             }
-            
-            return applyDraftsInternal(projectId);
-            
+
+            return applyDraftsInternal(projectId, userId, force, merge, resolutions);
+
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.error("[DRAFT] Interrupted while waiting for lock on project {}", projectId);
-            return new ApplyDraftsResult(false, 0, "Operation interrupted");
+            return new ApplyDraftsResult(false, 0, "Operation interrupted", false, null);
         } finally {
             if (lockAcquired) {
                 lock.unlock();
             }
         }
     }
-    
-    /**
-     * Internal method to apply drafts (called within lock)
-     */
-    private ApplyDraftsResult applyDraftsInternal(String projectId) {
-        List<DraftChange> unappliedDrafts = getUnappliedDrafts(projectId);
-        
-        if (unappliedDrafts.isEmpty()) {
-            log.info("[DRAFT] No drafts to apply for project {}", projectId);
-            return new ApplyDraftsResult(true, 0, "No drafts to apply");
-        }
-        
-        try {
-            // Convert drafts to mutation operations
-            List<MutationOp> operations = unappliedDrafts.stream()
-                .map(this::draftToMutationOp)
-                .collect(Collectors.toList());
-            
-            // Log each operation for debugging
-            log.info("[DRAFT] Converting {} drafts to mutation operations:", unappliedDrafts.size());
-            for (MutationOp op : operations) {
-                log.info("[DRAFT]   Operation: type={}, iri={}, label={}, parent={}", 
-                    op.type(), op.iri(), op.label(), op.parent());
-            }
-            
-            // Apply all mutations to GraphDB
-            mutationService.apply(projectId, operations);
 
-            // Broadcast each applied draft to collaborative clients
-            unappliedDrafts.forEach(draft -> {
-                MutationOp op = draftToMutationOp(draft);
-                collaborativeEditService.broadcastMutation(
-                    projectId,
-                    op,
-                    draft.getUserId(),
-                    draft.getUsername()
-                );
-            });
-            
-            // Record changes to change tracking for Recent Activity
-            recordDraftsAsChanges(projectId, unappliedDrafts);
-            
-            // Mark all drafts as applied
-            unappliedDrafts.forEach(draft -> draft.setApplied(true));
-            draftRepository.saveAll(unappliedDrafts);
-            
-            log.info("[DRAFT] Successfully applied {} drafts for project {}", unappliedDrafts.size(), projectId);
-            
-            // Update metadata asynchronously
-            CompletableFuture.runAsync(() -> {
-                Map<String, Object> meta = indexService.computeMetadata(projectId);
-                metadataService.writeMeta(projectId, meta);
-            }, metadataExecutor);
-            
-            return new ApplyDraftsResult(true, unappliedDrafts.size(), 
-                "Successfully applied " + unappliedDrafts.size() + " draft changes");
-            
-        } catch (Exception e) {
-            log.error("[DRAFT] Failed to apply drafts for project {}", projectId, e);
-            return new ApplyDraftsResult(false, 0, "Failed to apply drafts: " + e.getMessage());
-        }
+    /**
+     * @deprecated Use {@link #applyDrafts(String, String, boolean, boolean, Map)} to publish only one user's drafts.
+     */
+    @Deprecated
+    public ApplyDraftsResult applyDrafts(String projectId) {
+        log.warn("[DRAFT] applyDrafts(projectId) without userId is deprecated");
+        return applyDrafts(projectId, "anonymous", false, false, null);
     }
     
+    private ApplyDraftsResult applyDraftsInternal(String projectId, String userId, boolean force, boolean merge,
+                                                  Map<String, ConflictResolution> resolutions) {
+        List<DraftChange> unappliedDrafts = getUnappliedDraftsForUser(projectId, userId);
+
+        if (!draftCopyService.isReady(projectId, userId)) {
+            DraftCopyStatus status = draftCopyService.getStatus(projectId, userId);
+            if (status == DraftCopyStatus.COPYING) {
+                return new ApplyDraftsResult(false, 0,
+                        "Draft graph copy still in progress — wait before publishing", false, null);
+            }
+            if (unappliedDrafts.isEmpty()) {
+                return new ApplyDraftsResult(true, 0, "No drafts to apply", false, null);
+            }
+            return new ApplyDraftsResult(false, 0,
+                    "Draft session not ready — switch to private mode and wait for the graph copy", false, null);
+        }
+
+        if (merge) {
+            DraftPublishAnalysis analysis = draftPublishService.analyze(projectId, userId, unappliedDrafts, true);
+            if (analysis.isBlocked(force)) {
+                String message = analysis.getConflictType() == DraftPublishAnalysis.ConflictType.IRI_OVERLAP
+                        ? "Publish blocked: your draft touches entities changed by others since you started editing"
+                        : "Publish blocked: the shared ontology changed since your draft started — review, merge, or force publish";
+                log.warn("[DRAFT] {} for project {} user {}", message, projectId, userId);
+                return new ApplyDraftsResult(false, 0, message, true, analysis);
+            }
+            try {
+                draftPublishMergeService.publishWithThreeWayMerge(projectId, userId, analysis, resolutions);
+                mainGraphRevisionService.incrementRevision(projectId);
+                draftPublishService.clearBaseline(projectId, userId);
+                if (springCacheEviction != null) {
+                    springCacheEviction.evictForProject(projectId);
+                }
+                finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
+                return new ApplyDraftsResult(true, unappliedDrafts.size(),
+                        "Published draft with merge", false, analysis);
+            } catch (Exception e) {
+                log.error("[DRAFT] Merge publish failed for project {} user {}", projectId, userId, e);
+                return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+            }
+        }
+
+        return applyDraftsViaMoveGraph(projectId, userId, force, false, unappliedDrafts);
+    }
+
+    private void finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
+        if (unappliedDrafts.isEmpty()) {
+            return;
+        }
+        unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
+                projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
+        recordDraftsAsChanges(projectId, unappliedDrafts);
+        unappliedDrafts.forEach(draft -> draft.setApplied(true));
+        draftRepository.saveAll(unappliedDrafts);
+        CompletableFuture.runAsync(() -> {
+            Map<String, Object> meta = indexService.computeMetadata(projectId);
+            meta.put("mainGraphRevision", mainGraphRevisionService.getRevision(projectId));
+            metadataService.writeMeta(projectId, meta);
+        }, metadataExecutor);
+    }
+    
+    /**
+     * Publish a copy-on-switch draft session atomically via SPARQL MOVE GRAPH.
+     * Conflict detection: if main has advanced since the copy, block unless force=true.
+     */
+    private ApplyDraftsResult applyDraftsViaMoveGraph(String projectId, String userId, boolean force, boolean merge,
+                                                      List<DraftChange> unappliedDrafts) {
+        long mainRevisionAtCopy = draftCopyService.getMainRevisionAtCopy(projectId, userId);
+        long currentRevision = mainGraphRevisionService.getRevision(projectId);
+
+        // Block if main changed since copy, unless user explicitly approved (force or merge).
+        if (!force && !merge && mainRevisionAtCopy >= 0 && currentRevision > mainRevisionAtCopy) {
+            String message = "The shared ontology was updated while you were editing (revision "
+                    + mainRevisionAtCopy + " → " + currentRevision + "). "
+                    + "Review the changes or use force publish.";
+            log.warn("[DRAFT] Conflict blocked for project {} user {}: {}", projectId, userId, message);
+            return new ApplyDraftsResult(false, 0, message, true, null);
+        }
+
+        try {
+            log.info("[DRAFT] Publishing via MOVE GRAPH for project {} user {} (revision {} → {})",
+                    projectId, userId, mainRevisionAtCopy, currentRevision);
+            datasetService.moveDraftToMain(projectId, userId);
+            mainGraphRevisionService.incrementRevision(projectId);
+            draftPublishService.clearBaseline(projectId, userId);
+            if (springCacheEviction != null) {
+                springCacheEviction.evictForProject(projectId);
+            }
+
+            if (!unappliedDrafts.isEmpty()) {
+                unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
+                        projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
+                recordDraftsAsChanges(projectId, unappliedDrafts);
+                unappliedDrafts.forEach(draft -> draft.setApplied(true));
+                draftRepository.saveAll(unappliedDrafts);
+            }
+
+            CompletableFuture.runAsync(() -> {
+                Map<String, Object> meta = indexService.computeMetadata(projectId);
+                meta.put("mainGraphRevision", mainGraphRevisionService.getRevision(projectId));
+                metadataService.writeMeta(projectId, meta);
+            }, metadataExecutor);
+
+            log.info("[DRAFT] MOVE GRAPH publish complete for project {} user {} ({} Mongo ops)",
+                    projectId, userId, unappliedDrafts.size());
+            return new ApplyDraftsResult(true, unappliedDrafts.size(),
+                    "Published draft successfully", false, null);
+        } catch (Exception e) {
+            log.error("[DRAFT] MOVE GRAPH publish failed for project {} user {}", projectId, userId, e);
+            return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+        }
+    }
+
     /**
      * Discard all unapplied drafts for a project
      */
-    public DiscardDraftsResult discardDrafts(String projectId) {
-        log.info("[DRAFT] Discarding drafts for project {}", projectId);
-        
-        List<DraftChange> unappliedDrafts = getUnappliedDrafts(projectId);
+    public DiscardDraftsResult discardDrafts(String projectId, String userId) {
+        log.info("[DRAFT] Discarding drafts for project {} user {}", projectId, userId);
+
+        List<DraftChange> unappliedDrafts = userId != null && !userId.isBlank()
+                ? getUnappliedDraftsForUser(projectId, userId)
+                : getUnappliedDrafts(projectId);
         int count = unappliedDrafts.size();
-        
-        // Delete unapplied drafts
+
+        if (userId != null && !userId.isBlank()) {
+            datasetService.clearDraftGraph(projectId, userId);
+            draftPublishService.clearBaseline(projectId, userId);
+        } else {
+            unappliedDrafts.stream()
+                    .map(DraftChange::getUserId)
+                    .filter(id -> id != null && !id.isBlank())
+                    .distinct()
+                    .forEach(id -> {
+                        datasetService.clearDraftGraph(projectId, id);
+                        draftPublishService.clearBaseline(projectId, id);
+                    });
+        }
+
         unappliedDrafts.forEach(draft -> draftRepository.deleteById(draft.getId()));
-        
-        log.info("[DRAFT] Discarded {} drafts for project {}", count, projectId);
-        
+
+        log.info("[DRAFT] Discarded {} drafts for project {} user {}", count, projectId, userId);
+
         return new DiscardDraftsResult(true, count, "Discarded " + count + " draft changes");
     }
-    
+
+    public DiscardDraftsResult discardDrafts(String projectId) {
+        return discardDrafts(projectId, null);
+    }
+
+    /**
+     * Discard unapplied drafts whose operationData.iri is in the given set.
+     * Used by pull-from-public resolution when the user chooses "take_public" for specific entities.
+     */
+    public void discardDraftsByIris(String projectId, String userId, Set<String> iris) {
+        List<DraftChange> candidates = userId != null && !userId.isBlank()
+                ? getUnappliedDraftsForUser(projectId, userId)
+                : getUnappliedDrafts(projectId);
+        List<DraftChange> toDelete = candidates.stream()
+                .filter(d -> {
+                    if (d.getOperationData() == null) return false;
+                    Object iriVal = d.getOperationData().get("iri");
+                    return iriVal != null && iris.contains(iriVal.toString());
+                })
+                .collect(Collectors.toList());
+        toDelete.forEach(d -> draftRepository.deleteById(d.getId()));
+        log.info("[DRAFT] discardDraftsByIris: deleted {} drafts for project {} userId {}", toDelete.size(), projectId, userId);
+    }
+
     /**
      * Clear all applied drafts (cleanup)
      */
@@ -252,25 +400,29 @@ public class DraftTrackingService {
      * Get draft statistics
      */
     public Map<String, Object> getDraftStatistics(String projectId) {
-        List<DraftChange> allDrafts = getAllDrafts(projectId);
-        long unappliedCount = allDrafts.stream().filter(d -> !d.isApplied()).count();
-        long appliedCount = allDrafts.stream().filter(DraftChange::isApplied).count();
-        
-        Map<String, Long> operationTypeCounts = allDrafts.stream()
-            .filter(d -> !d.isApplied())
+        return getDraftStatistics(projectId, null);
+    }
+
+    public Map<String, Object> getDraftStatistics(String projectId, String userId) {
+        List<DraftChange> unapplied = userId != null && !userId.isBlank()
+            ? getUnappliedDraftsForUser(projectId, userId)
+            : getUnappliedDrafts(projectId);
+        long unappliedCount = unapplied.size();
+
+        Map<String, Long> operationTypeCounts = unapplied.stream()
             .collect(Collectors.groupingBy(DraftChange::getOperationType, Collectors.counting()));
-        
+
         Map<String, Object> stats = new HashMap<>();
-        stats.put("totalDrafts", allDrafts.size());
+        stats.put("totalDrafts", unappliedCount);
         stats.put("unappliedDrafts", unappliedCount);
-        stats.put("appliedDrafts", appliedCount);
+        stats.put("appliedDrafts", 0L);
         stats.put("operationTypeCounts", operationTypeCounts);
-        
-        if (!allDrafts.isEmpty()) {
-            stats.put("oldestDraft", allDrafts.get(allDrafts.size() - 1).getTimestamp());
-            stats.put("newestDraft", allDrafts.get(0).getTimestamp());
+
+        if (!unapplied.isEmpty()) {
+            stats.put("oldestDraft", unapplied.get(0).getTimestamp());
+            stats.put("newestDraft", unapplied.get(unapplied.size() - 1).getTimestamp());
         }
-        
+
         return stats;
     }
     
@@ -314,7 +466,7 @@ public class DraftTrackingService {
                 
                 // Also record to GraphDB history for Change Assistant plugin
                 String annotationProperty = data.get("property") != null ? data.get("property").toString() : null;
-                graphDBHistoryService.recordEdit(
+                historyService.recordEdit(
                     projectId,
                     draft.getUserId(),
                     draft.getUsername(),
@@ -440,7 +592,10 @@ public class DraftTrackingService {
             (String) data.get("restrictionType"),
             cardinality,
             (String) data.get("axiomType"),
-            (String) data.get("oldValue")
+            (String) data.get("oldValue"),
+            (String) data.get("language"),
+            (String) data.get("datatype"),
+            (String) data.get("ancestorIri")
         );
     }
     
@@ -450,16 +605,23 @@ public class DraftTrackingService {
         private final boolean success;
         private final int appliedCount;
         private final String message;
-        
-        public ApplyDraftsResult(boolean success, int appliedCount, String message) {
+        private final boolean conflictBlocked;
+        private final DraftPublishAnalysis publishAnalysis;
+
+        public ApplyDraftsResult(boolean success, int appliedCount, String message,
+                                 boolean conflictBlocked, DraftPublishAnalysis publishAnalysis) {
             this.success = success;
             this.appliedCount = appliedCount;
             this.message = message;
+            this.conflictBlocked = conflictBlocked;
+            this.publishAnalysis = publishAnalysis;
         }
-        
+
         public boolean isSuccess() { return success; }
         public int getAppliedCount() { return appliedCount; }
         public String getMessage() { return message; }
+        public boolean isConflictBlocked() { return conflictBlocked; }
+        public DraftPublishAnalysis getPublishAnalysis() { return publishAnalysis; }
     }
     
     public static class DiscardDraftsResult {

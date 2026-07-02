@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { resolveMutationActor } from '../utils/mutationActor';
 
 export interface MutationOp {
   type: string;
@@ -9,22 +10,49 @@ export interface MutationOp {
   value?: string;
   target?: string;
   classIri?: string;
+  // Restriction and axiom fields (match backend MutationOp record)
+  restrictionType?: string;
+  cardinality?: number;
+  axiomType?: string;
+  oldValue?: string;
+  ancestorIri?: string;
 }
 
 // Global flag to control real-time sync behavior
 // When true: changes apply immediately (for shared files)
 // When false: changes save as drafts (for private files)
-let realTimeSyncEnabled = false;
+// Default matches the React syncMode default of "public" (line ~1538 in Dashboard.tsx).
+// fetchProjects() will call setRealTimeSync(false) if the project should start in private mode.
+let realTimeSyncEnabled = true;
+
+// When true, all mutations are blocked at the client layer — the project requires Draft Mode
+// and the user has not yet started their draft copy. The callback fires so Dashboard can show the dialog.
+let draftEditBlocked = false;
+let onDraftEditBlocked: (() => void) | null = null;
+
+/** True when edits should go to the per-user draft graph (private mode). */
+export function isPrivateEditMode(): boolean {
+  return !realTimeSyncEnabled;
+}
+
+function resolveUseDraft(draft?: boolean): boolean {
+  return draft !== undefined ? draft : !realTimeSyncEnabled;
+}
 
 export const ontologyMutationService = {
-  /**
-   * Enable or disable real-time sync mode
-   * Should be enabled for shared files, disabled for private files
-   */
   setRealTimeSync(enabled: boolean) {
     realTimeSyncEnabled = enabled;
     console.log(`[MutationService] Real-time sync ${enabled ? 'ENABLED' : 'DISABLED'}`);
   },
+
+  /** Block/unblock direct edits when a project requires Draft Mode for members. */
+  setDraftRequired(blocked: boolean, onBlocked?: () => void) {
+    draftEditBlocked = blocked;
+    onDraftEditBlocked = onBlocked ?? null;
+  },
+
+  isPrivateEditMode,
+  resolveUseDraft,
 
   /**
    * Apply mutations to the ontology
@@ -35,24 +63,60 @@ export const ontologyMutationService = {
    * @param username - Username for tracking
    * @param sessionId - Session ID for tracking related operations
    */
-  async applyMutations(projectId: string, ops: MutationOp[], draft?: boolean, 
+  async applyMutations(projectId: string, ops: MutationOp[], draft?: boolean,
                       userId?: string, username?: string, sessionId?: string): Promise<void> {
-    // Use the draft parameter if explicitly provided, otherwise use the inverse of realTimeSyncEnabled
-    const useDraft = draft !== undefined ? draft : !realTimeSyncEnabled;
-    
+    // Private mode (realTimeSyncEnabled=false): write to per-user draft named graph in Fuseki.
+    // Public/shared mode: write directly to the project main graph.
+    const useDraft = resolveUseDraft(draft);
+    const actor = resolveMutationActor(userId, username);
+
+    // Block mutations for members who must use Draft Mode but haven't started their copy yet.
+    if (draftEditBlocked) {
+      if (onDraftEditBlocked) onDraftEditBlocked();
+      const e = new Error('This project requires Draft Mode for editing. Start your private copy to make changes.');
+      (e as any).reason = 'draftRequired';
+      throw e;
+    }
+
     console.log(`[MutationService] 🔄 Applying mutations to ${projectId}`,ops, {
       opsCount: ops.length,
       draft: useDraft,
       realTimeSyncEnabled,
       ops: ops.map(o => o.type)
     });
-    
-    await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${useDraft}`, { 
-      ops,
-      userId: userId || 'anonymous',
-      username: username || 'Anonymous',
-      sessionId: sessionId || `session_${Date.now()}`
-    });
+
+    try {
+      await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${useDraft}`, {
+        ops,
+        userId: actor.userId,
+        username: actor.username,
+        sessionId: sessionId || `session_${Date.now()}`
+      });
+    } catch (err: any) {
+      if (err?.status === 403 && err?.data?.requiresUpgrade) {
+        const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
+        (e as any).reason = 'requiresUpgrade';
+        throw e;
+      }
+      if (err?.status === 403 && err?.data?.viewOnly && err?.data?.draftAllowed) {
+        const e = new Error('You can view this project and edit via draft mode. Switch to Draft Mode to make your changes, then raise a pull request.');
+        (e as any).reason = 'draftRequired';
+        throw e;
+      }
+      if (err?.status === 403 && err?.data?.viewOnly) {
+        const e = new Error('You have view-only access to this project. Contact the project owner to request edit permissions.');
+        (e as any).reason = 'viewOnly';
+        throw e;
+      }
+      if (err?.status === 409 && err?.data?.draftCopyNotReady) {
+        const e = new Error(
+          'Private draft is still copying the ontology. Wait a moment and try again, or switch to Public mode.',
+        );
+        (e as any).reason = 'draftCopyNotReady';
+        throw e;
+      }
+      throw err;
+    }
   },
 
   /**
@@ -91,47 +155,53 @@ export const ontologyMutationService = {
   },
 
   /**
-   * Add annotation to an entity
+   * Add annotation to an entity (respects private/public sync mode).
    */
   async addAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string,
-                     userId?: string, username?: string): Promise<void> {
+                     userId?: string, username?: string, language?: string, datatype?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addAnnotation',
       iri: entityIri,
       property: propertyIri,
-      value
+      value,
+      language,
+      datatype,
     }], undefined, userId, username);
   },
 
   /**
-   * Delete annotation from an entity
+   * Delete annotation from an entity (respects private/public sync mode).
    */
   async deleteAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string,
-                        userId?: string, username?: string): Promise<void> {
+                        userId?: string, username?: string, language?: string, datatype?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteAnnotation',
       iri: entityIri,
       property: propertyIri,
-      value
+      value,
+      language,
+      datatype,
     }], undefined, userId, username);
   },
 
   /**
-   * Update annotation value (atomic operation)
+   * Update annotation value (respects private/public sync mode).
    */
   async updateAnnotation(projectId: string, entityIri: string, propertyIri: string, newValue: string,
-                        userId?: string, username?: string, oldValue?: string): Promise<void> {
+                        userId?: string, username?: string, oldValue?: string, language?: string, datatype?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'updateAnnotation',
       iri: entityIri,
       property: propertyIri,
       value: newValue,
-      oldValue: oldValue
+      oldValue,
+      language,
+      datatype,
     }], undefined, userId, username);
   },
 
   /**
-   * Add SubClassOf axiom (applied immediately, not as draft)
+   * Add SubClassOf axiom (respects private/public sync mode)
    */
   async addSubClassOf(projectId: string, classIri: string, superClassIri: string, 
                       userId?: string, username?: string): Promise<void> {
@@ -139,7 +209,7 @@ export const ontologyMutationService = {
       type: 'addSubClassOf',
       iri: classIri,
       target: superClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -151,7 +221,7 @@ export const ontologyMutationService = {
       type: 'deleteSubClassOf',
       iri: classIri,
       target: superClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -164,7 +234,7 @@ export const ontologyMutationService = {
       iri: classIri,
       value: oldSuperClassIri,  // old target
       target: newSuperClassIri   // new target
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -176,7 +246,7 @@ export const ontologyMutationService = {
       type: 'addEquivalentClass',
       iri: classIri,
       target: equivalentClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -188,7 +258,7 @@ export const ontologyMutationService = {
       type: 'deleteEquivalentClass',
       iri: classIri,
       target: equivalentClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -201,7 +271,7 @@ export const ontologyMutationService = {
       iri: classIri,
       value: oldEquivalentClassIri,  // old target
       target: newEquivalentClassIri   // new target
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -213,7 +283,7 @@ export const ontologyMutationService = {
       type: 'addDisjointWith',
       iri: classIri,
       target: disjointClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -225,7 +295,7 @@ export const ontologyMutationService = {
       type: 'deleteDisjointWith',
       iri: classIri,
       target: disjointClassIri
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -238,7 +308,7 @@ export const ontologyMutationService = {
       iri: classIri,
       value: oldDisjointClassIri,  // old target
       target: newDisjointClassIri   // new target
-    }], false, userId, username); // Apply immediately with user info
+    }], undefined, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -361,6 +431,15 @@ export const ontologyMutationService = {
   /**
    * Delete an annotation property
    */
+  async renameEntity(projectId: string, oldIri: string, newIri: string, userId?: string, username?: string): Promise<void> {
+    const actor = resolveMutationActor(userId, username);
+    const useDraft = resolveUseDraft();
+    await apiClient.post(
+      `/api/ontology/entity/${encodeURIComponent(projectId)}/rename?draft=${useDraft}&userId=${encodeURIComponent(actor.userId)}&username=${encodeURIComponent(actor.username)}`,
+      { oldIri, newIri },
+    );
+  },
+
   async deleteAnnotationProperty(projectId: string, iri: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteAnnotationProperty',
@@ -479,6 +558,55 @@ export const ontologyMutationService = {
     await this.applyMutations(projectId, [{ type: 'deleteEquivalentProperty', iri: propertyIri, target: equivalentPropertyIri }], undefined, userId, username);
   },
 
+  /**
+   * Replace a property relation (domain/range/subProperty/inverse/disjoint/equivalent)
+   * in a single API call — [deleteOp, addOp] together, no orphaned deletes.
+   */
+  async replacePropertyRelation(
+    projectId: string,
+    propertyIri: string,
+    relation: 'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent',
+    oldIri: string,
+    newIri: string,
+    userId?: string,
+    username?: string,
+  ): Promise<void> {
+    const deleteTypes: Record<string, string> = {
+      domain: 'deletePropertyDomain', range: 'deletePropertyRange',
+      subProperty: 'deleteSubPropertyOf', inverse: 'deleteInverseProperty',
+      disjoint: 'deleteDisjointProperty', equivalent: 'deleteEquivalentProperty',
+    };
+    const addTypes: Record<string, string> = {
+      domain: 'addPropertyDomain', range: 'addPropertyRange',
+      subProperty: 'addSubPropertyOf', inverse: 'addInverseProperty',
+      disjoint: 'addDisjointProperty', equivalent: 'addEquivalentProperty',
+    };
+    await this.applyMutations(projectId, [
+      { type: deleteTypes[relation], iri: propertyIri, target: oldIri },
+      { type: addTypes[relation],    iri: propertyIri, target: newIri },
+    ], undefined, userId, username);
+  },
+
+  /**
+   * Replace a Same/Different individual relation in a single API call.
+   */
+  async replaceIndividualRelation(
+    projectId: string,
+    individualIri: string,
+    relation: 'same' | 'different',
+    oldIri: string,
+    newIri: string,
+    userId?: string,
+    username?: string,
+  ): Promise<void> {
+    const deleteType = relation === 'same' ? 'deleteSameIndividual' : 'deleteDifferentIndividual';
+    const addType    = relation === 'same' ? 'addSameIndividual'    : 'addDifferentIndividual';
+    await this.applyMutations(projectId, [
+      { type: deleteType, iri: individualIri, target: oldIri },
+      { type: addType,    iri: individualIri, target: newIri },
+    ], undefined, userId, username);
+  },
+
   async addPropertyChain(projectId: string, propertyIri: string, chainExpression: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{ type: 'addPropertyChain', iri: propertyIri, value: chainExpression }], undefined, userId, username);
   },
@@ -512,8 +640,24 @@ export const ontologyMutationService = {
   /**
    * Add a data property assertion to an individual
    */
-  async addDataPropertyAssertion(projectId: string, individualIri: string, propertyIri: string, literalValue: string, userId?: string, username?: string): Promise<void> {
-    await this.applyMutations(projectId, [{ type: 'addDataPropertyAssertion', iri: individualIri, property: propertyIri, value: literalValue }], undefined, userId, username);
+  async addDataPropertyAssertion(
+    projectId: string,
+    individualIri: string,
+    propertyIri: string,
+    literalValue: string,
+    userId?: string,
+    username?: string,
+    language?: string,
+    datatype?: string,
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addDataPropertyAssertion',
+      iri: individualIri,
+      property: propertyIri,
+      value: literalValue,
+      language,
+      datatype,
+    }], undefined, userId, username);
   },
 
   /**
@@ -629,10 +773,119 @@ export const ontologyMutationService = {
     },
 
   /**
+   * Single endpoint for add / edit / delete of any entity relation.
+   * For "edit": atomically deletes the old value and inserts the new value
+   * in one SPARQL UPDATE on the server — no race condition, no orphaned triples.
+   */
+  async editRelation(
+    projectId: string,
+    params: {
+      operation: 'add' | 'edit' | 'delete';
+      entityIri: string;
+      relationshipType: string;
+      targetIri?: string;
+      oldTargetIri?: string;
+      userId?: string;
+      username?: string;
+      restrictionData?: {
+        propertyIri: string;
+        restrictionType: string;
+        fillerIri: string;
+        cardinality?: number;
+        isDataRestriction: boolean;
+      };
+      oldRestrictionData?: {
+        propertyIri: string;
+        restrictionType: string;
+        fillerIri: string;
+        cardinality?: number;
+        isDataRestriction: boolean;
+      };
+      memberIris?: string[];
+      expressionType?: 'intersection' | 'union';
+    }
+  ): Promise<void> {
+    const actor = resolveMutationActor(params.userId, params.username);
+    const useDraft = resolveUseDraft();
+    try {
+      await apiClient.put(
+        `/api/ontology/${projectId}/relation?draft=${useDraft}`,
+        { ...params, userId: actor.userId, username: actor.username },
+      );
+    } catch (err: any) {
+      if (err?.status === 403 && err?.data?.requiresUpgrade) {
+        const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
+        (e as any).reason = 'requiresUpgrade';
+        throw e;
+      }
+      if (err?.status === 403 && err?.data?.viewOnly && err?.data?.draftAllowed) {
+        const e = new Error('You can view this project and edit via draft mode. Switch to Draft Mode to make your changes, then raise a pull request.');
+        (e as any).reason = 'draftRequired';
+        throw e;
+      }
+      if (err?.status === 403 && err?.data?.viewOnly) {
+        const e = new Error('You have view-only access to this project. Contact the project owner to request edit permissions.');
+        (e as any).reason = 'viewOnly';
+        throw e;
+      }
+      throw err;
+    }
+  },
+
+  /**
    * Make siblings disjoint - adds pairwise disjointWith axioms
    */
   async makeSiblingsDisjoint(projectId: string, classIds: string[], userId?: string, username?: string): Promise<void> {
-    await apiClient.post(`/api/ontology/make-siblings-disjoint/${projectId}?userId=${userId || 'anonymous'}&username=${encodeURIComponent(username || 'Anonymous')}`, { classIds });
+    const actor = resolveMutationActor(userId, username);
+    const ops: MutationOp[] = [];
+    for (let i = 0; i < classIds.length; i++) {
+      for (let j = i + 1; j < classIds.length; j++) {
+        ops.push({ type: 'addDisjointWith', iri: classIds[i], target: classIds[j] });
+      }
+    }
+    if (ops.length === 0) return;
+    await this.applyMutations(projectId, ops, undefined, actor.userId, actor.username);
+  },
+
+  /** DL Query "Add to ontology" — respects private/public sync mode. */
+  async addDlQueryClass(
+    projectId: string,
+    expression: string,
+    className: string,
+    userEmail?: string,
+  ): Promise<void> {
+    const actor = resolveMutationActor(userEmail);
+    const useDraft = resolveUseDraft();
+    await apiClient.post(`/api/ontology/${projectId}/dl/add?draft=${useDraft}`, {
+      expression,
+      className,
+      userEmail: actor.userId,
+      userId: actor.userId,
+      username: actor.username,
+    });
+  },
+
+  /** Fallback when /dl/add is unavailable (older backends). */
+  async addDlQueryClassViaMutations(
+    projectId: string,
+    newIri: string,
+    className: string,
+    targetIri: string,
+    userId?: string,
+    username?: string,
+  ): Promise<void> {
+    const actor = resolveMutationActor(userId, username);
+    await this.applyMutations(
+      projectId,
+      [
+        { type: 'createClass', iri: newIri, label: className, parent: 'http://www.w3.org/2002/07/owl#Thing' },
+        { type: 'addEquivalentClass', iri: newIri, target: targetIri },
+      ],
+      undefined,
+      actor.userId,
+      actor.username,
+      `dl-add-${Date.now()}`,
+    );
   },
 
   /**
@@ -650,7 +903,7 @@ export const ontologyMutationService = {
       type: 'addDisjointUnion',
       iri: classIri,
       value: valueStr
-    }], false); // Apply immediately
+    }], undefined);
     
     console.log('[MutationService] addDisjointUnion completed');
   },
@@ -665,7 +918,7 @@ export const ontologyMutationService = {
       type: 'deleteDisjointUnion',
       iri: classIri,
       target: listNodeId
-    }], false); // Apply immediately
+    }], undefined);
   },
 
   /**
@@ -679,7 +932,7 @@ export const ontologyMutationService = {
       type: 'addHasKey',
       iri: classIri,
       value: propertyIris.join(',')
-    }], false); // Apply immediately
+    }], undefined);
   },
 
   /**
@@ -692,7 +945,89 @@ export const ontologyMutationService = {
       type: 'deleteHasKey',
       iri: classIri,
       target: listNodeId
-    }], false); // Apply immediately
+    }], undefined);
+  },
+
+  /**
+   * Replace an axiom in a single API call — sends [deleteOp, addOp] together so
+   * the add can never be orphaned if the delete succeeded. Handles all combinations:
+   * simple IRI, object/data restriction, intersection, union.
+   */
+  async replaceAxiom(
+    projectId: string,
+    classIri: string,
+    axiomType: 'SubClassOf' | 'EquivalentTo' | 'DisjointWith',
+    old: {
+      iri?: string;
+      restriction?: { property: string; restrictionType: string; filler: string; cardinality?: number; isData?: boolean };
+    },
+    newVal: {
+      iri?: string;
+      restriction?: { property: string; restrictionType: string; filler: string; cardinality?: number; isData?: boolean };
+      intersection?: string[];
+      union?: string[];
+    },
+    userId?: string,
+    username?: string,
+  ): Promise<void> {
+    // Simple IRI → Simple IRI: use single atomic SPARQL DELETE+INSERT+WHERE
+    if (old.iri && newVal.iri) {
+      const opType = axiomType === 'EquivalentTo' ? 'updateEquivalentClass'
+                   : axiomType === 'DisjointWith'  ? 'updateDisjointWith'
+                   : 'updateSubClassOf';
+      await this.applyMutations(projectId, [{ type: opType, iri: classIri, value: old.iri, target: newVal.iri }], undefined, userId, username);
+      return;
+    }
+
+    const ops: MutationOp[] = [];
+
+    // --- Delete op ---
+    if (old.restriction) {
+      ops.push({
+        type: old.restriction.isData ? 'deleteDataRestriction' : 'deleteObjectRestriction',
+        iri: classIri,
+        axiomType,
+        property: old.restriction.property,
+        restrictionType: old.restriction.restrictionType,
+        target: old.restriction.filler,
+        cardinality: old.restriction.cardinality,
+      });
+    } else if (old.iri) {
+      ops.push({
+        type: axiomType === 'EquivalentTo' ? 'deleteEquivalentClass'
+            : axiomType === 'DisjointWith'  ? 'deleteDisjointWith'
+            : 'deleteSubClassOf',
+        iri: classIri,
+        target: old.iri,
+      });
+    }
+
+    // --- Add op ---
+    if (newVal.restriction) {
+      ops.push({
+        type: newVal.restriction.isData ? 'addDataRestriction' : 'addObjectRestriction',
+        iri: classIri,
+        axiomType,
+        property: newVal.restriction.property,
+        restrictionType: newVal.restriction.restrictionType,
+        target: newVal.restriction.filler,
+        cardinality: newVal.restriction.cardinality,
+      });
+    } else if (newVal.iri) {
+      ops.push({
+        type: axiomType === 'EquivalentTo' ? 'addEquivalentClass'
+            : axiomType === 'DisjointWith'  ? 'addDisjointWith'
+            : 'addSubClassOf',
+        iri: classIri,
+        target: newVal.iri,
+      });
+    } else if (newVal.intersection) {
+      ops.push({ type: 'addIntersection', iri: classIri, axiomType, value: newVal.intersection.join(',') });
+    } else if (newVal.union) {
+      ops.push({ type: 'addUnion', iri: classIri, axiomType, value: newVal.union.join(',') });
+    }
+
+    await this.applyMutations(projectId, ops, undefined, userId, username);
   },
 
   /**
@@ -702,21 +1037,81 @@ export const ontologyMutationService = {
   async addAxiom(projectId: string, classIri: string, type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith' | 'GeneralClassAxiom', expression: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addAxiom',
+      iri: classIri,
       classIri,
-      target: expression, // We use 'target' for the expression
-      value: type // We use 'value' for the axiom type
-    }], false); // Apply immediately
+      target: expression,
+      value: type
+    }], undefined);
+  },
+
+  /**
+   * Add a General Class Axiom where an anonymous intersection is the subject:
+   * (A and B) rdfs:subClassOf <classIri>
+   */
+  async addGCAIntersection(projectId: string, classIri: string, memberIris: string[]): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addGCAIntersection',
+      iri: classIri,
+      value: memberIris.join(',')
+    }], undefined);
+  },
+
+  /**
+   * Add a General Class Axiom where an anonymous union is the subject:
+   * (A or B) rdfs:subClassOf <classIri>
+   */
+  async addGCAUnion(projectId: string, classIri: string, memberIris: string[]): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addGCAUnion',
+      iri: classIri,
+      value: memberIris.join(',')
+    }], undefined);
+  },
+
+  /**
+   * Add an intersection class expression (classIri EquivalentTo/SubClassOf: A and B and ...)
+   */
+  async addIntersection(
+    projectId: string,
+    classIri: string,
+    memberIris: string[],
+    axiomType: 'EquivalentTo' | 'SubClassOf'
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addIntersection',
+      iri: classIri,
+      value: memberIris.join(','),
+      axiomType
+    }], undefined);
+  },
+
+  /**
+   * Add a union class expression (classIri EquivalentTo/SubClassOf: A or B or ...)
+   */
+  async addUnion(
+    projectId: string,
+    classIri: string,
+    memberIris: string[],
+    axiomType: 'EquivalentTo' | 'SubClassOf'
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addUnion',
+      iri: classIri,
+      value: memberIris.join(','),
+      axiomType
+    }], undefined);
   },
 
   /**
    * Delete an axiom by its ID (blank node ID for anonymous axioms)
    * Used for deleting General Class Axioms, restrictions, etc.
    */
-  async deleteAxiom(projectId: string, axiomId: string): Promise<void> {
+  async deleteAxiom(projectId: string, axiomId: string, ancestorIri?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteAxiom',
-      iri: axiomId
-    }], false); // Apply immediately
+      iri: axiomId,
+      ...(ancestorIri ? { ancestorIri } : {})
+    }], undefined);
   },
 
   /**
@@ -724,13 +1119,15 @@ export const ontologyMutationService = {
    * This sends structured data that the backend can process without Manchester parsing
    */
   async addObjectRestriction(
-    projectId: string, 
-    classIri: string, 
+    projectId: string,
+    classIri: string,
     axiomType: 'EquivalentTo' | 'SubClassOf',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value',
     fillerClassIri: string,
-    cardinality?: number
+    cardinality?: number,
+    userId?: string,
+    username?: string
   ): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addObjectRestriction',
@@ -740,7 +1137,7 @@ export const ontologyMutationService = {
       target: fillerClassIri,
       cardinality: cardinality,
       axiomType // EquivalentTo or SubClassOf
-    }], false); // Apply immediately
+    }], undefined, userId, username);
   },
 
   /**
@@ -754,7 +1151,9 @@ export const ontologyMutationService = {
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly',
     datatypeIri: string,
-    cardinality?: number
+    cardinality?: number,
+    userId?: string,
+    username?: string
   ): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addDataRestriction',
@@ -764,7 +1163,7 @@ export const ontologyMutationService = {
       target: datatypeIri,
       cardinality: cardinality,
       axiomType
-    }], false); // Apply immediately
+    }], undefined, userId, username);
   },
 
   /**
@@ -773,10 +1172,11 @@ export const ontologyMutationService = {
   async deleteObjectRestriction(
     projectId: string,
     classIri: string,
-    axiomType: 'EquivalentTo' | 'SubClassOf',
+    axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value',
-    fillerClassIri: string
+    fillerClassIri: string,
+    cardinality?: number,
   ): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteObjectRestriction',
@@ -784,8 +1184,9 @@ export const ontologyMutationService = {
       property: propertyIri,
       restrictionType,
       target: fillerClassIri,
+      cardinality,
       axiomType
-    }], false);
+    }], undefined);
   },
 
   /**
@@ -794,10 +1195,11 @@ export const ontologyMutationService = {
   async deleteDataRestriction(
     projectId: string,
     classIri: string,
-    axiomType: 'EquivalentTo' | 'SubClassOf',
+    axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly',
-    datatypeIri: string
+    datatypeIri: string,
+    cardinality?: number,
   ): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteDataRestriction',
@@ -805,8 +1207,9 @@ export const ontologyMutationService = {
       property: propertyIri,
       restrictionType,
       target: datatypeIri,
+      cardinality,
       axiomType
-    }], false);
+    }], undefined);
   },
 };
 
