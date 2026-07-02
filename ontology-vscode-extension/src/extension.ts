@@ -1651,7 +1651,7 @@ class OntoCodePanel {
             const isUploadUrl = url.includes('/api/ontology/upload/') || /\/api\/projects\/[^/]+\/files/.test(url);
             const uploadProjectId = isUploadUrl ? extractUploadProjectId(url) : undefined;
             if (uploadProjectId && type === 'apiPost') {
-                axiosConfig.onUploadProgress = (progressEvent) => {
+                axiosConfig.onUploadProgress = (progressEvent: any) => {
                     const percentCompleted = progressEvent.total
                         ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
                         : 0;

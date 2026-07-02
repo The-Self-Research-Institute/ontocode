@@ -65,28 +65,19 @@ export function getGatewayUrl(type?: DeploymentType): string {
     if (typeof window !== 'undefined' && (window as any).__DESKTOP_API_URL__) {
         return (window as any).__DESKTOP_API_URL__;
     }
-    // Official cloud domain: always use the hardcoded API subdomain, never the env override.
-    // This ensures a self-hosted build (with VITE_CLOUD_GATEWAY_URL set to an EC2 IP)
-    // does not break the cloud deployment if the same image is reused there.
-    if (typeof window !== 'undefined') {
-        const hostname = window.location.hostname;
-        if (hostname === 'ontocode.selfresearch.org' || hostname === 'ontocodeapi.selfresearch.org') {
-            return DEFAULTS.CLOUD_GATEWAY_URL;
-        }
-    }
     const deploymentType = type ?? getStoredDeploymentType();
     const config = getConfig();
-    if (isLocalhost) {
-        return config?.SELF_HOSTED_GATEWAY_URL || DEFAULTS.SELF_HOSTED_GATEWAY_URL;
-    }
     if (deploymentType === 'cloud') {
-        // No explicit URL configured: derive the gateway from the page's hostname.
-        // Use protocol+hostname only (no port) — webapp runs on :3000 but the
-        // gateway/API is always on :80 (HTTP default, omitted by browsers).
-        return config?.CLOUD_GATEWAY_URL
-            || (typeof window !== 'undefined'
-                ? window.location.protocol + '//' + window.location.hostname
-                : DEFAULTS.CLOUD_GATEWAY_URL);
+        if (config?.CLOUD_GATEWAY_URL) return config.CLOUD_GATEWAY_URL;
+        // Real server (http/https, not localhost): use the page's own hostname.
+        // localhost, vscode-webview:, and Node.js all fall through to ontocodeapi.
+        if (typeof window !== 'undefined') {
+            const proto = window.location.protocol;
+            if ((proto === 'http:' || proto === 'https:') && !isLocalhost) {
+                return proto + '//' + window.location.hostname;
+            }
+        }
+        return DEFAULTS.CLOUD_GATEWAY_URL;
     }
     return config?.SELF_HOSTED_GATEWAY_URL || DEFAULTS.SELF_HOSTED_GATEWAY_URL;
 }
