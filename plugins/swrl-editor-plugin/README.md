@@ -67,7 +67,7 @@ Contributions are welcome! Please visit our [GitHub repository](https://github.c
 
 ## License
 
-MIT License - see LICENSE file for details
+GPL v3 License - see LICENSE file for details
 
 ## Support
 
