@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
-import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
+// '/pure' entry: no eager script injection at import time (see BillingManagement).
+import { loadStripe } from '@stripe/stripe-js/pure';
+import type { StripeElementsOptions } from '@stripe/stripe-js';
 import { X, Loader2, Shield, CheckCircle, CreditCard } from 'lucide-react';
 import { usePlanPricing } from '../hooks/usePlanPricing';
 

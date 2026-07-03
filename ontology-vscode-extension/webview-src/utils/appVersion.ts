@@ -24,10 +24,8 @@ export async function getAppVersion(): Promise<string> {
 
 export async function fetchLatestDesktopInstallerVersion(): Promise<string | null> {
   try {
-    const { getGatewayUrl } = await import("../config/deploymentConfig");
-    const res = await fetch(`${getGatewayUrl()}/api/downloads/info`);
-    if (!res.ok) return null;
-    const data = await res.json();
+    const { default: apiClient } = await import("../services/apiClient");
+    const data = await apiClient.get<any>("/api/downloads/info");
     return data?.latest?.["windows-x64"]?.version ?? null;
   } catch {
     return null;

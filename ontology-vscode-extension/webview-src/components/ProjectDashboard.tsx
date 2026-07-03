@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, Suspense, lazy } from "react";
+import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from "react";
 import {
   FolderOpen,
   Users,
@@ -171,6 +171,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     cancelText?: string;
     type?: "danger" | "warning" | "info";
   } | null>(null);
+  const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
 
   const currentUserInTeam = useMemo(() => teamMembers.find(m => m.id === user?.userId || m.email === user?.email || m.username === user?.username), [teamMembers, user]);
   const isWorkspaceOwner =
@@ -241,6 +242,16 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     setTimeout(() => setToast(null), 4000);
   };
 
+  // Settle any still-pending promise-based confirm before another dialog
+  // replaces it: its awaiting caller must never hang, and a later cancel of
+  // the replacing dialog must not resolve the stranded promise by mistake.
+  const settlePendingConfirm = (value: boolean) => {
+    if (confirmResolveRef.current) {
+      confirmResolveRef.current(value);
+      confirmResolveRef.current = null;
+    }
+  };
+
   // Helper function to show confirmation modal
   const showConfirm = (options: {
     title: string;
@@ -250,7 +261,26 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     cancelText?: string;
     type?: "danger" | "warning" | "info";
   }) => {
+    settlePendingConfirm(false);
     setConfirmModal(options);
+  };
+
+  const showConfirmDialog = (title: string, message: string, confirmLabel = "OK"): Promise<boolean> => {
+    return new Promise<boolean>((resolve) => {
+      settlePendingConfirm(false);
+      confirmResolveRef.current = resolve;
+      setConfirmModal({
+        title,
+        message,
+        confirmText: confirmLabel,
+        cancelText: "Cancel",
+        type: "warning",
+        onConfirm: () => {
+          setConfirmModal(null);
+          settlePendingConfirm(true);
+        },
+      });
+    });
   };
 
   const clearCacheAndLogout = () => {
@@ -1514,7 +1544,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           title={confirmModal.title}
           message={confirmModal.message}
           onConfirm={confirmModal.onConfirm}
-          onCancel={() => setConfirmModal(null)}
+          onCancel={() => {
+            setConfirmModal(null);
+            settlePendingConfirm(false);
+          }}
           confirmText={confirmModal.confirmText}
           cancelText={confirmModal.cancelText}
           type={confirmModal.type}

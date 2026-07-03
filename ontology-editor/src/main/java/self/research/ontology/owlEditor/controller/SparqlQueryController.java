@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.model.SparqlQueryEntity;
 import self.research.ontology.owlEditor.repository.SparqlQueryRepository;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.owlEditor.util.TripleStoreErrors;
 
 import java.util.ArrayList;
 import java.util.Date;
@@ -33,6 +34,22 @@ public class SparqlQueryController {
     private final SparqlDatasetService datasetService;
     private final SimpMessagingTemplate messagingTemplate;
     private final SparqlQueryRepository queryRepository;
+
+    // Desktop (lazy Fuseki): the store may still be starting when a query
+    // arrives. Only in that mode do we map connection-refused to a retryable
+    // 503 — webapp keeps its existing 400 semantics.
+    @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.owlapi-first:false}")
+    private boolean desktopOwlApiFirst;
+
+    private ResponseEntity<?> sparqlFailure(Exception e) {
+        if (desktopOwlApiFirst && TripleStoreErrors.isConnectionRefused(e)) {
+            return ResponseEntity.status(503).body(Map.of(
+                    "error", TripleStoreErrors.STORE_STARTING_MESSAGE,
+                    "retryable", true));
+        }
+        String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+        return ResponseEntity.badRequest().body(Map.of("error", msg));
+    }
 
     public SparqlQueryController(SparqlDatasetService datasetService,
                                 SimpMessagingTemplate messagingTemplate,
@@ -120,8 +137,7 @@ public class SparqlQueryController {
             long executionTime = System.currentTimeMillis() - startTime;
             return ResponseEntity.ok(new SparqlQueryResponse(new SparqlHead(vars), rows, executionTime));
         } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            return ResponseEntity.badRequest().body(Map.of("error", msg));
+            return sparqlFailure(e);
         }
     }
 
@@ -150,8 +166,7 @@ public class SparqlQueryController {
         messagingTemplate.convertAndSend("/topic/ontology/" + projectId, sparqlUpdateNotification);
         return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            return ResponseEntity.badRequest().body(Map.of("error", msg));
+            return sparqlFailure(e);
         }
     }
 

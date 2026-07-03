@@ -58,9 +58,12 @@ export default defineConfig(({ mode }) => {
       // Provide zlib constants as global defines
       'process.env.Z_SYNC_FLUSH': '2',
       'process.env.Z_NO_FLUSH': '0',
-      // Inject runtime config for standalone (browser / cloud) mode
-      // Cloud: uses env variable when on localhost, same-origin when on cloud domain
-      // Self-hosted: uses localhost URLs or proxy in dev mode
+      // Compile-time config for standalone (browser/cloud) mode.
+      // Empty strings fall through to DEFAULTS in deploymentConfig.ts
+      // (e.g. CLOUD_GATEWAY_URL → 'https://ontocodeapi.selfresearch.org').
+      // window.__ONTOCODE_CONFIG__ injected by extension.ts is only read
+      // by apiClient.ts (property access, not bare identifier) so this
+      // define does NOT conflict with the runtime injection.
       '__ONTOCODE_CONFIG__': JSON.stringify({
         IS_WEB_EXTENSION: true,
         CLOUD_GATEWAY_URL: env.VITE_CLOUD_GATEWAY_URL || '',
