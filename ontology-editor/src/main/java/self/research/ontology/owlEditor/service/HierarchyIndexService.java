@@ -3,9 +3,9 @@ package self.research.ontology.owlEditor.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.document.HierarchySnapshotDoc;
@@ -15,6 +15,7 @@ import self.research.ontology.owlEditor.repository.HierarchySnapshotRepository;
 
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.Executor;
 
 /**
  * Serves precomputed hierarchy snapshots to the web UI; schedules OWLAPI builds after import.
@@ -26,6 +27,7 @@ public class HierarchyIndexService {
 
     private final HierarchySnapshotRepository snapshotRepository;
     private final HierarchySnapshotBuildService buildService;
+    private final Executor hierarchyIndexExecutor;
 
     @Value("${ontocode.hierarchy.snapshot.enabled:true}")
     private boolean snapshotEnabled;
@@ -41,9 +43,11 @@ public class HierarchyIndexService {
     private ProjectOntologyCache ontologyCache;
 
     public HierarchyIndexService(HierarchySnapshotRepository snapshotRepository,
-                                 HierarchySnapshotBuildService buildService) {
+                                 HierarchySnapshotBuildService buildService,
+                                 @Qualifier("hierarchyIndexExecutor") Executor hierarchyIndexExecutor) {
         this.snapshotRepository = snapshotRepository;
         this.buildService = buildService;
+        this.hierarchyIndexExecutor = hierarchyIndexExecutor;
     }
 
     public boolean isEnabled() {
@@ -146,12 +150,11 @@ public class HierarchyIndexService {
         }
         String revision = Instant.now().toString();
         log.info("[HierarchyIndex] Scheduling snapshot build for {}", projectId);
-        buildAsync(projectId, revision);
-    }
-
-    @Async("hierarchyIndexExecutor")
-    public void buildAsync(String projectId, String revision) {
-        buildService.buildAndStore(projectId, revision);
+        // Submit to the executor directly. Do NOT rely on @Async here: scheduleBuild()
+        // and buildAsync() live in the same bean, so an @Async self-invocation is bypassed
+        // by Spring's proxy and runs synchronously on the caller (the import worker thread),
+        // blocking the import queue slot for the entire build on large ontologies.
+        hierarchyIndexExecutor.execute(() -> buildService.buildAndStore(projectId, revision));
     }
 
     public void markStale(String projectId) {
