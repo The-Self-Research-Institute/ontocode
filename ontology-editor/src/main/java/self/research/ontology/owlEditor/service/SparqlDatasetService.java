@@ -290,6 +290,26 @@ public class SparqlDatasetService {
     }
 
     /**
+     * Fast TCP probe of the Fuseki endpoint. Used on desktop (lazy Fuseki) to
+     * skip work quietly while the store is still starting, instead of failing
+     * every query with connection-refused stack traces.
+     */
+    public boolean isFusekiReachable() {
+        try {
+            java.net.URI uri = java.net.URI.create(fusekiQueryEndpoint);
+            int port = uri.getPort() != -1
+                    ? uri.getPort()
+                    : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(uri.getHost(), port), 1_200);
+                return true;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * Warm up TDB2 B-tree indexes after startup so the first user request isn't cold.
      * Runs asynchronously — never blocks startup or user requests.
      *

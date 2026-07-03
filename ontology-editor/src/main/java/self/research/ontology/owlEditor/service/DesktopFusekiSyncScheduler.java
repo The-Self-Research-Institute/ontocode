@@ -30,6 +30,7 @@ public class DesktopFusekiSyncScheduler {
     private static final int MAX_RETRIES = 4;
 
     private final ProjectImportService projectImportService;
+    private final SparqlDatasetService datasetService;
 
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "fuseki-bg-sync");
@@ -41,8 +42,10 @@ public class DesktopFusekiSyncScheduler {
     private final ConcurrentHashMap<String, Boolean> inFlight = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicInteger> retryCounts = new ConcurrentHashMap<>();
 
-    public DesktopFusekiSyncScheduler(@Lazy ProjectImportService projectImportService) {
+    public DesktopFusekiSyncScheduler(@Lazy ProjectImportService projectImportService,
+                                      @Lazy SparqlDatasetService datasetService) {
         this.projectImportService = projectImportService;
+        this.datasetService = datasetService;
     }
 
     /** After ontology open / OWLAPI warm — short delay, no debounce stacking. */
@@ -82,6 +85,14 @@ public class DesktopFusekiSyncScheduler {
         try {
             if (!projectImportService.isFusekiSyncPending(projectId)) {
                 retryCounts.remove(projectId);
+                return;
+            }
+            // Lazy desktop Fuseki may not be started yet — the Electron shell
+            // launches it on demand. Probe first so we defer with one log line
+            // instead of connection-refused stack traces from the sync path.
+            if (!datasetService.isFusekiReachable()) {
+                log.info("[FusekiBg] Fuseki not reachable yet — deferring sync for {}", projectId);
+                scheduleRetry(projectId);
                 return;
             }
             log.info("[FusekiBg] Silent sync starting for {}", projectId);

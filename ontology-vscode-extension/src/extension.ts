@@ -93,9 +93,9 @@ function getUrlsForDeployment(deploymentType: 'self-hosted' | 'cloud'): { gatewa
         };
     } else {
         return {
-            gateway: process.env.CLOUD_GATEWAY_URL || 'http://localhost:80',
-            editor: process.env.CLOUD_EDITOR_URL || 'http://localhost:80',
-            plugin: process.env.CLOUD_PLUGIN_URL || 'http://localhost:8087'
+            gateway: process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org',
+            editor: process.env.CLOUD_EDITOR_URL || 'https://ontocodeapi.selfresearch.org',
+            plugin: process.env.CLOUD_PLUGIN_URL || 'https://ontocodeapi.selfresearch.org:8087'
         };
     }
 }
@@ -3574,9 +3574,9 @@ class OntoCodePanel {
                     SELF_HOSTED_GATEWAY_URL: '${process.env.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80'}',
                     SELF_HOSTED_EDITOR_URL: '${process.env.SELF_HOSTED_EDITOR_URL || 'http://localhost:80'}',
                     SELF_HOSTED_PLUGIN_URL: '${process.env.SELF_HOSTED_PLUGIN_URL || 'http://localhost:8087'}',
-                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'http://localhost:80'}',
-                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'http://localhost:80'}',
-                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'http://localhost:8087'}',
+                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org'}',
+                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'https://ontocodeapi.selfresearch.org'}',
+                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'https://ontocodeapi.selfresearch.org:8087'}',
                     DEFAULT_DEPLOYMENT_TYPE: '${process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud'}',
                     IS_WEB_EXTENSION: ${isWebExtension}
                 };

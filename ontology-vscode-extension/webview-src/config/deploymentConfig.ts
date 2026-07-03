@@ -68,13 +68,17 @@ export function getGatewayUrl(type?: DeploymentType): string {
     const deploymentType = type ?? getStoredDeploymentType();
     const config = getConfig();
     if (deploymentType === 'cloud') {
+        // CLOUD_GATEWAY_URL env override is for dev/test servers only.
         if (config?.CLOUD_GATEWAY_URL) return config.CLOUD_GATEWAY_URL;
-        // Real server (http/https, not localhost): use the page's own hostname.
-        // localhost, vscode-webview:, and Node.js all fall through to ontocodeapi.
+        // Official cloud domain and localhost always use the ontocodeapi default.
+        // Any other real server (http/https) uses the page's own hostname.
         if (typeof window !== 'undefined') {
             const proto = window.location.protocol;
-            if ((proto === 'http:' || proto === 'https:') && !isLocalhost) {
-                return proto + '//' + window.location.hostname;
+            const hostname = window.location.hostname;
+            const isOfficialCloudHost =
+                hostname === 'ontocode.selfresearch.org' || hostname === 'ontocodeapi.selfresearch.org';
+            if ((proto === 'http:' || proto === 'https:') && !isLocalhost && !isOfficialCloudHost) {
+                return proto + '//' + hostname;
             }
         }
         return DEFAULTS.CLOUD_GATEWAY_URL;

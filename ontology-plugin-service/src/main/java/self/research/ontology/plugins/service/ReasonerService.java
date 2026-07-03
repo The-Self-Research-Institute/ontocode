@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -31,7 +32,9 @@ public class ReasonerService {
     private static final OWLDataFactory DATA_FACTORY =
             OWLManager.createOWLOntologyManager().getOWLDataFactory();
 
-    private final Map<String, OWLReasoner> reasonerCache = new HashMap<>();
+    // ConcurrentHashMap: read/written from request threads, the classify
+    // executor, and the controller's LRU-eviction path concurrently.
+    private final Map<String, OWLReasoner> reasonerCache = new ConcurrentHashMap<>();
     
     /**
      * Create or get cached reasoner for an ontology
@@ -1055,6 +1058,31 @@ public class ReasonerService {
         });
         
         reasonerCache.clear();
+    }
+
+    /**
+     * Dispose every cached reasoner wrapping the given ontology instance.
+     * Called when the controller's ontology LRU evicts an entry, so a later
+     * reload cannot be served a reasoner built on the evicted ontology.
+     */
+    public void disposeReasoners(OWLOntology ontology) {
+        String keyPrefix = ontology.getOntologyID().toString() + "-";
+        Iterator<Map.Entry<String, OWLReasoner>> it = reasonerCache.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, OWLReasoner> entry = it.next();
+            if (!entry.getKey().startsWith(keyPrefix)) {
+                continue;
+            }
+            it.remove();
+            try {
+                if (entry.getValue() != null) {
+                    entry.getValue().dispose();
+                }
+                log.info("Disposed reasoner {} for evicted ontology", entry.getKey());
+            } catch (Exception e) {
+                log.warn("Error disposing reasoner {}", entry.getKey(), e);
+            }
+        }
     }
 
     /**

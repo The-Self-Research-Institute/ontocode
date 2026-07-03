@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
-import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
+import { loadStripe } from '@stripe/stripe-js/pure';
+import type { StripeElementsOptions } from '@stripe/stripe-js';
 import { X, Loader2, CreditCard, XCircle, CheckCircle, Shield, AlertTriangle, Crown, ChevronLeft, Calendar, RefreshCw, History, Download, Monitor, ArrowLeftRight } from 'lucide-react';
 import { getGatewayUrl } from '../config/deploymentConfig';
 import { usePlanPricing } from '../hooks/usePlanPricing';
 import { isDesktop } from '../utils/desktop';
+import { billingErrorMessage, billingGet, billingPost, billingOriginFallback } from '../utils/billingApi';
 
 function safeGetStorage(key: string): string | null { try { return localStorage.getItem(key); } catch { return null; } }
 
@@ -170,32 +172,10 @@ const UpdateCardForm: React.FC<{
             return;
         }
 
-        const headers = {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${safeGetStorage('authToken') ?? ''}`,
-        };
-        const body = JSON.stringify({ setupIntentId: setupIntent.id, workspaceId });
-        let res: Response;
         try {
-            res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/update-payment-method`, { method: 'POST', headers, body });
-            if (!res.ok && res.status === 404) {
-                res = await fetchWithTimeout(`${window.location.origin}/api/billing/update-payment-method`, { method: 'POST', headers, body });
-            }
+            await billingPost('/api/billing/update-payment-method', { setupIntentId: setupIntent.id, workspaceId });
         } catch (err: any) {
-            setError(err.message || 'Network error. Please check your connection and try again.');
-            setSubmitting(false);
-            return;
-        }
-
-        if (res.status === 401 || res.status === 403) {
-            setError('Your session has expired. Please sign in again.');
-            setSubmitting(false);
-            return;
-        }
-
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-            setError(data?.error ?? 'Failed to update payment method.');
+            setError(billingErrorMessage(err, 'Failed to update payment method.'));
             setSubmitting(false);
             return;
         }
@@ -261,10 +241,13 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         setLicenseError(null);
         setDownloadingLicense(true);
         try {
+            // Blob download — cannot go through the apiClient postMessage proxy
+            // (JSON-only); raw fetch against the resolved gateway URL instead.
             const headers = { Authorization: `Bearer ${safeGetStorage('authToken') ?? ''}` };
             let res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/license/download`, { method: 'GET', headers });
-            if (!res.ok && res.status !== 401) {
-                res = await fetchWithTimeout(`${window.location.origin}/api/billing/license/download`, { method: 'GET', headers });
+            const fallbackOrigin = billingOriginFallback();
+            if (res.status === 404 && fallbackOrigin) {
+                res = await fetchWithTimeout(`${fallbackOrigin}/api/billing/license/download`, { method: 'GET', headers });
             }
             if (!res.ok) {
                 const msg = res.status === 503
@@ -320,43 +303,14 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         }
         : undefined;
 
-    const authHeaders = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${safeGetStorage('authToken') ?? ''}`,
-    };
-
     const loadBillingSummary = async () => {
         setLoadingSummary(true);
         setDetailsError(null);
         try {
-            let res: Response;
-            try {
-                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/subscription/details`, {
-                    method: 'GET',
-                    headers: authHeaders,
-                });
-                if (!res.ok && res.status === 404) {
-                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/subscription/details`, {
-                        method: 'GET',
-                        headers: authHeaders,
-                    });
-                }
-            } catch (err: any) {
-                throw new Error(err.message || 'Failed to load billing details.');
-            }
-
-            if (res.status === 401 || res.status === 403) {
-                throw new Error('Your session has expired. Please sign in again.');
-            }
-
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                throw new Error(data?.error ?? 'Failed to load billing details.');
-            }
-
+            const data = await billingGet<BillingSummary>('/api/billing/subscription/details');
             setBillingSummary(data);
         } catch (err: any) {
-            setDetailsError(err.message || 'Failed to load billing details.');
+            setDetailsError(billingErrorMessage(err, 'Failed to load billing details.'));
         } finally {
             setLoadingSummary(false);
         }
@@ -374,23 +328,13 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     const startCardUpdate = async () => {
         setError(null);
         try {
-            let res: Response;
-            try {
-                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/setup`, { method: 'POST', headers: authHeaders });
-                if (!res.ok && res.status === 404) {
-                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/setup`, { method: 'POST', headers: authHeaders });
-                }
-            } catch (err: any) {
-                throw new Error(err.message || 'Network error. Please check your connection.');
-            }
-            if (res.status === 401 || res.status === 403) throw new Error('Your session has expired. Please sign in again.');
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || !data?.clientSecret) throw new Error(data?.error ?? 'Failed to create payment setup');
-            setSetupPublishableKey(data.stripePublishableKey);
+            const data = await billingPost<{ clientSecret?: string; stripePublishableKey?: string }>('/api/billing/setup');
+            if (!data?.clientSecret) throw new Error('Failed to create payment setup');
+            setSetupPublishableKey(data.stripePublishableKey || '');
             setSetupClientSecret(data.clientSecret);
             setView('update-card');
         } catch (err: any) {
-            setError(err.message);
+            setError(billingErrorMessage(err, 'Failed to create payment setup'));
         }
     };
 
@@ -403,22 +347,10 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
             // subscription" and propagates the change to every workspace
             // owned by the user. We never pass the workspace id even when
             // navigated from a workspace context.
-            const body = JSON.stringify({ workspaceId: '' });
-            let res: Response;
-            try {
-                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/cancel-workspace`, { method: 'POST', headers: authHeaders, body });
-                if (!res.ok && res.status === 404) {
-                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/cancel-workspace`, { method: 'POST', headers: authHeaders, body });
-                }
-            } catch (err: any) {
-                throw new Error(err.message || 'Network error. Please check your connection and try again.');
-            }
-            if (res.status === 401 || res.status === 403) throw new Error('Your session has expired. Please sign in again.');
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data?.error ?? 'Failed to cancel subscription');
+            await billingPost('/api/billing/cancel-workspace', { workspaceId: '' });
             setView('done');
         } catch (err: any) {
-            setError(err.message);
+            setError(billingErrorMessage(err, 'Failed to cancel subscription'));
             setView('info');
         }
     };
@@ -427,21 +359,10 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         setError(null);
         setEnablingAutoRenew(true);
         try {
-            let res: Response;
-            try {
-                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/auto-renew/enable`, { method: 'POST', headers: authHeaders });
-                if (!res.ok && res.status === 404) {
-                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/auto-renew/enable`, { method: 'POST', headers: authHeaders });
-                }
-            } catch (err: any) {
-                throw new Error(err.message || 'Network error. Please check your connection and try again.');
-            }
-            if (res.status === 401 || res.status === 403) throw new Error('Your session has expired. Please sign in again.');
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data?.error ?? 'Failed to turn on auto-renewal');
+            await billingPost('/api/billing/auto-renew/enable');
             setBillingSummary((prev) => prev ? { ...prev, autoRenewEnabled: true, cancelAtPeriodEnd: false, canceledAt: '' } : prev);
         } catch (err: any) {
-            setError(err.message);
+            setError(billingErrorMessage(err, 'Failed to turn on auto-renewal'));
         } finally {
             setEnablingAutoRenew(false);
         }
@@ -458,14 +379,12 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         setIntervalSwitchSuccess(null);
         setIntervalSwitchConfirming(true);
         try {
-            const res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/preview-interval-change?interval=annual`, {
-                headers: authHeaders,
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data?.error ?? 'Failed to preview change.');
+            const data = await billingGet<{ amountFormatted: string; description: string }>(
+                '/api/billing/preview-interval-change?interval=annual',
+            );
             setIntervalSwitchPreview({ amountFormatted: data.amountFormatted, description: data.description });
         } catch (err: any) {
-            setIntervalSwitchError(err.message);
+            setIntervalSwitchError(billingErrorMessage(err, 'Failed to preview change.'));
             setIntervalSwitchConfirming(false);
         }
     };
@@ -477,22 +396,10 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         setIntervalSwitchConfirming(false);
         setSwitchingInterval(true);
         try {
-            let res: Response;
-            try {
-                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/change-interval`, {
-                    method: 'POST', headers: authHeaders, body: JSON.stringify({ interval: newInterval }),
-                });
-                if (!res.ok && res.status === 404) {
-                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/change-interval`, {
-                        method: 'POST', headers: authHeaders, body: JSON.stringify({ interval: newInterval }),
-                    });
-                }
-            } catch (err: any) {
-                throw new Error(err.message || 'Network error. Please check your connection and try again.');
-            }
-            if (res.status === 401 || res.status === 403) throw new Error('Your session has expired. Please sign in again.');
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data?.error ?? 'Failed to switch billing interval.');
+            const data = await billingPost<{ effectiveDate?: string; cancelledPending?: boolean; pending?: boolean }>(
+                '/api/billing/change-interval',
+                { interval: newInterval },
+            );
             const nextDate = data.effectiveDate ? formatBillingDate(data.effectiveDate) : '';
             if (data.cancelledPending) {
                 setIntervalSwitchSuccess(`Downgrade cancelled. Your plan will continue as annual.`);
@@ -505,7 +412,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
             }
             await loadBillingSummary();
         } catch (err: any) {
-            setIntervalSwitchError(err.message);
+            setIntervalSwitchError(billingErrorMessage(err, 'Failed to switch billing interval.'));
         } finally {
             setSwitchingInterval(false);
         }
@@ -515,26 +422,10 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         setBackupPmError(null);
         setUsingBackupPmId(pmId);
         try {
-            let res: Response;
-            const body = JSON.stringify({ paymentMethodId: pmId });
-            try {
-                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/use-payment-method`, {
-                    method: 'POST', headers: authHeaders, body,
-                });
-                if (!res.ok && res.status === 404) {
-                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/use-payment-method`, {
-                        method: 'POST', headers: authHeaders, body,
-                    });
-                }
-            } catch (err: any) {
-                throw new Error(err.message || 'Network error. Please check your connection and try again.');
-            }
-            if (res.status === 401 || res.status === 403) throw new Error('Your session has expired. Please sign in again.');
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data?.error ?? 'Failed to update payment method.');
+            await billingPost('/api/billing/use-payment-method', { paymentMethodId: pmId });
             await loadBillingSummary();
         } catch (err: any) {
-            setBackupPmError(err.message);
+            setBackupPmError(billingErrorMessage(err, 'Failed to update payment method.'));
         } finally {
             setUsingBackupPmId(null);
         }
@@ -911,6 +802,20 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 <div className="flex flex-col items-center justify-center py-20 bg-white/5 border border-dashed border-white/10 rounded-3xl gap-4">
                                     <Loader2 size={32} className="text-purple-500 animate-spin" />
                                     <p className="text-slate-400 font-medium">Fetching your invoices...</p>
+                                </div>
+                            ) : detailsError ? (
+                                // A failed fetch is not "no invoices" — say so and offer a retry.
+                                <div className="text-center py-16 bg-white/5 border border-dashed border-red-400/20 rounded-3xl">
+                                    <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 text-red-400/70">
+                                        <AlertTriangle size={32} />
+                                    </div>
+                                    <p className="text-slate-300 font-medium">Couldn't load your payment history.</p>
+                                    <p className="text-slate-500 text-sm mt-1">{detailsError}</p>
+                                    <button
+                                        onClick={() => loadBillingSummary()}
+                                        className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-white/20 bg-white/5 text-slate-300 text-sm font-medium hover:bg-white/10 transition-all">
+                                        <RefreshCw size={14} /> Try again
+                                    </button>
                                 </div>
                             ) : paymentHistory.length === 0 ? (
                                 <div className="text-center py-16 bg-white/5 border border-dashed border-white/10 rounded-3xl">
