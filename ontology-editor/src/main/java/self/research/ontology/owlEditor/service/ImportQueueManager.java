@@ -52,6 +52,10 @@ public class ImportQueueManager {
 
     private static final int MAX_RETRIES = 3;
     private static final long RETRY_DELAY_MS = 10 * 1000;
+    /** Never timeout an in-flight import earlier than this floor. */
+    private static final long MIN_PROCESSING_TIMEOUT_MS = 10 * 60 * 1000;
+    /** Allow headroom beyond the estimator because parse/write phases can vary. */
+    private static final double PROCESSING_TIMEOUT_MULTIPLIER = 2.0;
     /** Cap total queue wait shown to users (sum of ahead-of-you estimates). */
     private static final long MAX_WAIT_TIME_MS = 20 * 60 * 1000;
 
@@ -137,6 +141,8 @@ public class ImportQueueManager {
     public synchronized ImportQueueItem dequeue() {
         long dequeueStart = System.nanoTime();
         if (activeImports.size() >= maxConcurrentImports || queue.isEmpty()) {
+            log.debug("[Queue] Dequeue skipped (active={}, max={}, queued={})",
+                    activeImports.size(), maxConcurrentImports, queue.size());
             return null;
         }
 
@@ -152,6 +158,8 @@ public class ImportQueueManager {
             }
         }
         if (item == null) {
+            log.debug("[Queue] Dequeue found no eligible item (queued={}, activeProjectIds={})",
+                    queue.size(), activeImports.keySet());
             return null; // All queued items are for projects already being imported
         }
 
@@ -186,6 +194,8 @@ public class ImportQueueManager {
 
             log.info("[Queue] Completed project {} in {} ms (avg: {} ms)",
                     projectId, durationMs, getAverageProcessingTime());
+            } else {
+                log.warn("[Queue] markCompleted called for {} but it was not in activeImports", projectId);
         }
 
         refreshQueuedEstimates();
@@ -210,6 +220,8 @@ public class ImportQueueManager {
     public synchronized void markFailed(String projectId, String reason, boolean shouldRetry) {
         ImportQueueItem item = activeImports.remove(projectId);
         if (item == null) {
+            log.warn("[Queue] markFailed called for {} but it was not in activeImports. reason={}",
+                    projectId, reason);
             return;
         }
 
@@ -365,6 +377,71 @@ public class ImportQueueManager {
      */
     public synchronized boolean isEmpty() {
         return queue.isEmpty() && activeImports.isEmpty();
+    }
+
+    /**
+     * Expire processing imports that have exceeded the supplied timeout.
+     * Returns the expired items so callers can update project-level status stores.
+     */
+    public synchronized List<ImportQueueItem> expireStuckProcessing(long maxProcessingMs) {
+        if (maxProcessingMs <= 0 || activeImports.isEmpty()) {
+            return List.of();
+        }
+
+        log.info("[Queue] Scanning active imports for timeout (thresholdMs={}, active={}, queued={})",
+                maxProcessingMs, activeImports.size(), queue.size());
+
+        long nowMs = Instant.now().toEpochMilli();
+        List<ImportQueueItem> expired = new ArrayList<>();
+
+        for (ImportQueueItem item : new ArrayList<>(activeImports.values())) {
+            if (item.getStartedAt() == null) {
+                continue;
+            }
+
+            long elapsedMs = nowMs - item.getStartedAt().toEpochMilli();
+            long itemTimeoutMs = calculateTimeoutMsForItem(item, maxProcessingMs);
+            if (elapsedMs < itemTimeoutMs) {
+                continue;
+            }
+
+            activeImports.remove(item.getProjectId());
+            item.setStatus(ImportQueueItem.ImportStatus.FAILED);
+                long estimateMs = Math.max(0, estimateDurationMsForItem(item));
+            item.setFailureReason(String.format(
+                "Import timed out after %d minutes while processing (timeout=%d minutes, estimate=%d minutes)",
+                    Math.max(1, elapsedMs / 60_000),
+                    Math.max(1, itemTimeoutMs / 60_000),
+                    Math.max(1, estimateMs / 60_000)));
+            expired.add(item);
+
+            double fileSizeMb = item.getFileSizeBytes() > 0
+                ? (item.getFileSizeBytes() / (1024.0 * 1024.0))
+                : 0.0;
+            log.error("[Queue] Expired stuck import for project {} after {} ms (timeoutMs={}, estimateMs={}, fileSizeMb={})",
+                item.getProjectId(), elapsedMs, itemTimeoutMs, estimateMs, String.format("%.2f", fileSizeMb));
+            notifyFailed(item);
+        }
+
+        if (!expired.isEmpty()) {
+            log.warn("[Queue] Expired {} stuck import(s). Active now: {}, queued now: {}",
+                    expired.size(), activeImports.size(), queue.size());
+            updateQueuePositions();
+            broadcastQueueStats();
+        }
+
+        return expired;
+    }
+
+    private long calculateTimeoutMsForItem(ImportQueueItem item, long configuredTimeoutMs) {
+        long estimateMs = Math.max(0, estimateDurationMsForItem(item));
+        long estimateBasedTimeoutMs = estimateMs > 0
+                ? (long) Math.ceil(estimateMs * PROCESSING_TIMEOUT_MULTIPLIER)
+                : 0;
+
+        return Math.max(
+                Math.max(configuredTimeoutMs, MIN_PROCESSING_TIMEOUT_MS),
+                estimateBasedTimeoutMs);
     }
 
     // Private helper methods
