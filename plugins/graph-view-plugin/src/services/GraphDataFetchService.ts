@@ -10,6 +10,7 @@
  */
 
 import { OntologyNode, OntologyEdge } from '../types';
+import { authHeaders } from '../utils/authHeaders';
 
 export class GraphDataFetchService {
   private apiBaseUrl: string;
@@ -23,10 +24,7 @@ export class GraphDataFetchService {
   }
 
   private get headers() {
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${this.authToken}`
-    };
+    return authHeaders(this.authToken);
   }
 
   /**
