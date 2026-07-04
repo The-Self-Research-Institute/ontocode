@@ -369,9 +369,9 @@ class ApiClient {
           console.log(`[ApiClient] FormData bridge: file=${fileEntry.name}, size=${buf.byteLength}, type=${contentType}`);
         }
         msgBody._isMultipart = true;
-        data = await this.postViaVSCode<T>({ type: 'apiPost', url, body: msgBody, headers: config?.headers });
+        data = await this.postViaVSCode<T>({ type: 'apiPost', url, body: msgBody, params: config?.params, headers: config?.headers });
       } else {
-        data = await this.postViaVSCode<T>({ type: 'apiPost', url, body, headers: config?.headers });
+        data = await this.postViaVSCode<T>({ type: 'apiPost', url, body, params: config?.params, headers: config?.headers });
       }
     } else {
       // When sending FormData, remove the default Content-Type so axios/browser
@@ -418,7 +418,7 @@ class ApiClient {
     let data: T;
     if (this.isVSCode) {
       console.log(url, 'put via vs');
-      data = await this.postViaVSCode<T>({ type: 'apiPut', url, body, headers: config?.headers });
+      data = await this.postViaVSCode<T>({ type: 'apiPut', url, body, params: config?.params, headers: config?.headers });
     } else {
       const resp = await this.axiosClient!.put(url, body, config);
       data = resp.data as T;
@@ -431,7 +431,7 @@ class ApiClient {
     let data: T;
     if (this.isVSCode) {
       console.log(url, 'patch via vs');
-      data = await this.postViaVSCode<T>({ type: 'apiPatch', url, body, headers: config?.headers });
+      data = await this.postViaVSCode<T>({ type: 'apiPatch', url, body, params: config?.params, headers: config?.headers });
     } else {
       const resp = await this.axiosClient!.patch(url, body, config);
       data = resp.data as T;

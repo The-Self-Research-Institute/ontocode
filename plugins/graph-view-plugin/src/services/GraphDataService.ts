@@ -4,6 +4,7 @@
  */
 
 import type { OntologyNode, OntologyEdge, GraphFilters, GraphQuery, ReasoningResult } from '../types';
+import { authHeaders } from '../utils/authHeaders';
 
 export class GraphDataService {
   private cache: Map<string, { data: any; timestamp: number }> = new Map();
@@ -47,8 +48,7 @@ export class GraphDataService {
       const response = await fetch(`${this.apiRoot}/api/collab-graph/${projectId}/clear-cache`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         }
       });
 
@@ -110,8 +110,7 @@ export class GraphDataService {
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         },
         signal: this.abortController.signal
       });
@@ -149,8 +148,7 @@ export class GraphDataService {
       const response = await fetch(`${this.baseUrl}/${projectId}/graph/query`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         },
         body: JSON.stringify(query)
       });
@@ -177,8 +175,7 @@ export class GraphDataService {
       const response = await fetch(`${this.baseUrl}/${projectId}/reasoning`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         },
         body: JSON.stringify(options || {})
       });
@@ -207,8 +204,7 @@ export class GraphDataService {
         {
           method: 'GET',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+            ...authHeaders()
           }
         }
       );
@@ -241,8 +237,7 @@ export class GraphDataService {
       const response = await fetch(`${this.baseUrl}/${projectId}/graph/path`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         },
         body: JSON.stringify({
           from: fromNodeId,
@@ -279,8 +274,7 @@ export class GraphDataService {
       const response = await fetch(`${this.baseUrl}/${projectId}/graph/suggestions`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         },
         body: JSON.stringify(context)
       });
@@ -310,8 +304,7 @@ export class GraphDataService {
       const response = await fetch(`${this.baseUrl}/${projectId}/graph/conflicts`, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         }
       });
 

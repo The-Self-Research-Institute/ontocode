@@ -45,6 +45,7 @@ import type {
   VisualizationType
 } from './types';
 import PluginUpdateService from './PluginUpdateService';
+import { authHeaders } from './utils/authHeaders';
 import { vowlNotationService } from './services/VOWLNotationService';
 import { UnifiedSidebar } from './components/UnifiedSidebar';
 import { GraphViewSidebar } from './components/GraphViewSidebar';
@@ -837,10 +838,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     setInferredGraphStatus('loading');
     try {
       const response = await fetch(`${apiBaseUrl}/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=OPENLLET`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
-        }
+        headers: authHeaders(authToken)
       });
       if (!response.ok) {
         throw new Error(`Reasoner hierarchy request failed: ${response.status}`);
@@ -3993,10 +3991,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       
       const response = await fetch(`${apiBaseUrl}/api/ontology/mutations/${projectId}?draft=${draftMode}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
-        },
+        headers: authHeaders(authToken),
         body: JSON.stringify({
           ops: [{
             type: 'createClass',
