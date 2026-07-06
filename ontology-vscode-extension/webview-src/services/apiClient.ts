@@ -259,6 +259,10 @@ class ApiClient {
       if (desktopUrl && config.baseURL !== desktopUrl) {
         config.baseURL = desktopUrl;
         BASE_URL = desktopUrl;
+        // Keep the plugin-facing global in sync — UMD plugin bundles fetch()
+        // against window.API_BASE_URL and would otherwise keep the stale
+        // pre-injection default (http://localhost:80 → ERR_CONNECTION_REFUSED).
+        (window as any).API_BASE_URL = desktopUrl;
       }
 
       // Desktop runs a permit-all local backend with no real session — never send
