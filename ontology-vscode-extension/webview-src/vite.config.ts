@@ -85,6 +85,16 @@ export default defineConfig(({ mode }) => {
         ...(existsSync(zlibShimPath) ? { zlib: zlibShimPath } : {}),
       }
     },
+    // Dev-server dependency pre-bundling (esbuild) does NOT inherit `define`
+    // below — sockjs-client references `global` and crashes with
+    // "global is not defined" in dev without this.
+    optimizeDeps: {
+      esbuildOptions: {
+        define: {
+          global: 'globalThis',
+        },
+      },
+    },
     build: {
       // Disable source maps in production to reduce size
       sourcemap: false,

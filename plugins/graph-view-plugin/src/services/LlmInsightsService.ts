@@ -1,19 +1,62 @@
 /**
  * BYOK (Bring-Your-Own-Key) LLM insights for the graph analytics panel.
  *
- * The user supplies their own Google Gemini API key — OntoCode never stores a key
- * of its own and incurs no LLM cost. The key lives only in the user's browser
- * localStorage and is sent directly to Google's API from the client.
+ * Users can choose their preferred LLM provider (Gemini, Claude, OpenAI).
+ * API keys are stored only in the user's browser localStorage and sent directly to
+ * the provider's API from the client. OntoCode never stores or sees the keys.
  *
  * Security notes:
  * - We never bundle any API key. The key is user-provided at runtime.
- * - In the VS Code webview, calls to generativelanguage.googleapis.com require the
- *   host CSP to allow that connect-src; in the web/desktop app it works directly.
+ * - In the VS Code webview, calls to external APIs require the host CSP to allow
+ *   that connect-src; in the web/desktop app it works directly.
  */
 
+export type LlmProvider = 'gemini' | 'claude' | 'openai';
+
+interface ProviderConfig {
+  name: string;
+  displayName: string;
+  models: { id: string; label: string }[];
+  defaultModel: string;
+}
+
+const PROVIDERS: Record<LlmProvider, ProviderConfig> = {
+  gemini: {
+    name: 'gemini',
+    displayName: 'Google Gemini',
+    models: [
+      { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (fast, free)' },
+      { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (powerful)' },
+      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (latest)' },
+    ],
+    defaultModel: 'gemini-1.5-flash',
+  },
+  claude: {
+    name: 'claude',
+    displayName: 'Anthropic Claude',
+    models: [
+      { id: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (fast, cheap)' },
+      { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (balanced)' },
+      { id: 'claude-opus-4-1-20250805', label: 'Claude Opus (most capable)' },
+    ],
+    defaultModel: 'claude-3-5-sonnet-20241022',
+  },
+  openai: {
+    name: 'openai',
+    displayName: 'OpenAI',
+    models: [
+      { id: 'gpt-4o-mini', label: 'GPT-4o Mini (fast, cheap)' },
+      { id: 'gpt-4o', label: 'GPT-4o (balanced)' },
+      { id: 'o1', label: 'o1 (reasoning, slower)' },
+    ],
+    defaultModel: 'gpt-4o-mini',
+  },
+};
+
+const PROVIDER_STORAGE = 'ontocode_llm_provider';
 const KEY_STORAGE = 'ontocode_llm_api_key';
 const MODEL_STORAGE = 'ontocode_llm_model';
-const DEFAULT_MODEL = 'gemini-1.5-flash';
+const DEFAULT_PROVIDER: LlmProvider = 'gemini';
 
 export interface LlmInsightRequest {
   ontologyName?: string;
@@ -28,6 +71,34 @@ export interface LlmInsightRequest {
 
 export class LlmConfigError extends Error {}
 export class LlmRequestError extends Error {}
+
+export function getStoredProvider(): LlmProvider {
+  try {
+    const stored = localStorage.getItem(PROVIDER_STORAGE) as LlmProvider | null;
+    return stored && stored in PROVIDERS ? stored : DEFAULT_PROVIDER;
+  } catch {
+    return DEFAULT_PROVIDER;
+  }
+}
+
+export function setStoredProvider(provider: LlmProvider): void {
+  try {
+    if (provider in PROVIDERS) localStorage.setItem(PROVIDER_STORAGE, provider);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getAvailableProviders(): Array<{ id: LlmProvider; label: string }> {
+  return Object.entries(PROVIDERS).map(([id, cfg]) => ({
+    id: id as LlmProvider,
+    label: cfg.displayName,
+  }));
+}
+
+export function getProviderModels(provider: LlmProvider): { id: string; label: string }[] {
+  return PROVIDERS[provider]?.models ?? [];
+}
 
 export function getStoredApiKey(): string {
   try {
@@ -53,9 +124,10 @@ export function hasApiKey(): boolean {
 
 export function getStoredModel(): string {
   try {
-    return localStorage.getItem(MODEL_STORAGE) || DEFAULT_MODEL;
+    const provider = getStoredProvider();
+    return localStorage.getItem(MODEL_STORAGE) || PROVIDERS[provider].defaultModel;
   } catch {
-    return DEFAULT_MODEL;
+    return PROVIDERS[DEFAULT_PROVIDER].defaultModel;
   }
 }
 
@@ -103,48 +175,27 @@ function buildPrompt(req: LlmInsightRequest): string {
   ].join('\n');
 }
 
-/**
- * Generate insights via the user's Gemini key. Returns markdown text.
- * Throws LlmConfigError when no key is set, LlmRequestError on API failure.
- */
-export async function generateGraphInsights(
-  req: LlmInsightRequest,
-  signal?: AbortSignal,
-): Promise<string> {
-  const key = getStoredApiKey();
-  if (!key) {
-    throw new LlmConfigError('No API key configured. Add your Gemini API key to enable AI insights.');
-  }
+async function callGemini(key: string, model: string, prompt: string, signal?: AbortSignal): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
 
-  const model = getStoredModel();
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
-
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: buildPrompt(req) }] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 512, topP: 0.9 },
-      }),
-      signal,
-    });
-  } catch (e) {
-    throw new LlmRequestError(
-      'Could not reach the AI provider. Check your connection (and, in VS Code, that the host allows generativelanguage.googleapis.com).',
-    );
-  }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.4, maxOutputTokens: 512, topP: 0.9 },
+    }),
+    signal,
+  });
 
   if (res.status === 400 || res.status === 403) {
-    throw new LlmRequestError('Invalid or unauthorized API key. Double-check your Gemini key.');
+    throw new LlmRequestError('Invalid or unauthorized API key. Check your Gemini key.');
   }
   if (res.status === 429) {
-    throw new LlmRequestError('Rate limit reached on your Gemini key. Try again shortly.');
+    throw new LlmRequestError('Rate limit reached. Try again shortly.');
   }
   if (!res.ok) {
-    throw new LlmRequestError(`AI provider error (HTTP ${res.status}).`);
+    throw new LlmRequestError(`Gemini API error (HTTP ${res.status}).`);
   }
 
   const data = await res.json().catch(() => null);
@@ -154,4 +205,111 @@ export async function generateGraphInsights(
     throw new LlmRequestError('The AI provider returned an empty response.');
   }
   return text.trim();
+}
+
+async function callClaude(key: string, model: string, prompt: string, signal?: AbortSignal): Promise<string> {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 512,
+      temperature: 0.4,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+    signal,
+  });
+
+  if (res.status === 401) {
+    throw new LlmRequestError('Invalid or unauthorized API key. Check your Claude key.');
+  }
+  if (res.status === 429) {
+    throw new LlmRequestError('Rate limit reached. Try again shortly.');
+  }
+  if (!res.ok) {
+    throw new LlmRequestError(`Claude API error (HTTP ${res.status}).`);
+  }
+
+  const data = await res.json().catch(() => null);
+  const text: string = data?.content?.[0]?.text ?? '';
+  if (!text.trim()) {
+    throw new LlmRequestError('The AI provider returned an empty response.');
+  }
+  return text.trim();
+}
+
+async function callOpenAI(key: string, model: string, prompt: string, signal?: AbortSignal): Promise<string> {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 512,
+      temperature: 0.4,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+    signal,
+  });
+
+  if (res.status === 401) {
+    throw new LlmRequestError('Invalid or unauthorized API key. Check your OpenAI key.');
+  }
+  if (res.status === 429) {
+    throw new LlmRequestError('Rate limit reached. Try again shortly.');
+  }
+  if (!res.ok) {
+    throw new LlmRequestError(`OpenAI API error (HTTP ${res.status}).`);
+  }
+
+  const data = await res.json().catch(() => null);
+  const text: string = data?.choices?.[0]?.message?.content ?? '';
+  if (!text.trim()) {
+    throw new LlmRequestError('The AI provider returned an empty response.');
+  }
+  return text.trim();
+}
+
+/**
+ * Generate insights via the user's chosen LLM provider. Returns markdown text.
+ * Throws LlmConfigError when no key is set, LlmRequestError on API failure.
+ */
+export async function generateGraphInsights(
+  req: LlmInsightRequest,
+  signal?: AbortSignal,
+): Promise<string> {
+  const key = getStoredApiKey();
+  if (!key) {
+    const provider = getStoredProvider();
+    const providerName = PROVIDERS[provider].displayName;
+    throw new LlmConfigError(`No API key configured. Add your ${providerName} API key to enable AI insights.`);
+  }
+
+  const provider = getStoredProvider();
+  const model = getStoredModel();
+  const prompt = buildPrompt(req);
+
+  try {
+    switch (provider) {
+      case 'gemini':
+        return await callGemini(key, model, prompt, signal);
+      case 'claude':
+        return await callClaude(key, model, prompt, signal);
+      case 'openai':
+        return await callOpenAI(key, model, prompt, signal);
+      default:
+        throw new LlmRequestError(`Unknown LLM provider: ${provider}`);
+    }
+  } catch (e) {
+    if (e instanceof LlmRequestError || e instanceof LlmConfigError) throw e;
+    throw new LlmRequestError(
+      'Could not reach the AI provider. Check your connection and firewall settings.',
+    );
+  }
 }
