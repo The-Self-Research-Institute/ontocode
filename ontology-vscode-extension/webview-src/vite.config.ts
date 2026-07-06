@@ -22,6 +22,13 @@ const zlibShimPath = path.resolve(__dirname, '../src/zlib-shim.js');
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  // Vite loads .env.local in ALL modes (including `vite build`), so dev-only
+  // localhost overrides (e.g. VITE_CLOUD_GATEWAY_URL=http://localhost:3001 for
+  // the dev-server proxy) would get baked into production bundles and break
+  // cloud deployments (CORS to localhost:3001). Strip localhost values from
+  // production builds; non-localhost overrides (staging servers) still apply.
+  const prodSafe = (v?: string) =>
+    mode === 'production' && v && /^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(v) ? '' : v || '';
   return {
     // Use absolute paths from root for production (cloud server), relative for dev (VSCode webview)
     base: mode === 'production' ? '/' : './',
@@ -66,9 +73,9 @@ export default defineConfig(({ mode }) => {
       // define does NOT conflict with the runtime injection.
       '__ONTOCODE_CONFIG__': JSON.stringify({
         IS_WEB_EXTENSION: true,
-        CLOUD_GATEWAY_URL: env.VITE_CLOUD_GATEWAY_URL || '',
-        CLOUD_EDITOR_URL: env.VITE_CLOUD_EDITOR_URL || '',
-        CLOUD_PLUGIN_URL: env.VITE_CLOUD_PLUGIN_URL || '',
+        CLOUD_GATEWAY_URL: prodSafe(env.VITE_CLOUD_GATEWAY_URL),
+        CLOUD_EDITOR_URL: prodSafe(env.VITE_CLOUD_EDITOR_URL),
+        CLOUD_PLUGIN_URL: prodSafe(env.VITE_CLOUD_PLUGIN_URL),
         SELF_HOSTED_GATEWAY_URL: env.VITE_SELF_HOSTED_GATEWAY_URL || '',
       }),
     },
