@@ -1,10 +1,6 @@
 /**
  * BYOK (Bring-Your-Own-Key) LLM insights for the graph analytics panel.
  *
- * This service is re-exported from webview-src/services/LlmInsightsService.ts
- * to ensure it's built into the webview bundle. The graph-view-plugin imports
- * from this shared location.
- *
  * Users can choose their preferred LLM provider (Gemini, Claude, OpenAI).
  * API keys are stored only in the user's browser localStorage and sent directly to
  * the provider's API from the client. OntoCode never stores or sees the keys.
@@ -14,9 +10,6 @@
  * - In the VS Code webview, calls to external APIs require the host CSP to allow
  *   that connect-src; in the web/desktop app it works directly.
  */
-
-// Re-export from the shared webview-src location
-export * from '../../../ontology-vscode-extension/webview-src/services/LlmInsightsService';
 
 export type LlmProvider = 'gemini' | 'claude' | 'openai';
 
