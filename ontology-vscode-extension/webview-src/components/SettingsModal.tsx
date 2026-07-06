@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2, KeyRound, Upload, Info } from 'lucide-react';
+import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2, KeyRound, Upload, Info, Zap } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from '../utils/desktop';
 import { fetchLatestDesktopInstallerVersion, getAppVersion } from '../utils/appVersion';
+import LLMSettingsPanel from './LLMSettingsPanel';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -137,6 +138,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 { id: 'workspace', label: 'Workspace', icon: Building2 },
                 { id: 'security', label: 'Security', icon: Lock },
               ]),
+        { id: 'ai', label: 'AI & Integrations', icon: Zap },
         // { id: 'notifications', label: 'Notifications', icon: Bell },
         // { id: 'appearance', label: 'Appearance', icon: Palette },
         // { id: 'preferences', label: 'Preferences', icon: Globe }
@@ -543,6 +545,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                       </button>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {activeTab === "ai" && (
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-900 mb-1">AI & Integrations</h4>
+                  <p className="text-sm text-gray-500 mb-4">
+                    Configure your LLM provider for AI-powered graph insights.
+                  </p>
+                  <LLMSettingsPanel onSave={onClose} />
                 </div>
               )}
 
