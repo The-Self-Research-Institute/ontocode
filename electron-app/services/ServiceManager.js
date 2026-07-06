@@ -130,7 +130,8 @@ module.exports = {
     },
 
     async ensureFuseki() {
-        if (fusekiProcess && !fusekiProcess.killed) {
+        // exitCode check: a crashed JVM is not `killed`, but it is not running either.
+        if (fusekiProcess && !fusekiProcess.killed && fusekiProcess.exitCode === null) {
             return { running: true, port: FUSEKI_PORT };
         }
         if (!fusekiStartPromise) {
@@ -157,11 +158,14 @@ module.exports = {
     },
 
     status() {
+        // Same liveness check as ensureFuseki(): a crashed JVM is not `killed`,
+        // but it is not running either.
+        const isRunning = (p) => Boolean(p && !p.killed && p.exitCode === null);
         return {
-            mongo:   mongoProcess   && !mongoProcess.killed,
-            fuseki:  fusekiProcess  && !fusekiProcess.killed,
-            desktop: desktopProcess && !desktopProcess.killed,
-            swrl:    swrlProcess    && !swrlProcess.killed,
+            mongo:   isRunning(mongoProcess),
+            fuseki:  isRunning(fusekiProcess),
+            desktop: isRunning(desktopProcess),
+            swrl:    isRunning(swrlProcess),
         };
     },
 };
@@ -310,7 +314,37 @@ async function startFuseki() {
         FUSEKI_BASE: FUSEKI_BASE_DIR,
     }, logFile);
 
-    await waitForHttp(`http://127.0.0.1:${FUSEKI_PORT}/$/ping`, 45000, 'Fuseki');
+    // Fail fast if the JVM dies before answering the health check (port conflict,
+    // missing jar, bad config) instead of burning the full 45s ping timeout.
+    let onEarlyExit, onSpawnError;
+    const earlyDeath = new Promise((_, reject) => {
+        onEarlyExit = (code) => reject(new Error(`Fuseki exited with code ${code} before becoming ready`));
+        onSpawnError = (err) => reject(new Error(`Fuseki failed to start: ${err.message}`));
+        fusekiProcess.once('exit', onEarlyExit);
+        fusekiProcess.once('error', onSpawnError);
+    });
+    try {
+        await Promise.race([
+            waitForHttp(`http://127.0.0.1:${FUSEKI_PORT}/$/ping`, 45000, 'Fuseki'),
+            earlyDeath,
+        ]);
+    } catch (err) {
+        // Detach first so the kill below can't reject the already-settled race.
+        fusekiProcess.removeListener('exit', onEarlyExit);
+        fusekiProcess.removeListener('error', onSpawnError);
+        // On ping timeout the JVM is still alive — kill it before dropping the
+        // reference, or it keeps the port and TDB2 lock (every retry then fails
+        // to bind) and stopAll() can no longer reach it.
+        await stopProcess(fusekiProcess, 'Fuseki', 4000);
+        fusekiProcess = null;
+        throw err;
+    } finally {
+        // Detach so a later shutdown doesn't reject the (already settled) race.
+        if (fusekiProcess) {
+            fusekiProcess.removeListener('exit', onEarlyExit);
+            fusekiProcess.removeListener('error', onSpawnError);
+        }
+    }
     log('ok', `Fuseki ready on port ${FUSEKI_PORT}`);
 }
 
@@ -350,6 +384,9 @@ async function startDesktop() {
         // Auth service points to itself (auth is bundled in the same JAR)
         `--app.auth-service-url=http://127.0.0.1:${DESKTOP_PORT}`,
         `--auth.service.url=http://127.0.0.1:${DESKTOP_PORT}`,
+        // Plugin-service controllers (reasoner) are bundled too — their editor
+        // calls must loop back to this JAR, not the Docker hostname default.
+        `--ontology.editor.url=http://127.0.0.1:${DESKTOP_PORT}`,
         // JWT — shared secret used by all three bundled services
         '--jwt.secret=b250b2NvZGUtZGVza3RvcC1qd3Qtc2VjcmV0LWtleS12MQ==',
         `--app.base-url=http://127.0.0.1:${DESKTOP_PORT}`,

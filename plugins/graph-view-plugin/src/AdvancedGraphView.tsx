@@ -46,6 +46,7 @@ import type {
 } from './types';
 import PluginUpdateService from './PluginUpdateService';
 import { authHeaders } from './utils/authHeaders';
+import { NODE_ACCENTS, nodeFill, nodeStroke } from './utils/nodePalette';
 import { vowlNotationService } from './services/VOWLNotationService';
 import { UnifiedSidebar } from './components/UnifiedSidebar';
 import { GraphViewSidebar } from './components/GraphViewSidebar';
@@ -128,15 +129,17 @@ const normalizeEdgeType = (type: string): EdgeType => {
   return normalized as EdgeType;
 };
 
-// Color schemes
+// Color schemes — all node color derives from the validated NODE_ACCENTS
+// palette (utils/nodePalette). One entity type = one hue, everywhere:
+// fill, stroke, legend, tooltip, selection glow.
 const TYPE_COLORS: Record<NodeType, string> = {
-  class: '#667eea',
-  individual: '#10b981',
-  property: '#f59e0b',
-  dataProperty: '#ec4899',
-  objectProperty: '#06b6d4',
-  annotation: '#8b5cf6',
-  datatype: '#FFA500'
+  class: NODE_ACCENTS.class,
+  individual: NODE_ACCENTS.individual,
+  property: NODE_ACCENTS.property,
+  dataProperty: NODE_ACCENTS.dataProperty,
+  objectProperty: NODE_ACCENTS.objectProperty,
+  annotation: NODE_ACCENTS.annotation,
+  datatype: NODE_ACCENTS.datatype
 };
 
 const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
@@ -156,15 +159,7 @@ const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
 };
 
 // Per-type accent colors shared by node rendering, selection styling, and tooltips
-const ACCENT_COLORS: Record<string, string> = {
-  class: '#3b82f6',
-  individual: '#8b5cf6',
-  datatype: '#f59e0b',
-  property: '#10b981',
-  objectProperty: '#10b981',
-  dataProperty: '#ec4899',
-  annotation: '#6366f1'
-};
+const ACCENT_COLORS: Record<string, string> = { ...NODE_ACCENTS };
 
 const hexToRgba = (hex: string, alpha: number): string => {
   const c = d3.color(hex);
@@ -1368,7 +1363,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       
       // For force mode, use special colors for classes
       if (visualizationType === 'force') {
-        if (nodeTypes.has('class')) legend.push({ name: `Class (${filteredNodes.filter(n => n.type === 'class').length})`, type: 'node', nodeType: 'class', color: '#FFE4B5' });
+        if (nodeTypes.has('class')) legend.push({ name: `Class (${filteredNodes.filter(n => n.type === 'class').length})`, type: 'node', nodeType: 'class', color: nodeFill('class', document.documentElement.classList.contains('dark')) });
         if (nodeTypes.has('individual')) legend.push({ name: `Individual (${filteredNodes.filter(n => n.type === 'individual').length})`, type: 'node', nodeType: 'individual', color: '#a78bfa' });
         if (nodeTypes.has('datatype')) legend.push({ name: `Datatype (${filteredNodes.filter(n => n.type === 'datatype').length})`, type: 'node', nodeType: 'datatype', color: '#FFFFFF' });
       } else {
@@ -2946,15 +2941,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('rx', ellipseWidth)
             .attr('ry', ellipseHeight)
             .attr('fill', () => {
-              const base = colorByCluster && clusterFor(d.id) !== undefined
-                ? (getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors) || '#FFE4B5')
-                : '#FFE4B5';
-              return glossyFill(base);
+              // Flat tint + accent stroke + soft shadow — no glossy gradient.
+              const paletteFill = nodeFill(d.type, isDark);
+              return colorByCluster && clusterFor(d.id) !== undefined
+                ? (getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors) || paletteFill)
+                : paletteFill;
             })
-            .attr('stroke', isInferredEntity(d) ? '#10b981' : (d3.color(
+            .attr('stroke', isInferredEntity(d) ? '#10b981' : (
               colorByCluster && clusterFor(d.id) !== undefined
-                ? (getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors) || '#FFE4B5')
-                : '#FFE4B5')?.darker(1.2).formatHex() || '#b45309'))
+                ? (d3.color(getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors)
+                    || nodeStroke(d.type, isDark))?.darker(1.2).formatHex() || '#b45309')
+                : nodeStroke(d.type, isDark)))
             .attr('stroke-width', isInferredEntity(d) ? 3 : 1.75)
             .attr('stroke-dasharray', isInferredEntity(d) ? '8 4' : null)
             .style('filter', softShadow)
@@ -3082,7 +3079,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Hide labels when zoomed out on large graphs (LOD)
     const showLabels = !isLargeGraph || viewportBounds.scale >= 0.5;
     
+    // Surface-colored halo keeps labels readable over crossing edges at density
+    // without label boxes. VOWL mode is exempt: its notation rendering (text
+    // inside semantically-shaped nodes) stays exactly as Protégé users expect.
+    const labelHalo = document.documentElement.classList.contains('dark') ? '#1b1e2b' : '#ffffff';
     node.append('text')
+      .attr('paint-order', 'stroke')
+      .attr('stroke', visualizationType === 'vowl' ? 'none' : labelHalo)
+      .attr('stroke-width', visualizationType === 'vowl' ? 0 : 3)
+      .attr('stroke-linejoin', 'round')
       .attr('dx', d => {
         if (visualizationType === 'vowl') return 0;
         if (visualizationType === 'ontograph') {

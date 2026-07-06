@@ -111,6 +111,14 @@ public class SparqlDatasetService {
     @Autowired(required = false)
     private TopLevelClassCacheService topLevelCacheService;
 
+    // Hierarchy snapshot + per-class detail caches (MongoDB) — like the top-level
+    // cache, they mirror the public graph and must drop on every public write.
+    @Autowired(required = false)
+    private HierarchyIndexService hierarchyIndexService;
+
+    @Autowired(required = false)
+    private ClassDetailCacheService classDetailCacheService;
+
     // OWLAPI in-memory model (fast-open). Evicted here so EVERY write path —
     // including services that call execUpdate directly without going through
     // OntologyMutationService.apply() — invalidates the parsed model.
@@ -3290,6 +3298,16 @@ public class SparqlDatasetService {
             // Public mutation: evict all project-scoped cache entries (all users see updated data).
             if (topLevelCacheService != null) {
                 topLevelCacheService.evict(projectId);
+            }
+            if (hierarchyIndexService != null) {
+                hierarchyIndexService.markStale(projectId);
+            }
+            // Structured mutations invalidate class details per affected IRI in
+            // OntologyMutationService — a project-wide drop here would defeat the
+            // prewarmed cache. Only unstructured writes (raw SPARQL, Manchester,
+            // citations, admin ops) have unknown scope and need the full drop.
+            if (classDetailCacheService != null && !MutationContext.hasStructuredOps()) {
+                classDetailCacheService.dropAll(projectId);
             }
             if (springCacheEviction != null) {
                 springCacheEviction.evictForProject(projectId);
