@@ -10,7 +10,7 @@ import {
   getAvailableProviders,
   getProviderModels,
   LlmProvider,
-} from '../plugins/graph-view-plugin/src/services/LlmInsightsService';
+} from '../services/LlmInsightsService';
 
 interface LLMSettingsPanelProps {
   onSave?: () => void;
