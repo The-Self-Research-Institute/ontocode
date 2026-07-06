@@ -16394,7 +16394,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0 min-w-0 overflow-hidden">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between px-2 sm:px-4 py-1.5 gap-2 sm:gap-4 min-w-0">
-            <div className="flex items-center flex-nowrap gap-x-1 gap-y-0.5 flex-1 min-w-0 overflow-x-auto no-scrollbar">
+            <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 flex-1 min-w-0">
               {visibleMainTabs.map((tabId) => {
                 const tab = ALL_MAIN_TABS[tabId];
                 if (!tab) return null;
