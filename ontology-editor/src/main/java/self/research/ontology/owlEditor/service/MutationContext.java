@@ -22,4 +22,9 @@ public final class MutationContext {
         OPS.remove();
         return ops;
     }
+
+    /** Non-destructive check: true while a structured mutation is in flight on this thread. */
+    public static boolean hasStructuredOps() {
+        return OPS.get() != null;
+    }
 }

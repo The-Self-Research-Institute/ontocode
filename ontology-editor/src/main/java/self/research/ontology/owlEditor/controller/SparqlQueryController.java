@@ -151,6 +151,8 @@ public class SparqlQueryController {
         }
         try {
         datasetService.execUpdate(projectId, request.query());
+        // Derived-cache invalidation (hierarchy snapshot, top-level classes, class
+        // details) happens inside execUpdate — the shared choke point for all writers.
         
         // Broadcast a generic SPARQL update notification to collaborators
         // Since we can't parse the SPARQL to determine exact changes,

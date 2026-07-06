@@ -41,7 +41,18 @@ function targetPort(url) {
     return DESKTOP_PORT;
 }
 
+// Mirror the cloud gateway's route 14: the reasoner plugin calls
+// /plugin-service/api/reasoner/** but desktop.jar serves the bundled
+// plugin-service controllers at their bare /api/reasoner/** paths.
+function rewritePath(url) {
+    if (url && url.startsWith('/plugin-service/api/reasoner/')) {
+        return url.substring('/plugin-service'.length);
+    }
+    return url;
+}
+
 function proxyHttp(req, res) {
+    req.url = rewritePath(req.url);
     const port = targetPort(req.url);
 
     res.setHeader('Access-Control-Allow-Origin',  '*');

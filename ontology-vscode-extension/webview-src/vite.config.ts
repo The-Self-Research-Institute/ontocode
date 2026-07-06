@@ -53,8 +53,8 @@ export default defineConfig(({ mode }) => {
     define: {
       __APP_VERSION__: JSON.stringify(extensionPackage.version),
       'global': 'globalThis',
-      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      // Note: no LLM API key is injected into the client bundle. AI insights use a
+      // bring-your-own-key model — the user's key stays in their browser at runtime.
       // Provide zlib constants as global defines
       'process.env.Z_SYNC_FLUSH': '2',
       'process.env.Z_NO_FLUSH': '0',
@@ -83,6 +83,16 @@ export default defineConfig(({ mode }) => {
       sourcemap: false,
       // Ensure lucide-react is not tree-shaken since plugins need it globally
       rollupOptions: {
+        // Inline dynamic imports into a single JS bundle. VS Code webviews load
+        // the main script from a rewritten webview-resource URI, but code-split
+        // chunks are resolved at runtime against the vscode-webview:// document
+        // origin (the <base> tag is intentionally removed for anchor navigation).
+        // That makes lazy chunks 404 at runtime, so lazy routes (billing/upgrade,
+        // desktop download, payment) crash with "Something went wrong". A single
+        // bundle removes runtime chunk loading entirely and fixes those routes.
+        output: {
+          inlineDynamicImports: true,
+        },
         treeshake: {
           moduleSideEffects: (id) => {
             // Mark setupGlobals and lucide-react as having side effects
