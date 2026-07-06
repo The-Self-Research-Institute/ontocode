@@ -649,19 +649,21 @@ public class OntologyQueryController {
     public ResponseEntity<?> classDetails(@PathVariable String projectId,
                                          @RequestParam String classIri,
                                          jakarta.servlet.http.HttpServletRequest httpRequest) {
-        // Skip OWLAPI and MongoDB cache when the user has an active draft overlay:
+        // Skip OWLAPI and MongoDB cache only when the user has an active draft overlay:
         // OWLAPI only knows the main graph; MongoDB cache is also main-graph-only.
         // SPARQL path uses buildFromClause which adds FROM <draftGraph> automatically
         // when SparqlQueryContext.getUserId() is set (done by SparqlQueryContextInterceptor).
+        // A bare userId with NO draft overlay reads the main graph either way, and every
+        // main-graph write path invalidates these caches (per-IRI in OntologyMutationService,
+        // project-wide in execUpdate's derived-cache choke point, publish in
+        // DraftTrackingService) — so cached hits are safe. Forcing live SPARQL here made
+        // every class click on large ontologies run ~20 throttled queries and 504.
         String ctxUserId = SparqlQueryContext.getUserId();
         boolean hasDraft = ctxUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
-        // When userId is on the request, always use live SPARQL so draft-graph writes
-        // and post-mutation reads stay consistent (MongoDB/OWLAPI caches are main-only).
-        boolean userScopedRead = ctxUserId != null && !ctxUserId.isBlank();
 
         // 1. OWLAPI in-memory (desktop / warm cloud) — instant, Protégé-parity
-        if (!hasDraft && !userScopedRead && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+        if (!hasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             Map<String, Object> details = new java.util.LinkedHashMap<>(
                     desktopHierarchyService.classDetails(projectId, classIri));
             if (!details.isEmpty()) {
@@ -669,7 +671,7 @@ public class OntologyQueryController {
             }
         }
         // 2. MongoDB persistent cache — survives restarts, shared across pods
-        if (!hasDraft && !userScopedRead && classDetailCacheService != null) {
+        if (!hasDraft && classDetailCacheService != null) {
             var cached = classDetailCacheService.getDetails(projectId, classIri);
             if (cached.isPresent()) {
                 return ResponseEntity.ok(Map.of("success", true, "data", cached.get()));
@@ -683,7 +685,7 @@ public class OntologyQueryController {
         } catch (Exception ignored) {}
         // 3. SPARQL fallback — store result in MongoDB for next request
         Map<String, Object> details = queryService.classDetails(projectId, classIri);
-        if (!hasDraft && !userScopedRead && classDetailCacheService != null && !details.isEmpty()) {
+        if (!hasDraft && classDetailCacheService != null && !details.isEmpty()) {
             classDetailCacheService.putDetails(projectId, classIri, details);
         }
         return ResponseEntity.ok(Map.of("success", true, "data", details));

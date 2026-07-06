@@ -1580,8 +1580,18 @@ public class ProjectLoadController {
 
             // Step 2: Reimport into GraphDB
             log.info("[CODE-VIEW-SAVE] Reimporting {} bytes into GraphDB as {}", importBytes.length, rdfFormat);
-            try (InputStream is = new ByteArrayInputStream(importBytes)) {
-                datasetService.bulkLoadChunked(projectId, is, rdfFormat);
+            try {
+                try (InputStream is = new ByteArrayInputStream(importBytes)) {
+                    datasetService.bulkLoadChunked(projectId, is, rdfFormat, importBytes.length, ImportOptions.defaults(), null);
+                }
+            } catch (RuntimeException bulkEx) {
+                if (rdfFormat == RDFFormat.RDFXML && isXmlStructuralError(bulkEx)) {
+                    log.warn("[CODE-VIEW-SAVE] RDF/XML reimport failed with structural XML error; retrying after OWL API re-serialization for project: {}. Error: {}",
+                            projectId, bulkEx.getMessage());
+                    importBytes = retryCodeViewImportAfterReserialization(projectId, format, content);
+                } else {
+                    throw bulkEx;
+                }
             }
             log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
 
@@ -1639,6 +1649,62 @@ public class ProjectLoadController {
                             "error", "Failed to get timestamp: " + e.getMessage()
                     ));
         }
+    }
+
+    private byte[] retryCodeViewImportAfterReserialization(String projectId, String format, String content)
+            throws IOException, org.semanticweb.owlapi.model.OWLOntologyCreationException,
+                   org.semanticweb.owlapi.model.OWLOntologyStorageException {
+        String ext = storageManager.extensionFor(format);
+        Path tempFile = Files.createTempFile("codeview-retry-", "." + ext);
+        Path convertedFile = null;
+
+        try {
+            Files.writeString(tempFile, content, StandardCharsets.UTF_8);
+            convertedFile = OWLFormatConverter.convertToRDFXML(tempFile);
+            byte[] retryBytes = Files.readAllBytes(convertedFile);
+            log.info("[CODE-VIEW-SAVE] OWL API re-serialization successful ({} bytes), retrying GraphDB import", retryBytes.length);
+            try (InputStream retryStream = new ByteArrayInputStream(retryBytes)) {
+                datasetService.bulkLoadChunked(projectId, retryStream, RDFFormat.RDFXML, retryBytes.length, ImportOptions.defaults(), null);
+            }
+            return retryBytes;
+        } finally {
+            if (convertedFile != null) {
+                Files.deleteIfExists(convertedFile);
+            }
+            Files.deleteIfExists(tempFile);
+        }
+    }
+
+    private boolean isXmlStructuralError(Throwable ex) {
+        Throwable current = ex;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                String lower = message.toLowerCase(Locale.ROOT);
+                if (lower.contains("must be terminated") ||
+                    lower.contains("end-tag") ||
+                    lower.contains("end tag") ||
+                    lower.contains("unexpected end of file") ||
+                    lower.contains("premature end of file") ||
+                    lower.contains("content is not allowed in prolog") ||
+                    lower.contains("invalid xml") ||
+                    lower.contains("invalid iri") ||
+                    lower.contains("invalidvalueexception") ||
+                    lower.contains("illegalstateexception") ||
+                    lower.contains("illegal state")) {
+                    return true;
+                }
+                if (current.getClass().getName().contains("SAXParseException")) {
+                    boolean isNamespaceError = lower.contains("prefix")
+                            && (lower.contains("bound") || lower.contains("not bound"));
+                    if (!isNamespaceError) {
+                        return true;
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     /**

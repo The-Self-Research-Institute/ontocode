@@ -296,21 +296,15 @@ const TopMenuBar = ({
   const [isLoading, setIsLoading] = useState(false);
   const [showExportFormats, setShowExportFormats] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<string | null>(null);
+  // Display-only (Help menu "Version …"). The auto-open-release-notes logic
+  // lives in the Dashboard component, which owns the modal state.
   const [appVersion, setAppVersion] = useState("");
 
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     import("../utils/appVersion").then(({ getAppVersion }) => {
-      getAppVersion().then((v) => {
-        setAppVersion(v || "");
-        if (!v) return;
-        const seenKey = "ontocode_release_notes_seen";
-        const lastSeen = localStorage.getItem(seenKey) || "";
-        if (lastSeen !== v) {
-          setIsReleaseNotesOpen(true);
-        }
-      }).catch(() => setAppVersion(""));
+      getAppVersion().then((v) => setAppVersion(v || "")).catch(() => setAppVersion(""));
     });
   }, []);
 
@@ -1908,7 +1902,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
   const [isEditOntologyIRIDialogOpen, setEditOntologyIRIDialogOpen] = useState(false);
-  const [isEditEntityIRIDialogOpen, setEditEntityIRIDialogOpen] = useState(false);
+  const [isEditEntityIRIDialogOpen, setIsEditEntityIRIDialogOpen] = useState(false);
   const [editEntityIRITarget, setEditEntityIRITarget] = useState<SelectableItem | null>(null);
   const [isGCIEditorDialogOpen, setGCIEditorDialogOpen] = useState(false);
   const [editGCIData, setEditGCIData] = useState<{
@@ -2142,7 +2136,24 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
   const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
+
+  // Auto-open release notes once per new app version; closing the modal
+  // records the seen version (see ReleaseNotesModal onClose below). Lives
+  // here — not in the menu bar — because this component owns the modal state.
+  useEffect(() => {
+    import("../utils/appVersion").then(({ getAppVersion }) => {
+      getAppVersion().then((v) => {
+        setAppVersion(v || "");
+        if (!v) return;
+        const lastSeen = localStorage.getItem("ontocode_release_notes_seen") || "";
+        if (lastSeen !== v) {
+          setIsReleaseNotesOpen(true);
+        }
+      }).catch(() => setAppVersion(""));
+    });
+  }, []);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
   // Auto-close collaboration panel if permissions are lost (downgrade/expiration)
@@ -7144,19 +7155,100 @@ const Dashboard: React.FC<DashboardProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode]);
 
-  // Desktop: lazy Fuseki when user opens SPARQL or Graph (OWLAPI handles everything else).
-  useEffect(() => {
-    if (!isDesktop() || !projectId) return;
-    if (mainTab !== "SPARQL" && mainTab !== "Graph" && mainTab !== "WebVOWL") return;
-    void ensureDesktopFusekiSync(projectId).then((r) => {
-      if (!r.synced && r.error) {
-        notificationService.warning(
-          "Triple store preparing",
-          "SPARQL and graph views need a background index. Try again in a moment.",
-        );
+  // ── Desktop lazy-Fuseki preparation ────────────────────────────────────
+  // Tabs whose content queries the triple store. Opening any of them starts
+  // Fuseki + syncs the ontology. Graph/Fuzzy additionally block rendering
+  // until ready, because their plugins fetch on mount and would otherwise
+  // race the cold start into a silent blank view. Web is untouched: every
+  // branch below is behind isDesktop().
+  const [desktopFusekiPrep, setDesktopFusekiPrep] = useState<{
+    projectId: string | null;
+    status: "idle" | "preparing" | "ready" | "failed" | "bypassed";
+    error?: string;
+  }>({ projectId: null, status: "idle" });
+  const desktopFusekiPrepRef = useRef(desktopFusekiPrep);
+  desktopFusekiPrepRef.current = desktopFusekiPrep;
+
+  const startDesktopFusekiPrep = useCallback((pid: string) => {
+    setDesktopFusekiPrep({ projectId: pid, status: "preparing" });
+    // Hard UI timeout — never leave an endless spinner. Large ontologies can
+    // legitimately take minutes, so this only flips the UI to a retry/continue
+    // state; a late success still upgrades it back to ready.
+    const timeout = window.setTimeout(() => {
+      const cur = desktopFusekiPrepRef.current;
+      if (cur.projectId === pid && cur.status === "preparing") {
+        setDesktopFusekiPrep({
+          projectId: pid,
+          status: "failed",
+          error: "Preparing is taking longer than expected. It may still finish in the background.",
+        });
+      }
+    }, 180_000);
+    void ensureDesktopFusekiSync(pid).then((r) => {
+      window.clearTimeout(timeout);
+      const cur = desktopFusekiPrepRef.current;
+      if (cur.projectId !== pid || cur.status === "bypassed") return;
+      if (r.synced) {
+        setDesktopFusekiPrep({ projectId: pid, status: "ready" });
+      } else {
+        setDesktopFusekiPrep({
+          projectId: pid,
+          status: "failed",
+          error: r.error || "The triple store could not be prepared.",
+        });
       }
     });
-  }, [mainTab, projectId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktop() || !projectId) return;
+    const fusekiTabs = ["SPARQL", "Graph", "WebVOWL", "Fuzzy", "DLQuery", "Reasoner"];
+    if (!fusekiTabs.includes(mainTab)) return;
+    const cur = desktopFusekiPrepRef.current;
+    // Same project: only (re)start from idle — 'failed' waits for an explicit
+    // Try-again click, 'preparing'/'ready'/'bypassed' need no new sync.
+    if (cur.projectId === projectId && cur.status !== "idle") return;
+    startDesktopFusekiPrep(projectId);
+  }, [mainTab, projectId, startDesktopFusekiPrep]);
+
+  // Blocks Fuseki-dependent plugin mounts on desktop until the store is usable.
+  const desktopFusekiBlocked =
+    isDesktop() && !!projectId &&
+    desktopFusekiPrep.status !== "ready" && desktopFusekiPrep.status !== "bypassed";
+
+  const renderDesktopFusekiGate = () => (
+    <div className="flex flex-col items-center justify-center h-full min-h-[320px] gap-4 p-8 text-center">
+      {desktopFusekiPrep.status === "failed" ? (
+        <>
+          <AlertTriangle size={40} className="text-amber-400" />
+          <p className="text-white font-semibold text-lg">Triple store isn't ready</p>
+          <p className="text-slate-400 text-sm max-w-md">{desktopFusekiPrep.error}</p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => projectId && startDesktopFusekiPrep(projectId)}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-sm font-semibold hover:from-purple-700 hover:to-indigo-700 transition-all">
+              Try again
+            </button>
+            <button
+              onClick={() => setDesktopFusekiPrep((p) => ({ ...p, status: "bypassed" }))}
+              className="px-4 py-2 rounded-xl border border-white/20 bg-white/5 text-slate-300 text-sm font-medium hover:bg-white/10 transition-all">
+              Continue anyway
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <Loader2 size={40} className="animate-spin text-purple-400" />
+          <p className="text-white font-semibold text-lg">Preparing triple store…</p>
+          <p className="text-slate-400 text-sm max-w-md">
+            Starting the local SPARQL engine and indexing your ontology. Large
+            ontologies can take a minute — this view opens automatically when ready.
+          </p>
+        </>
+      )}
+    </div>
+  );
 
   // ── Desktop OWLAPI deferred-hierarchy resolver ────────────────────────────
   // Single responsibility: when fetchData deferred the hierarchy render because
@@ -8233,6 +8325,26 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[DEBUG] handleSave called", { forcePublish, mergePublish });
     if (!projectId || isSaving) return;
 
+    // Desktop: explicit Save promotes the on-disk draft (draft/ontology.draft.owl)
+    // to ontology.current.owl and deletes the draft folder — Protégé-style save.
+    if (isDesktop()) {
+      setIsSaving(true);
+      try {
+        const resp: any = await apiClient.post(`/api/desktop/save/${encodeURIComponent(projectId)}`);
+        const d = resp?.data || resp;
+        setHasUnsavedChanges(false);
+        notificationService.success(
+          "Saved",
+          d?.saved ? "Your changes were saved." : "Nothing to save — already up to date.",
+        );
+      } catch (err) {
+        notificationService.error("Save Failed", err instanceof Error ? err.message : "Could not save changes.");
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
     const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
 
     const performSave = async (force: boolean, merge: boolean, resolutions?: Record<string, { action: string }>) => {
@@ -8319,6 +8431,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       setIsSaving(false);
     }
   }, [projectId, isSaving, user?.userId, user?.username]);
+
+  // Expose the current project to the Electron main process so its exit-time
+  // unsaved-draft check (main.js close handler → /api/desktop/draft-status)
+  // knows which project to query.
+  useEffect(() => {
+    if (isDesktop()) {
+      (window as any).__ONTOCODE_PROJECT_ID__ = projectId || null;
+    }
+  }, [projectId]);
 
   // Switch to a different file (with unsaved changes check)
   const handleSwitchFile = useCallback(
@@ -10444,7 +10565,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       );
       showNotification("Entity IRI updated successfully", "info");
       setEditEntityIRITarget(null);
-      await fetchData();
+      // Force refresh so the hierarchy reflects the renamed IRI.
+      await fetchData(projectId, false, undefined, true);
     },
     [projectId, editEntityIRITarget, user, fetchData],
   );
@@ -13407,16 +13529,39 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (sparqlPlugin?.component && projectId) {
           const SparqlPluginComponent = sparqlPlugin.component;
           return (
-            <SparqlPluginComponent
-              projectId={projectId}
-              prefixes={(metadata as any)?.prefixes || []}
-              context={{
-                apiClient,
-                showNotification: (msg: string, type: "info" | "success" | "warning" | "error") => {
-                  console.log(`[${type}] ${msg}`);
-                },
-              }}
-            />
+            <div className="h-full flex flex-col">
+              {/* Desktop: non-blocking heads-up while Fuseki spins up — users can
+                  keep writing queries; execution succeeds once the store is ready. */}
+              {desktopFusekiBlocked && desktopFusekiPrep.status !== "failed" && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 border-b border-purple-400/20 text-purple-300 text-sm">
+                  <Loader2 size={14} className="animate-spin flex-shrink-0" />
+                  <span>Preparing triple store — queries will run once indexing finishes.</span>
+                </div>
+              )}
+              {desktopFusekiBlocked && desktopFusekiPrep.status === "failed" && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-400/20 text-amber-300 text-sm">
+                  <AlertTriangle size={14} className="flex-shrink-0" />
+                  <span>{desktopFusekiPrep.error || "The triple store could not be prepared."}</span>
+                  <button
+                    onClick={() => projectId && startDesktopFusekiPrep(projectId)}
+                    className="ml-auto underline hover:text-amber-200 flex-shrink-0">
+                    Try again
+                  </button>
+                </div>
+              )}
+              <div className="flex-1 min-h-0">
+                <SparqlPluginComponent
+                  projectId={projectId}
+                  prefixes={(metadata as any)?.prefixes || []}
+                  context={{
+                    apiClient,
+                    showNotification: (msg: string, type: "info" | "success" | "warning" | "error") => {
+                      console.log(`[${type}] ${msg}`);
+                    },
+                  }}
+                />
+              </div>
+            </div>
           );
         }
 
@@ -13444,6 +13589,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         );
       }
       case "Graph": {
+        // Desktop: the plugin fetches on mount — hold it until Fuseki is synced,
+        // otherwise the first load races the cold start into a blank canvas.
+        if (desktopFusekiBlocked) return renderDesktopFusekiGate();
         // Use dynamically loaded Graph View Plugin
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "graph-view-plugin");
         const loadingState = pluginLoadingStates["graph-view-plugin"];
@@ -13524,6 +13672,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         );
       }
       case "Fuzzy": {
+        // Desktop: fuzzy plugin issues SPARQL on load — wait for Fuseki sync.
+        if (desktopFusekiBlocked) return renderDesktopFusekiGate();
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "fuzzy-ontology-plugin");
         const loadingState = pluginLoadingStates["fuzzy-ontology-plugin"];
 
@@ -16122,7 +16272,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       />
 
       {/* Full-height flex column — children control their own scroll via overflow-y-auto */}
-      <div className="h-full bg-gray-50 flex flex-col text-sm overflow-hidden">
+      <div className="h-full bg-gray-50 flex flex-col text-sm overflow-y-auto min-h-0">
         {/* Persistent background import progress banner */}
         {backgroundImportActive && (
           <div className="flex flex-wrap items-center gap-2 px-3 sm:px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-blue-800 text-xs z-40 shrink-0 min-w-0">
@@ -16273,7 +16423,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0 min-w-0 overflow-hidden">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between px-2 sm:px-4 py-1.5 gap-2 sm:gap-4 min-w-0">
-            <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 flex-1 min-w-0 overflow-x-auto no-scrollbar">
+            <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 flex-1 min-w-0">
               {visibleMainTabs.map((tabId) => {
                 const tab = ALL_MAIN_TABS[tabId];
                 if (!tab) return null;
@@ -16451,7 +16601,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         {mainTab === "Entities" && (
           <div className="bg-gray-100 border-b border-gray-200 px-4 flex-shrink-0">
-            <div className="flex items-center flex-nowrap overflow-x-auto no-scrollbar gap-1">
+            <div className="flex items-center flex-wrap gap-1">
               {entitiesTabs.map((tab) => (
                 <button
                   key={tab.id}

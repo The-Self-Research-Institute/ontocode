@@ -93,9 +93,9 @@ function getUrlsForDeployment(deploymentType: 'self-hosted' | 'cloud'): { gatewa
         };
     } else {
         return {
-            gateway: process.env.CLOUD_GATEWAY_URL || 'http://localhost:80',
-            editor: process.env.CLOUD_EDITOR_URL || 'http://localhost:80',
-            plugin: process.env.CLOUD_PLUGIN_URL || 'http://localhost:8087'
+            gateway: process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org',
+            editor: process.env.CLOUD_EDITOR_URL || 'https://ontocodeapi.selfresearch.org',
+            plugin: process.env.CLOUD_PLUGIN_URL || 'https://ontocodeapi.selfresearch.org:8087'
         };
     }
 }
@@ -230,9 +230,9 @@ type ExtensionMessage =
     | { type: 'duplicateFilePromptResponse'; requestId: string; action: 'open_existing' | 'replace' | 'create_copy' | 'cancel'; copyName?: string }
     // Fix: Added message types for API requests to the proxy
     | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
-    | { type: 'apiPost'; requestId: string; url: string; body?: unknown }
-    | { type: 'apiPut'; requestId: string; url: string; body?: unknown }
-    | { type: 'apiPatch'; requestId: string; url: string; body?: unknown }
+    | { type: 'apiPost'; requestId: string; url: string; body?: unknown; params?: Record<string, unknown> }
+    | { type: 'apiPut'; requestId: string; url: string; body?: unknown; params?: Record<string, unknown> }
+    | { type: 'apiPatch'; requestId: string; url: string; body?: unknown; params?: Record<string, unknown> }
     | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
     | { type: 'proxyRequest'; reqId: string; config: any }
     | { type: 'webviewReady' }
@@ -1705,13 +1705,13 @@ class OntoCodePanel {
                     response = await axios.get(fullUrl, { ...axiosConfig, params: (message as any).params });
                     break;
                 case 'apiPost':
-                    response = await axios.post(fullUrl, postBody, axiosConfig);
+                    response = await axios.post(fullUrl, postBody, { ...axiosConfig, params: (message as any).params });
                     break;
                 case 'apiPut':
-                    response = await axios.put(fullUrl, (message as any).body, axiosConfig);
+                    response = await axios.put(fullUrl, (message as any).body, { ...axiosConfig, params: (message as any).params });
                     break;
                 case 'apiPatch':
-                    response = await axios.patch(fullUrl, (message as any).body, axiosConfig);
+                    response = await axios.patch(fullUrl, (message as any).body, { ...axiosConfig, params: (message as any).params });
                     break;
                 case 'apiDelete':
                     response = await axios.delete(fullUrl, { ...axiosConfig, params: (message as any).params });
@@ -3574,9 +3574,9 @@ class OntoCodePanel {
                     SELF_HOSTED_GATEWAY_URL: '${process.env.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80'}',
                     SELF_HOSTED_EDITOR_URL: '${process.env.SELF_HOSTED_EDITOR_URL || 'http://localhost:80'}',
                     SELF_HOSTED_PLUGIN_URL: '${process.env.SELF_HOSTED_PLUGIN_URL || 'http://localhost:8087'}',
-                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'http://localhost:80'}',
-                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'http://localhost:80'}',
-                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'http://localhost:8087'}',
+                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org'}',
+                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'https://ontocodeapi.selfresearch.org'}',
+                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'https://ontocodeapi.selfresearch.org:8087'}',
                     DEFAULT_DEPLOYMENT_TYPE: '${process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud'}',
                     IS_WEB_EXTENSION: ${isWebExtension}
                 };

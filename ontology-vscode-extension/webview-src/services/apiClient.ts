@@ -259,6 +259,10 @@ class ApiClient {
       if (desktopUrl && config.baseURL !== desktopUrl) {
         config.baseURL = desktopUrl;
         BASE_URL = desktopUrl;
+        // Keep the plugin-facing global in sync — UMD plugin bundles fetch()
+        // against window.API_BASE_URL and would otherwise keep the stale
+        // pre-injection default (http://localhost:80 → ERR_CONNECTION_REFUSED).
+        (window as any).API_BASE_URL = desktopUrl;
       }
 
       // Desktop runs a permit-all local backend with no real session — never send
@@ -369,9 +373,9 @@ class ApiClient {
           console.log(`[ApiClient] FormData bridge: file=${fileEntry.name}, size=${buf.byteLength}, type=${contentType}`);
         }
         msgBody._isMultipart = true;
-        data = await this.postViaVSCode<T>({ type: 'apiPost', url, body: msgBody, headers: config?.headers });
+        data = await this.postViaVSCode<T>({ type: 'apiPost', url, body: msgBody, params: config?.params, headers: config?.headers });
       } else {
-        data = await this.postViaVSCode<T>({ type: 'apiPost', url, body, headers: config?.headers });
+        data = await this.postViaVSCode<T>({ type: 'apiPost', url, body, params: config?.params, headers: config?.headers });
       }
     } else {
       // When sending FormData, remove the default Content-Type so axios/browser
@@ -418,7 +422,7 @@ class ApiClient {
     let data: T;
     if (this.isVSCode) {
       console.log(url, 'put via vs');
-      data = await this.postViaVSCode<T>({ type: 'apiPut', url, body, headers: config?.headers });
+      data = await this.postViaVSCode<T>({ type: 'apiPut', url, body, params: config?.params, headers: config?.headers });
     } else {
       const resp = await this.axiosClient!.put(url, body, config);
       data = resp.data as T;
@@ -431,7 +435,7 @@ class ApiClient {
     let data: T;
     if (this.isVSCode) {
       console.log(url, 'patch via vs');
-      data = await this.postViaVSCode<T>({ type: 'apiPatch', url, body, headers: config?.headers });
+      data = await this.postViaVSCode<T>({ type: 'apiPatch', url, body, params: config?.params, headers: config?.headers });
     } else {
       const resp = await this.axiosClient!.patch(url, body, config);
       data = resp.data as T;

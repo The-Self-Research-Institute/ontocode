@@ -4,13 +4,29 @@
  */
 
 import type { OntologyNode, OntologyEdge, GraphFilters, GraphQuery, ReasoningResult } from '../types';
+import { authHeaders } from '../utils/authHeaders';
 
 export class GraphDataService {
   private cache: Map<string, { data: any; timestamp: number }> = new Map();
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   private abortController: AbortController | null = null;
+  private baseUrlOverride?: string;
 
-  constructor(private baseUrl: string = `${(window as any).API_BASE_URL || 'http://localhost:8082'}/api/ontology`) {}
+  constructor(baseUrl?: string) {
+    this.baseUrlOverride = baseUrl;
+  }
+
+  // Resolved per request, never captured at construction: the singleton is
+  // created at module evaluation, before the desktop shell injects
+  // __DESKTOP_API_URL__ (did-finish-load) — and the desktop proxy may bind a
+  // non-default port, so the localhost fallback is only a last resort.
+  private get apiRoot(): string {
+    return (window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL || 'http://localhost:18085';
+  }
+
+  private get baseUrl(): string {
+    return this.baseUrlOverride ?? `${this.apiRoot}/api/ontology`;
+  }
 
   /**
    * Clear all caches
@@ -29,11 +45,10 @@ export class GraphDataService {
 
     // Clear backend cache
     try {
-      const response = await fetch(`${(window as any).API_BASE_URL || 'http://localhost:8082'}/api/collab-graph/${projectId}/clear-cache`, {
+      const response = await fetch(`${this.apiRoot}/api/collab-graph/${projectId}/clear-cache`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         }
       });
 
@@ -95,8 +110,7 @@ export class GraphDataService {
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         },
         signal: this.abortController.signal
       });
@@ -134,8 +148,7 @@ export class GraphDataService {
       const response = await fetch(`${this.baseUrl}/${projectId}/graph/query`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         },
         body: JSON.stringify(query)
       });
@@ -162,8 +175,7 @@ export class GraphDataService {
       const response = await fetch(`${this.baseUrl}/${projectId}/reasoning`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         },
         body: JSON.stringify(options || {})
       });
@@ -192,8 +204,7 @@ export class GraphDataService {
         {
           method: 'GET',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+            ...authHeaders()
           }
         }
       );
@@ -226,8 +237,7 @@ export class GraphDataService {
       const response = await fetch(`${this.baseUrl}/${projectId}/graph/path`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         },
         body: JSON.stringify({
           from: fromNodeId,
@@ -264,8 +274,7 @@ export class GraphDataService {
       const response = await fetch(`${this.baseUrl}/${projectId}/graph/suggestions`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         },
         body: JSON.stringify(context)
       });
@@ -295,8 +304,7 @@ export class GraphDataService {
       const response = await fetch(`${this.baseUrl}/${projectId}/graph/conflicts`, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          ...authHeaders()
         }
       });
 

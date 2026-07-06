@@ -10,7 +10,7 @@ import Dashboard from "./components/Dashboard";
 import LoginForm from "./components/LoginForm";
 import SignupForm from "./components/SignupForm";
 import DeploymentSelector from "./components/DeploymentSelector";
-const WorkspaceSelection = lazy(() => import("./components/WorkspaceSelection"));
+import WorkspaceSelection from "./components/WorkspaceSelection";
 import ProjectDashboard from "./components/ProjectDashboard";
 import ProjectLibrary from "./components/ProjectLibrary";
 import SubscriptionPlanSelection from "./components/SubscriptionPlanSelection";
@@ -2096,18 +2096,9 @@ const AppContent = () => {
   if (showWorkspaceSelectionScreen) {
     console.log("[App] 🎨 Rendering WorkspaceSelection component");
     return (
-      <Suspense fallback={
-        <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "var(--color-background)" }}>
-          <Loader2 size={40} className="text-purple-500 animate-spin" />
-        </div>
-      }>
         <WorkspaceSelection
           username={user.username}
           isAdmin={user.isAdmin || false}
-          // Bug #44: route the top-right "Manage Billing" pill to the new
-          // BillingManagement page in account-level mode instead of the
-          // legacy in-place modal. The page treats an empty workspaceId as
-          // "your account" and the backend's billing endpoints accept it.
           onManageAccountBilling={(isDesktop() || user.enterpriseDomainBypass) ? undefined : () => navigateTo({ view: 'billing' })}
           onUpgradeAccountPlan={(isDesktop() || user.enterpriseDomainBypass) ? undefined : openAccountSubscription}
           onWorkspaceSelected={handleWorkspaceSelected}
@@ -2116,7 +2107,6 @@ const AppContent = () => {
             console.log("[App] Current needsWorkspaceSelection:", needsWorkspaceSelection);
             console.log("[App] Current user:", { email: user?.email, workspaceId: user?.workspaceId });
             setSkipWorkspaceRequested(true);
-            // Update auth context to skip workspace selection
             selectWorkspace({ skipWorkspace: true });
             setForceShowWorkspace(false);
             setRestoredRoute(null);
@@ -2135,7 +2125,6 @@ const AppContent = () => {
           }}
           onLogout={handleLogout}
         />
-      </Suspense>
     );
   }
 
@@ -2226,7 +2215,10 @@ const AppContent = () => {
           isDesktop() || user.workspaceId
             ? handleBackToProjectLibrary
             : () => {
-                clearLastOpenedSelection();
+                // No-workspace user: must clear file/project selection too —
+                // the workspace screen only renders when !selectedFileId, so
+                // setting forceShowWorkspace alone is a dead click from the editor.
+                resetWorkspaceHubNavigation();
                 setForceShowWorkspace(true);
               }
         }
@@ -2234,7 +2226,7 @@ const AppContent = () => {
           isDesktop() || user.workspaceId
             ? handleBackToProjectDashboard
             : () => {
-                clearLastOpenedSelection();
+                resetWorkspaceHubNavigation();
                 setForceShowWorkspace(true);
               }
         }
@@ -2242,7 +2234,7 @@ const AppContent = () => {
           isDesktop()
             ? undefined
             : () => {
-                clearLastOpenedSelection();
+                resetWorkspaceHubNavigation();
                 try {
                   localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true");
                 } catch {
@@ -2323,13 +2315,16 @@ const AppContent = () => {
 };
 
 const App = () => {
+  const desktop = isDesktop();
   return (
     <ThemeProvider>
       <CollaborationProvider>
         <EntityPreferencesProvider>
-          <Suspense fallback={null}>
-            <DesktopUpdateBanner />
-          </Suspense>
+          {desktop && (
+            <Suspense fallback={<></>}>
+              <DesktopUpdateBanner />
+            </Suspense>
+          )}
           <AppContent />
         </EntityPreferencesProvider>
       </CollaborationProvider>

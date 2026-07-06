@@ -66,7 +66,7 @@ class ApiClient {
   }
 
   private async fetchRequest<T>(method: string, url: string, data?: any): Promise<T> {
-    const baseUrl = window.API_BASE_URL || '';
+    const baseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).__ONTOCODE_CONFIG__?.CLOUD_GATEWAY_URL || window.API_BASE_URL || '';
     const fullUrl = url.startsWith('http') ? url : `${baseUrl}${url}`;
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };

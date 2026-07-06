@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getGatewayUrl } from '../config/deploymentConfig';
-import { getAuthHeaders } from '../utils/authenticatedFetch';
+import apiClient from '../services/apiClient';
 
 export interface PlanPricing {
     id: string;
@@ -50,9 +49,8 @@ let _inflight: Promise<PricingMap> | null = null;
 function loadPricing(): Promise<PricingMap> {
     if (_cache) return Promise.resolve(_cache);
     if (_inflight) return _inflight;
-    _inflight = fetch(`${getGatewayUrl()}/api/billing/plans`, { headers: getAuthHeaders() })
-        .then(r => r.json())
-        .then((data: { plans?: PlanPricing[], trialPeriodDays?: number }) => {
+    _inflight = apiClient.get<{ plans?: PlanPricing[], trialPeriodDays?: number }>('/api/billing/plans')
+        .then((data) => {
             if (Array.isArray(data.plans)) {
                 const map: PricingMap = {};
                 data.plans.forEach(p => { map[p.id.toUpperCase()] = p; });

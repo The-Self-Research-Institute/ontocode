@@ -22,6 +22,13 @@ const zlibShimPath = path.resolve(__dirname, '../src/zlib-shim.js');
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  // Vite loads .env.local in ALL modes (including `vite build`), so dev-only
+  // localhost overrides (e.g. VITE_CLOUD_GATEWAY_URL=http://localhost:3001 for
+  // the dev-server proxy) would get baked into production bundles and break
+  // cloud deployments (CORS to localhost:3001). Strip localhost values from
+  // production builds; non-localhost overrides (staging servers) still apply.
+  const prodSafe = (v?: string) =>
+    mode === 'production' && v && /^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(v) ? '' : v || '';
   return {
     // Use absolute paths from root for production (cloud server), relative for dev (VSCode webview)
     base: mode === 'production' ? '/' : './',
@@ -53,19 +60,22 @@ export default defineConfig(({ mode }) => {
     define: {
       __APP_VERSION__: JSON.stringify(extensionPackage.version),
       'global': 'globalThis',
-      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      // Note: no LLM API key is injected into the client bundle. AI insights use a
+      // bring-your-own-key model — the user's key stays in their browser at runtime.
       // Provide zlib constants as global defines
       'process.env.Z_SYNC_FLUSH': '2',
       'process.env.Z_NO_FLUSH': '0',
-      // Inject runtime config for standalone (browser / cloud) mode
-      // Cloud: uses env variable when on localhost, same-origin when on cloud domain
-      // Self-hosted: uses localhost URLs or proxy in dev mode
+      // Compile-time config for standalone (browser/cloud) mode.
+      // Empty strings fall through to DEFAULTS in deploymentConfig.ts
+      // (e.g. CLOUD_GATEWAY_URL → 'https://ontocodeapi.selfresearch.org').
+      // window.__ONTOCODE_CONFIG__ injected by extension.ts is only read
+      // by apiClient.ts (property access, not bare identifier) so this
+      // define does NOT conflict with the runtime injection.
       '__ONTOCODE_CONFIG__': JSON.stringify({
         IS_WEB_EXTENSION: true,
-        CLOUD_GATEWAY_URL: env.VITE_CLOUD_GATEWAY_URL || '',
-        CLOUD_EDITOR_URL: env.VITE_CLOUD_EDITOR_URL || '',
-        CLOUD_PLUGIN_URL: env.VITE_CLOUD_PLUGIN_URL || '',
+        CLOUD_GATEWAY_URL: prodSafe(env.VITE_CLOUD_GATEWAY_URL),
+        CLOUD_EDITOR_URL: prodSafe(env.VITE_CLOUD_EDITOR_URL),
+        CLOUD_PLUGIN_URL: prodSafe(env.VITE_CLOUD_PLUGIN_URL),
         SELF_HOSTED_GATEWAY_URL: env.VITE_SELF_HOSTED_GATEWAY_URL || '',
       }),
     },
@@ -75,11 +85,31 @@ export default defineConfig(({ mode }) => {
         ...(existsSync(zlibShimPath) ? { zlib: zlibShimPath } : {}),
       }
     },
+    // Dev-server dependency pre-bundling (esbuild) does NOT inherit `define`
+    // below — sockjs-client references `global` and crashes with
+    // "global is not defined" in dev without this.
+    optimizeDeps: {
+      esbuildOptions: {
+        define: {
+          global: 'globalThis',
+        },
+      },
+    },
     build: {
       // Disable source maps in production to reduce size
       sourcemap: false,
       // Ensure lucide-react is not tree-shaken since plugins need it globally
       rollupOptions: {
+        // Inline dynamic imports into a single JS bundle. VS Code webviews load
+        // the main script from a rewritten webview-resource URI, but code-split
+        // chunks are resolved at runtime against the vscode-webview:// document
+        // origin (the <base> tag is intentionally removed for anchor navigation).
+        // That makes lazy chunks 404 at runtime, so lazy routes (billing/upgrade,
+        // desktop download, payment) crash with "Something went wrong". A single
+        // bundle removes runtime chunk loading entirely and fixes those routes.
+        output: {
+          inlineDynamicImports: true,
+        },
         treeshake: {
           moduleSideEffects: (id) => {
             // Mark setupGlobals and lucide-react as having side effects

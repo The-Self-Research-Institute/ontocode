@@ -11,6 +11,12 @@ import {
 } from 'lucide-react';
 import type { OntologyNode } from '../types';
 import type { GraphAnalytics, StructuralGap, DiscourseStructure } from '../services/GraphAnalyticsService';
+import {
+  generateGraphInsights, getStoredApiKey, setStoredApiKey, hasApiKey,
+  getStoredProvider, setStoredProvider, getStoredModel, setStoredModel,
+  getAvailableProviders, getProviderModels,
+  LlmConfigError, type LlmInsightRequest, type LlmProvider,
+} from '../services/LlmInsightsService';
 
 type TabId = 'topics' | 'concepts' | 'gaps' | 'trends';
 
@@ -196,6 +202,19 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
   const [aiSummary, setAiSummary] = useState<string>('');
   const [selectedCluster, setSelectedCluster] = useState<ClusterInfo | null>(null);
 
+  // BYOK LLM insights (user supplies their own API key — no OntoCode cost)
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmError, setLlmError] = useState<string>('');
+  const [llmText, setLlmText] = useState<string>('');
+  const [showKeyInput, setShowKeyInput] = useState(false);
+  const [provider, setProvider] = useState<LlmProvider>(getStoredProvider());
+  const [model, setModel] = useState<string>(getStoredModel());
+  const [keyDraft, setKeyDraft] = useState<string>('');
+  const [keySaved, setKeySaved] = useState<boolean>(hasApiKey());
+
+  const providersList = getAvailableProviders();
+  const modelsList = getProviderModels(provider);
+
   const clusters = useClusterInfos(analytics, nodes);
   const maxBetweenness = Math.max(0.001, ...analytics.topConcepts.map(t => t.score));
 
@@ -222,6 +241,48 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
     const text = `${cluster.edgePct}%: ${cluster.topWords.join(' ')}`;
     navigator.clipboard?.writeText(text).catch(() => {});
   }, []);
+
+  const buildLlmRequest = useCallback((): LlmInsightRequest => ({
+    nodeCount: nodes.length,
+    clusterCount: analytics.discourseStructure.clusterCount,
+    discourseLabel: analytics.discourseStructure.label,
+    focusScore: analytics.discourseStructure.focusScore,
+    topConcepts: analytics.topConcepts.map(t => t.node?.label).filter(Boolean) as string[],
+    clusters: clusters.map(c => ({ topWords: c.topWords, size: c.size })),
+    gaps: analytics.gaps.map(g => ({ a: g.labelA, b: g.labelB, suggestion: g.suggestion })),
+  }), [analytics, nodes, clusters]);
+
+  const handleGenerateLlmInsights = useCallback(async () => {
+    if (!hasApiKey()) {
+      setShowKeyInput(true);
+      setKeyDraft(getStoredApiKey());
+      return;
+    }
+    setLlmLoading(true);
+    setLlmError('');
+    setLlmText('');
+    setShowAiBox(true);
+    try {
+      const text = await generateGraphInsights(buildLlmRequest());
+      setLlmText(text);
+    } catch (e) {
+      if (e instanceof LlmConfigError) {
+        setShowKeyInput(true);
+      }
+      setLlmError(e instanceof Error ? e.message : 'Failed to generate insights.');
+    } finally {
+      setLlmLoading(false);
+    }
+  }, [buildLlmRequest]);
+
+  const handleSaveKey = useCallback(() => {
+    setStoredProvider(provider);
+    setStoredModel(model);
+    setStoredApiKey(keyDraft);
+    setKeySaved(hasApiKey());
+    setShowKeyInput(false);
+    setLlmError('');
+  }, [keyDraft, provider, model]);
 
   const TABS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
     { id: 'topics', label: 'Topics', icon: <Hash size={11} /> },
@@ -326,6 +387,159 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                 Summarize ontology
               </button>
             )}
+
+            {/* BYOK LLM insights — user supplies their own Gemini key */}
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <button
+                  type="button"
+                  onClick={handleGenerateLlmInsights}
+                  disabled={llmLoading}
+                  style={{
+                    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    padding: '5px 10px',
+                    background: llmLoading ? 'var(--surface-3)' : 'linear-gradient(90deg,#8b5cf6,#6366f1)',
+                    color: llmLoading ? 'var(--text-tertiary)' : '#fff',
+                    border: 'none', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                    cursor: llmLoading ? 'default' : 'pointer'
+                  }}
+                  title="Generate AI insights using your own Gemini API key"
+                >
+                  <Zap size={12} />
+                  {llmLoading ? 'Generating…' : 'AI Insights (your key)'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowKeyInput(v => !v); setKeyDraft(getStoredApiKey()); }}
+                  style={iconBtn}
+                  title={keySaved ? 'Update your Gemini API key' : 'Add your Gemini API key'}
+                >
+                  <Search size={13} />
+                </button>
+              </div>
+
+              {showKeyInput && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 6 }}>
+                  {/* Provider Selector */}
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>
+                      LLM Provider
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
+                      {providersList.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setProvider(p.id as LlmProvider);
+                            setModel(getProviderModels(p.id as LlmProvider)[0].id);
+                          }}
+                          style={{
+                            padding: '5px 8px', fontSize: 10, borderRadius: 4,
+                            border: provider === p.id ? '2px solid #10b981' : '1px solid var(--border)',
+                            background: provider === p.id ? 'rgba(16,185,129,0.1)' : 'var(--surface-1)',
+                            color: 'var(--text-primary)', cursor: 'pointer', fontWeight: provider === p.id ? 600 : 400
+                          }}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Model Selector */}
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>
+                      Model
+                    </label>
+                    <select
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      style={{
+                        width: '100%', boxSizing: 'border-box', padding: '5px 8px', fontSize: 11,
+                        borderRadius: 6, border: '1px solid var(--border)',
+                        background: 'var(--surface-1)', color: 'var(--text-primary)'
+                      }}
+                    >
+                      {modelsList.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* API Key Input */}
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>
+                      API Key
+                    </label>
+                    <input
+                      type="password"
+                      value={keyDraft}
+                      onChange={(e) => setKeyDraft(e.target.value)}
+                      placeholder={`Paste your ${providersList.find(p => p.id === provider)?.label} API key`}
+                      style={{
+                        width: '100%', boxSizing: 'border-box', padding: '5px 8px', fontSize: 11,
+                        borderRadius: 6, border: '1px solid var(--border)',
+                        background: 'var(--surface-1)', color: 'var(--text-primary)'
+                      }}
+                    />
+                  </div>
+
+                  {/* Save/Remove Buttons */}
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={handleSaveKey}
+                      style={{
+                        flex: 1, padding: '4px 10px', background: '#10b981', color: '#fff',
+                        border: 'none', borderRadius: 999, fontSize: 11, fontWeight: 600, cursor: 'pointer'
+                      }}
+                    >
+                      Save
+                    </button>
+                    {keySaved && (
+                      <button
+                        type="button"
+                        onClick={() => { setStoredApiKey(''); setKeyDraft(''); setKeySaved(false); }}
+                        style={{
+                          padding: '4px 10px', background: 'var(--surface-3)', color: 'var(--text-secondary)',
+                          border: '1px solid var(--border)', borderRadius: 999, fontSize: 11, cursor: 'pointer'
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Security Notice */}
+                  <p style={{ fontSize: 10, color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.4 }}>
+                    🔒 Your key is stored only in this browser and sent directly to {providersList.find(p => p.id === provider)?.label}. OntoCode never sees or stores it.
+                  </p>
+                </div>
+              )}
+
+              {llmError && (
+                <p style={{
+                  fontSize: 11, color: '#ef4444', margin: '4px 0 0', lineHeight: 1.4,
+                  background: 'rgba(239,68,68,0.08)', padding: '6px 8px', borderRadius: 6
+                }}>
+                  {llmError}
+                </p>
+              )}
+
+              {llmText && (
+                <div style={{
+                  marginTop: 6, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5,
+                  whiteSpace: 'pre-wrap', background: 'var(--surface-3)',
+                  padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border)',
+                  maxHeight: 240, overflowY: 'auto'
+                }}>
+                  {llmText}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
