@@ -269,6 +269,11 @@ function createMainWindow() {
             window.__DESKTOP_API_URL__ = '${editorUrl}';
             window.__DESKTOP_MODE__ = true;
             window.__IS_DEV__ = ${IS_DEV};
+            // Plugins (UMD bundles) call fetch() against window.API_BASE_URL.
+            // apiClient initialised it to the self-hosted default (localhost:80)
+            // before this injection ran — overwrite so plugin requests hit the
+            // desktop proxy instead of a dead port.
+            window.API_BASE_URL = '${editorUrl}';
         `);
         flushPendingOpenFile();
         flushPendingFocusFile();
@@ -295,6 +300,40 @@ function createMainWindow() {
     // Fallback: if ready-to-show doesn't fire within 8 seconds, show anyway
     mainWindow.webContents.once('did-finish-load', () => setTimeout(showMain, 500));
     setTimeout(showMain, 8000);
+
+    // Exit-time unsaved-draft check: if the open project still has a draft on
+    // disk, offer Save & Exit / Exit (draft kept for recovery) / Cancel.
+    let closeConfirmed = false;
+    mainWindow.on('close', (e) => {
+        if (closeConfirmed) return;
+        e.preventDefault();
+        (async () => {
+            try {
+                const pid = await mainWindow.webContents.executeJavaScript('window.__ONTOCODE_PROJECT_ID__ || null');
+                if (pid) {
+                    const st = await fetch(`${editorUrl}/api/desktop/draft-status/${encodeURIComponent(pid)}`)
+                        .then(r => (r.ok ? r.json() : null)).catch(() => null);
+                    if (st && st.hasDraft) {
+                        const choice = dialog.showMessageBoxSync(mainWindow, {
+                            type: 'question',
+                            buttons: ['Save & Exit', 'Exit Without Saving', 'Cancel'],
+                            defaultId: 0,
+                            cancelId: 2,
+                            message: 'You have unsaved changes',
+                            detail: 'Exit Without Saving keeps your changes as a draft — they will be recovered next time you open this project.',
+                        });
+                        if (choice === 2) return; // Cancel — stay open
+                        if (choice === 0) {
+                            await fetch(`${editorUrl}/api/desktop/save/${encodeURIComponent(pid)}`, { method: 'POST' })
+                                .catch(() => { /* draft stays on disk — recoverable */ });
+                        }
+                    }
+                }
+            } catch (_) { /* backend unreachable — draft stays on disk, safe to exit */ }
+            closeConfirmed = true;
+            mainWindow.close();
+        })();
+    });
 
     mainWindow.on('closed', () => {
         autoUpdater.stop();
