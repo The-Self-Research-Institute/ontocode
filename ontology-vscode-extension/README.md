@@ -13,7 +13,7 @@ This extension is part of the larger [Ontology Platform](../README.md) but can b
 
 - **Ontology editing** — open and edit `.owl`, `.rdf`, `.ttl`, `.jsonld`, and other RDF serializations directly in VS Code.
 - **SPARQL / DL Query Workbench** — run SPARQL queries against your active ontology and browse results as a table or JSON.
-- **AI Change Assistant** — every edit is tracked as a reviewable change (drafts, saved, conflicts, timeline, rollback) with per-author attribution.
+- **Change Assistant** — every edit is tracked as a reviewable change (drafts, saved, conflicts, timeline, rollback) with per-author attribution.
 - **Built-in reasoner** — run HermiT (or other supported reasoners) for consistency checking, satisfiability, and inferred class hierarchies.
 - **Graph visualization** — explore your ontology as an interactive D3 graph (tree, network, and WebVOWL notation) with AI-generated topic/cluster insights.
 - **Real-time collaboration** — create workspaces, invite members with role-based access, and see collaborator presence live.
@@ -35,7 +35,7 @@ Write and run SPARQL queries against the active ontology, with results as a sort
 
 ![SPARQL Query Editor with results](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/query-workbench.gif)
 
-### 3. AI Change Assistant
+### 3. Change Assistant
 Every mutation is tracked as a reviewable, attributable change — with drafts, conflicts, a timeline, and one-click rollback.
 
 ![Change Assistant reviewing a saved change](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/change-assistant.gif)
