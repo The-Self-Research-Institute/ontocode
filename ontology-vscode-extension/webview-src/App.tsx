@@ -2215,7 +2215,10 @@ const AppContent = () => {
           isDesktop() || user.workspaceId
             ? handleBackToProjectLibrary
             : () => {
-                clearLastOpenedSelection();
+                // No-workspace user: must clear file/project selection too —
+                // the workspace screen only renders when !selectedFileId, so
+                // setting forceShowWorkspace alone is a dead click from the editor.
+                resetWorkspaceHubNavigation();
                 setForceShowWorkspace(true);
               }
         }
@@ -2223,7 +2226,7 @@ const AppContent = () => {
           isDesktop() || user.workspaceId
             ? handleBackToProjectDashboard
             : () => {
-                clearLastOpenedSelection();
+                resetWorkspaceHubNavigation();
                 setForceShowWorkspace(true);
               }
         }
@@ -2231,7 +2234,7 @@ const AppContent = () => {
           isDesktop()
             ? undefined
             : () => {
-                clearLastOpenedSelection();
+                resetWorkspaceHubNavigation();
                 try {
                   localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true");
                 } catch {

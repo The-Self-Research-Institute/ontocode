@@ -8325,6 +8325,26 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[DEBUG] handleSave called", { forcePublish, mergePublish });
     if (!projectId || isSaving) return;
 
+    // Desktop: explicit Save promotes the on-disk draft (draft/ontology.draft.owl)
+    // to ontology.current.owl and deletes the draft folder — Protégé-style save.
+    if (isDesktop()) {
+      setIsSaving(true);
+      try {
+        const resp: any = await apiClient.post(`/api/desktop/save/${encodeURIComponent(projectId)}`);
+        const d = resp?.data || resp;
+        setHasUnsavedChanges(false);
+        notificationService.success(
+          "Saved",
+          d?.saved ? "Your changes were saved." : "Nothing to save — already up to date.",
+        );
+      } catch (err) {
+        notificationService.error("Save Failed", err instanceof Error ? err.message : "Could not save changes.");
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
     const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
 
     const performSave = async (force: boolean, merge: boolean, resolutions?: Record<string, { action: string }>) => {
@@ -8411,6 +8431,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       setIsSaving(false);
     }
   }, [projectId, isSaving, user?.userId, user?.username]);
+
+  // Expose the current project to the Electron main process so its exit-time
+  // unsaved-draft check (main.js close handler → /api/desktop/draft-status)
+  // knows which project to query.
+  useEffect(() => {
+    if (isDesktop()) {
+      (window as any).__ONTOCODE_PROJECT_ID__ = projectId || null;
+    }
+  }, [projectId]);
 
   // Switch to a different file (with unsaved changes check)
   const handleSwitchFile = useCallback(
