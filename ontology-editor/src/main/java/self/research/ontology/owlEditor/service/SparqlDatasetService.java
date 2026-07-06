@@ -120,7 +120,10 @@ public class SparqlDatasetService {
     @Lazy
     private HierarchyIndexService hierarchyIndexService;
 
+    // @Lazy: ClassDetailCacheService's constructor takes SparqlDatasetService,
+    // so eager injection here forms a two-bean startup cycle.
     @Autowired(required = false)
+    @Lazy
     private ClassDetailCacheService classDetailCacheService;
 
     // OWLAPI in-memory model (fast-open). Evicted here so EVERY write path —
