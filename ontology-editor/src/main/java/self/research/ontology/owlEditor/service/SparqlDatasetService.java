@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DraftCopyStatus;
 import self.research.ontology.owlEditor.model.DraftSession;
@@ -113,7 +114,10 @@ public class SparqlDatasetService {
 
     // Hierarchy snapshot + per-class detail caches (MongoDB) — like the top-level
     // cache, they mirror the public graph and must drop on every public write.
+    // @Lazy breaks the startup cycle: hierarchyIndexService → hierarchySnapshotBuildService
+    // → storageManager → sparqlDatasetService (this bean).
     @Autowired(required = false)
+    @Lazy
     private HierarchyIndexService hierarchyIndexService;
 
     @Autowired(required = false)
