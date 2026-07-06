@@ -28,6 +28,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -227,6 +228,74 @@ public class StorageManager {
         }
         Path original = dir.resolve("ontology.original.owl");
         return Files.exists(original) ? Optional.of(original) : Optional.empty();
+    }
+
+    // ── Desktop draft (unsaved working copy) ─────────────────────────────────
+    // Mutations autosave into draft/ontology.draft.owl; an explicit Save promotes
+    // the draft to ontology.current.owl. A draft left on disk after a crash or
+    // unsaved exit is the recovery source for the next open.
+
+    public Path draftDir(String projectId) {
+        return projectDir(projectId).resolve("draft");
+    }
+
+    public Path draftOntologyPath(String projectId) {
+        return draftDir(projectId).resolve("ontology.draft.owl");
+    }
+
+    public boolean hasDraft(String projectId) {
+        return Files.exists(draftOntologyPath(projectId));
+    }
+
+    /**
+     * Working state of the project: the unsaved draft when present, otherwise the
+     * last saved ontology. Fuseki sync and OWLAPI warm should read this so views
+     * always mirror what the user is editing.
+     */
+    public Optional<Path> findWorkingOntology(String projectId) {
+        Path draft = draftOntologyPath(projectId);
+        if (Files.exists(draft)) {
+            return Optional.of(draft);
+        }
+        return findCurrentOntology(projectId);
+    }
+
+    /**
+     * Explicit Save: atomically promote the draft to ontology.current.owl and
+     * remove the draft folder. No-op (returns false) when no draft exists.
+     */
+    public boolean promoteDraft(String projectId) throws IOException {
+        Path draft = draftOntologyPath(projectId);
+        if (!Files.exists(draft)) {
+            return false;
+        }
+        Path target = projectDir(projectId).resolve("ontology.current.owl");
+        Files.createDirectories(target.getParent());
+        try {
+            Files.move(draft, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            Files.move(draft, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+        deleteDraft(projectId);
+        log.info("Draft promoted to saved ontology for project {}", projectId);
+        return true;
+    }
+
+    /** Discard unsaved changes: delete the draft folder entirely. */
+    public void deleteDraft(String projectId) throws IOException {
+        Path dir = draftDir(projectId);
+        if (!Files.exists(dir)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(dir)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException e) {
+                    log.warn("Could not delete draft file {}: {}", p, e.getMessage());
+                }
+            });
+        }
     }
 
     /**

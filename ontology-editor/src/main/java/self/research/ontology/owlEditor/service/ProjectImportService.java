@@ -1648,7 +1648,9 @@ public class ProjectImportService {
             return result;
         }
         try {
-            Optional<Path> file = storageManager.findCurrentOntology(projectId);
+            // Draft-aware: sync the working copy (unsaved draft when present) so
+            // SPARQL/graph views mirror what the user is editing, not the last save.
+            Optional<Path> file = storageManager.findWorkingOntology(projectId);
             if (file.isEmpty() || !Files.exists(file.get())) {
                 result.put("synced", false);
                 result.put("error", "No ontology file on disk");

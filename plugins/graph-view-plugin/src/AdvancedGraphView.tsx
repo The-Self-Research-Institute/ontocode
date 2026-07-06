@@ -3147,7 +3147,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             const brightness = (r * 299 + g * 587 + b * 114) / 1000;
             return brightness > 140 ? '#111111' : '#ffffff';
           }
-          return '#000000';
+          // Individuals / datatypes / properties: pick black or white from the
+          // node's actual fill luminance instead of hardcoded black (which was
+          // unreadable on purple individual boxes in dark theme).
+          const nodeFill = (d as any).color || TYPE_COLORS[(d as any).type as NodeType] || (isDark ? '#6b92c4' : '#acd5f2');
+          const hex2 = nodeFill.replace('#', '');
+          const r2 = parseInt(hex2.substring(0, 2), 16);
+          const g2 = parseInt(hex2.substring(2, 4), 16);
+          const b2 = parseInt(hex2.substring(4, 6), 16);
+          const brightness2 = (r2 * 299 + g2 * 587 + b2 * 114) / 1000;
+          return brightness2 > 140 ? '#111111' : '#ffffff';
         }
         if (visualizationType === 'ontograph') {
           const isDark = document.documentElement.classList.contains('dark');
@@ -3168,25 +3177,43 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         return '#333';
       })
-      .attr('stroke', d => visualizationType === 'spatial3d' ? 'rgba(0,0,0,0.75)' : 'none')
-      .attr('stroke-width', d => visualizationType === 'spatial3d' ? 3 : 0)
-      .style('paint-order', d => visualizationType === 'spatial3d' ? 'stroke' : 'normal')
+      .attr('stroke', d => {
+        if (visualizationType === 'spatial3d') return 'rgba(0,0,0,0.75)';
+        if (visualizationType === 'vowl') return 'none';
+        return labelHalo;
+      })
+      .attr('stroke-width', d => {
+        if (visualizationType === 'spatial3d') return 3;
+        if (visualizationType === 'vowl') return 0;
+        return 3;
+      })
+      .style('paint-order', 'stroke')
       .text(d => {
         if (visualizationType === 'vowl') {
-          // Truncate labels in WebVOWL mode to fit within rectangles
+          // Truncate labels in WebVOWL mode to fit within their shapes.
+          // Char budget derives from the actual shape width (≈7px/char at 11px
+          // font) so text can never spill outside the box.
           const label = d.label || '';
-          let maxChars = 18; // Increased default for classes
-          
-          // Adjust max length based on node type and size
+          const size = d.size || settings.nodeSize;
+          let maxChars = 18;
+
           if (d.type === 'datatype') {
-            maxChars = 16; // Increased for datatypes
+            // Rect width = size * 4.2, minus padding
+            maxChars = Math.max(4, Math.floor((size * 4.2 - 12) / 7));
           } else if (d.type === 'individual') {
-            maxChars = 12; // Increased for individuals
+            // Rect width capped at size * 5.0, minus padding
+            const label2 = d.label || '';
+            const baseWidth = size * 2.8;
+            const labelWidth = Math.min(label2.length * 7, 180);
+            const rectWidth = Math.max(baseWidth, labelWidth + 16);
+            const finalWidth = Math.min(rectWidth, size * 5.0);
+            maxChars = Math.max(4, Math.floor((finalWidth - 10) / 7));
           } else if (d.type === 'class') {
-            maxChars = 18; // Classes can be longer
+            // Circle radius = size * 1.8 → diameter-based budget
+            maxChars = Math.max(6, Math.floor((size * 3.6 - 8) / 7));
           }
-          
-          return label.length > maxChars ? label.substring(0, maxChars - 2) + '..' : label;
+
+          return label.length > maxChars ? label.substring(0, Math.max(1, maxChars - 2)) + '..' : label;
         }
         if (visualizationType === 'ontograph' && !showLabels) {
           return ''; // Hide labels when zoomed out on large graphs
