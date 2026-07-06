@@ -131,6 +131,7 @@
     <logger name="org.springframework" level="INFO" additivity="false">
         <appender-ref ref="APP_FILE" />
         <appender-ref ref="ERROR_FILE" />
+        <appender-ref ref="CONSOLE" />
     </logger>
 
     <!-- MongoDB -->

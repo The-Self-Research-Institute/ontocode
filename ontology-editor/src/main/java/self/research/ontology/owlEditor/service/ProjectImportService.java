@@ -14,6 +14,7 @@ import self.research.ontology.owlEditor.service.TopLevelClassCacheService;
 import self.research.ontology.owlEditor.model.ImportQueueItem;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.model.collaboration.ImportStatusMessage;
+import self.research.ontology.owlEditor.model.collaboration.QueueStatusMessage;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +26,9 @@ import org.eclipse.rdf4j.rio.RDFHandlerException;
 import org.eclipse.rdf4j.rio.RDFParser;
 import org.eclipse.rdf4j.rio.Rio;
 import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
+
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
@@ -47,6 +51,9 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -61,6 +68,7 @@ public class ProjectImportService {
     private static final Logger log = LoggerFactory.getLogger(ProjectImportService.class);
     private static final Logger importLog = LoggerFactory.getLogger("IMPORT");
     private static final Logger perfLog = LoggerFactory.getLogger("PERFORMANCE");
+    private static final AtomicLong IMPORT_RUN_SEQUENCE = new AtomicLong(1);
 
     // Prevent concurrent imports for the same project (which cause overlapping progress threads and GraphDB clears)
     private final Map<String, AtomicBoolean> importInProgress = new ConcurrentHashMap<>();
@@ -111,6 +119,16 @@ public class ProjectImportService {
     @Value("${ontocode.desktop.owlapi-first:false}")
     private boolean owlApiFirst;
 
+    @Value("${ontocode.import.stuck-timeout-minutes:10}")
+    private long stuckImportTimeoutMinutes;
+
+    private final ScheduledExecutorService watchdogScheduler =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "import-watchdog");
+                t.setDaemon(true);
+                return t;
+            });
+
     public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
                                 @Qualifier("metadataExecutor") Executor metadataExecutor,
                                 SparqlDatasetService datasetService,
@@ -129,6 +147,62 @@ public class ProjectImportService {
         this.messagingTemplate = messagingTemplate;
         this.queueManager = queueManager;
         this.timeEstimator = timeEstimator;
+    }
+
+    @PostConstruct
+    public void startWatchdog() {
+        log.info("[Import] Watchdog started (interval=30s, initialDelay=60s, timeoutMinutes={})",
+                Math.max(1, stuckImportTimeoutMinutes));
+        watchdogScheduler.scheduleWithFixedDelay(() -> {
+            try {
+                long timeoutMs = Math.max(1, stuckImportTimeoutMinutes) * 60_000L;
+                QueueStatusMessage.QueueStats beforeStats = queueManager.getQueueStats();
+                if (beforeStats.getActiveImports() > 0 || beforeStats.getQueuedImports() > 0) {
+                    log.info("[Import] Watchdog tick (active={}, queued={}, activeProjectIds={})",
+                            beforeStats.getActiveImports(),
+                            beforeStats.getQueuedImports(),
+                            beforeStats.getActiveProjectIds());
+                }
+                List<ImportQueueItem> expired = queueManager.expireStuckProcessing(timeoutMs);
+                if (expired.isEmpty()) {
+                    return;
+                }
+
+                log.warn("[Import] Watchdog expired {} import(s): {}",
+                        expired.size(), expired.stream().map(ImportQueueItem::getProjectId).toList());
+
+                for (ImportQueueItem item : expired) {
+                    String projectId = item.getProjectId();
+                    String filename = metadataService.readStatus(projectId)
+                            .map(ProjectStatus::filename)
+                            .filter(f -> f != null && !f.isBlank())
+                            .orElse(item.getFilename());
+                    String reason = item.getFailureReason() != null
+                            ? item.getFailureReason()
+                            : "Import timed out while processing";
+
+                    metadataService.writeStatus(projectId, ProjectStatus.error(filename, reason));
+                    sendImportNotification(projectId,
+                            ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
+                            "ERROR",
+                            "Import failed: " + reason,
+                            filename,
+                            Map.of("error", reason, "stage", "timeout-watchdog"));
+
+                    importReservations.remove(projectId);
+                    releaseImport(projectId);
+                }
+
+                processNextInQueue();
+            } catch (Exception e) {
+                log.warn("[Import] Watchdog scan failed", e);
+            }
+        }, 60, 30, TimeUnit.SECONDS);
+    }
+
+    @PreDestroy
+    public void stopWatchdog() {
+        watchdogScheduler.shutdownNow();
     }
 
     /**
@@ -260,24 +334,34 @@ public class ProjectImportService {
     }
 
     private void processNextInQueue() {
+        QueueStatusMessage.QueueStats stats = queueManager.getQueueStats();
         if (!queueManager.canProcess()) {
-            log.debug("[Import] Cannot process - max concurrent imports reached");
+            log.info("[Import] Cannot process - max concurrent imports reached (active={}, queued={}, activeProjectIds={})",
+                    stats.getActiveImports(), stats.getQueuedImports(), stats.getActiveProjectIds());
             return;
         }
 
         owlParsingExecutor.execute(() -> {
             ImportQueueItem item = queueManager.dequeue();
             if (item == null) {
+                QueueStatusMessage.QueueStats afterDequeueStats = queueManager.getQueueStats();
+                log.debug("[Import] Dequeue returned null (active={}, queued={}, activeProjectIds={})",
+                        afterDequeueStats.getActiveImports(),
+                        afterDequeueStats.getQueuedImports(),
+                        afterDequeueStats.getActiveProjectIds());
                 return; // No items in queue
             }
 
+            long runId = IMPORT_RUN_SEQUENCE.getAndIncrement();
             long startTime = System.currentTimeMillis();
+            log.info("[Import {}|run:{}] Queue worker picked item on thread {}",
+                    item.getProjectId(), runId, Thread.currentThread().getName());
             try {
-                runImport(item);
+                runImport(item, runId);
                 long duration = System.currentTimeMillis() - startTime;
                 queueManager.markCompleted(item.getProjectId(), duration);
             } catch (Exception e) {
-                log.error("[Import] Failed to process queue item for project {}", item.getProjectId(), e);
+                log.error("[Import {}|run:{}] Failed to process queue item", item.getProjectId(), runId, e);
 
                 // Check if error is retryable (connection issues, timeouts, etc.)
                 boolean shouldRetry = isRetryableError(e);
@@ -287,11 +371,14 @@ public class ProjectImportService {
             } catch (Throwable t) {
                 // StackOverflowError, OutOfMemoryError etc. are Errors not Exceptions —
                 // must catch Throwable or the item is stuck in PROCESSING forever.
-                log.error("[Import] Fatal JVM error for project {}", item.getProjectId(), t);
+                log.error("[Import {}|run:{}] Fatal JVM error", item.getProjectId(), runId, t);
                 queueManager.markFailed(item.getProjectId(),
                         t.getClass().getSimpleName() + " during OWL parsing — file may be too large or deeply nested",
                         false);
             } finally {
+                long duration = System.currentTimeMillis() - startTime;
+                log.info("[Import {}|run:{}] Queue worker finished in {} ms. Triggering next dequeue.",
+                        item.getProjectId(), runId, duration);
                 // Try to process next item in queue
                 processNextInQueue();
             }
@@ -339,7 +426,7 @@ public class ProjectImportService {
         return message != null ? message : "Unknown error";
     }
 
-    private void runImport(ImportQueueItem item) {
+    private void runImport(ImportQueueItem item, long runId) {
         String projectId = item.getProjectId();
         Path owlFile = item.getOwlFile();
         AtomicBoolean guard = importInProgress.computeIfAbsent(projectId, id -> new AtomicBoolean(false));
@@ -354,7 +441,7 @@ public class ProjectImportService {
         }
 
         long importStart = System.nanoTime();
-        importLog.info("[START] project={} file={}", projectId, owlFile.getFileName());
+        importLog.info("[START] project={} runId={} file={}", projectId, runId, owlFile.getFileName());
         String stage = "initialization";
         String filename = metadataService.readStatus(projectId)
                 .map(ProjectStatus::filename)
@@ -368,7 +455,7 @@ public class ProjectImportService {
         // Track whether import was marked as COMPLETED (prevents overwriting to ERROR in catch block)
         AtomicBoolean importMarkedCompleted = new AtomicBoolean(false);
 
-        log.info("[Import {}] Starting import for file {}", projectId, filename);
+        log.info("[Import {}|run:{}] Starting import for file {}", projectId, runId, filename);
 
         // Notify: Import started
         sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_STARTED,
@@ -863,8 +950,8 @@ public class ProjectImportService {
             });
 
         } catch (Exception e) {
-            log.error("Import failed for {} while {}", projectId, stage, e);
-            importLog.error("[FAILED] project={} stage={} error={}", projectId, stage, e.getMessage());
+            log.error("[Import {}|run:{}] Import failed while {}", projectId, runId, stage, e);
+            importLog.error("[FAILED] project={} runId={} stage={} error={}", projectId, runId, stage, e.getMessage());
 
             // Only set ERROR status if import wasn't already marked as COMPLETED
             // This prevents overwriting COMPLETED -> ERROR after IMPORT_COMPLETED was sent
@@ -878,14 +965,14 @@ public class ProjectImportService {
                         "ERROR", "Import failed: " + e.getMessage(), filename, errorMeta);
             } else {
                 // Import was already marked COMPLETED - log but don't change status
-                log.warn("[Import {}] Exception occurred after import was marked COMPLETED (status not changed): {}",
-                        projectId, e.getMessage());
+                log.warn("[Import {}|run:{}] Exception occurred after import was marked COMPLETED (status not changed): {}",
+                        projectId, runId, e.getMessage());
             }
         } catch (Throwable t) {
             // StackOverflowError, OutOfMemoryError etc. are Errors, not Exceptions — catch (Exception e) above
             // does not intercept them, leaving metadata stuck as PROCESSING and the frontend spinner running forever.
-            log.error("[Import {}] Fatal JVM error while {}", projectId, stage, t);
-            importLog.error("[FAILED] project={} stage={} error={}", projectId, stage, t.getClass().getSimpleName());
+            log.error("[Import {}|run:{}] Fatal JVM error while {}", projectId, runId, stage, t);
+            importLog.error("[FAILED] project={} runId={} stage={} error={}", projectId, runId, stage, t.getClass().getSimpleName());
             if (!importMarkedCompleted.get()) {
                 String reason = t.getClass().getSimpleName() + " during OWL parsing — file may be too large or deeply nested";
                 metadataService.writeStatus(projectId, ProjectStatus.error(filename, reason));
@@ -895,6 +982,8 @@ public class ProjectImportService {
                         "ERROR", "Import failed: " + reason, filename, errorMeta);
             }
         } finally {
+            log.info("[Import {}|run:{}] Finalizing import (lastStage={}, totalElapsedMs={})",
+                    projectId, runId, stage, elapsedMillis(importStart));
             releaseImport(projectId);
         }
     }
@@ -1559,7 +1648,9 @@ public class ProjectImportService {
             return result;
         }
         try {
-            Optional<Path> file = storageManager.findCurrentOntology(projectId);
+            // Draft-aware: sync the working copy (unsaved draft when present) so
+            // SPARQL/graph views mirror what the user is editing, not the last save.
+            Optional<Path> file = storageManager.findWorkingOntology(projectId);
             if (file.isEmpty() || !Files.exists(file.get())) {
                 result.put("synced", false);
                 result.put("error", "No ontology file on disk");

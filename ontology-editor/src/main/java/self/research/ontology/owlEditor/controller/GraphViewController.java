@@ -45,6 +45,10 @@ public class GraphViewController {
     private final self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
     private final java.util.Map<String, OWLOntology> ontologyCache = new HashMap<>();
 
+    // Desktop lazy Fuseki flag — non-final so Lombok's @RequiredArgsConstructor skips it.
+    @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.owlapi-first:false}")
+    private boolean desktopOwlApiFirst;
+
     /**
      * Load ontology from GridFS with caching
      * Pass forceReload=true to bypass cache and get fresh data
@@ -246,6 +250,17 @@ public class GraphViewController {
             return ResponseEntity.ok(generateGraphFromGraphDB(projectId, maxNodes));
 
         } catch (Exception e) {
+            // Desktop lazy Fuseki: store may still be starting — signal retryable
+            // 503 instead of a terminal 500. Webapp keeps 500 (its Fuseki is
+            // always up, so connection-refused there is a genuine outage).
+            if (desktopOwlApiFirst && self.research.ontology.owlEditor.util.TripleStoreErrors.isConnectionRefused(e)) {
+                log.info("Initial graph deferred for {} — triple store not up yet", projectId);
+                return ResponseEntity.status(503).body(Map.of(
+                    "success", false,
+                    "error", self.research.ontology.owlEditor.util.TripleStoreErrors.STORE_STARTING_MESSAGE,
+                    "retryable", true
+                ));
+            }
             log.error("Error fetching initial graph for project: {}", projectId, e);
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,

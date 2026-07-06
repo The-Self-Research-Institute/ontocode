@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DraftCopyStatus;
 import self.research.ontology.owlEditor.model.DraftSession;
@@ -110,6 +111,20 @@ public class SparqlDatasetService {
     // MongoDB persistent top-level class cache — evicted on import/mutation.
     @Autowired(required = false)
     private TopLevelClassCacheService topLevelCacheService;
+
+    // Hierarchy snapshot + per-class detail caches (MongoDB) — like the top-level
+    // cache, they mirror the public graph and must drop on every public write.
+    // @Lazy breaks the startup cycle: hierarchyIndexService → hierarchySnapshotBuildService
+    // → storageManager → sparqlDatasetService (this bean).
+    @Autowired(required = false)
+    @Lazy
+    private HierarchyIndexService hierarchyIndexService;
+
+    // @Lazy: ClassDetailCacheService's constructor takes SparqlDatasetService,
+    // so eager injection here forms a two-bean startup cycle.
+    @Autowired(required = false)
+    @Lazy
+    private ClassDetailCacheService classDetailCacheService;
 
     // OWLAPI in-memory model (fast-open). Evicted here so EVERY write path —
     // including services that call execUpdate directly without going through
@@ -286,6 +301,26 @@ public class SparqlDatasetService {
                 log.error("Start Fuseki: docker compose up fuseki");
                 throw new RuntimeException("Fuseki connection failed: " + e.getMessage(), e);
             }
+        }
+    }
+
+    /**
+     * Fast TCP probe of the Fuseki endpoint. Used on desktop (lazy Fuseki) to
+     * skip work quietly while the store is still starting, instead of failing
+     * every query with connection-refused stack traces.
+     */
+    public boolean isFusekiReachable() {
+        try {
+            java.net.URI uri = java.net.URI.create(fusekiQueryEndpoint);
+            int port = uri.getPort() != -1
+                    ? uri.getPort()
+                    : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(uri.getHost(), port), 1_200);
+                return true;
+            }
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -3270,6 +3305,16 @@ public class SparqlDatasetService {
             // Public mutation: evict all project-scoped cache entries (all users see updated data).
             if (topLevelCacheService != null) {
                 topLevelCacheService.evict(projectId);
+            }
+            if (hierarchyIndexService != null) {
+                hierarchyIndexService.markStale(projectId);
+            }
+            // Structured mutations invalidate class details per affected IRI in
+            // OntologyMutationService — a project-wide drop here would defeat the
+            // prewarmed cache. Only unstructured writes (raw SPARQL, Manchester,
+            // citations, admin ops) have unknown scope and need the full drop.
+            if (classDetailCacheService != null && !MutationContext.hasStructuredOps()) {
+                classDetailCacheService.dropAll(projectId);
             }
             if (springCacheEviction != null) {
                 springCacheEviction.evictForProject(projectId);

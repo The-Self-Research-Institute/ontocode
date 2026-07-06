@@ -45,6 +45,8 @@ import type {
   VisualizationType
 } from './types';
 import PluginUpdateService from './PluginUpdateService';
+import { authHeaders } from './utils/authHeaders';
+import { NODE_ACCENTS, nodeFill, nodeStroke } from './utils/nodePalette';
 import { vowlNotationService } from './services/VOWLNotationService';
 import { UnifiedSidebar } from './components/UnifiedSidebar';
 import { GraphViewSidebar } from './components/GraphViewSidebar';
@@ -127,15 +129,17 @@ const normalizeEdgeType = (type: string): EdgeType => {
   return normalized as EdgeType;
 };
 
-// Color schemes
+// Color schemes — all node color derives from the validated NODE_ACCENTS
+// palette (utils/nodePalette). One entity type = one hue, everywhere:
+// fill, stroke, legend, tooltip, selection glow.
 const TYPE_COLORS: Record<NodeType, string> = {
-  class: '#667eea',
-  individual: '#10b981',
-  property: '#f59e0b',
-  dataProperty: '#ec4899',
-  objectProperty: '#06b6d4',
-  annotation: '#8b5cf6',
-  datatype: '#FFA500'
+  class: NODE_ACCENTS.class,
+  individual: NODE_ACCENTS.individual,
+  property: NODE_ACCENTS.property,
+  dataProperty: NODE_ACCENTS.dataProperty,
+  objectProperty: NODE_ACCENTS.objectProperty,
+  annotation: NODE_ACCENTS.annotation,
+  datatype: NODE_ACCENTS.datatype
 };
 
 const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
@@ -152,6 +156,16 @@ const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
   spatial: '#3b82f6',
   probabilistic: '#fb923c',
   subPropertyOf: '#2563eb'
+};
+
+// Per-type accent colors shared by node rendering, selection styling, and tooltips
+const ACCENT_COLORS: Record<string, string> = { ...NODE_ACCENTS };
+
+const hexToRgba = (hex: string, alpha: number): string => {
+  const c = d3.color(hex);
+  if (!c) return `rgba(99,102,241,${alpha})`;
+  const { r, g, b } = c.rgb();
+  return `rgba(${r},${g},${b},${alpha})`;
 };
 
 // Default settings
@@ -819,10 +833,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     setInferredGraphStatus('loading');
     try {
       const response = await fetch(`${apiBaseUrl}/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=OPENLLET`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
-        }
+        headers: authHeaders(authToken)
       });
       if (!response.ok) {
         throw new Error(`Reasoner hierarchy request failed: ${response.status}`);
@@ -1352,7 +1363,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       
       // For force mode, use special colors for classes
       if (visualizationType === 'force') {
-        if (nodeTypes.has('class')) legend.push({ name: `Class (${filteredNodes.filter(n => n.type === 'class').length})`, type: 'node', nodeType: 'class', color: '#FFE4B5' });
+        if (nodeTypes.has('class')) legend.push({ name: `Class (${filteredNodes.filter(n => n.type === 'class').length})`, type: 'node', nodeType: 'class', color: nodeFill('class', document.documentElement.classList.contains('dark')) });
         if (nodeTypes.has('individual')) legend.push({ name: `Individual (${filteredNodes.filter(n => n.type === 'individual').length})`, type: 'node', nodeType: 'individual', color: '#a78bfa' });
         if (nodeTypes.has('datatype')) legend.push({ name: `Datatype (${filteredNodes.filter(n => n.type === 'datatype').length})`, type: 'node', nodeType: 'datatype', color: '#FFFFFF' });
       } else {
@@ -1694,6 +1705,72 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     });
     
     console.log('[AdvancedGraphView] ✅ Arrow markers created with specific property colors');
+
+    // ── Premium visual defs: gradients & glow filters ─────────────────────
+    defs.selectAll('.premium-def').remove();
+
+    // Card background gradient (ontograph mode) — subtle vertical sheen
+    const cardGrad = defs.append('linearGradient')
+      .attr('class', 'premium-def')
+      .attr('id', 'card-grad')
+      .attr('x1', '0').attr('y1', '0').attr('x2', '0').attr('y2', '1');
+    cardGrad.append('stop').attr('offset', '0%').attr('stop-color', isDark ? '#2a3850' : '#ffffff');
+    cardGrad.append('stop').attr('offset', '100%').attr('stop-color', isDark ? '#1b2436' : '#eef2f9');
+
+    // Glow filters: selection (indigo), hover (per-node accent via per-type filters)
+    const makeGlow = (id: string, color: string, blur: number, opacity: number) => {
+      const f = defs.append('filter')
+        .attr('class', 'premium-def')
+        .attr('id', id)
+        .attr('x', '-40%').attr('y', '-40%')
+        .attr('width', '180%').attr('height', '180%');
+      f.append('feDropShadow')
+        .attr('dx', 0).attr('dy', 0)
+        .attr('stdDeviation', blur)
+        .attr('flood-color', color)
+        .attr('flood-opacity', opacity);
+    };
+    makeGlow('sel-glow', '#818cf8', 5, 0.85);
+    Object.entries(ACCENT_COLORS).forEach(([type, color]) => makeGlow(`hover-glow-${type}`, color, 4, 0.7));
+
+    // Glossy radial gradient factory — gives flat fills gentle 3D depth.
+    // Cached per color so defs stay small no matter how many nodes render.
+    const glossyCache = new Map<string, string>();
+    const glossyFill = (color: string | undefined): string => {
+      if (!color || color.startsWith('url(')) return color || '';
+      const c = d3.color(color);
+      if (!c) return color;
+      const key = color.replace(/[^a-zA-Z0-9]/g, '');
+      if (glossyCache.has(key)) return glossyCache.get(key)!;
+      const grad = defs.append('radialGradient')
+        .attr('class', 'premium-def')
+        .attr('id', `ng-${key}`)
+        .attr('cx', '35%').attr('cy', '30%').attr('r', '80%');
+      grad.append('stop').attr('offset', '0%').attr('stop-color', c.brighter(0.55).formatHex());
+      grad.append('stop').attr('offset', '55%').attr('stop-color', color);
+      grad.append('stop').attr('offset', '100%').attr('stop-color', c.darker(0.35).formatHex());
+      const url = `url(#ng-${key})`;
+      glossyCache.set(key, url);
+      return url;
+    };
+
+    // Linear accent gradient factory (stripes, badges, expanders)
+    const accentCache = new Map<string, string>();
+    const accentGrad = (color: string): string => {
+      const c = d3.color(color);
+      if (!c) return color;
+      const key = color.replace(/[^a-zA-Z0-9]/g, '');
+      if (accentCache.has(key)) return accentCache.get(key)!;
+      const grad = defs.append('linearGradient')
+        .attr('class', 'premium-def')
+        .attr('id', `ag-${key}`)
+        .attr('x1', '0').attr('y1', '0').attr('x2', '1').attr('y2', '1');
+      grad.append('stop').attr('offset', '0%').attr('stop-color', c.brighter(0.5).formatHex());
+      grad.append('stop').attr('offset', '100%').attr('stop-color', c.darker(0.25).formatHex());
+      const url = `url(#ag-${key})`;
+      accentCache.set(key, url);
+      return url;
+    };
 
     // Prepare D3 data — reuse saved positions for stable expand/collapse
     const savedPositions = nodePositionsRef.current;
@@ -2597,6 +2674,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           ? (isThing ? '5 3' : null)
           : null);
 
+      // Glossy gradient version of the flat fill (depth without per-frame cost)
+      const fillPaint = glossyFill(fill);
+      // Soft layered shadow for small graphs; disabled on large graphs (LOD)
+      const softShadow = visibleNodes.length > 100
+        ? 'none'
+        : 'drop-shadow(0 2px 5px rgba(0,0,0,0.22)) drop-shadow(0 6px 14px rgba(0,0,0,0.10))';
+
       // Render different shapes based on node type (WebVOWL style)
       if (nodeType === 'dataProperty' || nodeType === 'property') {
         // Pink Rectangle for data properties
@@ -2606,12 +2690,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .attr('y', -size)
           .attr('width', size * 2)
           .attr('height', size * 2)
-          .attr('rx', 3)
-          .attr('fill', fill)
+          .attr('rx', 5)
+          .attr('fill', fillPaint)
           .attr('stroke', stroke)
           .attr('stroke-width', strokeWidth)
           .attr('stroke-dasharray', strokeDasharray || null)
-          .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+          .style('filter', softShadow)
           .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
           .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
           .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
@@ -2627,11 +2711,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('y', -rectHeight / 2)
             .attr('width', rectWidth)
             .attr('height', rectHeight)
-            .attr('rx', 3)
-            .attr('ry', 3)
-            .attr('fill', '#FFFFFF')
-            .attr('stroke', '#999999')
-            .attr('stroke-width', 1)
+            .attr('rx', 5)
+            .attr('ry', 5)
+            .attr('fill', isDark ? glossyFill('#334155') : glossyFill('#f8fafc'))
+            .attr('stroke', isDark ? '#64748b' : '#cbd5e1')
+            .attr('stroke-width', 1.25)
+            .style('filter', softShadow)
             .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
             .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
@@ -2647,11 +2732,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('width', rectWidth)
             .attr('height', rectHeight)
             .attr('rx', size * 0.4)
-            .attr('fill', visualizationType === 'vowl' ? (isDark ? '#d97706' : '#FFD9B3') : fill)
+            .attr('fill', visualizationType === 'vowl' ? glossyFill(isDark ? '#d97706' : '#FFD9B3') : fillPaint)
             .attr('stroke', visualizationType === 'vowl' ? (isDark ? '#d1d5db' : '#000000') : stroke)
             .attr('stroke-width', visualizationType === 'vowl' ? 2 : strokeWidth)
             .attr('stroke-dasharray', visualizationType === 'vowl' ? '5 3' : (strokeDasharray || null))
-            .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+            .style('filter', softShadow)
             .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
             .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
@@ -2668,12 +2753,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('y', -rectHeight / 2)
             .attr('width', rectWidth)
             .attr('height', rectHeight)
-            .attr('rx', 5)
-            .attr('ry', 5)
-            .attr('fill', '#B0C4DE')
-            .attr('stroke', '#000000')
+            .attr('rx', 7)
+            .attr('ry', 7)
+            .attr('fill', glossyFill('#B0C4DE'))
+            .attr('stroke', '#64748b')
             .attr('stroke-width', 1.5)
-            .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))')
+            .style('filter', softShadow)
             .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
             .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
@@ -2694,13 +2779,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('y', -rectHeight / 2)
             .attr('width', finalWidth)
             .attr('height', rectHeight)
-            .attr('rx', 4)
-            .attr('ry', 4)
-            .attr('fill', fill)
+            .attr('rx', 6)
+            .attr('ry', 6)
+            .attr('fill', fillPaint)
             .attr('stroke', stroke)
             .attr('stroke-width', strokeWidth)
             .attr('stroke-dasharray', strokeDasharray || null)
-            .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+            .style('filter', softShadow)
             .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
             .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
@@ -2720,11 +2805,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         nodeGroup.append('polygon')
           .attr('class', 'node-shape')
           .attr('points', hexPoints)
-          .attr('fill', visualizationType === 'vowl' ? (isDark ? '#9333ea' : '#e8d5f2') : fill) // Darker purple in dark mode
+          .attr('fill', visualizationType === 'vowl' ? glossyFill(isDark ? '#9333ea' : '#e8d5f2') : fillPaint) // Darker purple in dark mode
           .attr('stroke', stroke)
           .attr('stroke-width', strokeWidth)
           .attr('stroke-dasharray', strokeDasharray || null)
-          .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+          .style('filter', softShadow)
           .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
           .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
           .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
@@ -2754,7 +2839,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               })()
             : (nodeColors[d.type] || nodeColors['class']));
         
-        // Main card background with subtle shadow
+        // Main card background — gradient sheen + colored ambient shadow
         nodeGroup.append('rect')
           .attr('class', 'node-shape')
           .attr('x', -rectWidth / 2)
@@ -2762,44 +2847,47 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .attr('width', rectWidth)
           .attr('height', rectHeight)
           .attr('rx', cornerRadius)
-          .attr('fill', colors.bg)
+          .attr('fill', (simplifiedLOD || isInferredEntity(d)) ? colors.bg : 'url(#card-grad)')
           .attr('stroke', colors.border)
           .attr('stroke-width', simplifiedLOD ? 1 : 1.5)
           .attr('stroke-dasharray', isInferredEntity(d) ? '8 4' : null)
-          .style('filter', simplifiedLOD ? 'none' : 'drop-shadow(0 1px 3px rgba(0,0,0,0.12)) drop-shadow(0 1px 2px rgba(0,0,0,0.06))')
+          .style('filter', simplifiedLOD
+            ? 'none'
+            : `drop-shadow(0 2px 8px ${hexToRgba(colors.accent, isDark ? 0.35 : 0.22)}) drop-shadow(0 1px 2px rgba(0,0,0,0.10))`)
           .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
           .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
           .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
           .on('mouseout', handleNodeMouseOut);
-        
+
         if (!simplifiedLOD) {
-          // Left accent stripe
+          // Left accent stripe — gradient for depth
           nodeGroup.append('rect')
             .attr('x', -rectWidth / 2)
             .attr('y', -rectHeight / 2)
-            .attr('width', 4)
+            .attr('width', 5)
             .attr('height', rectHeight)
             .attr('rx', 0)
-            .attr('fill', colors.accent)
+            .attr('fill', accentGrad(colors.accent))
             .style('pointer-events', 'none')
             // Clip to card's left rounded corners
             .attr('clip-path', `inset(0 0 0 0 round ${cornerRadius}px 0 0 ${cornerRadius}px)`);
-          
-          // Type badge (small pill)
+
+          // Type badge (small gradient pill)
           const badgeText = d.type === 'class' ? 'C' : (d.type === 'individual' ? 'I' : (d.type === 'datatype' ? 'D' : (d.type === 'dataProperty' ? 'DP' : 'P')));
           const badgeWidth = badgeText.length > 1 ? 22 : 16;
-          
+
           nodeGroup.append('rect')
-            .attr('x', -rectWidth / 2 + 10)
+            .attr('x', -rectWidth / 2 + 11)
             .attr('y', -rectHeight / 2 + 5)
             .attr('width', badgeWidth)
             .attr('height', 16)
-            .attr('rx', 4)
-            .attr('fill', colors.accent)
+            .attr('rx', 8)
+            .attr('fill', accentGrad(colors.accent))
+            .style('filter', `drop-shadow(0 1px 2px ${hexToRgba(colors.accent, 0.4)})`)
             .style('pointer-events', 'none');
-          
+
           nodeGroup.append('text')
-            .attr('x', -rectWidth / 2 + 10 + badgeWidth / 2)
+            .attr('x', -rectWidth / 2 + 11 + badgeWidth / 2)
             .attr('y', -rectHeight / 2 + 14)
             .attr('text-anchor', 'middle')
             .attr('font-size', '9px')
@@ -2809,7 +2897,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .text(badgeText)
             .style('pointer-events', 'none');
 
-          // Expander icon on the right
+          // Expander icon on the right — accent-filled with white glyph
           if (hasChildren(d.id, allEdges, allNodes)) {
             const isExpanded = expandedNodeIds.has(d.id);
             const expanderGroup = nodeGroup.append('g')
@@ -2823,18 +2911,19 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             expanderGroup.append('circle')
               .attr('cx', rectWidth / 2 - 14)
               .attr('cy', 0)
-              .attr('r', 9)
-              .attr('fill', isDark ? '#334155' : '#f1f5f9')
-              .attr('stroke', colors.border)
-              .attr('stroke-width', 1);
+              .attr('r', 10)
+              .attr('fill', accentGrad(colors.accent))
+              .attr('stroke', isDark ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.8)')
+              .attr('stroke-width', 1.5)
+              .style('filter', `drop-shadow(0 1px 3px ${hexToRgba(colors.accent, 0.45)})`);
 
             expanderGroup.append('text')
               .attr('x', rectWidth / 2 - 14)
-              .attr('y', 4)
+              .attr('y', 4.5)
               .attr('text-anchor', 'middle')
               .attr('font-size', '13px')
-              .attr('font-weight', '600')
-              .attr('fill', colors.accent)
+              .attr('font-weight', '700')
+              .attr('fill', '#ffffff')
               .text(isExpanded ? '−' : '+')
               .style('pointer-events', 'none');
           }
@@ -2851,13 +2940,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('cy', 0)
             .attr('rx', ellipseWidth)
             .attr('ry', ellipseHeight)
-            .attr('fill', colorByCluster && clusterFor(d.id) !== undefined
-              ? (getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors) || '#FFE4B5')
-              : '#FFE4B5')
-            .attr('stroke', isInferredEntity(d) ? '#10b981' : '#000000')
-            .attr('stroke-width', isInferredEntity(d) ? 3 : 2)
+            .attr('fill', () => {
+              // Flat tint + accent stroke + soft shadow — no glossy gradient.
+              const paletteFill = nodeFill(d.type, isDark);
+              return colorByCluster && clusterFor(d.id) !== undefined
+                ? (getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors) || paletteFill)
+                : paletteFill;
+            })
+            .attr('stroke', isInferredEntity(d) ? '#10b981' : (
+              colorByCluster && clusterFor(d.id) !== undefined
+                ? (d3.color(getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors)
+                    || nodeStroke(d.type, isDark))?.darker(1.2).formatHex() || '#b45309')
+                : nodeStroke(d.type, isDark)))
+            .attr('stroke-width', isInferredEntity(d) ? 3 : 1.75)
             .attr('stroke-dasharray', isInferredEntity(d) ? '8 4' : null)
-            .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+            .style('filter', softShadow)
             .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
             .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
@@ -2871,11 +2968,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           nodeGroup.append('circle')
             .attr('class', 'node-shape')
             .attr('r', circleRadius)
-            .attr('fill', fill)
+            .attr('fill', fillPaint)
             .attr('stroke', stroke)
             .attr('stroke-width', strokeWidth)
             .attr('stroke-dasharray', strokeDasharray || null)
-            .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+            .style('filter', softShadow)
             .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
             .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
@@ -2969,11 +3066,28 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
     });
 
+    // Remember each shape's base styling so the selection/hover effect can
+    // layer highlights on top and restore the original look afterwards
+    node.selectAll<SVGGraphicsElement, D3Node>('.node-shape').each(function() {
+      const el = d3.select(this);
+      el.attr('data-base-stroke', el.attr('stroke') || 'none');
+      el.attr('data-base-stroke-width', el.attr('stroke-width') || '1');
+      el.attr('data-base-filter', this.style.filter || 'none');
+    });
+
     // Node labels - INSIDE for WebVOWL and OntoGraph, outside for force mode
     // Hide labels when zoomed out on large graphs (LOD)
     const showLabels = !isLargeGraph || viewportBounds.scale >= 0.5;
     
+    // Surface-colored halo keeps labels readable over crossing edges at density
+    // without label boxes. VOWL mode is exempt: its notation rendering (text
+    // inside semantically-shaped nodes) stays exactly as Protégé users expect.
+    const labelHalo = document.documentElement.classList.contains('dark') ? '#1b1e2b' : '#ffffff';
     node.append('text')
+      .attr('paint-order', 'stroke')
+      .attr('stroke', visualizationType === 'vowl' ? 'none' : labelHalo)
+      .attr('stroke-width', visualizationType === 'vowl' ? 0 : 3)
+      .attr('stroke-linejoin', 'round')
       .attr('dx', d => {
         if (visualizationType === 'vowl') return 0;
         if (visualizationType === 'ontograph') {
@@ -3033,7 +3147,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             const brightness = (r * 299 + g * 587 + b * 114) / 1000;
             return brightness > 140 ? '#111111' : '#ffffff';
           }
-          return '#000000';
+          // Individuals / datatypes / properties: pick black or white from the
+          // node's actual fill luminance instead of hardcoded black (which was
+          // unreadable on purple individual boxes in dark theme).
+          const nodeFill = (d as any).color || TYPE_COLORS[(d as any).type as NodeType] || (isDark ? '#6b92c4' : '#acd5f2');
+          const hex2 = nodeFill.replace('#', '');
+          const r2 = parseInt(hex2.substring(0, 2), 16);
+          const g2 = parseInt(hex2.substring(2, 4), 16);
+          const b2 = parseInt(hex2.substring(4, 6), 16);
+          const brightness2 = (r2 * 299 + g2 * 587 + b2 * 114) / 1000;
+          return brightness2 > 140 ? '#111111' : '#ffffff';
         }
         if (visualizationType === 'ontograph') {
           const isDark = document.documentElement.classList.contains('dark');
@@ -3054,25 +3177,43 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         return '#333';
       })
-      .attr('stroke', d => visualizationType === 'spatial3d' ? 'rgba(0,0,0,0.75)' : 'none')
-      .attr('stroke-width', d => visualizationType === 'spatial3d' ? 3 : 0)
-      .style('paint-order', d => visualizationType === 'spatial3d' ? 'stroke' : 'normal')
+      .attr('stroke', d => {
+        if (visualizationType === 'spatial3d') return 'rgba(0,0,0,0.75)';
+        if (visualizationType === 'vowl') return 'none';
+        return labelHalo;
+      })
+      .attr('stroke-width', d => {
+        if (visualizationType === 'spatial3d') return 3;
+        if (visualizationType === 'vowl') return 0;
+        return 3;
+      })
+      .style('paint-order', 'stroke')
       .text(d => {
         if (visualizationType === 'vowl') {
-          // Truncate labels in WebVOWL mode to fit within rectangles
+          // Truncate labels in WebVOWL mode to fit within their shapes.
+          // Char budget derives from the actual shape width (≈7px/char at 11px
+          // font) so text can never spill outside the box.
           const label = d.label || '';
-          let maxChars = 18; // Increased default for classes
-          
-          // Adjust max length based on node type and size
+          const size = d.size || settings.nodeSize;
+          let maxChars = 18;
+
           if (d.type === 'datatype') {
-            maxChars = 16; // Increased for datatypes
+            // Rect width = size * 4.2, minus padding
+            maxChars = Math.max(4, Math.floor((size * 4.2 - 12) / 7));
           } else if (d.type === 'individual') {
-            maxChars = 12; // Increased for individuals
+            // Rect width capped at size * 5.0, minus padding
+            const label2 = d.label || '';
+            const baseWidth = size * 2.8;
+            const labelWidth = Math.min(label2.length * 7, 180);
+            const rectWidth = Math.max(baseWidth, labelWidth + 16);
+            const finalWidth = Math.min(rectWidth, size * 5.0);
+            maxChars = Math.max(4, Math.floor((finalWidth - 10) / 7));
           } else if (d.type === 'class') {
-            maxChars = 18; // Classes can be longer
+            // Circle radius = size * 1.8 → diameter-based budget
+            maxChars = Math.max(6, Math.floor((size * 3.6 - 8) / 7));
           }
-          
-          return label.length > maxChars ? label.substring(0, maxChars - 2) + '..' : label;
+
+          return label.length > maxChars ? label.substring(0, Math.max(1, maxChars - 2)) + '..' : label;
         }
         if (visualizationType === 'ontograph' && !showLabels) {
           return ''; // Hide labels when zoomed out on large graphs
@@ -3384,23 +3525,38 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         // Remove any existing tooltips first
         d3.selectAll('.graph-tooltip').remove();
 
-        d3.select('body').append('div')
+        const isDarkTip = document.documentElement.classList.contains('dark');
+        const accent = ACCENT_COLORS[d.type] || '#3b82f6';
+        const tooltip = d3.select('body').append('div')
           .attr('class', 'graph-tooltip')
           .style('position', 'absolute')
-          .style('background', 'rgba(0,0,0,0.8)')
-          .style('color', 'white')
-          .style('padding', '8px 12px')
-          .style('border-radius', '6px')
+          .style('background', isDarkTip ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.96)')
+          .style('color', isDarkTip ? '#e2e8f0' : '#1e293b')
+          .style('backdrop-filter', 'blur(10px)')
+          .style('-webkit-backdrop-filter', 'blur(10px)')
+          .style('border', `1px solid ${hexToRgba(accent, 0.4)}`)
+          .style('border-left', `3px solid ${accent}`)
+          .style('box-shadow', `0 8px 24px rgba(0,0,0,0.22), 0 0 12px ${hexToRgba(accent, 0.18)}`)
+          .style('padding', '10px 14px')
+          .style('border-radius', '10px')
           .style('font-size', '12px')
+          .style('line-height', '1.5')
+          .style('max-width', '280px')
           .style('pointer-events', 'none')
           .style('z-index', '1000')
-          .style('left', `${event.pageX + 10}px`)
-          .style('top', `${event.pageY + 10}px`)
+          .style('left', `${event.pageX + 12}px`)
+          .style('top', `${event.pageY + 12}px`)
+          .style('opacity', '0')
+          .style('transform', 'translateY(4px)')
+          .style('transition', 'opacity 160ms ease, transform 160ms ease')
           .html(`
-            <strong>${d.label}</strong><br/>
-            <em>${d.type}</em><br/>
-            ${d.description ? `<br/>${d.description.substring(0, 100)}...` : ''}
+            <div style="font-weight:600;font-size:13px;margin-bottom:4px;">${d.label}</div>
+            <span style="display:inline-block;padding:1px 8px;border-radius:9999px;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;background:${hexToRgba(accent, 0.15)};color:${accent};">${d.type}</span>
+            ${d.description ? `<div style="margin-top:6px;opacity:0.75;">${d.description.substring(0, 140)}${d.description.length > 140 ? '…' : ''}</div>` : ''}
           `);
+        requestAnimationFrame(() => {
+          tooltip.style('opacity', '1').style('transform', 'translateY(0)');
+        });
       }
     }
 
@@ -3498,7 +3654,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   useEffect(() => {
     if (!gRef.current) return;
     const g = d3.select(gRef.current);
-    
+
+    // One pass over edges instead of an allEdges.some() scan per node:
+    // the opacity callback below runs for every node on every hover change,
+    // which made hovering O(nodes × edges) on large graphs.
+    const hoverNeighborIds = new Set<string>();
+    if (hoveredNode) {
+      for (const e of allEdges) {
+        if (e.from === hoveredNode) hoverNeighborIds.add(e.to);
+        else if (e.to === hoveredNode) hoverNeighborIds.add(e.from);
+      }
+    }
+
     // Update edges
     g.selectAll('.edge-path')
       .attr('stroke-width', (d: any) => {
@@ -3551,47 +3718,55 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return 0.85;
       });
       
-    // Update nodes — search highlight: glow + bright stroke on matches, dim others
+    // Update nodes — layered highlights (search > selection > hover) on top of
+    // each shape's remembered base styling, so per-type accents survive updates
     const searchLower = searchQuery ? searchQuery.toLowerCase() : '';
-    g.selectAll('.node-shape')
-      .attr('stroke', (d: any) => {
-        if (visualizationType === 'ontograph') return 'none'; // handled by card styles
-        if (searchLower && (
-          d.label?.toLowerCase().includes(searchLower) ||
-          d.id?.toLowerCase().includes(searchLower)
-        )) return '#f59e0b'; // amber highlight for search match
-        return selectedNodes.has(d.id) ? '#667eea' : (visualizationType === 'vowl' ? '#1f2937' : '#fff');
+    const isSearchMatch = (d: any) => !!searchLower && (
+      d.label?.toLowerCase().includes(searchLower) ||
+      d.id?.toLowerCase().includes(searchLower)
+    );
+    g.selectAll<SVGGraphicsElement, any>('.node-shape')
+      .attr('stroke', function(d: any) {
+        if (isSearchMatch(d)) return '#f59e0b'; // amber highlight for search match
+        if (selectedNodes.has(d.id)) return '#818cf8'; // indigo selection ring
+        return this.getAttribute('data-base-stroke');
       })
-      .attr('stroke-width', (d: any) => {
-        if (searchLower && (
-          d.label?.toLowerCase().includes(searchLower) ||
-          d.id?.toLowerCase().includes(searchLower)
-        )) return 4;
-        return selectedNodes.has(d.id) ? 4 : 2;
+      .attr('stroke-width', function(d: any) {
+        const base = parseFloat(this.getAttribute('data-base-stroke-width') || '2');
+        if (isSearchMatch(d)) return base + 2;
+        return selectedNodes.has(d.id) ? base + 1.5 : base;
       })
-      .attr('filter', (d: any) => {
-        if (searchLower && (
-          d.label?.toLowerCase().includes(searchLower) ||
-          d.id?.toLowerCase().includes(searchLower)
-        )) return 'url(#search-glow)';
-        return null;
+      // style() (not attr()) so highlight glows reliably win over base shadows
+      .style('filter', function(d: any) {
+        if (isSearchMatch(d)) return 'url(#search-glow)';
+        if (selectedNodes.has(d.id)) return 'url(#sel-glow)';
+        if (hoveredNode === d.id) {
+          return `url(#hover-glow-${ACCENT_COLORS[d.type] ? d.type : 'class'})`;
+        }
+        const base = this.getAttribute('data-base-filter');
+        return base && base !== 'none' ? base : null;
       })
       .style('opacity', (n: any) => {
         if (searchLower) {
-          const isMatch = n.label?.toLowerCase().includes(searchLower) || n.id?.toLowerCase().includes(searchLower);
-          return isMatch ? 1 : 0.2;
+          return isSearchMatch(n) ? 1 : 0.2;
         }
         if (hoveredNode) {
-          const isConnected = allEdges.some(e =>
-            (e.from === hoveredNode && e.to === n.id) ||
-            (e.to === hoveredNode && e.from === n.id)
-          );
-          return n.id === hoveredNode || isConnected ? 1 : 0.3;
+          return n.id === hoveredNode || hoverNeighborIds.has(n.id) ? 1 : 0.3;
         }
         return 1;
       });
-      
+
   }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery]);
+
+  // Pulse animation class on selected node groups (CSS keyframes in svg <style>).
+  // Separate effect: this sweep only depends on selection, so hover moves
+  // don't re-touch every node group's class list.
+  useEffect(() => {
+    if (!gRef.current) return;
+    d3.select(gRef.current)
+      .selectAll<SVGGElement, any>('.node')
+      .classed('node-selected', (d: any) => selectedNodes.has(d.id));
+  }, [selectedNodes, filteredNodes]);
 
   /**
    * ========================================================================
@@ -3848,10 +4023,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       
       const response = await fetch(`${apiBaseUrl}/api/ontology/mutations/${projectId}?draft=${draftMode}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
-        },
+        headers: authHeaders(authToken),
         body: JSON.stringify({
           ops: [{
             type: 'createClass',
@@ -5388,6 +5560,37 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                     </feMerge>
                   </filter>
                 </defs>
+                {/* Micro-interactions: hover lift, smooth highlight transitions,
+                    label halos for readability, selection pulse */}
+                <style>{`
+                  [data-testid="graph-svg"] .node-shape {
+                    transition: stroke 160ms ease, stroke-width 160ms ease, opacity 220ms ease;
+                  }
+                  [data-testid="graph-svg"] .node:hover > * {
+                    transform: scale(1.03);
+                    transition: transform 180ms ease;
+                  }
+                  [data-testid="graph-svg"] .node > text {
+                    transition: opacity 220ms ease;
+                    paint-order: stroke;
+                    stroke: rgba(255,255,255,0.75);
+                    stroke-width: 2px;
+                    stroke-linejoin: round;
+                  }
+                  .dark [data-testid="graph-svg"] .node > text {
+                    stroke: rgba(15,23,42,0.7);
+                  }
+                  [data-testid="graph-svg"] .edge-path {
+                    transition: stroke-opacity 200ms ease, stroke-width 160ms ease;
+                  }
+                  @keyframes ontocode-node-pulse {
+                    0%, 100% { stroke-opacity: 1; }
+                    50% { stroke-opacity: 0.45; }
+                  }
+                  [data-testid="graph-svg"] .node-selected > .node-shape {
+                    animation: ontocode-node-pulse 1.8s ease-in-out infinite;
+                  }
+                `}</style>
                 {visualizationType === 'spatial3d' && (
                   <>
                     <radialGradient id="spatial3d-bg" cx="50%" cy="45%" r="75%">

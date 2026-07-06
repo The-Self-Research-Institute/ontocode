@@ -49,6 +49,24 @@ public class DraftTrackingService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private OntologySpringCacheEvictionService springCacheEviction;
 
+    // Invalidated when drafts are published so the class tree reflects the new public graph.
+    // Publish runs in the publishing user's SPARQL context, so execUpdate's derived-cache
+    // choke point takes its draft branch and leaves public caches alone — the explicit
+    // project-wide invalidation must happen here.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private HierarchyIndexService hierarchyIndexService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private TopLevelClassCacheService topLevelClassCacheService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ClassDetailCacheService classDetailCacheService;
+
+    /** Drop hierarchy caches after the public graph changes so the served tree is not stale. */
+    private void invalidateHierarchyCaches(String projectId) {
+        if (topLevelClassCacheService != null) topLevelClassCacheService.evict(projectId);
+        if (hierarchyIndexService != null) hierarchyIndexService.markStale(projectId);
+        if (classDetailCacheService != null) classDetailCacheService.dropAll(projectId);
+    }
+
     public DraftTrackingService(DraftChangeRepository draftRepository,
                                OntologyMutationService mutationService,
                                SparqlDatasetService datasetService,
@@ -253,6 +271,7 @@ public class DraftTrackingService {
                 if (springCacheEviction != null) {
                     springCacheEviction.evictForProject(projectId);
                 }
+                invalidateHierarchyCaches(projectId);
                 finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
                 return new ApplyDraftsResult(true, unappliedDrafts.size(),
                         "Published draft with merge", false, analysis);
@@ -308,6 +327,7 @@ public class DraftTrackingService {
             if (springCacheEviction != null) {
                 springCacheEviction.evictForProject(projectId);
             }
+            invalidateHierarchyCaches(projectId);
 
             if (!unappliedDrafts.isEmpty()) {
                 unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(

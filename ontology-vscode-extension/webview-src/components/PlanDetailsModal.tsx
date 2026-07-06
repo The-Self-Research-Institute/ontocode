@@ -1,26 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
-import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
+// '/pure' entry: no eager script injection at import time — the default entry's
+// module side-effect races React's commit on first lazy mount (removeChild crash).
+import { loadStripe } from '@stripe/stripe-js/pure';
+import type { StripeElementsOptions } from '@stripe/stripe-js';
 import { X, Check, Crown, Zap, Sparkles, Users, HardDrive, Shield, Rocket, Loader2, CreditCard, CheckCircle, ArrowLeft } from 'lucide-react';
 import { useSubscription } from '../hooks/useSubscription';
-import { getGatewayUrl } from '../config/deploymentConfig';
 import { usePlanPricing } from '../hooks/usePlanPricing';
 import { isInheritedPlanFeature, orderPlanFeatures } from '../utils/planFeatures';
-
-function safeGetStorage(key: string): string | null { try { return localStorage.getItem(key); } catch { return null; } }
-
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 15000): Promise<Response> {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        return await fetch(url, { ...options, signal: controller.signal });
-    } catch (err: any) {
-        if (err?.name === 'AbortError') throw new Error('Request timed out. Check your connection and try again.');
-        throw err;
-    } finally {
-        clearTimeout(id);
-    }
-}
+import { billingErrorMessage, billingPost } from '../utils/billingApi';
 
 interface PlanDetailsModalProps {
     isOpen: boolean;
@@ -65,30 +53,10 @@ const UpdateCardForm: React.FC<{
             return;
         }
 
-        const headers = {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${safeGetStorage('authToken') ?? ''}`,
-        };
-        const body = JSON.stringify({ setupIntentId: setupIntent.id, workspaceId });
-        let res: Response;
         try {
-            res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/update-payment-method`, { method: 'POST', headers, body });
-            if (!res.ok && res.status === 404) {
-                res = await fetchWithTimeout(`${window.location.origin}/api/billing/update-payment-method`, { method: 'POST', headers, body });
-            }
+            await billingPost('/api/billing/update-payment-method', { setupIntentId: setupIntent.id, workspaceId });
         } catch (err: any) {
-            setError(err.message || 'Network error. Please check your connection and try again.');
-            setSubmitting(false);
-            return;
-        }
-        if (res.status === 401 || res.status === 403) {
-            setError('Your session has expired. Please sign in again.');
-            setSubmitting(false);
-            return;
-        }
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-            setError(data?.error ?? 'Failed to update payment method.');
+            setError(billingErrorMessage(err, 'Failed to update payment method.'));
             setSubmitting(false);
             return;
         }
@@ -274,27 +242,13 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
     const startCardUpdate = async () => {
         setError(null);
         try {
-            const headers = {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${safeGetStorage('authToken') ?? ''}`,
-            };
-            let res: Response;
-            try {
-                res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/setup`, { method: 'POST', headers });
-                if (!res.ok && res.status === 404) {
-                    res = await fetchWithTimeout(`${window.location.origin}/api/billing/setup`, { method: 'POST', headers });
-                }
-            } catch (err: any) {
-                throw new Error(err.message || 'Network error. Please check your connection.');
-            }
-            if (res.status === 401 || res.status === 403) throw new Error('Your session has expired. Please sign in again.');
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || !data?.clientSecret) throw new Error(data?.error ?? 'Failed to create payment setup');
-            setSetupPublishableKey(data.stripePublishableKey);
+            const data = await billingPost<{ clientSecret?: string; stripePublishableKey?: string }>('/api/billing/setup');
+            if (!data?.clientSecret) throw new Error('Failed to create payment setup');
+            setSetupPublishableKey(data.stripePublishableKey || '');
             setSetupClientSecret(data.clientSecret);
             setView('update-card');
         } catch (err: any) {
-            setError(err.message);
+            setError(billingErrorMessage(err, 'Failed to create payment setup'));
         }
     };
 

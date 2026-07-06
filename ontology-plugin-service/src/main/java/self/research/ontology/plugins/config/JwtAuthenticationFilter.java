@@ -31,6 +31,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Value("${jwt.secret}")
     private String jwtSecret;
 
+    // Desktop bundles this filter via component scan into the combined
+    // desktop.jar, which runs permit-all with no real accounts (see auth
+    // SecurityConfig). Without this skip, a client sending a stale or
+    // placeholder token (e.g. "Bearer null" from an empty localStorage)
+    // gets a hard 401 on every endpoint.
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
     @PostConstruct
     public void validateSecrets() {
         if (jwtSecret == null || jwtSecret.isBlank()) {
@@ -56,6 +64,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
+
+        if (desktopMode) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         String authHeader = request.getHeader("Authorization");
 

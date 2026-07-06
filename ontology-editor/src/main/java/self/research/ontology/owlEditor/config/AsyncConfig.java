@@ -91,6 +91,27 @@ public class AsyncConfig implements AsyncConfigurer {
     }
 
     /**
+     * Interactive OWLAPI warm lane — serves a user actively opening a file so the
+     * parse never queues behind background bulk-upload warms on desktopModelExecutor.
+     * Serial (1 thread): only one project is opened interactively at a time, and a
+     * second concurrent parse would double heap pressure.
+     */
+    @Bean(name = "desktopInteractiveWarmExecutor")
+    public Executor desktopInteractiveWarmExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(1);
+        executor.setQueueCapacity(10);
+        executor.setThreadNamePrefix("owl-warm-ui-");
+        executor.setKeepAliveSeconds(60);
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.initialize();
+        return executor;
+    }
+
+    /**
      * Dedicated lane for copy-on-switch draft graph copies (full SPARQL INSERT WHERE).
      * Serial by design: concurrent full-graph copies would double memory/IO pressure.
      */
