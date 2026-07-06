@@ -94,7 +94,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
   const currentInfo = providerInfo[provider];
 
   return (
-    <div className="space-y-6 p-6 max-w-2xl">
+    <div className="space-y-6 p-4 sm:p-6 max-w-full sm:max-w-2xl">
       <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-lg p-4">
         <div className="flex items-start gap-3">
           <Zap className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
@@ -112,7 +112,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
         <label className="block text-sm font-medium text-gray-700 mb-3">
           Choose Your LLM Provider
         </label>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {providers.map((p) => (
             <button
               key={p.id}
