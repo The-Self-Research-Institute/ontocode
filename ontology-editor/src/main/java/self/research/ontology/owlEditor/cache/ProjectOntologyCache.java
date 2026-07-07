@@ -5,6 +5,7 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.config.FastOpenCondition;
@@ -26,11 +27,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ProjectOntologyCache {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectOntologyCache.class);
-    // Configurable via -Dontocode.desktop.cache.maxProjects=N (default 4).
-    // Holds parsed model + reasoner per project; revisiting within this window
-    // is instant instead of triggering a multi-second re-parse.
-    private static final int MAX_PROJECTS =
-        Math.max(1, Integer.getInteger("ontocode.desktop.cache.maxProjects", 4));
 
     public record CachedOntology(
             OWLOntology ontology,
@@ -48,11 +44,23 @@ public class ProjectOntologyCache {
 
     private final Map<String, Long> cachedMutationVersions = new ConcurrentHashMap<>();
 
-    private final Map<String, CachedOntology> cache =
-        Collections.synchronizedMap(new LinkedHashMap<>(MAX_PROJECTS + 1, 0.75f, true) {
+    // Configurable via -Dontocode.desktop.cache.maxProjects=N. Default is 1 on desktop
+    // (single user working on one file at a time; entries always carry a precomputed
+    // reasoner — heavy) and 4 in cloud/webapp (this cache is shared across all
+    // concurrent users on the instance, and fast-open entries there skip the
+    // reasoner — lighter per entry).
+    private final int maxProjects;
+
+    private final Map<String, CachedOntology> cache;
+
+    public ProjectOntologyCache(@Value("${ontocode.desktop.mode:false}") boolean desktopMode) {
+        int defaultMaxProjects = desktopMode ? 1 : 4;
+        this.maxProjects = Math.max(1,
+            Integer.getInteger("ontocode.desktop.cache.maxProjects", defaultMaxProjects));
+        this.cache = Collections.synchronizedMap(new LinkedHashMap<>(this.maxProjects + 1, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<String, CachedOntology> eldest) {
-                if (size() > MAX_PROJECTS) {
+                if (size() > maxProjects) {
                     log.info("[OntologyCache] Evicting project {} from OWLAPI cache", eldest.getKey());
                     eldest.getValue().dispose();
                     return true;
@@ -60,6 +68,7 @@ public class ProjectOntologyCache {
                 return false;
             }
         });
+    }
 
     public void put(String projectId, OWLOntology ontology, OWLReasoner reasoner,
                     OWLOntologyManager manager, boolean assertedHierarchyOnly) {
