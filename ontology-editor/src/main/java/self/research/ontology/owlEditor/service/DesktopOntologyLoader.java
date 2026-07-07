@@ -518,7 +518,13 @@ public class DesktopOntologyLoader {
                         owlFilePath.toString());
             }
 
-            boolean assertedOnly = !desktopMode && skipReasonerPrecompute;
+            // Protege-parity: show the asserted hierarchy immediately (no reasoner), same as
+            // Cloud fast-open. Precomputing a structural reasoner over the whole ontology here
+            // made every top-level/count query on Desktop pay reasoner.getSuperClasses() calls
+            // per candidate class - for large ontologies (GO/ChEBI, 50k-90k classes) that alone
+            // took minutes. The "Start Reasoner" plugin builds its own reasoner independently
+            // (ReasonerController -> ReasonerService.getReasoner) and is unaffected.
+            boolean assertedOnly = skipReasonerPrecompute;
             OWLReasoner reasoner = null;
             if (!assertedOnly) {
                 reasoner = new StructuralReasonerFactory().createNonBufferingReasoner(ontology);

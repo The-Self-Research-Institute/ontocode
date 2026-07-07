@@ -45,6 +45,7 @@ public class HierarchySnapshotBuilder {
     public List<OntologyDto.TreeNode> buildTopLevel(OWLOntology ont, OWLReasoner reasoner, int limit, int offset,
                                                     Imports importsScope) {
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
+        Map<OWLClass, Set<OWLClass>> childrenIndex = assertedChildrenIndex(ont, importsScope);
         return reasoner
                 .getSubClasses(df.getOWLThing(), true)
                 .entities()
@@ -54,7 +55,7 @@ public class HierarchySnapshotBuilder {
                 .sorted(Comparator.comparing(c -> getLabel(ont, c, importsScope).toLowerCase(Locale.ROOT)))
                 .skip(Math.max(0, offset))
                 .limit(Math.max(1, limit))
-                .map(c -> toTreeNode(ont, reasoner, c, null, importsScope))
+                .map(c -> toTreeNode(ont, reasoner, c, null, importsScope, childrenIndex))
                 .collect(Collectors.toList());
     }
 
@@ -76,11 +77,12 @@ public class HierarchySnapshotBuilder {
 
     public List<OntologyDto.TreeNode> buildTopLevelAsserted(OWLOntology ont, int limit, int offset,
                                                             Imports importsScope) {
+        Map<OWLClass, Set<OWLClass>> childrenIndex = assertedChildrenIndex(ont, importsScope);
         return assertedTopLevelCandidates(ont, importsScope).stream()
                 .sorted(Comparator.comparing(c -> getLabel(ont, c, importsScope).toLowerCase(Locale.ROOT)))
                 .skip(Math.max(0, offset))
                 .limit(Math.max(1, limit))
-                .map(c -> toTreeNodeAsserted(ont, c, null, importsScope))
+                .map(c -> toTreeNodeAsserted(ont, c, null, importsScope, childrenIndex))
                 .collect(Collectors.toList());
     }
 
@@ -140,11 +142,12 @@ public class HierarchySnapshotBuilder {
                                                     Imports importsScope) {
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
         OWLClass parent = df.getOWLClass(IRI.create(parentIri));
-        return collectAssertedChildClasses(ont, parent, importsScope).stream()
+        Map<OWLClass, Set<OWLClass>> childrenIndex = assertedChildrenIndex(ont, importsScope);
+        return childrenIndex.getOrDefault(parent, Set.of()).stream()
                 .sorted(Comparator.comparing(c -> getLabel(ont, c, importsScope).toLowerCase(Locale.ROOT)))
                 .skip(Math.max(0, offset))
                 .limit(Math.max(1, limit))
-                .map(c -> toTreeNode(ont, reasoner, c, parentIri, importsScope))
+                .map(c -> toTreeNode(ont, reasoner, c, parentIri, importsScope, childrenIndex))
                 .collect(Collectors.toList());
     }
 
@@ -152,22 +155,14 @@ public class HierarchySnapshotBuilder {
      * Precomputes direct children for every named class parent (Protégé asserted hierarchy).
      */
     public Map<String, List<OntologyDto.TreeNode>> buildChildrenIndex(OWLOntology ont, OWLReasoner reasoner) {
-        Map<String, Set<OWLClass>> raw = new HashMap<>();
-        for (OWLClass cls : ont.getClassesInSignature(Imports.EXCLUDED)) {
-            if (cls.isBuiltIn() || cls.isOWLNothing()) {
-                continue;
-            }
-            for (OWLClass parent : structuralNamedParents(ont, cls, Imports.EXCLUDED)) {
-                raw.computeIfAbsent(parent.getIRI().toString(), k -> new LinkedHashSet<>()).add(cls);
-            }
-        }
+        Map<OWLClass, Set<OWLClass>> childrenIndex = assertedChildrenIndex(ont, Imports.EXCLUDED);
 
         Map<String, List<OntologyDto.TreeNode>> index = new HashMap<>();
-        for (Map.Entry<String, Set<OWLClass>> e : raw.entrySet()) {
-            String parentIri = e.getKey();
+        for (Map.Entry<OWLClass, Set<OWLClass>> e : childrenIndex.entrySet()) {
+            String parentIri = e.getKey().getIRI().toString();
             List<OntologyDto.TreeNode> nodes = e.getValue().stream()
                     .sorted(Comparator.comparing(c -> getLabel(ont, c, Imports.EXCLUDED).toLowerCase(Locale.ROOT)))
-                    .map(c -> toTreeNode(ont, reasoner, c, parentIri, Imports.EXCLUDED))
+                    .map(c -> toTreeNode(ont, reasoner, c, parentIri, Imports.EXCLUDED, childrenIndex))
                     .collect(Collectors.toList());
             index.put(parentIri, nodes);
         }
@@ -175,26 +170,24 @@ public class HierarchySnapshotBuilder {
     }
 
     /**
-     * Protégé asserted children: direct subClassOf plus classes defined as equivalent to
-     * (Parent ⊓ …) or subClassOf (Parent ⊓ …).
+     * One-pass parent -&gt; children index over the WHOLE ontology (Protégé asserted semantics:
+     * direct subClassOf plus equivalentClass/intersectionOf-derived membership, same as
+     * {@link #structuralNamedParents} inverted). Building this once per request and reusing it
+     * for every rendered node is O(totalClasses) total instead of O(totalClasses) PER rendered
+     * node - on a 50k-class ontology that's the difference between milliseconds and minutes,
+     * and unlike a subClassOf-only shortcut it still finds equivalentClass-only children.
      */
-    private Set<OWLClass> collectAssertedChildClasses(OWLOntology ont, OWLClass parent, Imports importsScope) {
-        Set<OWLClass> children = new LinkedHashSet<>();
-        ont.subClassAxiomsForSuperClass(parent)
-                .map(OWLSubClassOfAxiom::getSubClass)
-                .filter(ce -> !ce.isAnonymous() && !ce.isOWLNothing())
-                .map(OWLClassExpression::asOWLClass)
-                .forEach(children::add);
-
+    private Map<OWLClass, Set<OWLClass>> assertedChildrenIndex(OWLOntology ont, Imports importsScope) {
+        Map<OWLClass, Set<OWLClass>> index = new HashMap<>();
         for (OWLClass cls : ont.getClassesInSignature(importsScope)) {
-            if (cls.isBuiltIn() || cls.isOWLNothing() || cls.equals(parent)) {
+            if (cls.isBuiltIn() || cls.isOWLNothing()) {
                 continue;
             }
-            if (structuralNamedParents(ont, cls, importsScope).contains(parent)) {
-                children.add(cls);
+            for (OWLClass parent : structuralNamedParents(ont, cls, importsScope)) {
+                index.computeIfAbsent(parent, k -> new LinkedHashSet<>()).add(cls);
             }
         }
-        return children;
+        return index;
     }
 
     /** Returns true when the class is declared in the active (non-imported) ontology. */
@@ -264,14 +257,14 @@ public class HierarchySnapshotBuilder {
     }
 
     private OntologyDto.TreeNode toTreeNodeAsserted(OWLOntology ont, OWLClass cls, String parentIri,
-                                                    Imports importsScope) {
+                                                    Imports importsScope, Map<OWLClass, Set<OWLClass>> childrenIndex) {
         String iri = cls.getIRI().toString();
         String label = getLabel(ont, cls, importsScope);
         String description = getAnnotation(ont, cls, "http://purl.obolibrary.org/obo/IAO_0000115", importsScope);
         if (description == null) {
             description = getAnnotation(ont, cls, "http://www.w3.org/2000/01/rdf-schema#comment", importsScope);
         }
-        boolean hasChildren = hasDirectChildren(ont, cls, importsScope);
+        boolean hasChildren = childrenIndex.containsKey(cls);
         List<Map<String, String>> equivalentClasses = getEquivalentClasses(ont, cls);
 
         OntologyDto.TreeNode node = new OntologyDto.TreeNode();
@@ -290,14 +283,15 @@ public class HierarchySnapshotBuilder {
     }
 
     private OntologyDto.TreeNode toTreeNode(OWLOntology ont, OWLReasoner reasoner,
-                                            OWLClass cls, String parentIri, Imports importsScope) {
+                                            OWLClass cls, String parentIri, Imports importsScope,
+                                            Map<OWLClass, Set<OWLClass>> childrenIndex) {
         String iri = cls.getIRI().toString();
         String label = getLabel(ont, cls, importsScope);
         String description = getAnnotation(ont, cls, "http://purl.obolibrary.org/obo/IAO_0000115", importsScope);
         if (description == null) {
             description = getAnnotation(ont, cls, "http://www.w3.org/2000/01/rdf-schema#comment", importsScope);
         }
-        boolean hasChildren = hasDirectChildren(ont, cls, importsScope);
+        boolean hasChildren = childrenIndex.containsKey(cls);
         List<Map<String, String>> equivalentClasses = getEquivalentClasses(ont, cls);
 
         OntologyDto.TreeNode node = new OntologyDto.TreeNode();
@@ -313,10 +307,6 @@ public class HierarchySnapshotBuilder {
             node.setSourceOntology(findSourceOntologyIri(ont, cls));
         }
         return node;
-    }
-
-    private boolean hasDirectChildren(OWLOntology ont, OWLClass cls, Imports importsScope) {
-        return !collectAssertedChildClasses(ont, cls, importsScope).isEmpty();
     }
 
     private String getLabel(OWLOntology ont, OWLClass cls, Imports importsScope) {
