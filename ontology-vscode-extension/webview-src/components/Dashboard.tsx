@@ -2719,6 +2719,25 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       const payload = await fetchWithReasoner(effectiveReasoner);
 
+      // Backend signals the ontology is logically inconsistent — reasoning cannot
+      // proceed. Tell the user instead of silently showing an empty tree.
+      if (payload?.inconsistent) {
+        setInferredClassHierarchy([]);
+        showNotification(
+          payload?.message ||
+            "The ontology is inconsistent — reasoning cannot proceed. Use 'Explain inconsistency' to find the conflicting axioms.",
+          "error",
+        );
+        return;
+      }
+      // Backend converted an error into a friendly message with success:false —
+      // surface it rather than rendering an empty hierarchy.
+      if (payload && payload.success === false && (payload.message || payload.error)) {
+        setInferredClassHierarchy([]);
+        showNotification(payload.message || payload.error, "error");
+        return;
+      }
+
       // Backend signals ontology is too large — retry with STRUCTURAL (no inference, always fast)
       if (payload?.tooLargeForReasoner && effectiveReasoner !== 'STRUCTURAL') {
         const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
@@ -2963,6 +2982,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     setIsReasonerLoading(false);
     setReasonerResults(null);
     notificationService.success("Reasoner Stopped", "Reasoner session has been disposed");
+  }, [projectId]);
+
+  // Reasoner state belongs to a single project — reset when switching projects so the
+  // Start button isn't left permanently disabled by a stale isReasonerRunning flag.
+  useEffect(() => {
+    setIsReasonerRunning(false);
+    setIsReasonerLoading(false);
+    setReasonerResults(null);
+    setInferredClassHierarchy([]);
   }, [projectId]);
 
   const toggleReasonerSync = useCallback(() => {

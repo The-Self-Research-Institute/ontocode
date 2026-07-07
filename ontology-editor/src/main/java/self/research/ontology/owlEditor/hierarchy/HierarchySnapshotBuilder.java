@@ -84,6 +84,39 @@ public class HierarchySnapshotBuilder {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Flat list of every named class with its asserted parents — OWLAPI equivalent of the
+     * SPARQL allClasses query used by the graph view. Reads the live in-memory model, so on
+     * desktop it reflects mutations immediately instead of waiting for the deferred Fuseki sync.
+     */
+    public List<OntologyDto.TreeNode> buildAllClasses(OWLOntology ont, int limit, Imports importsScope) {
+        List<OntologyDto.TreeNode> result = new ArrayList<>();
+        for (OWLClass cls : ont.getClassesInSignature(importsScope)) {
+            if (cls.isBuiltIn() || cls.isOWLNothing() || cls.isOWLThing()) {
+                continue;
+            }
+            OntologyDto.TreeNode node = new OntologyDto.TreeNode();
+            node.setId(cls.getIRI().toString());
+            node.setLabel(getLabel(ont, cls, importsScope));
+            String description = getAnnotation(ont, cls, "http://www.w3.org/2000/01/rdf-schema#comment", importsScope);
+            node.setDescription(description == null ? "" : description);
+            node.setHasChildren(true);
+            List<String> parents = structuralNamedParents(ont, cls, importsScope).stream()
+                    .map(p -> p.getIRI().toString())
+                    .collect(Collectors.toList());
+            if (!parents.isEmpty()) {
+                node.setSubClassOf(parents);
+                node.setParent(parents.get(0));
+            }
+            result.add(node);
+            if (result.size() >= Math.max(1, limit)) {
+                break;
+            }
+        }
+        result.sort(Comparator.comparing(n -> (n.getLabel() == null ? n.getId() : n.getLabel()).toLowerCase(Locale.ROOT)));
+        return result;
+    }
+
     private Set<OWLClass> assertedTopLevelCandidates(OWLOntology ont, Imports importsScope) {
         Set<OWLClass> roots = new LinkedHashSet<>();
         for (OWLClass cls : ont.getClassesInSignature(importsScope)) {
