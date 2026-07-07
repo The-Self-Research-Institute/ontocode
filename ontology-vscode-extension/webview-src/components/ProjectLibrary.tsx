@@ -946,19 +946,21 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       {/* Header */}
       <div className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
-            <div className="flex items-center gap-4">
-              <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0">
                 <ArrowLeft size={20} className="text-gray-600" />
               </button>
-              <div>
-                <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{projectName}</h1>
+              <div className="min-w-0">
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate" title={projectName}>
+                  {projectName}
+                </h1>
                 <p className="text-xs sm:text-sm text-gray-500">Project Library</p>
               </div>
             </div>
 
             {storageUsage && (
-              <div className="flex flex-col gap-1 min-w-0 sm:min-w-[180px]">
+              <div className="flex flex-col gap-1 min-w-0 sm:min-w-[180px] flex-shrink-0">
                 <div className="flex items-center justify-between text-xs text-gray-500">
                   <span>{storageUsage.usedMB} MB used</span>
                   <span>{storageUsage.limitGB === -1 ? "Unlimited" : `${storageUsage.limitGB} GB`}</span>

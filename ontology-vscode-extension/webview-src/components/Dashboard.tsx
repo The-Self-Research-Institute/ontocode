@@ -16422,8 +16422,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0 min-w-0 overflow-hidden">
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between px-2 sm:px-4 py-1.5 gap-2 sm:gap-4 min-w-0">
-            <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 flex-1 min-w-0">
+          <div className="flex flex-col px-2 sm:px-4 py-1.5 gap-2 min-w-0">
+            <div className="custom-scrollbar flex items-center flex-nowrap gap-x-1 flex-1 min-w-0 overflow-x-auto">
               {visibleMainTabs.map((tabId) => {
                 const tab = ALL_MAIN_TABS[tabId];
                 if (!tab) return null;
@@ -16438,7 +16438,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 );
               })}
             </div>
-            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0 flex-wrap justify-end min-w-0">
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0 flex-wrap justify-start min-w-0">
               {isCloudDeployment && projectId && (
                 <button
                   onClick={() => {
@@ -16638,12 +16638,14 @@ const Dashboard: React.FC<DashboardProps> = ({
           />
         )}
 
-        {/* Mobile: stack hierarchy above details. Desktop: each panel scrolls independently inside itself. */}
-        <main className="flex flex-1 flex-col md:flex-row md:overflow-hidden min-h-0">
+        {/* Mobile: stack hierarchy above details, page scrolls if both need more room than fits.
+            Desktop: side-by-side row with a guaranteed min height; page scrolls if the window is too short to fit it. */}
+        <main className="flex flex-1 flex-col overflow-y-auto md:flex-row min-h-0">
           {mainTab === "Entities" ? (
             <>
-              {/* Hierarchy panel — flex column, fixed height on desktop so inner overflow-y-auto works */}
-              <div className="w-full md:w-auto flex-shrink-0 flex flex-col max-h-[42dvh] md:max-h-none md:h-full overflow-hidden">
+              {/* Hierarchy panel — guaranteed min height on mobile so the tree stays usable
+                  even with the search/filter chrome above it; fixed height on desktop. */}
+              <div className="w-full md:w-auto flex-shrink-0 flex flex-col min-h-[75dvh] max-h-[80dvh] md:min-h-[600px] md:max-h-none md:h-full overflow-hidden">
                 <EntityHierarchy
                   entitiesTab={entitiesTab}
                   filteredData={filteredData}
@@ -16694,8 +16696,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 />
               </div>
 
-              {/* Details panel — scrolls within itself on desktop */}
-              <section className="flex-1 min-w-0 overflow-hidden p-2 bg-slate-200 flex flex-col min-h-0">
+              {/* Details panel — guaranteed min height on mobile (stacked below hierarchy),
+                  scrolls within itself on desktop */}
+              <section className="flex-1 min-w-0 min-h-[90dvh] md:min-h-[600px] overflow-hidden p-2 bg-slate-200 flex flex-col">
                 <div className="flex-1 min-w-0 min-h-0 overflow-y-auto flex flex-col">
                   <DetailsPanel
                     selectedItem={selectedItem}
