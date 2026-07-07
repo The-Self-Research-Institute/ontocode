@@ -239,6 +239,7 @@ type ExtensionMessage =
     | { type: 'downloadOntology'; url: string; filename: string }
     | { type: 'downloadCurrentOntology' }
     | { type: 'downloadFile'; content: string; filename: string; format: string }
+    | { type: 'openExternalUrl'; url: string } // Open a URL in the OS default browser (webview navigation is sandboxed)
     | { type: 'fileLoaded'; projectId: string } // File selected from menu
     | { type: 'requestCollaborationStatus' } // Request current collaboration status
     | { type: 'showNotification'; notification: { type: string; title: string; message: string; actions?: string[] } } // System notification
@@ -853,6 +854,15 @@ class OntoCodePanel {
                         break;
                     case 'downloadFile':
                         this.handleDownloadFile(message.content, message.filename);
+                        break;
+                    case 'openExternalUrl':
+                        // VS Code webviews are sandboxed iframes — a programmatic
+                        // window.location.href / window.open to an external URL is silently
+                        // blocked. The webview must postMessage here instead so the extension
+                        // host can hand the URL to the OS's default browser.
+                        if (message.url) {
+                            vscode.env.openExternal(vscode.Uri.parse(message.url));
+                        }
                         break;
                     case 'fileLoaded':
                         // User selected a file from the File menu
