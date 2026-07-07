@@ -590,6 +590,19 @@ public class ReasonerController {
                 ReasonerType finalType = type;
                 Future<Map<String, Object>> future = executor.submit(() -> {
                     OWLReasoner reasoner = reasonerService.getReasoner(ontology, finalType);
+
+                    // Inconsistent ontologies cannot be classified — every reasoner call
+                    // throws InconsistentOntologyException. Return an explicit signal so
+                    // the UI can tell the user instead of rendering an empty tree.
+                    if (finalType != ReasonerType.STRUCTURAL && !reasoner.isConsistent()) {
+                        Map<String, Object> inconsistent = new HashMap<>();
+                        inconsistent.put("hierarchy", List.of());
+                        inconsistent.put("reasonerType", finalType.getDisplayName());
+                        inconsistent.put("totalClasses", 0);
+                        inconsistent.put("inconsistent", true);
+                        return inconsistent;
+                    }
+
                     OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
                     OWLClass thing = df.getOWLThing();
                     OWLClass nothing = df.getOWLNothing();
@@ -613,6 +626,17 @@ public class ReasonerController {
                 });
 
                 Map<String, Object> result = future.get(HIERARCHY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                if (Boolean.TRUE.equals(result.get("inconsistent"))) {
+                    log.warn("Ontology for project {} is inconsistent — cannot build inferred hierarchy", projectId);
+                    return ResponseEntity.ok(Map.of(
+                            "success", false, "projectId", projectId,
+                            "reasonerType", result.get("reasonerType"),
+                            "hierarchy", List.of(),
+                            "inconsistent", true,
+                            "message", "The ontology is inconsistent — reasoning cannot proceed. "
+                                    + "Use 'Explain inconsistency' to find the conflicting axioms."
+                    ));
+                }
                 @SuppressWarnings("unchecked")
                 List<Map<String, Object>> builtHierarchy = (List<Map<String, Object>>) result.get("hierarchy");
                 editorReasonerCache.putHierarchy(cacheKey, new EditorReasonerCacheService.HierarchyCacheEntry(

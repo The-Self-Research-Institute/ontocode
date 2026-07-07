@@ -92,6 +92,13 @@ export const ontologyMutationService = {
         username: actor.username,
         sessionId: sessionId || `session_${Date.now()}`
       });
+      // Let open views (e.g. Graph View plugin) know the ontology changed so they
+      // can drop their caches and refetch.
+      try {
+        window.dispatchEvent(new CustomEvent('ontology:mutated', {
+          detail: { projectId, ops: ops.map(o => o.type) },
+        }));
+      } catch { /* non-fatal */ }
     } catch (err: any) {
       if (err?.status === 403 && err?.data?.requiresUpgrade) {
         const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');

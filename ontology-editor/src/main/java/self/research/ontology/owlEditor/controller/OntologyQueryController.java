@@ -387,6 +387,14 @@ public class OntologyQueryController {
     @GetMapping("/classes/all/{projectId:.+}")
     public ResponseEntity<?> allClasses(@PathVariable String projectId,
                                         @RequestParam(defaultValue = "50000") int limit) {
+        // Desktop fast path: read the live OWLAPI model so classes added in this session
+        // appear immediately (Fuseki sync is deferred on desktop). Skipped when a draft
+        // overlay is active — draft reads must merge Fuseki state.
+        if (preferOwlApiPath(projectId)
+                && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            return ResponseEntity.ok(Map.of("success", true, "classes",
+                    desktopHierarchyService.allClasses(projectId, limit)));
+        }
         try {
             return ResponseEntity.ok(Map.of("success", true, "classes",
                     queryService.allClasses(projectId, limit)));

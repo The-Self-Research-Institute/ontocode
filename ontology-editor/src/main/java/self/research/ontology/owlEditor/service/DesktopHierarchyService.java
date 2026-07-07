@@ -84,6 +84,13 @@ public class DesktopHierarchyService {
             .orElse(0);
     }
 
+    /** Flat all-classes list for the graph view — served from the live in-memory model. */
+    public List<OntologyDto.TreeNode> allClasses(String projectId, int limit) {
+        return ontologyCache.get(projectId)
+            .map(c -> snapshotBuilder.buildAllClasses(c.ontology(), limit, Imports.EXCLUDED))
+            .orElse(Collections.emptyList());
+    }
+
     public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset) {
         return children(projectId, parentIri, limit, offset, Imports.EXCLUDED);
     }

@@ -1392,7 +1392,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * DATA FETCHING - Optimized GraphDB Direct Approach
    * ========================================================================
    */
-  const fetchGraphData = useCallback(async () => {
+  const fetchGraphData = useCallback(async (opts?: { bypassCache?: boolean }) => {
     // Guard: Don't fetch if projectId is not set
     if (!projectId) {
       console.warn('[AdvancedGraphView D3] ⚠️ No projectId provided, skipping data fetch');
@@ -1413,18 +1413,23 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
       // Try sessionStorage cache first. Session-scoped (cleared on tab close).
       // Short TTL means users editing the ontology pick up changes quickly.
+      // Explicit Refresh and ontology mutations bypass the cache entirely.
       let graphData: any = null;
-      try {
-        const cachedRaw = sessionStorage.getItem(cacheKey);
-        if (cachedRaw) {
-          const cached = JSON.parse(cachedRaw);
-          if (cached && typeof cached.timestamp === 'number' && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.data) {
-            console.log('[AdvancedGraphView D3] ⚡ Using cached graph data (age:', Math.round((Date.now() - cached.timestamp) / 1000), 's)');
-            graphData = cached.data;
+      if (opts?.bypassCache) {
+        try { sessionStorage.removeItem(cacheKey); } catch { /* ignore */ }
+      } else {
+        try {
+          const cachedRaw = sessionStorage.getItem(cacheKey);
+          if (cachedRaw) {
+            const cached = JSON.parse(cachedRaw);
+            if (cached && typeof cached.timestamp === 'number' && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.data) {
+              console.log('[AdvancedGraphView D3] ⚡ Using cached graph data (age:', Math.round((Date.now() - cached.timestamp) / 1000), 's)');
+              graphData = cached.data;
+            }
           }
+        } catch (cacheErr) {
+          console.warn('[AdvancedGraphView D3] Cache read failed, fetching fresh:', cacheErr);
         }
-      } catch (cacheErr) {
-        console.warn('[AdvancedGraphView D3] Cache read failed, fetching fresh:', cacheErr);
       }
 
       const apiBaseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL;
@@ -4483,6 +4488,31 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     fetchGraphData();
   }, [projectId]); // Remove fetchGraphData from dependencies to avoid stale closure issues
 
+  // Refetch (bypassing the sessionStorage cache) when classes are created/deleted
+  // elsewhere in the app — the entity editor dispatches these window events.
+  useEffect(() => {
+    if (!projectId) return;
+    let refetchQueued = false;
+    const handleMutation = () => {
+      if (refetchQueued) return;
+      refetchQueued = true;
+      // Small delay so rapid successive mutations coalesce into one refetch.
+      setTimeout(() => {
+        refetchQueued = false;
+        console.log('[AdvancedGraphView] 🔄 Ontology mutated elsewhere — refetching graph data');
+        fetchGraphData({ bypassCache: true });
+      }, 500);
+    };
+    window.addEventListener('graph-view:class-created', handleMutation as EventListener);
+    window.addEventListener('graph-view:class-deleted', handleMutation as EventListener);
+    window.addEventListener('ontology:mutated', handleMutation as EventListener);
+    return () => {
+      window.removeEventListener('graph-view:class-created', handleMutation as EventListener);
+      window.removeEventListener('graph-view:class-deleted', handleMutation as EventListener);
+      window.removeEventListener('ontology:mutated', handleMutation as EventListener);
+    };
+  }, [projectId, fetchGraphData]);
+
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
@@ -5052,7 +5082,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           {/* Toolbar */}
           <div style={styles.toolbar}>
         {/* Primary actions */}
-        <button onClick={() => fetchGraphData()} disabled={loading} style={styles.btnPrimary} title="Refresh graph">
+        <button onClick={() => fetchGraphData({ bypassCache: true })} disabled={loading} style={styles.btnPrimary} title="Refresh graph">
           <RefreshCw size={16} className={loading ? 'spinning' : ''} />
           Refresh
         </button>
