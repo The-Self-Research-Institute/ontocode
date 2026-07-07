@@ -116,7 +116,15 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
   const handleDownload = () => {
     setDownloading(true);
     const clientOs = detectClientOs();
-    window.location.href = `${RELEASE_BASE}/${PLATFORM}?clientOs=${encodeURIComponent(clientOs)}`;
+    const url = `${RELEASE_BASE}/${PLATFORM}?clientOs=${encodeURIComponent(clientOs)}`;
+    // VS Code webviews are sandboxed iframes — a programmatic window.location.href
+    // navigation to an external URL is silently blocked (unlike a real <a> click,
+    // which the webview host intercepts). Route through the extension host instead.
+    if (typeof window !== "undefined" && window.vscode) {
+      window.vscode.postMessage({ type: "openExternalUrl", url });
+    } else {
+      window.location.href = url;
+    }
     setTimeout(() => setDownloading(false), 3000);
   };
 
