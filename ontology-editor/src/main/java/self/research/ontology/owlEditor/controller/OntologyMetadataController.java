@@ -229,8 +229,12 @@ public class OntologyMetadataController {
         try {
             String subClass = request.get("subClass");
             String superClass = request.get("superClass");
-            metadataService.addGCI(projectId, subClass, superClass);
-            broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_ADDED, subClass, httpRequest);
+            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            String userId = request.get("userId");
+            metadataService.addGCI(projectId, subClass, superClass, draft, userId);
+            if (!draft) {
+                broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_ADDED, subClass, httpRequest);
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error adding GCI", e);
@@ -247,12 +251,16 @@ public class OntologyMetadataController {
             String oldValue = request.get("oldValue");
             String subClass = request.get("subClass");
             String superClass = request.get("superClass");
+            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            String userId = request.get("userId");
 
             if (oldValue != null) {
-                metadataService.deleteGCI(projectId, oldValue);
+                metadataService.deleteGCI(projectId, oldValue, draft, userId);
             }
-            metadataService.addGCI(projectId, subClass, superClass);
-            broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_ADDED, subClass, httpRequest);
+            metadataService.addGCI(projectId, subClass, superClass, draft, userId);
+            if (!draft) {
+                broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_ADDED, subClass, httpRequest);
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error updating GCI", e);
@@ -263,10 +271,14 @@ public class OntologyMetadataController {
     @DeleteMapping("/{projectId}/gci")
     public ResponseEntity<?> deleteGCI(@PathVariable String projectId,
                                       @RequestParam String value,
+                                      @RequestParam(required = false, defaultValue = "false") boolean draft,
+                                      @RequestParam(required = false) String userId,
                                       HttpServletRequest httpRequest) {
         try {
-            metadataService.deleteGCI(projectId, value);
-            broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_REMOVED, value, httpRequest);
+            metadataService.deleteGCI(projectId, value, draft, userId);
+            if (!draft) {
+                broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_REMOVED, value, httpRequest);
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error deleting GCI", e);

@@ -14,7 +14,10 @@ import self.research.ontology.owlEditor.repository.DraftSessionRepository;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -30,15 +33,18 @@ public class DraftPublishMergeService {
     private final StorageManager storageManager;
     private final OntologyMergeService mergeService;
     private final DraftSessionRepository sessionRepository;
+    private final MainGraphRevisionService revisionService;
 
     public DraftPublishMergeService(SparqlDatasetService datasetService,
                                     StorageManager storageManager,
                                     OntologyMergeService mergeService,
-                                    DraftSessionRepository sessionRepository) {
+                                    DraftSessionRepository sessionRepository,
+                                    MainGraphRevisionService revisionService) {
         this.datasetService = datasetService;
         this.storageManager = storageManager;
         this.mergeService = mergeService;
         this.sessionRepository = sessionRepository;
+        this.revisionService = revisionService;
     }
 
     public String captureBaselineSnapshot(String projectId, String userId) throws IOException {
@@ -160,6 +166,158 @@ public class DraftPublishMergeService {
             log.warn("[DRAFT-MERGE] Could not enrich conflict axioms: {}", e.getMessage());
             return conflicts;
         }
+    }
+
+    /**
+     * Analyse what pulling public changes into the draft would do: which entities changed
+     * only in main since the draft's baseline (safe to merge automatically) and which were
+     * also touched in the draft itself (need per-entity resolution). Read-only.
+     */
+    public Map<String, Object> analyzePull(String projectId, String userId) throws Exception {
+        Optional<DraftSession> sessionOpt = sessionRepository.findByProjectIdAndUserId(projectId, userId);
+        if (sessionOpt.isEmpty()) {
+            return noChangesResult(true);
+        }
+
+        DraftSession session = sessionOpt.get();
+        String baselineRdf = readOrEstablishBaseline(projectId, userId, session);
+        if (baselineRdf == null) {
+            // Freshly established baseline == current main, so there is nothing to pull yet.
+            return noChangesResult(false);
+        }
+
+        OWLOntology baseline = mergeService.loadOntologyFromRdf(baselineRdf);
+        String mainRdf = datasetService.exportNamedGraph(projectId, datasetService.getGraphUri(projectId), RDFFormat.RDFXML);
+        OWLOntology theirs = mergeService.loadOntologyFromRdf(mainRdf);
+        OWLOntology ours = buildOursOntology(projectId, userId, baselineRdf);
+
+        Set<String> mainTouched = mergeService.collectTouchedIris(baseline, theirs);
+        Set<String> draftTouched = mergeService.collectTouchedIris(baseline, ours);
+        Set<String> conflictIris = new LinkedHashSet<>(mainTouched);
+        conflictIris.retainAll(draftTouched);
+
+        List<Map<String, Object>> safeChanges = new ArrayList<>();
+        List<Map<String, Object>> conflicts = new ArrayList<>();
+        for (String iriStr : mainTouched) {
+            IRI iri = IRI.create(iriStr);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("entityIri", iriStr);
+            row.put("entityLabel", localName(iriStr));
+            row.put("publicAxioms", summarizeAxioms(theirs, iri));
+            if (conflictIris.contains(iriStr)) {
+                row.put("yourAxioms", summarizeAxioms(ours, iri));
+                conflicts.add(row);
+            } else {
+                safeChanges.add(row);
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("hasChanges", !mainTouched.isEmpty());
+        result.put("hasConflicts", !conflicts.isEmpty());
+        result.put("safeChanges", safeChanges);
+        result.put("conflicts", conflicts);
+        result.put("noBaseline", false);
+        return result;
+    }
+
+    /**
+     * Merge public changes into the user's draft graph via an OWLAPI three-way merge
+     * (baseline / draft / main), applying the caller's per-entity resolutions to conflicts.
+     * Entities changed only in main are copied into the draft automatically. The draft's
+     * baseline is advanced to the current main state afterwards.
+     */
+    public Map<String, Object> applyPull(String projectId, String userId,
+                                         Map<String, ConflictResolution> resolutions) throws Exception {
+        Optional<DraftSession> sessionOpt = sessionRepository.findByProjectIdAndUserId(projectId, userId);
+        if (sessionOpt.isEmpty()) {
+            throw new IllegalStateException("No draft session found for project " + projectId);
+        }
+        DraftSession session = sessionOpt.get();
+        String baselineRdf = readOrEstablishBaseline(projectId, userId, session);
+        if (baselineRdf == null) {
+            return Map.of("success", true, "mergedCount", 0, "conflictsResolved", 0,
+                    "message", "Draft baseline established — nothing to pull yet");
+        }
+
+        OWLOntology baseline = mergeService.loadOntologyFromRdf(baselineRdf);
+        String mainRdf = datasetService.exportNamedGraph(projectId, datasetService.getGraphUri(projectId), RDFFormat.RDFXML);
+        OWLOntology theirs = mergeService.loadOntologyFromRdf(mainRdf);
+        OWLOntology ours = buildOursOntology(projectId, userId, baselineRdf);
+
+        Set<String> mainTouched = mergeService.collectTouchedIris(baseline, theirs);
+        Set<String> draftTouched = mergeService.collectTouchedIris(baseline, ours);
+        Set<String> conflictIris = new LinkedHashSet<>(mainTouched);
+        conflictIris.retainAll(draftTouched);
+
+        // NOTE the swapped roles versus publishWithThreeWayMerge: here "ours" (the source of
+        // changes being applied) is main/theirs, and "theirs" (the ontology mutated in place)
+        // is the draft. So ResolutionAction.KEEP_SOURCE means "take public" and KEEP_TARGET
+        // means "keep draft" — the inverse of their meaning on the publish path.
+        OWLOntology mergedDraft = mergeService.mergeDraftPublishThreeWay(
+                baseline, theirs, ours, conflictIris, resolutions);
+
+        String mergedRdf = mergeService.saveOntologyToRdfXml(mergedDraft);
+        datasetService.replaceNamedGraphFromRdf(
+                projectId, datasetService.getDraftGraphUri(projectId, userId), mergedRdf, RDFFormat.RDFXML);
+
+        advanceBaseline(projectId, userId, session);
+
+        int mergedCount = mainTouched.size();
+        int conflictCount = conflictIris.size();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("mergedCount", mergedCount);
+        result.put("conflictsResolved", conflictCount);
+        result.put("message", mergedCount == 0
+                ? "Your draft is already up to date with public"
+                : "Pulled " + mergedCount + " public change(s) into your draft"
+                        + (conflictCount == 0 ? "" : " (" + conflictCount + " conflict(s) resolved)"));
+        return result;
+    }
+
+    /**
+     * Returns the baseline RDF to diff against, or null if no baseline existed and one was
+     * just established (in which case baseline == current main, so nothing has "changed" yet).
+     */
+    private String readOrEstablishBaseline(String projectId, String userId, DraftSession session) throws Exception {
+        String snapshotPath = session.getBaselineSnapshotPath();
+        Path baselinePath = snapshotPath != null ? storageManager.projectDir(projectId).resolve(snapshotPath) : null;
+        if (baselinePath != null && Files.exists(baselinePath)) {
+            return Files.readString(baselinePath);
+        }
+        // Legacy session predating baseline snapshots, or the file went missing — self-heal by
+        // capturing the current main state as the new baseline.
+        log.warn("[DRAFT-MERGE] No baseline snapshot for project {} user {} — establishing one now",
+                projectId, userId);
+        advanceBaseline(projectId, userId, session);
+        return null;
+    }
+
+    private void advanceBaseline(String projectId, String userId, DraftSession session) throws IOException {
+        String newSnapshotPath = captureBaselineSnapshot(projectId, userId);
+        session.setBaselineSnapshotPath(newSnapshotPath);
+        session.setBaselineMainRevision(revisionService.getRevision(projectId));
+        session.setBaselineMainTripleCount(datasetService.countMainGraphTriples(projectId));
+        session.setBaselineAt(LocalDateTime.now());
+        sessionRepository.save(session);
+    }
+
+    private static Map<String, Object> noChangesResult(boolean noBaseline) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("hasChanges", false);
+        result.put("hasConflicts", false);
+        result.put("safeChanges", List.of());
+        result.put("conflicts", List.of());
+        result.put("noBaseline", noBaseline);
+        return result;
+    }
+
+    private static String localName(String iriStr) {
+        int hash = iriStr.lastIndexOf('#');
+        int slash = iriStr.lastIndexOf('/');
+        int idx = Math.max(hash, slash);
+        return idx >= 0 && idx < iriStr.length() - 1 ? iriStr.substring(idx + 1) : iriStr;
     }
 
     private OWLOntology buildOursOntology(String projectId, String userId, String baselineRdf) throws Exception {

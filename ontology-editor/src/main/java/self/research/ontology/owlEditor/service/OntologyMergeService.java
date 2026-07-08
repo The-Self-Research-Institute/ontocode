@@ -1429,9 +1429,21 @@ public class OntologyMergeService {
         return result;
     }
 
+    /**
+     * Clones {@code original} under a fresh, valid IRI in {@code manager} — never a truly
+     * anonymous ontology. A same-manager anonymous ontology (createOntology with no IRI) gets
+     * an auto-generated "urn:unnamed:ontology#..." placeholder IRI when later serialized via
+     * saveOntologyToRdfXml, and OWLAPI's RDF/XML writer derives a malformed default namespace
+     * from it (a literal double "#") — which Fuseki accepts as data but chokes on when the
+     * dataset's RDF/XML serializer later reflects it back as a namespace declaration, breaking
+     * every subsequent export from that dataset. A valid synthetic IRI avoids this entirely and
+     * still prevents baseline/ours/theirs from colliding IRIs within one manager.
+     */
     private OWLOntology cloneAsAnonymousOntology(OWLOntologyManager manager, OWLOntology original)
             throws OWLOntologyCreationException {
-        OWLOntology clone = manager.createOntology(original.getAxioms());
+        IRI scratchIri = IRI.create("http://ontocode.org/merge-scratch/" + java.util.UUID.randomUUID());
+        OWLOntology clone = manager.createOntology(scratchIri);
+        manager.addAxioms(clone, original.getAxioms());
         for (OWLAnnotation annotation : original.getAnnotations()) {
             manager.applyChange(new AddOntologyAnnotation(clone, annotation));
         }
@@ -1558,7 +1570,12 @@ public class OntologyMergeService {
         return theirs;
     }
 
-    private Set<String> collectTouchedIris(OWLOntology baseline, OWLOntology ours) {
+    /**
+     * Entities whose defining axioms differ between {@code baseline} and {@code modified}.
+     * Public so both the publish (draft vs main) and pull (main vs draft) directions can
+     * compute touched/conflict sets without duplicating the OWLAPI diff logic.
+     */
+    public Set<String> collectTouchedIris(OWLOntology baseline, OWLOntology ours) {
         Set<String> touched = new LinkedHashSet<>();
         for (OWLEntity entity : ours.getSignature()) {
             if (entity.isBuiltIn()) {

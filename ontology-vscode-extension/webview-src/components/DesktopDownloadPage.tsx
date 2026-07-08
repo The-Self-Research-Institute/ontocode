@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Download, Monitor, CheckCircle, ArrowLeft, Cpu, HardDrive, MemoryStick } from "lucide-react";
 import { getGatewayUrl } from "../config/deploymentConfig";
+import { isRealVSCode } from "../utils/desktop";
 import { OntoCodeLogo } from "./OntoCodeLogo";
 import { AppVersionBadge } from "./AppVersionBadge";
 
@@ -120,8 +121,11 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
     // VS Code webviews are sandboxed iframes — a programmatic window.location.href
     // navigation to an external URL is silently blocked (unlike a real <a> click,
     // which the webview host intercepts). Route through the extension host instead.
-    if (typeof window !== "undefined" && window.vscode) {
-      window.vscode.postMessage({ type: "openExternalUrl", url });
+    // Note: window.vscode alone isn't enough to detect this — the plain-browser
+    // bridge (vscodeBridge.ts) installs a same-named shim so browser code keeps
+    // working, so isRealVSCode() is needed to tell the two apart.
+    if (isRealVSCode()) {
+      window.vscode!.postMessage({ type: "openExternalUrl", url });
     } else {
       window.location.href = url;
     }

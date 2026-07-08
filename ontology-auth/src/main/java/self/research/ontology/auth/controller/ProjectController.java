@@ -1912,11 +1912,11 @@ public class ProjectController {
         @NotBlank(message = "Email is required")
         public String email;
 
-        /** Project-level role: ADMIN, EDITOR, or VIEWER */
+        /** Project-level role: ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER */
         @NotBlank(message = "Role is required")
         @Pattern(
-            regexp = "^(ADMIN|EDITOR|VIEWER)$",
-            message = "Invalid role. Must be ADMIN, EDITOR, or VIEWER"
+            regexp = "^(ADMIN|EDITOR|DRAFT_EDITOR|VIEWER)$",
+            message = "Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER"
         )
         public String role;
     }

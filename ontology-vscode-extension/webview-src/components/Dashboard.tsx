@@ -170,7 +170,6 @@ import {
 import { OntoCodeLogo } from "./OntoCodeLogo";
 import ReleaseNotesModal from "./ReleaseNotesModal";
 import DraftCopyModal from "./dialogs/DraftCopyModal";
-import PullFromPublicDialog from "./PullFromPublicDialog";
 import PRsModal from "./PRsModal";
 import DraftPRPanel from "./DraftPRPanel";
 import PullPreviewDialog from "./PullPreviewDialog";
@@ -1340,6 +1339,17 @@ const OpenFileDialog = ({
 
 
 
+/**
+ * Appends the explicit draft-scope opt-in the backend requires before reading from a
+ * user's draft graph instead of main. userId alone isn't a scope signal — it's always
+ * resolvable via the X-Ontocode-User-Id header/JWT, even on requests made while viewing
+ * Public — so omitting/blanking userId doesn't stop a read from being scoped to draft.
+ */
+function withDraftScope(url: string): string {
+  if (!ontologyMutationService.isPrivateEditMode()) return url;
+  return url + (url.includes("?") ? "&draft=true" : "?draft=true");
+}
+
 interface DashboardProps {
   onBackToProjects?: () => void;
   onGoToProjectDashboard?: () => void;
@@ -1371,6 +1381,15 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [userProjectRole, setUserProjectRole] = useState<string | null>(null);
   const isProjectViewerRole = userProjectRole === 'VIEWER';
   const isProjectDraftEditorRole = userProjectRole === 'DRAFT_EDITOR';
+  // userProjectRole is fetched asynchronously (via fetchProjectFiles) and can resolve after
+  // the initial-load promise chain that reads isProjectDraftEditorRole/isProjectViewerRole in
+  // a .then() has already captured its closure — that .then() would otherwise see stale
+  // `false` values even after the role updates. These refs always reflect the latest value
+  // for such callbacks.
+  const isProjectDraftEditorRoleRef = useRef(isProjectDraftEditorRole);
+  useEffect(() => { isProjectDraftEditorRoleRef.current = isProjectDraftEditorRole; }, [isProjectDraftEditorRole]);
+  const isProjectViewerRoleRef = useRef(isProjectViewerRole);
+  useEffect(() => { isProjectViewerRoleRef.current = isProjectViewerRole; }, [isProjectViewerRole]);
   const isViewOnlyMember =
     !isDesktop() && (
       (subscription.isFree && user?.workspaceRole != null && normalizeRole(user.workspaceRole) !== "OWNER") ||
@@ -1736,7 +1755,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [requireDraftForMembers, setRequireDraftForMembers] = useState(false);
   const [isProjectOwner, setIsProjectOwner] = useState(false);
   const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
-  const [showPullFromPublic, setShowPullFromPublic] = useState(false);
   const [showPRsModal, setShowPRsModal] = useState(false);
   const [pendingPRCount, setPendingPRCount] = useState(0);
   const isWorkspaceAdminRole = normalizeRole(user?.workspaceRole ?? "") === "ADMIN";
@@ -1850,16 +1868,16 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
   }, [projectId, user, startDraftCopySession]);
 
-  const handlePullFromPublic = useCallback(() => {
+  const handlePullComplete = useCallback(() => {
     if (!projectId) return;
-    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
-    startDraftCopySession(projectId, effectiveUserId, {
-      showModal: true,
-      onReady: () => {
-        notificationService.info("Draft Synced", "Your draft has been refreshed from the latest public version.");
-      },
-    });
-  }, [projectId, user, startDraftCopySession]);
+    notificationService.success("Pull Complete", "Public changes were merged into your draft.");
+    // The draft graph was just merged server-side — the already-loaded tree reflects the
+    // pre-merge draft content, so refresh it.
+    fetchData(projectId, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchData is declared further
+    // down this component; referencing it here in the deps array (not just the closure body)
+    // would hit the const temporal-dead-zone during this render.
+  }, [projectId]);
 
   const refreshOpenPRCount = useCallback(async () => {
     if (!projectId) return;
@@ -1930,6 +1948,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isEntityPreferencesDialogOpen, setEntityPreferencesDialogOpen] = useState(false);
   const classHierarchyRefreshInFlight = useRef(false);
   const lastClassHierarchyRefreshAt = useRef(0);
+  const classHierarchyRefreshRetryCount = useRef(0);
 
   useEffect(() => {
     hasUserSelectedFileRef.current = hasUserSelectedFile;
@@ -2860,7 +2879,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     setClassInstancesLoading(true);
     try {
       const response = await apiClient.get<any>(
-        `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`,
+        withDraftScope(`/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`),
       );
       const payload = response?.data || response;
       const instances = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
@@ -3363,6 +3382,27 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Determine if we're in admin flow (parentProjectId provided means files should be loaded from project library)
       const isAdminFlow = !!parentProjectId;
 
+      // Restore the user's last explicit sync-mode choice for this project immediately,
+      // regardless of admin/non-admin flow. The admin (file-open) flow — the common path
+      // when reopening a specific file — has no sync-mode restoration logic of its own
+      // further down, so without this it silently stays on the "public" useState default
+      // on every reload, even if the user had explicitly switched to Draft.
+      if (currentProjectId) {
+        const earlySyncModeKey = `ontocode_sync_mode_${currentProjectId}`;
+        const earlySavedSyncMode = localStorage.getItem(earlySyncModeKey);
+        if (earlySavedSyncMode !== null) {
+          const applyDirectly = earlySavedSyncMode === "public";
+          ontologyMutationService.setRealTimeSync(applyDirectly);
+          setSyncMode(applyDirectly ? "public" : "private");
+          console.log("[Dashboard] 🔍 Early syncMode restore (covers admin flow):", {
+            currentProjectId,
+            isAdminFlow,
+            earlySavedSyncMode,
+            applyDirectly,
+          });
+        }
+      }
+
       // Notify user that loading has started
       console.log(`Loading ontology "${currentProjectId}"...`);
       console.log("[Dashboard] 🔄 Fetching data for project:", currentProjectId);
@@ -3420,6 +3460,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         // Add cache-busting parameter when forceRefresh is true to bypass any HTTP/browser caching
         const cacheBuster = forceRefresh ? `?_t=${Date.now()}` : "";
+        // Explicit opt-in the backend requires before scoping reads to the draft graph —
+        // userId alone isn't a scope signal (it's always resolvable via header/JWT, even
+        // while viewing Public). See hierarchyUserId/draftScopeParam comment further below.
+        const entityDraftScopeQuery = ontologyMutationService.isPrivateEditMode()
+          ? (cacheBuster ? "&draft=true" : "?draft=true")
+          : "";
 
         // Abort any previous in-flight fetch and create a fresh controller for this load
         loadGeneration = ++fetchDataGenerationRef.current;
@@ -3654,9 +3700,16 @@ const Dashboard: React.FC<DashboardProps> = ({
           setLoadingStatusMessage("Opening ontology (fast path)…");
         }
 
+        // Explicit userId (not just JWT) so the backend can scope reads to this user's
+        // draft graph when they're drafting — mirrors how mutation calls already pass it.
+        const hierarchyUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+        // userId alone isn't a scope signal — it's always resolvable via JWT even while
+        // viewing Public. draft=true is the explicit, request-level opt-in the backend
+        // requires before it will read from the draft graph instead of main.
+        const draftScopeParam = ontologyMutationService.isPrivateEditMode() ? "&draft=true" : "";
         const topLevelClassesRes = (!desktopOwlapiReady && desktopHierarchyDeferredForProject.current === currentProjectId) ? null : await apiClient
           .get<any>(
-            `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+            `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000&userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
             undefined,
             { signal },
           )
@@ -3800,7 +3853,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // that could delay the top-level response and trigger the retry loop.
         if (!desktopOwlapiReady && !isStaleLoad()) {
           apiClient
-            .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
+            .get<any>(withDraftScope(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`), undefined, { signal })
             .then((instanceCountsRes: any) => {
               if (isStaleLoad()) return;
               const payload = instanceCountsRes?.data || instanceCountsRes;
@@ -3827,7 +3880,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               await new Promise((r) => setTimeout(r, 2000));
               try {
                 const retry = await apiClient.get<any>(
-                  `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+                  `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000&userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
                   undefined,
                   { signal },
                 );
@@ -3871,7 +3924,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 applyDeclarationCounts(cs);
                 if (cs?.hierarchyReady ?? cs?.owlapiReady) {
                   const retry = await apiClient.get<any>(
-                    `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+                    `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000&userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
                     undefined,
                     { signal },
                   );
@@ -4010,7 +4063,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               }
             }
             const res = await apiClient.get<any>(
-              `/api/ontology/metadata/${encodedProjectId}${cacheBuster}`,
+              `/api/ontology/metadata/${encodedProjectId}${cacheBuster}${cacheBuster ? "&" : "?"}userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}`,
               undefined,
               { signal },
             );
@@ -4028,7 +4081,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           await desktopOwlApiGate;
           if (isStaleLoad()) return;
           try {
-            const fetchUrl = `/api/ontology/properties/${encodedProjectId}${cacheBuster}`;
+            const fetchUrl = `/api/ontology/properties/${encodedProjectId}${cacheBuster}${entityDraftScopeQuery}`;
             const res = isDesktop()
               ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
               : await apiClient.get<any>(fetchUrl, undefined, { signal });
@@ -4048,7 +4101,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           await desktopOwlApiGate;
           if (isStaleLoad()) return;
           try {
-            const fetchUrl = `/api/ontology/individuals/${encodedProjectId}${cacheBuster}`;
+            const fetchUrl = `/api/ontology/individuals/${encodedProjectId}${cacheBuster}${entityDraftScopeQuery}`;
             const res = isDesktop()
               ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
               : await apiClient.get<any>(fetchUrl, undefined, { signal });
@@ -4074,7 +4127,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           await desktopOwlApiGate;
           if (isStaleLoad()) return;
           try {
-            const fetchUrl = `/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`;
+            const fetchUrl = `/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}${entityDraftScopeQuery}`;
             const res = isDesktop()
               ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
               : await apiClient.get<any>(fetchUrl, undefined, { signal });
@@ -4103,7 +4156,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           await desktopOwlApiGate;
           if (isStaleLoad()) return;
           try {
-            const fetchUrl = `/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`;
+            const fetchUrl = `/api/ontology/datatypes/${encodedProjectId}${cacheBuster}${entityDraftScopeQuery}`;
             const res = isDesktop()
               ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
               : await apiClient.get<any>(fetchUrl, undefined, { signal });
@@ -4190,12 +4243,17 @@ const Dashboard: React.FC<DashboardProps> = ({
             const syncModeKey = projectId ? `ontocode_sync_mode_${projectId}` : null;
             const savedSyncMode = syncModeKey ? localStorage.getItem(syncModeKey) : null;
             let shouldApplyDirectly: boolean;
-            if (isNonWorkspaceMode || isShared) {
+            if (isNonWorkspaceMode) {
+              // Non-workspace files have no durable draft storage — always apply directly
+              // to avoid silently losing edits when navigating away.
               shouldApplyDirectly = true;
             } else if (savedSyncMode !== null) {
-              // Trust localStorage — it is written on every mode change, so it reflects the
-              // most recent choice made on any device that also had a copy of this browser storage.
+              // Trust the user's own explicit choice for this project on this device, even if
+              // shared — a reload must not silently revert a mode the user just picked via the
+              // toggle (localStorage is written on every explicit mode change).
               shouldApplyDirectly = savedSyncMode === "public";
+            } else if (isShared) {
+              shouldApplyDirectly = true;
             } else if (projectId) {
               // First visit on this device: fetch from DB (one-time cost) for cross-device restore.
               const dbSyncMode = await userPreferencesService.getSyncMode(projectId);
@@ -4208,6 +4266,17 @@ const Dashboard: React.FC<DashboardProps> = ({
             } else {
               shouldApplyDirectly = true;
             }
+            // TEMP DIAGNOSTIC: confirming why sync mode isn't restoring on reload.
+            console.warn("[Dashboard] 🔍 syncMode restore decision:", {
+              isNonWorkspaceMode,
+              initialProjectId,
+              workspaceId: user?.workspaceId,
+              isDesktopFlag: isDesktop(),
+              isShared,
+              syncModeKey,
+              savedSyncMode,
+              shouldApplyDirectly,
+            });
             ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
             ontologyMutationService.setDraftRequired(false); // Clear any stale block from a prior project.
             setSyncMode(shouldApplyDirectly ? "public" : "private");
@@ -4226,7 +4295,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   setRequireDraftForMembers(rdm);
                   setIsProjectOwner(isOwner);
                   refreshOpenPRCount();
-                  if ((rdm || isProjectDraftEditorRole) && !isOwner && !isProjectViewerRole) {
+                  if ((rdm || isProjectDraftEditorRoleRef.current) && !isOwner && !isProjectViewerRoleRef.current) {
                     if (shouldApplyDirectly) {
                       // Member has no saved draft preference (public view) — block direct mutations
                       // so they must explicitly switch to Draft Mode before editing.
@@ -4365,7 +4434,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId) return;
     try {
       console.log("[Dashboard] 🔄 Refreshing ontology annotations for project:", projectId);
-      const response = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}/annotations`);
+      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${encodeProjectId(projectId)}/annotations`));
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       console.log("[Dashboard] 📥 Raw annotations data received:", data);
@@ -4381,7 +4450,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const refreshOntologyImports = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}/imports`);
+      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${encodeProjectId(projectId)}/imports`));
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       const validImports = Array.isArray(data) ? data : [];
@@ -4400,7 +4469,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const refreshPrefixes = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/ontology/prefixes/${encodeProjectId(projectId)}`);
+      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/ontology/prefixes/${encodeProjectId(projectId)}`));
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
       setPrefixMappings(normalizePrefixMappings(data));
@@ -4418,7 +4487,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
       setIsEditingOntologyId(false);
       await apiClient
-        .get(`/api/ontology/metadata/${projectId}`)
+        .get(withDraftScope(`/api/ontology/metadata/${projectId}`))
         .then((res) => {
           const data = res?.data || res;
           setMetadata({ ...(metadata || {}), ...data });
@@ -4878,6 +4947,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
         subClass: axiomDefinition,
         superClass: axiomSuperClass || "",
+        draft: ontologyMutationService.resolveUseDraft(),
+        userId: resolveMutationActor(user?.userId || user?.email, user?.username).userId,
       });
 
       // Immediately update the UI with the new axiom
@@ -4959,6 +5030,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         oldValue,
         subClass,
         superClass: superClass || "",
+        draft: ontologyMutationService.resolveUseDraft(),
+        userId: resolveMutationActor(user?.userId || user?.email, user?.username).userId,
       });
 
       // Immediately update UI
@@ -5011,7 +5084,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      await apiClient.delete(`/api/ontology/metadata/${projectId}/gci?value=${encodeURIComponent(value)}`);
+      const gciDeleteActorId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      await apiClient.delete(
+        `/api/ontology/metadata/${projectId}/gci?value=${encodeURIComponent(value)}` +
+          `&draft=${ontologyMutationService.resolveUseDraft()}&userId=${encodeURIComponent(gciDeleteActorId)}`,
+      );
 
       // Immediately update UI
       const updatedAxioms = generalClassAxioms.filter((_, idx) => idx !== index);
@@ -5030,7 +5107,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const refreshGeneralClassAxioms = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/gci`);
+      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${projectId}/gci`));
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       // Map backend fields to frontend expected structure
@@ -5064,21 +5141,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       notificationService.error("Prefixes Failed", "Could not save prefixes.");
     }
   };
-
-  // Update real-time sync status based on collaboration state
-  useEffect(() => {
-    if (!projectId || !user?.userId) return;
-
-    const activeUsersInProject = Array.from(collaboration.state.activeUsers.values()).filter(
-      (u) => u.projectId === projectId && u.userId !== user?.userId,
-    );
-
-    if (activeUsersInProject.length > 0) {
-      console.log("[Dashboard] 👥 Collaborators detected, enabling real-time sync");
-      ontologyMutationService.setRealTimeSync(true);
-      setSyncMode("public");
-    }
-  }, [projectId, collaboration.state.activeUsers, user?.userId]);
 
   // Collaborative cursor tracking - includes clicks and mouse movement
   useEffect(() => {
@@ -5243,7 +5305,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       setClassIndividualSameDiffDialog({ mode });
       try {
         if (!projectId) return;
-        const response = await apiClient.get<any>(`/api/ontology/individuals/${projectId}`);
+        const response = await apiClient.get<any>(withDraftScope(`/api/ontology/individuals/${projectId}`));
         const loadedIndividuals = Array.isArray(response?.data)
           ? response.data
           : response?.data?.individuals || response?.individuals || [];
@@ -5286,7 +5348,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     (async () => {
       try {
         const response = await apiClient.get<any>(
-          `/api/ontology/individuals/usage/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`,
+          withDraftScope(`/api/ontology/individuals/usage/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`),
         );
         const usageData = response?.data?.data || response?.data || response || [];
         if (alive) setClassIndividualUsages(Array.isArray(usageData) ? usageData : []);
@@ -5687,8 +5749,20 @@ const Dashboard: React.FC<DashboardProps> = ({
           closeSpinner(`backend status=${status} — ready to browse`);
           return;
         }
-      } catch {
-        // Status endpoint unavailable — keep waiting until the hard cap.
+      } catch (error: any) {
+        // A 404 here is terminal, not transient: the outer guard already restricts polling
+        // to file-level IDs (contain "--"), for which the status endpoint always exists once
+        // the upload succeeded. A 404 means the file/project record itself is gone (upload
+        // never completed, or was removed) — waiting out the multi-minute hard cap just to
+        // show the same failure is a bad experience, so fail fast instead.
+        const status = error?.status ?? error?.response?.status;
+        if (status === 404) {
+          failAndRedirect(
+            "This file could not be found on the server. The upload may not have completed — please try again.",
+          );
+          return;
+        }
+        // Any other error (network blip, 5xx, server still warming up) — keep waiting until the hard cap.
       }
       if (!cancelled) timer = setTimeout(tick, 3000);
     };
@@ -5705,7 +5779,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const loadImportClosure = async () => {
       try {
         const res = await apiClient.get<any>(
-          `/api/ontology/metadata/${encodeProjectId(projectId)}/imports/closure`,
+          withDraftScope(`/api/ontology/metadata/${encodeProjectId(projectId)}/imports/closure`),
         );
         const payload = res?.data || res;
         if (payload?.closure && typeof payload.closure === "object") {
@@ -6843,9 +6917,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         // which finds ALL top-level classes (not just those with explicit rdfs:subClassOf owl:Thing)
         // OPTIMIZED: Use limit parameter for faster initial load (backend has caching)
         const isOwlThing = nodeId === "http://www.w3.org/2002/07/owl#Thing";
+        const childrenUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+        // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
+        const childrenDraftScopeParam = ontologyMutationService.isPrivateEditMode() ? "&draft=true" : "";
         const endpoint = isOwlThing
-          ? `/api/ontology/classes/top-level/${projectId}?limit=5000&scope=${hierarchyImportsScope}`
-          : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}&scope=${hierarchyImportsScope}`;
+          ? `/api/ontology/classes/top-level/${projectId}?limit=5000&scope=${hierarchyImportsScope}&userId=${encodeURIComponent(childrenUserId)}${childrenDraftScopeParam}`
+          : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}&scope=${hierarchyImportsScope}&userId=${encodeURIComponent(childrenUserId)}${childrenDraftScopeParam}`;
 
         const response = await apiClient.get<any>(endpoint);
 
@@ -6884,7 +6961,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.error(`Failed to load children for ${nodeId}`, error);
       }
     },
-    [projectId, classInstanceCounts, applyInstanceCountsToTree, hierarchyImportsScope],
+    [projectId, classInstanceCounts, applyInstanceCountsToTree, hierarchyImportsScope, user],
   );
 
   const fetchInferredChildren = useCallback(
@@ -7042,7 +7119,35 @@ const Dashboard: React.FC<DashboardProps> = ({
     classHierarchyRefreshInFlight.current = true;
     lastClassHierarchyRefreshAt.current = now;
     try {
-      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}?scope=${hierarchyImportsScope}`);
+      const refreshUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
+      const refreshDraftScopeParam = ontologyMutationService.isPrivateEditMode() ? "&draft=true" : "";
+      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}?scope=${hierarchyImportsScope}&userId=${encodeURIComponent(refreshUserId)}${refreshDraftScopeParam}`);
+
+      const hierarchyBuilding =
+        topLevelRes?.hierarchyReady === false ||
+        topLevelRes?.status === 202 ||
+        topLevelRes?.success === false;
+      if (hierarchyBuilding) {
+        // Backend snapshot is stale/rebuilding after a recent mutation (e.g. add class).
+        // Keep the current (optimistic) tree instead of overwriting it with an empty
+        // result, and retry shortly until the rebuilt snapshot is ready.
+        if (classHierarchyRefreshRetryCount.current < 60) {
+          classHierarchyRefreshRetryCount.current += 1;
+          console.warn(
+            `[Dashboard] Class hierarchy snapshot not ready yet (attempt ${classHierarchyRefreshRetryCount.current}) — keeping current tree and retrying`,
+          );
+          window.setTimeout(() => {
+            lastClassHierarchyRefreshAt.current = 0;
+            refreshClassHierarchy();
+          }, 2000);
+        } else {
+          console.error("[Dashboard] Class hierarchy snapshot never became ready after retries — giving up");
+          classHierarchyRefreshRetryCount.current = 0;
+        }
+        return;
+      }
+      classHierarchyRefreshRetryCount.current = 0;
 
       let classes: any[] = [];
       if (Array.isArray(topLevelRes?.classes)) {
@@ -7104,7 +7209,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     } finally {
       classHierarchyRefreshInFlight.current = false;
     }
-  }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree, shouldDeferHierarchyDuringFileOpen]);
+  }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree, shouldDeferHierarchyDuringFileOpen, user]);
 
   // Keep hierarchyAnnotationProperties in sync with the existing annotation property list
   useEffect(() => {
@@ -7417,7 +7522,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const encodedProjectId = encodeURIComponent(projectId);
     const encodedIri = encodeURIComponent(selectedItem.id);
     apiClient
-      .get<any>(`/api/ontology/properties/detail/${encodedProjectId}?iri=${encodedIri}`)
+      .get<any>(withDraftScope(`/api/ontology/properties/detail/${encodedProjectId}?iri=${encodedIri}`))
       .then((res: any) => {
         const payload = res?.data ?? res;
         const detail = payload?.data ?? payload;
@@ -7497,7 +7602,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             // Add delay to ensure backend is ready
             setTimeout(() => {
               apiClient
-                .get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}${userParam}&_=${Date.now()}`)
+                .get(withDraftScope(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}${userParam}&_=${Date.now()}`))
                 .then((response) => {
                   const details = response?.data?.data || response?.data || response;
                   if (!details || typeof details !== "object" || details.success) {
@@ -7555,7 +7660,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               }
 
               apiClient
-                .get(url)
+                .get(withDraftScope(url))
                 .then((response) => {
                   const newData = response.data || response;
                   // Ensure ID is present (map IRI to ID if needed)
@@ -7591,7 +7696,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] 👤 Refreshing individuals due to individual edit");
           // Trigger refresh of individuals
           apiClient
-            .get(`/api/ontology/individuals/${projectId}`)
+            .get(withDraftScope(`/api/ontology/individuals/${projectId}`))
             .then((response) => {
               setIndividuals(response.data || []);
               console.log("[Dashboard] ✅ Individuals refreshed");
@@ -7643,7 +7748,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             // Use 1000ms delay to allow ClassEditor's 800ms refresh to complete first
             setTimeout(() => {
               apiClient
-                .get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`)
+                .get(withDraftScope(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`))
                 .then((response) => {
                   const details = response?.data?.data || response?.data || response;
                   console.log("[Dashboard] ✅ Class details refreshed with equivalent axioms:", details);
@@ -7667,7 +7772,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             // Use 1000ms delay to allow ClassEditor's 800ms refresh to complete first
             setTimeout(() => {
               apiClient
-                .get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`)
+                .get(withDraftScope(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`))
                 .then((response) => {
                   const details = response?.data?.data || response?.data || response;
                   console.log("[Dashboard] ✅ Class details refreshed with subclass axioms:", details);
@@ -7716,7 +7821,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "GCI_REMOVED":
           console.log("[Dashboard] 🔢 GCI changed by remote user, refreshing GCIs");
           apiClient
-            .get(`/api/ontology/metadata/${projectId}/gci`)
+            .get(withDraftScope(`/api/ontology/metadata/${projectId}/gci`))
             .then((response) => {
               const raw = response?.data?.data || response?.data?.axioms || response?.axioms || response?.data || response;
               const gcis = Array.isArray(raw)
@@ -7738,8 +7843,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         default:
           console.log("[Dashboard] 🔄 Generic remote edit, refreshing metadata");
           // Generic refresh for other edit types
+          // Only sent in private/draft mode — see hierarchyUserId comment above.
           apiClient
-            .get(`/api/ontology/metadata/${projectId}`)
+            .get(`/api/ontology/metadata/${projectId}?userId=${encodeURIComponent(resolveMutationActor(user?.userId || user?.email, user?.username).userId)}${ontologyMutationService.isPrivateEditMode() ? "&draft=true" : ""}`)
             .then((response) => {
               setMetadata(response.data);
               console.log("[Dashboard] ✅ Metadata refreshed");
@@ -7878,7 +7984,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           if (apiEndpoint) {
             apiClient
-              .get(apiEndpoint)
+              .get(withDraftScope(apiEndpoint))
               .then((response) => {
                 const newData = response.data || response;
                 if (!newData.id && newData.iri) {
@@ -8225,8 +8331,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       const currentLoaded = classHierarchy[0]?.children?.filter(
         (c) => c.id !== "__load_more_top_level__"
       ).length ?? 0;
+      const loadMoreUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
+      const loadMoreDraftScopeParam = ontologyMutationService.isPrivateEditMode() ? "&draft=true" : "";
       const res: any = await apiClient.get(
-        `/api/ontology/classes/top-level/${encoded}?limit=5000&offset=${currentLoaded}`
+        `/api/ontology/classes/top-level/${encoded}?limit=5000&offset=${currentLoaded}&userId=${encodeURIComponent(loadMoreUserId)}${loadMoreDraftScopeParam}`
       );
       const data = res?.data ?? res;
       const newClasses: TreeNode[] = (Array.isArray(data?.classes) ? data.classes : []).map(
@@ -8257,7 +8366,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     } finally {
       setIsLoadingMoreTopLevel(false);
     }
-  }, [isLoadingMoreTopLevel, projectId, classHierarchy]);
+  }, [isLoadingMoreTopLevel, projectId, classHierarchy, user]);
 
   // Update draft count
   const updateDraftCount = useCallback(async () => {
@@ -8280,7 +8389,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const silentRefreshMetadata = useCallback(async () => {
     if (!projectId) return;
     try {
-      const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}`);
+      const metaUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
+      const metaDraftScopeParam = ontologyMutationService.isPrivateEditMode() ? "&draft=true" : "";
+      const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}?userId=${encodeURIComponent(metaUserId)}${metaDraftScopeParam}`);
       const data = res?.data || res;
       if (data) {
         setMetadata((prev) => prev ? {
@@ -8297,7 +8409,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     } catch (err) {
       console.debug("[Dashboard] Silent metadata refresh failed:", err);
     }
-  }, [projectId]);
+  }, [projectId, user]);
 
   // Mark as unsaved (called after mutations)
   const markAsUnsaved = useCallback(() => {
@@ -8837,7 +8949,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleRefreshAnnotationProperties = useCallback(async () => {
     if (!projectId) return;
-    const res = await apiClient.get<any>(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`);
+    const res = await apiClient.get<any>(withDraftScope(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`));
     const rawProperties = Array.isArray(res?.data)
       ? res.data
       : Array.isArray(res?.annotationProperties)
@@ -9090,7 +9202,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           versionIRI: normalizedVersionIri || undefined,
         }));
 
-        const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
+        const metadataRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}`));
         const metadataData = extractResponseData(metadataRes);
         if (metadataData && typeof metadataData === "object") {
           setMetadata((prev) => ({ ...(prev || {}), ...metadataData }));
@@ -9110,20 +9222,26 @@ const Dashboard: React.FC<DashboardProps> = ({
     async (subClass: string, superClass: string) => {
       if (!projectId) return;
       try {
+        const gciActorId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+        const gciDraft = ontologyMutationService.resolveUseDraft();
         if (editGCIData) {
           // Update existing GCI
           await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`, {
             subClass,
             superClass,
             oldValue: editGCIData.value,
+            draft: gciDraft,
+            userId: gciActorId,
           });
         } else {
           // Add new GCI
-          await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, { subClass, superClass });
+          await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
+            subClass, superClass, draft: gciDraft, userId: gciActorId,
+          });
         }
 
         // Refresh GCIs
-        const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
+        const gciRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}/gci`));
         const gciData = Array.isArray(gciRes?.data)
           ? gciRes.data
           : Array.isArray(gciRes?.axioms)
@@ -9140,7 +9258,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to save GCI.", "error");
       }
     },
-    [projectId, editGCIData],
+    [projectId, editGCIData, user],
   );
 
   const handleDeleteGCI = useCallback(
@@ -9153,10 +9271,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         message: `Are you sure you want to delete this General Class Axiom?`,
         onConfirm: async () => {
           try {
-            await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, { value: axiom.id || axiom.value });
+            await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, {
+              value: axiom.id || axiom.value,
+              draft: ontologyMutationService.resolveUseDraft(),
+              userId: resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+            });
 
             // Refresh GCIs
-            const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
+            const gciRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}/gci`));
             const gciData = Array.isArray(gciRes?.data)
               ? gciRes.data
               : Array.isArray(gciRes?.axioms)
@@ -9174,7 +9296,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         },
       });
     },
-    [projectId],
+    [projectId, user],
   );
 
   const handleDeleteAnnotation = useCallback(
@@ -9253,10 +9375,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (isDesktop()) {
         await waitForDesktopOwlApiReady(projectId);
       }
-      let propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
+      let propertiesRes = await apiClient.get<any>(withDraftScope(`/api/ontology/properties/${projectId}`));
       if (isOwlApiWarmingResponse(propertiesRes)) {
         await waitForDesktopOwlApiReady(projectId);
-        propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
+        propertiesRes = await apiClient.get<any>(withDraftScope(`/api/ontology/properties/${projectId}`));
       }
 
       const allProps = Array.isArray(propertiesRes?.data)
@@ -9463,7 +9585,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       setIsIndividualsLoading(true);
       apiClient
-        .get<any>(`/api/ontology/individuals/${encodedProjectId}`)
+        .get<any>(withDraftScope(`/api/ontology/individuals/${encodedProjectId}`))
         .then((res) => {
           setIndividuals(
             Array.isArray(res?.data) ? res.data : Array.isArray(res?.individuals) ? res.individuals : [],
@@ -9497,7 +9619,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       setIsDatatypesLoading(true);
       apiClient
-        .get<any>(`/api/ontology/datatypes/${encodedProjectId}`)
+        .get<any>(withDraftScope(`/api/ontology/datatypes/${encodedProjectId}`))
         .then((res) => {
           setDatatypes(Array.isArray(res?.data) ? res.data : Array.isArray(res?.datatypes) ? res.datatypes : []);
         })
@@ -9675,13 +9797,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         });
 
         setClassHierarchy((prev) => {
+          // Same fallback as handleCreateClass: if parentIri (e.g. owl:Thing when
+          // there's no selection) isn't itself a rendered node, append at the root
+          // instead of silently dropping the new class from the optimistic update.
+          let inserted = false;
           const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
             return nodes.map((node) => {
               if (type === "subclass" && node.id === parentIri) {
+                inserted = true;
                 const children = node.children ? [...node.children, newNode] : [newNode];
                 return { ...node, children, hasChildren: true };
               }
               if (type === "sibling" && node.children?.some((child: TreeNode) => child.id === parentId)) {
+                inserted = true;
                 return { ...node, children: [...(node.children || []), newNode] };
               }
               if (node.children) {
@@ -9690,7 +9818,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               return node;
             });
           };
-          return addNodeRecursively(prev);
+          const updated = addNodeRecursively(prev);
+          return inserted ? updated : [...prev, newNode];
         });
 
         markAsUnsaved();
@@ -9924,7 +10053,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleCreateClass = useCallback(
     async (name: string) => {
-      if (!projectId || !selectedItem) return;
+      if (!projectId) return;
 
       const type = addClassType;
 
@@ -9990,13 +10119,22 @@ const Dashboard: React.FC<DashboardProps> = ({
           });
 
           setClassHierarchy((prev) => {
+            // Root-level creation (no selection, or a parent not found in the loaded
+            // tree — e.g. owl:Thing, which is never itself a rendered node) has no
+            // node to attach to; track whether we actually found one and fall back
+            // to appending at the root instead of silently dropping the new class
+            // from the optimistic update (it was still created on the backend, but
+            // wouldn't show up until a full reload).
+            let inserted = false;
             const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
               return nodes.map((node) => {
                 if (type === "subclass" && node.id === selectedItem?.id) {
+                  inserted = true;
                   const children = node.children ? [...node.children, newNode] : [newNode];
                   return { ...node, children, hasChildren: true };
                 }
                 if (type === "sibling" && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
+                  inserted = true;
                   return { ...node, children: [...(node.children || []), newNode] };
                 }
                 if (node.children) {
@@ -10007,11 +10145,11 @@ const Dashboard: React.FC<DashboardProps> = ({
             };
 
             // If adding sibling at root level
-            if (type === "sibling" && prev.some((node) => node.id === selectedItem.id)) {
+            if (type === "sibling" && prev.some((node) => node.id === selectedItem?.id)) {
               return [...prev, newNode];
-            } else {
-              return addNodeRecursively(prev);
             }
+            const updated = addNodeRecursively(prev);
+            return inserted ? updated : [...prev, newNode];
           });
           markAsUnsaved();
           setMetadata((prev) => (prev ? { ...prev, classCount: (prev.classCount || 0) + 1 } : prev));
@@ -10119,9 +10257,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         setObjectProperties((prev) => [...prev, newProp]);
 
+        // If parentIri (e.g. owl:topObjectProperty when there's no selection) isn't
+        // itself a rendered node, append at the root instead of silently dropping
+        // the new property from the optimistic update.
+        let objectPropInserted = false;
         const addNodeRecursively = (nodes: any[]): any[] => {
           return nodes.map((node) => {
             if (node.id === parentIri) {
+              objectPropInserted = true;
               const children = node.children ? [...node.children, newProp] : [newProp];
               return { ...node, children, hasChildren: true };
             }
@@ -10132,7 +10275,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           });
         };
 
-        setObjectPropertyHierarchy((prev) => addNodeRecursively(prev));
+        setObjectPropertyHierarchy((prev) => {
+          const updated = addNodeRecursively(prev);
+          return objectPropInserted ? updated : [...prev, newProp];
+        });
 
         if (parentIri && !expandedNodes.includes(parentIri)) {
           setExpandedNodes((prev) => [...prev, parentIri]);
@@ -10182,9 +10328,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         setDataProperties((prev) => [...prev, newProp]);
 
+        // If parentIri (e.g. owl:topDataProperty when there's no selection) isn't
+        // itself a rendered node, append at the root instead of silently dropping
+        // the new property from the optimistic update.
+        let dataPropInserted = false;
         const addNodeRecursively = (nodes: any[]): any[] => {
           return nodes.map((node) => {
             if (node.id === parentIri) {
+              dataPropInserted = true;
               const children = node.children ? [...node.children, newProp] : [newProp];
               return { ...node, children, hasChildren: true };
             }
@@ -10195,7 +10346,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           });
         };
 
-        setDataPropertyHierarchy((prev) => addNodeRecursively(prev));
+        setDataPropertyHierarchy((prev) => {
+          const updated = addNodeRecursively(prev);
+          return dataPropInserted ? updated : [...prev, newProp];
+        });
 
         if (parentIri && !expandedNodes.includes(parentIri)) {
           setExpandedNodes((prev) => [...prev, parentIri]);
@@ -15726,7 +15880,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         onAdd={async (importIri) => {
           if (!projectId) return;
           await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri });
-          const importsRes = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/imports`);
+          const importsRes = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${projectId}/imports`));
           const importsPayload = importsRes?.data?.data ?? importsRes?.data ?? importsRes;
           const importsData = Array.isArray(importsPayload) ? importsPayload : [];
           setOntologyImports(importsData);
@@ -16092,8 +16246,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         onCancel={confirmDialog.onCancel}
         title={confirmDialog.title}
         message={confirmDialog.message}
-        confirmText={confirmDialog.confirmLabel}
-        cancelText={confirmDialog.cancelLabel}
+        confirmLabel={confirmDialog.confirmLabel}
+        cancelLabel={confirmDialog.cancelLabel}
       />
       {publishConflictDialog.isOpen && (() => {
         const conflicts = publishConflictDialog.conflicts;
@@ -16408,20 +16562,25 @@ const Dashboard: React.FC<DashboardProps> = ({
                   localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'private');
                   userPreferencesService.saveSyncMode(projectId, 'private');
                   notificationService.info("Draft Mode Active", "Editing your private draft — changes won't affect others until you publish.");
+                  // The backend now scopes reads to the draft graph for this user — the
+                  // already-loaded tree was fetched under public scope, so refresh it.
+                  fetchData(projectId, false);
                 },
               });
             } else {
-              // private → public: if user has draft changes, offer pull-from-public dialog
-              // so they can reconcile any public updates before switching view.
-              if (draftCount > 0 && projectId) {
-                setShowPullFromPublic(true);
-                return;
-              }
+              // Free, unconditional switch — no forced/gated pull dialog. Merging public
+              // changes into a draft, or publishing a draft, are explicit actions the user
+              // takes via the dedicated "Pull" and "PRs" toolbar buttons, not a side effect
+              // of just changing which view you're looking at. The draft itself is untouched
+              // either way — switching to Public never discards anything.
               setSyncMode('public');
               ontologyMutationService.setRealTimeSync(true);
               if (projectId) {
                 localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
                 userPreferencesService.saveSyncMode(projectId, 'public');
+                // Reads now scope back to the public graph — refresh so the tree drops
+                // any draft-only entities the user was just looking at.
+                fetchData(projectId, false);
               }
               notificationService.info("Public View", "Your draft is preserved — toggle back to Draft Mode to resume editing.");
               if (requireDraftForMembers && !isProjectOwner) {
@@ -16929,10 +17088,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI });
 
                   // Refresh all metadata related state sequentially
-                  const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
-                  const annotationsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/annotations`);
-                  const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
-                  const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
+                  const metadataRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}`));
+                  const annotationsRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`));
+                  const importsRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}/imports`));
+                  const gciRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}/gci`));
 
                   // Extract data with fallbacks (API returns {success, data: [...]})
                   const annotationsPayload = annotationsRes?.data?.data ?? annotationsRes?.data ?? annotationsRes;
@@ -17484,6 +17643,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           draftCount={draftCount}
           onPRApproved={() => {
             refreshOpenPRCount();
+            if (projectId) fetchData(projectId, false);
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
           }}
         />
@@ -17494,7 +17654,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         <PullPreviewDialog
           isOpen={showPullPreview}
           onClose={() => setShowPullPreview(false)}
-          onConfirm={handlePullFromPublic}
+          onConfirm={handlePullComplete}
           projectId={projectId}
           userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
         />
@@ -17544,25 +17704,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           isOpen={showPRsModal}
           onClose={() => setShowPRsModal(false)}
           onCountChange={setPendingPRCount}
-        />
-      )}
-
-      {/* Pull from Public — conflict-aware merge dialog */}
-      {showPullFromPublic && projectId && (
-        <PullFromPublicDialog
-          projectId={projectId}
-          onClose={() => setShowPullFromPublic(false)}
-          onPullComplete={() => {
-            setShowPullFromPublic(false);
-            setSyncMode("public");
-            ontologyMutationService.setRealTimeSync(true);
-            if (projectId) {
-              localStorage.setItem(`ontocode_sync_mode_${projectId}`, "public");
-              userPreferencesService.saveSyncMode(projectId, "public");
-            }
-            notificationService.success("Pull Complete", "Public changes merged into your view.");
-            window.location.reload();
-          }}
         />
       )}
 

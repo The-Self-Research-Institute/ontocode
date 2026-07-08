@@ -11,6 +11,7 @@ import org.semanticweb.owlapi.util.ShortFormProvider;
 import org.semanticweb.owlapi.util.SimpleShortFormProvider;
 import org.semanticweb.owlapi.util.mansyntax.ManchesterOWLSyntaxParser;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.util.OwlAxiomSparqlWriter;
@@ -28,14 +29,20 @@ public class ManchesterExpressionService {
 
     private final StorageManager storageManager;
     private final SparqlDatasetService datasetService;
+    private final OntologyMutationService mutationService;
 
     /** Optional: present when fast-open is enabled. Used to skip the slow export+parse. */
     @Autowired(required = false)
     private ProjectOntologyCache ontologyCache;
 
-    public ManchesterExpressionService(StorageManager storageManager, SparqlDatasetService datasetService) {
+    // @Lazy breaks the cycle: OntologyMutationService -> OntologyIndexService ->
+    // OntologyMetadataService -> GeneralClassAxiomService -> ManchesterExpressionService.
+    // Same pattern already used by OntologyMetadataService for the same bean.
+    public ManchesterExpressionService(StorageManager storageManager, SparqlDatasetService datasetService,
+                                       @Lazy OntologyMutationService mutationService) {
         this.storageManager = storageManager;
         this.datasetService = datasetService;
+        this.mutationService = mutationService;
     }
 
     public OWLClassExpression parseClassExpression(String projectId, String expression) throws Exception {
@@ -44,6 +51,15 @@ public class ManchesterExpressionService {
     }
 
     public void addGeneralClassAxiom(String projectId, String subClassExpr, String superClassExpr) throws Exception {
+        addGeneralClassAxiom(projectId, subClassExpr, superClassExpr, false, null);
+    }
+
+    /**
+     * Draft-aware variant: when {@code draft} is true, the axiom is written to the user's
+     * private draft graph instead of the shared/public ontology.
+     */
+    public void addGeneralClassAxiom(String projectId, String subClassExpr, String superClassExpr,
+                                     boolean draft, String userId) throws Exception {
         OWLOntology ontology = loadOntology(projectId);
         OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
 
@@ -59,8 +75,8 @@ public class ManchesterExpressionService {
         }
 
         OWLSubClassOfAxiom axiom = df.getOWLSubClassOfAxiom(subClass, superClass);
-        persistAxioms(projectId, Set.of(axiom));
-        log.info("Added GCA for project {}: {} SubClassOf {}", projectId, subClassExpr, superClassExpr);
+        persistAxioms(projectId, Set.of(axiom), draft, userId);
+        log.info("Added GCA for project {}: {} SubClassOf {} (draft={})", projectId, subClassExpr, superClassExpr, draft);
     }
 
     public void addClassExpressionAxiom(String projectId, String classIri, String axiomType, String expression)
@@ -174,11 +190,16 @@ public class ManchesterExpressionService {
     }
 
     private void persistAxioms(String projectId, Set<? extends OWLAxiom> axioms) throws Exception {
+        persistAxioms(projectId, axioms, false, null);
+    }
+
+    private void persistAxioms(String projectId, Set<? extends OWLAxiom> axioms, boolean draft, String userId)
+            throws Exception {
         String sparql = OwlAxiomSparqlWriter.toInsertData(axioms);
         if (sparql.isBlank()) {
             throw new IllegalStateException("Failed to serialize OWL axiom");
         }
-        datasetService.execUpdate(projectId, sparql);
+        mutationService.applyRawUpdate(projectId, sparql, draft, userId);
     }
 
     private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms) throws Exception {

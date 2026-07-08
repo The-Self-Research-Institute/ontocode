@@ -50,28 +50,39 @@ public class OntologyMetadataService {
      */
     public Map<String, Object> getMetadata(String projectId) {
         Map<String, Object> metadata = new HashMap<>();
-        
+
+        // The cached metadata below is shared project-wide and only ever reflects the public
+        // graph (computed once after each direct/publish mutation). A drafter's own new
+        // classes/properties/individuals only exist in their draft graph, so serving them this
+        // cache would show stale, pre-draft counts (e.g. "Classes" badge not incrementing after
+        // a draft createClass). Skip the cache for drafters and fall through to the live query
+        // path below, which is draft-aware via SparqlDatasetService.execSelect's automatic
+        // FROM <draftGraph> injection for the current SparqlQueryContext user.
+        String ctxUserId = SparqlQueryContext.getUserId();
+        boolean hasDraft = ctxUserId != null && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
+
         // 1. Check if cached metadata exists and is valid
-        Optional<Map<String, Object>> cachedMetadata = projectMetadataService.readMeta(projectId);
-        
+        Optional<Map<String, Object>> cachedMetadata = hasDraft
+                ? Optional.empty() : projectMetadataService.readMeta(projectId);
+
         if (cachedMetadata.isPresent() && !cachedMetadata.get().isEmpty()) {
             Map<String, Object> cached = cachedMetadata.get();
-            
+
             // Check if cache contains comprehensive data (has counts or classCount)
             if (cached.containsKey("counts") || cached.containsKey("classCount") || cached.containsKey("cacheComplete")) {
                 log.info("⚡ Using cached metadata for project {} (fast path, skipping GraphDB queries)", projectId);
                 metadata.putAll(cached);
-                
+
                 // Always include fresh filename and status from MongoDB
                 projectMetadataService.readStatus(projectId).ifPresent(status -> {
                     metadata.put("filename", status.filename());
                     metadata.put("projectStatus", status.status());
                 });
-                
+
                 return metadata;
             }
         }
-        
+
         // 2. Cache miss or incomplete - compute from GraphDB (slow path)
         log.info("📊 Computing fresh metadata for project {} (slow path, querying GraphDB)", projectId);
         
@@ -106,16 +117,19 @@ public class OntologyMetadataService {
         metadata.put("imports", getOntologyImports(projectId));
         metadata.put("axioms", getGeneralClassAxioms(projectId));
         
-        // Save to cache for future fast loading
-        try {
-            metadata.put("cacheComplete", true);
-            metadata.put("cachedAt", java.time.Instant.now().toString());
-            projectMetadataService.writeMeta(projectId, new HashMap<>(metadata));
-            log.info("💾 Saved metadata to MongoDB cache for project {}", projectId);
-        } catch (Exception e) {
-            log.warn("Failed to cache metadata for project {}: {}", projectId, e.getMessage());
+        // Save to cache for future fast loading — but never from a drafter's request, or their
+        // draft-inclusive counts would leak into the shared cache and be served to everyone else.
+        if (!hasDraft) {
+            try {
+                metadata.put("cacheComplete", true);
+                metadata.put("cachedAt", java.time.Instant.now().toString());
+                projectMetadataService.writeMeta(projectId, new HashMap<>(metadata));
+                log.info("💾 Saved metadata to MongoDB cache for project {}", projectId);
+            } catch (Exception e) {
+                log.warn("Failed to cache metadata for project {}: {}", projectId, e.getMessage());
+            }
         }
-        
+
         return metadata;
     }
 
@@ -568,6 +582,14 @@ public class OntologyMetadataService {
      * Add a General Class Axiom (GCI) as a real OWL blank-node SubClassOf axiom.
      */
     public void addGCI(String projectId, String subClassExpr, String superClassExpr) {
+        addGCI(projectId, subClassExpr, superClassExpr, false, null);
+    }
+
+    /**
+     * Draft-aware variant: when {@code draft} is true, the axiom is written to the user's
+     * private draft graph instead of the shared/public ontology.
+     */
+    public void addGCI(String projectId, String subClassExpr, String superClassExpr, boolean draft, String userId) {
         if (subClassExpr == null || subClassExpr.isBlank()) {
             throw new IllegalArgumentException("GCA sub-class expression is required");
         }
@@ -576,7 +598,8 @@ public class OntologyMetadataService {
         }
 
         try {
-            generalClassAxiomService.addGeneralClassAxiom(projectId, subClassExpr.trim(), superClassExpr.trim());
+            generalClassAxiomService.addGeneralClassAxiom(
+                    projectId, subClassExpr.trim(), superClassExpr.trim(), draft, userId);
             return;
         } catch (IllegalArgumentException e) {
             throw e;
@@ -607,13 +630,25 @@ public class OntologyMetadataService {
             throw new IllegalArgumentException(
                     "GCA could not be parsed. Use Manchester syntax (e.g. 'A and (p some B) SubClassOf C')");
         }
-        mutationService.apply(projectId, List.of(op));
+        if (draft) {
+            mutationService.applyDraft(projectId, userId, List.of(op));
+        } else {
+            mutationService.apply(projectId, List.of(op));
+        }
     }
 
     /**
      * Delete a General Class Axiom — supports legacy string literals and real blank-node GCIs.
      */
     public void deleteGCI(String projectId, String gciValue) {
+        deleteGCI(projectId, gciValue, false, null);
+    }
+
+    /**
+     * Draft-aware variant: when {@code draft} is true, the deletion is applied to the user's
+     * private draft graph instead of the shared/public ontology.
+     */
+    public void deleteGCI(String projectId, String gciValue, boolean draft, String userId) {
         if (gciValue == null || gciValue.isBlank()) return;
 
         // Legacy custom-predicate string storage
@@ -633,7 +668,7 @@ public class OntologyMetadataService {
                     }
                     """, formattedOntologyIri, escapeString(legacyValue),
                         formattedOntologyIri, escapeString(legacyValue));
-                datasetService.execUpdate(projectId, update);
+                mutationService.applyRawUpdate(projectId, update, draft, userId);
             }
         }
 
@@ -646,10 +681,15 @@ public class OntologyMetadataService {
             }
         }
         if (looksLikeBlankNodeId(blankNodeId)) {
-            mutationService.apply(projectId, List.of(
+            List<OntologyMutationService.MutationOp> ops = List.of(
                     new OntologyMutationService.MutationOp(
                             "deleteAxiom", blankNodeId, null, null, null, null,
-                            null, null, null, null, null, null, null, null, null)));
+                            null, null, null, null, null, null, null, null, null));
+            if (draft) {
+                mutationService.applyDraft(projectId, userId, ops);
+            } else {
+                mutationService.apply(projectId, ops);
+            }
         }
     }
 

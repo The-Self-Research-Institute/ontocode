@@ -270,6 +270,12 @@ public class OntologyQueryController {
                 "closure".equalsIgnoreCase(scope)
                         ? org.semanticweb.owlapi.model.parameters.Imports.INCLUDED
                         : org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
+        // The MongoDB hierarchy snapshot only ever reflects the main graph — skip it for a
+        // drafter or they'd see the public hierarchy instead of their own uncommitted edits.
+        // Same pattern as classDetails() below.
+        String ctxUserId = SparqlQueryContext.getUserId();
+        boolean hasDraft = ctxUserId != null && datasetService != null
+                && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
         try {
             // Desktop fast path: OWLAPI in-memory — skip when user has active draft overlay
             if (preferOwlApiPath(projectId)
@@ -305,18 +311,21 @@ public class OntologyQueryController {
             if (desktopOntologyLoader != null) {
                 desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
             }
-            // Cloud: precomputed OWLAPI snapshot (Protégé-parity)
-            Optional<Map<String, Object>> snapshot = hierarchyIndexService.topLevelResponse(projectId, limit);
-            if (snapshot.isPresent()) {
-                return ResponseEntity.ok(snapshot.get());
-            }
-            if (hierarchyIndexService.isEnabled() && !hierarchyIndexService.allowsLegacySparqlFallback()) {
-                Map<String, Object> pending = new java.util.LinkedHashMap<>();
-                pending.put("success", false);
-                pending.put("hierarchyReady", false);
-                pending.putAll(hierarchyIndexService.statusPayload(projectId));
-                pending.put("message", "Class hierarchy index is building. Please wait and refresh.");
-                return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
+            // Cloud: precomputed OWLAPI snapshot (Protégé-parity) — main-graph-only, so a
+            // drafter falls through to the live SPARQL path below instead (draft-scope-aware).
+            if (!hasDraft) {
+                Optional<Map<String, Object>> snapshot = hierarchyIndexService.topLevelResponse(projectId, limit);
+                if (snapshot.isPresent()) {
+                    return ResponseEntity.ok(snapshot.get());
+                }
+                if (hierarchyIndexService.isEnabled() && !hierarchyIndexService.allowsLegacySparqlFallback()) {
+                    Map<String, Object> pending = new java.util.LinkedHashMap<>();
+                    pending.put("success", false);
+                    pending.put("hierarchyReady", false);
+                    pending.putAll(hierarchyIndexService.statusPayload(projectId));
+                    pending.put("message", "Class hierarchy index is building. Please wait and refresh.");
+                    return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
+                }
             }
             // Desktop owlapi-first: while OWLAPI is actively loading, return a "loading" response
             // instead of running SPARQL. SPARQL misses classes that have only anonymous superclasses
@@ -419,19 +428,26 @@ public class OntologyQueryController {
                 && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(desktopHierarchyService.children(projectId, parentIri, limit, offset, importsScope));
         }
-        Optional<List<self.research.ontology.owlEditor.dto.OntologyDto.TreeNode>> snapChildren =
-                hierarchyIndexService.children(projectId, parentIri, limit, offset);
-        if (snapChildren.isPresent()) {
-            return ResponseEntity.ok(snapChildren.get());
-        }
-        if (hierarchyIndexService.isEnabled() && !hierarchyIndexService.allowsLegacySparqlFallback()) {
-            Map<String, Object> pending = new java.util.LinkedHashMap<>();
-            pending.put("success", false);
-            pending.put("hierarchyReady", false);
-            pending.put("children", List.of());
-            pending.putAll(hierarchyIndexService.statusPayload(projectId));
-            pending.put("message", "Class hierarchy index is building. Please wait and retry.");
-            return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
+        // The MongoDB hierarchy snapshot only ever reflects the main graph — skip it for a
+        // drafter, same as topLevel() above, or they'd never see their own draft-only children.
+        String childrenCtxUserId = SparqlQueryContext.getUserId();
+        boolean childrenHasDraft = childrenCtxUserId != null && datasetService != null
+                && datasetService.hasActiveDraftOverlay(projectId, childrenCtxUserId);
+        if (!childrenHasDraft) {
+            Optional<List<self.research.ontology.owlEditor.dto.OntologyDto.TreeNode>> snapChildren =
+                    hierarchyIndexService.children(projectId, parentIri, limit, offset);
+            if (snapChildren.isPresent()) {
+                return ResponseEntity.ok(snapChildren.get());
+            }
+            if (hierarchyIndexService.isEnabled() && !hierarchyIndexService.allowsLegacySparqlFallback()) {
+                Map<String, Object> pending = new java.util.LinkedHashMap<>();
+                pending.put("success", false);
+                pending.put("hierarchyReady", false);
+                pending.put("children", List.of());
+                pending.putAll(hierarchyIndexService.statusPayload(projectId));
+                pending.put("message", "Class hierarchy index is building. Please wait and retry.");
+                return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
+            }
         }
         try {
             return ResponseEntity.ok(queryService.children(projectId, parentIri, limit, offset));

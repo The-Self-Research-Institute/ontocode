@@ -178,6 +178,35 @@ public class HierarchySnapshotBuildService {
 
     private Optional<Path> findFastestParseSource(String projectId) {
         Path dir = storageManager.projectDir(projectId);
+
+        // Mutations since the last import live only in Fuseki — the on-disk artifacts are
+        // stale. Export fresh before parsing, or the snapshot would silently keep serving
+        // pre-mutation data forever (same staleness DesktopOntologyLoader guards against).
+        Path dirtyMarker = dir.resolve("ontology.dirty");
+        if (Files.exists(dirtyMarker)) {
+            try {
+                Path fresh = storageManager.exportOntology(projectId, "rdfxml");
+                for (String stale : List.of("ontology.original.ofn", "ontology.original.ttl",
+                        "ontology.original.nt", "ontology.current.ttl", "ontology.current.owl")) {
+                    Path p = dir.resolve(stale);
+                    if (!p.equals(fresh)) {
+                        Files.deleteIfExists(p);
+                    }
+                }
+                Files.deleteIfExists(dirtyMarker);
+                log.info("[HierarchyIndex] Project {} had post-import mutations — parsed source re-exported from Fuseki: {}",
+                        projectId, fresh);
+                return Optional.of(fresh);
+            } catch (Exception e) {
+                log.warn("[HierarchyIndex] Fresh Fuseki export failed for dirty project {} — trying on-disk copy: {}",
+                        projectId, e.getMessage());
+                try {
+                    Files.deleteIfExists(dirtyMarker);
+                } catch (java.io.IOException ignored) {
+                }
+            }
+        }
+
         List<String> fastFirst = List.of(
                 "ontology.original.ofn",
                 "ontology.original.ttl",

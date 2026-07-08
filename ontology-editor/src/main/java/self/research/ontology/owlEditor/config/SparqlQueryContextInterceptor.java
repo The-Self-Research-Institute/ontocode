@@ -35,6 +35,7 @@ public class SparqlQueryContextInterceptor implements HandlerInterceptor {
             userId = DESKTOP_USER_ID;
         }
         SparqlQueryContext.setUserId(userId);
+        SparqlQueryContext.setWantsDraft("true".equalsIgnoreCase(request.getParameter("draft")));
         return true;
     }
 
