@@ -1348,6 +1348,16 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
+        // In a real VS Code webview this goes through the extension host
+        // (vscode.env.openExternal) because sandboxed iframes block direct
+        // navigation. A plain browser tab has no such sandbox — just navigate.
+        case 'openExternalUrl': {
+            if (message.url) {
+                window.location.href = message.url;
+            }
+            break;
+        }
+
         default:
             console.log('[BrowserBridge] Unhandled message type:', message.type);
     }

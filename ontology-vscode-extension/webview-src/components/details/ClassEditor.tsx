@@ -1949,10 +1949,16 @@ const ClassEditor: React.FC<{
       } else if (parsedSub?.expressionType === "union") {
         await ontologyMutationService.addGCAUnion(projectId, superIri, parsedSub.iris);
       } else {
-        await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/expression/add-gca`, {
-          subClassExpression: subExpr.trim(),
-          superClassExpression: superIri,
-        });
+        const gcaActorId = user?.email || user?.userId;
+        const gcaDraft = ontologyMutationService.resolveUseDraft();
+        await apiClient.post(
+          `/api/ontology/${encodeURIComponent(projectId)}/expression/add-gca` +
+            `?userId=${encodeURIComponent(gcaActorId || "")}&draft=${gcaDraft}`,
+          {
+            subClassExpression: subExpr.trim(),
+            superClassExpression: superIri,
+          },
+        );
       }
 
       await new Promise((resolve) => setTimeout(resolve, 500));

@@ -35,9 +35,14 @@ public class HierarchyIndexService {
     @Value("${ontocode.hierarchy.snapshot.legacy-sparql-fallback:false}")
     private boolean legacySparqlFallback;
 
-    /** Desktop uses live OWLAPI warm — skip redundant snapshot builds when model is cached. */
-    @Autowired(required = false) @Nullable
-    private DesktopOntologyLoader desktopOntologyLoader;
+    /**
+     * True desktop deployment only (single user, single process — the same instance that
+     * wrote a mutation is guaranteed to serve the next read). NOT the same as "OWLAPI fast-open
+     * cache is warm": fast-open defaults to enabled on cloud too, so {@link DesktopOntologyLoader}
+     * is a non-null bean there as well and must not be used as a desktop-mode proxy.
+     */
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
 
     @Autowired(required = false) @Nullable
     private ProjectOntologyCache ontologyCache;
@@ -145,7 +150,10 @@ public class HierarchyIndexService {
             return;
         }
         // Desktop: skip snapshot only when OWLAPI already serves hierarchy (heap-sized files).
-        if (desktopOntologyLoader != null && ontologyCache != null && ontologyCache.has(projectId)) {
+        // Gated on true desktop mode, not just "OWLAPI cache is warm" — on cloud, fast-open is
+        // enabled by default too, so another instance (or this one after LRU eviction) can still
+        // need the shared snapshot even while this instance's local cache is warm.
+        if (desktopMode && ontologyCache != null && ontologyCache.has(projectId)) {
             return;
         }
         String revision = Instant.now().toString();

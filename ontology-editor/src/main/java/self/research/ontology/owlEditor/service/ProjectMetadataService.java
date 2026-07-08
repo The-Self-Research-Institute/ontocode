@@ -224,6 +224,29 @@ public class ProjectMetadataService {
                 ? updated.getMutationVersion() : 0L;
     }
 
+    /**
+     * Atomic version bump for the main-graph revision counter, mirroring
+     * {@link #incrementMutationVersion}. {@code writeMeta} does a full read-then-replace
+     * of the whole "metadata" sub-document, so a concurrent writer (e.g. the hierarchy
+     * snapshot rebuild's mergeMetaIntoProject) reading in between this read and write
+     * would silently clobber the new revision on its own write-back. $inc on the nested
+     * field sidesteps that race entirely.
+     */
+    public long incrementMainGraphRevision(String projectId) {
+        Instant now = Instant.now();
+        Update update = new Update()
+                .inc("metadata.mainGraphRevision", 1)
+                .set("updatedAt", now);
+        ProjectDocument updated = mongoTemplate.findAndModify(
+                projectQuery(projectId),
+                update,
+                org.springframework.data.mongodb.core.FindAndModifyOptions.options().returnNew(true),
+                ProjectDocument.class);
+        if (updated == null || updated.getMetadata() == null) return 0L;
+        Object rev = updated.getMetadata().get("mainGraphRevision");
+        return rev instanceof Number ? ((Number) rev).longValue() : 0L;
+    }
+
     private Query projectQuery(String projectId) {
         return Query.query(Criteria.where("_id").is(projectId));
     }

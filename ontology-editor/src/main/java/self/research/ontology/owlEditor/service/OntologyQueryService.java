@@ -53,6 +53,17 @@ public class OntologyQueryService {
         return datasetService.isKnownLargeProject(projectId) ? LARGE_QUERY_POOL : QUERY_POOL;
     }
 
+    /**
+     * Like {@link CompletableFuture#supplyAsync(java.util.function.Supplier, Executor)}, but
+     * propagates the calling thread's {@link SparqlQueryContext} (userId/wantsDraft) onto the
+     * pool thread. Without this, every parallel sub-query here would silently scope to the
+     * main graph regardless of the request's draft=true — SparqlQueryContext is a plain
+     * ThreadLocal set by an HTTP interceptor on the request thread, not the pool thread.
+     */
+    private static <T> CompletableFuture<T> queryAsync(java.util.function.Supplier<T> supplier, Executor executor) {
+        return CompletableFuture.supplyAsync(SparqlQueryContext.wrap(supplier), executor);
+    }
+
     private static final String PREFIXES = """
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -123,7 +134,7 @@ public class OntologyQueryService {
      * Cached in the "topLevelClasses" cache so the 2s status poll costs one query, not one
      * per poll; the cache is evicted on every mutation and import.
      */
-    @Cacheable(value = "topLevelClasses", key = "#projectId + '_statusCount_' + (T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId() ?: 'public')", sync = true)
+    @Cacheable(value = "topLevelClasses", key = "#projectId + '_statusCount_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()", sync = true)
     public int topLevelClassCount(String projectId) {
         String countQuery = PREFIXES + """
             SELECT (COUNT(DISTINCT ?c) AS ?count) WHERE {
@@ -166,15 +177,23 @@ public class OntologyQueryService {
         return 0;
     }
 
-    @Cacheable(value = "topLevelClasses", key = "#projectId + '_' + #limit + '_' + (T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId() ?: 'public')",
+    @Cacheable(value = "topLevelClasses", key = "#projectId + '_' + #limit + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
                unless = "#result != null && #result.isEmpty()")
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
         long startTime = System.currentTimeMillis();
 
+        // This cache is shared project-wide (keyed only on projectId+limit, no user dimension)
+        // and only ever holds the public-graph result — reading it for a drafter would silently
+        // hide their own draft-only classes; writing to it from a drafter's request would leak
+        // their draft content to every other reader. Skip both ends of it entirely for drafters.
+        String qsCtxUserId = SparqlQueryContext.getUserId();
+        boolean hasDraft = qsCtxUserId != null
+                && datasetService.hasActiveDraftOverlay(projectId, qsCtxUserId);
+
         // === L2: MongoDB persistent cache ===
         // Treat a cached empty list as a miss — empty was likely stored during a cold-Fuseki
         // first call (orphan scan skipped) and would block retries from ever seeing results.
-        List<OntologyDto.TreeNode> mongoHit = topLevelCacheService.get(projectId, limit);
+        List<OntologyDto.TreeNode> mongoHit = hasDraft ? null : topLevelCacheService.get(projectId, limit);
         if (mongoHit != null && !mongoHit.isEmpty()) {
             log.info("[PERF] Top-level classes served from MongoDB cache for project={} in {}ms",
                     projectId, System.currentTimeMillis() - startTime);
@@ -274,7 +293,7 @@ public class OntologyQueryService {
             // orphan scan so "empty" just means "not ready yet", not "ontology is empty".
             final List<OntologyDto.TreeNode> toStore = new java.util.ArrayList<>(result);
             final int finalLimit = limit;
-            if (!toStore.isEmpty()) {
+            if (!toStore.isEmpty() && !hasDraft) {
                 CompletableFuture.runAsync(() -> topLevelCacheService.put(projectId, toStore, finalLimit));
             }
             return result;
@@ -311,19 +330,19 @@ public class OntologyQueryService {
             }
             """;
 
-        CompletableFuture<Set<String>> allClassesFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<Set<String>> allClassesFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             Set<String> s = new java.util.HashSet<>();
             TupleQueryResult r = datasetService.execSelect(projectId, allClassesQueryStr);
             while (r.hasNext()) { Value v = r.next().getValue("c"); if (v != null) s.add(v.stringValue()); }
             return s;
-        }, QUERY_POOL);
+        }), QUERY_POOL);
 
-        CompletableFuture<Set<String>> hasParentFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<Set<String>> hasParentFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             Set<String> s = new java.util.HashSet<>();
             TupleQueryResult r = datasetService.execSelect(projectId, hasParentQueryStr);
             while (r.hasNext()) { Value v = r.next().getValue("c"); if (v != null) s.add(v.stringValue()); }
             return s;
-        }, QUERY_POOL);
+        }), QUERY_POOL);
 
         Set<String> allClassIris;
         Set<String> hasParentIris;
@@ -443,7 +462,7 @@ public class OntologyQueryService {
         // persisting it would cause every future call to return empty until server restart.
         final List<OntologyDto.TreeNode> toStore = new java.util.ArrayList<>(result);
         final int finalLimit = limit;
-        if (!toStore.isEmpty()) {
+        if (!toStore.isEmpty() && !hasDraft) {
             CompletableFuture.runAsync(() -> topLevelCacheService.put(projectId, toStore, finalLimit));
         }
 
@@ -455,7 +474,7 @@ public class OntologyQueryService {
      * Get ALL classes (including children) in a single SPARQL query.
      * Used by the graph visualization to render the full class hierarchy.
      */
-    @Cacheable(value = "allClasses", key = "#projectId + '_' + #limit")
+    @Cacheable(value = "allClasses", key = "#projectId + '_' + #limit + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<OntologyDto.TreeNode> allClasses(String projectId, int limit) {
         long startTime = System.currentTimeMillis();
 
@@ -561,7 +580,7 @@ public class OntologyQueryService {
      *   hasChildren — correct for Protégé-style defined-class hierarchies. Fast enough
      *   at this scale (path traversals complete in <5s).
      */
-    @Cacheable(value = "classChildren", key = "#projectId + '_' + #parentIri + '_' + #limit + '_' + #offset + '_' + (T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId() ?: 'public')")
+    @Cacheable(value = "classChildren", key = "#projectId + '_' + #parentIri + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset) {
         safeIri(parentIri);
         long startTime = System.currentTimeMillis();
@@ -677,7 +696,7 @@ public class OntologyQueryService {
      * Get all properties for a project.
      * OPTIMIZED: Cached + simplified query (details loaded on-demand per property).
      */
-    @Cacheable(value = "ontologyProperties", key = "#projectId + '_' + #type + '_' + #limit + '_' + #offset")
+    @Cacheable(value = "ontologyProperties", key = "#projectId + '_' + #type + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<PropertyDto> properties(String projectId, String type, int limit, int offset) {
         long startTime = System.currentTimeMillis();
         String filter = switch (normalize(type)) {
@@ -921,7 +940,7 @@ public class OntologyQueryService {
      * Get individuals for a project.
      * OPTIMIZED: Cached for repeated access.
      */
-    @Cacheable(value = "ontologyIndividuals", key = "#projectId + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId()")
+    @Cacheable(value = "ontologyIndividuals", key = "#projectId + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<IndividualDto> individuals(String projectId, int limit, int offset) {
         long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
@@ -964,7 +983,7 @@ public class OntologyQueryService {
         return individuals;
     }
 
-    @Cacheable(value = "individualCount", key = "#projectId")
+    @Cacheable(value = "individualCount", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public long individualCount(String projectId) {
         long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
@@ -987,7 +1006,7 @@ public class OntologyQueryService {
         return count;
     }
 
-    @Cacheable(value = "ontologyAnnotationProperties", key = "#projectId + '_' + #limit + '_' + #offset + '_' + (T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId() ?: 'public')")
+    @Cacheable(value = "ontologyAnnotationProperties", key = "#projectId + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<AnnotationPropertyDto> annotationProperties(String projectId, int limit, int offset) {
         long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
@@ -1815,7 +1834,7 @@ public class OntologyQueryService {
         return axioms;
     }
 
-    @Cacheable(value = "debugInfo", key = "#projectId")
+    @Cacheable(value = "debugInfo", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public Map<String, Object> debugInfo(String projectId) {
         long startTime = System.currentTimeMillis();
         // Count all triples
@@ -2462,7 +2481,7 @@ public class OntologyQueryService {
         // This reduces total time from sum(all queries) to max(slowest query).
         
         // --- Annotations query ---
-        CompletableFuture<TupleQueryResult> annFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> annFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             String annQuery = PREFIXES + """
                 SELECT DISTINCT ?prop ?value WHERE {
                   <%s> ?prop ?value .
@@ -2479,12 +2498,12 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, annQuery);
-        }, queryPool);
+        }), queryPool);
         
         // --- Named targets: subClassOf + equivalentClass + disjointWith in ONE query ---
         // ?kind ("sub"/"equiv"/"disjoint") tells the parser which axiom list a row
         // feeds. Presentation ordering (previously ORDER BY ?label) is done in Java.
-        CompletableFuture<TupleQueryResult> namedAxiomsFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> namedAxiomsFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?kind ?target ?label WHERE {
                   {
@@ -2522,16 +2541,16 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, queryPool);
+        }), queryPool);
 
         // --- Restrictions via subClassOf AND equivalentClass in ONE query (?rel discriminates) ---
-        CompletableFuture<TupleQueryResult> restrictionsFuture = CompletableFuture.supplyAsync(() ->
-            datasetService.execSelect(projectId, buildClassRestrictionSparqlBothAxes(classIri)),
+        CompletableFuture<TupleQueryResult> restrictionsFuture = queryAsync(SparqlQueryContext.wrap(() ->
+            datasetService.execSelect(projectId, buildClassRestrictionSparqlBothAxes(classIri))),
             queryPool);
 
         // --- Anonymous expressions via subClassOf AND equivalentClass in ONE query ---
         // (?rel discriminates; intersection/union/complement/oneOf merged as before)
-        CompletableFuture<TupleQueryResult> anonymousFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> anonymousFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             String q = PREFIXES + """
                 SELECT ?rel ?bnode ?member ?memberLabel ?exprType WHERE {
                   {
@@ -2562,10 +2581,10 @@ public class OntologyQueryService {
                 LIMIT 1000
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
-        }, queryPool);
+        }), queryPool);
         
         // --- DisjointUnionOf + HasKey merged ---
-        CompletableFuture<TupleQueryResult> listAxiomsFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> listAxiomsFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT ?axType ?list ?prop WHERE {
                   {
@@ -2586,7 +2605,7 @@ public class OntologyQueryService {
         // --- Inferred axioms (equivalent + superclass + disjoint) in ONE query ---
         // GraphDB-only graphs: on Fuseki/TDB2 these graphs don't exist, so this
         // returns empty — one cheap round trip instead of the previous three.
-        CompletableFuture<TupleQueryResult> inferredFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> inferredFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?kind ?target ?label WHERE {
                   {
@@ -2644,7 +2663,7 @@ public class OntologyQueryService {
         // Member traversal is done inline in the same query to avoid blank node ID
         // instability across separate SPARQL queries (blank node IDs from query 1
         // are not guaranteed to match in a second query against RDF4J/Fuseki).
-        CompletableFuture<TupleQueryResult> gciFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> gciFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT ?subExpr ?superClass ?superClassLabel ?exprType ?member ?memberLabel WHERE {
                   ?subExpr rdfs:subClassOf ?superClass .
@@ -2680,7 +2699,7 @@ public class OntologyQueryService {
         // OPTIMIZED: Added explicit LIMIT to prevent runaway transitive path
         // expansion in deeply nested hierarchies. 500 is well above any realistic
         // ancestor count for a single class.
-        CompletableFuture<TupleQueryResult> ancestorFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> ancestorFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?ancestor ?super ?label WHERE {
                   <%s> rdfs:subClassOf+ ?ancestor .
@@ -3093,7 +3112,7 @@ public class OntologyQueryService {
         long startTime = System.currentTimeMillis();
         final Executor queryPool = queryExecutorFor(projectId);
 
-        CompletableFuture<TupleQueryResult> annFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> annFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             String annQuery = PREFIXES + """
                 SELECT DISTINCT ?prop ?value WHERE {
                   <%s> ?prop ?value .
@@ -3110,9 +3129,9 @@ public class OntologyQueryService {
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, annQuery);
-        }, queryPool);
+        }), queryPool);
 
-        CompletableFuture<TupleQueryResult> disjointFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> disjointFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?disjoint ?label WHERE {
                   {
@@ -3134,7 +3153,7 @@ public class OntologyQueryService {
             return datasetService.execSelect(projectId, q);
         }, queryPool);
 
-        CompletableFuture<TupleQueryResult> disjointUnionFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> disjointUnionFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT ?list ?member WHERE {
                   <%s> owl:disjointUnionOf ?list .
@@ -3144,7 +3163,7 @@ public class OntologyQueryService {
             return datasetService.execSelect(projectId, q);
         }, queryPool);
 
-        CompletableFuture<TupleQueryResult> hasKeyFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> hasKeyFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT ?keyList ?prop WHERE {
                   <%s> owl:hasKey ?keyList .
@@ -3154,7 +3173,7 @@ public class OntologyQueryService {
             return datasetService.execSelect(projectId, q);
         }, queryPool);
 
-        CompletableFuture<TupleQueryResult> inferredEquivFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> inferredEquivFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?equiv ?label WHERE {
                   GRAPH <http://www.ontotext.com/inferred> {
@@ -3172,7 +3191,7 @@ public class OntologyQueryService {
             return datasetService.execSelect(projectId, q);
         }, queryPool);
 
-        CompletableFuture<TupleQueryResult> inferredSuperFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> inferredSuperFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?super ?label WHERE {
                   GRAPH <http://www.ontotext.com/inferred> {
@@ -3190,7 +3209,7 @@ public class OntologyQueryService {
             return datasetService.execSelect(projectId, q);
         }, queryPool);
 
-        CompletableFuture<TupleQueryResult> inferredDisjointFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> inferredDisjointFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?disjoint ?label WHERE {
                   GRAPH <http://www.ontotext.com/inferred> {
@@ -3216,7 +3235,7 @@ public class OntologyQueryService {
             return datasetService.execSelect(projectId, q);
         }, queryPool);
 
-        CompletableFuture<TupleQueryResult> gciFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> gciFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT ?subExpr ?superClass ?superClassLabel ?exprType ?member ?memberLabel WHERE {
                   ?subExpr rdfs:subClassOf ?superClass .
@@ -3248,7 +3267,7 @@ public class OntologyQueryService {
             return datasetService.execSelect(projectId, q);
         }, queryPool);
 
-        CompletableFuture<TupleQueryResult> ancestorFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TupleQueryResult> ancestorFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?ancestor ?super ?label WHERE {
                   <%s> rdfs:subClassOf+ ?ancestor .
@@ -3507,7 +3526,7 @@ public class OntologyQueryService {
      * Returns both asserted and inferred instances.
      * OPTIMIZED: Cached + combined into single SPARQL query with BIND for isInferred flag.
      */
-    @Cacheable(value = "classInstances", key = "#projectId + '_' + #classIri + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).getUserId()")
+    @Cacheable(value = "classInstances", key = "#projectId + '_' + #classIri + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<Map<String, Object>> getClassInstances(String projectId, String classIri) {
         safeIri(classIri);
         long startTime = System.currentTimeMillis();
@@ -3557,7 +3576,7 @@ public class OntologyQueryService {
      * Get per-class instance counts.
      * OPTIMIZED: Cached + simplified query (skip inferred graph for speed).
      */
-    @Cacheable(value = "classInstanceCounts", key = "#projectId")
+    @Cacheable(value = "classInstanceCounts", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public Map<String, Map<String, Integer>> getClassInstanceCounts(String projectId) {
         long startTime = System.currentTimeMillis();
         Map<String, Map<String, Integer>> counts = new LinkedHashMap<>();

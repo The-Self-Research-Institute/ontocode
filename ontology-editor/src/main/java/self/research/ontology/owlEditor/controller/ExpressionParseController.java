@@ -152,7 +152,8 @@ public class ExpressionParseController {
     public ResponseEntity<?> addGeneralClassAxiom(@PathVariable String projectId,
                                                   @RequestBody AddGcaRequest request,
                                                   @RequestParam(required = false) String userId,
-                                                  @RequestParam(required = false) String username) {
+                                                  @RequestParam(required = false) String username,
+                                                  @RequestParam(required = false, defaultValue = "false") boolean draft) {
         if (request == null || request.subClassExpression == null || request.subClassExpression.isBlank()
                 || request.superClassExpression == null || request.superClassExpression.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of(
@@ -161,14 +162,17 @@ public class ExpressionParseController {
         }
         try {
             manchesterExpressionService.addGeneralClassAxiom(
-                    projectId, request.subClassExpression.trim(), request.superClassExpression.trim());
-            collaborativeEditService.broadcastMutation(projectId,
-                    new OntologyMutationService.MutationOp(
-                            "addGCA", null, null, null, null,
-                            request.subClassExpression.trim() + " SubClassOf " + request.superClassExpression.trim(),
-                            request.superClassExpression.trim(), null, null, null, null, null, null, null, null),
-                    userId != null ? userId : "anonymous",
-                    username != null ? username : "Anonymous");
+                    projectId, request.subClassExpression.trim(), request.superClassExpression.trim(), draft, userId);
+            // Draft edits are private to the author — do not broadcast them to other collaborators.
+            if (!draft) {
+                collaborativeEditService.broadcastMutation(projectId,
+                        new OntologyMutationService.MutationOp(
+                                "addGCA", null, null, null, null,
+                                request.subClassExpression.trim() + " SubClassOf " + request.superClassExpression.trim(),
+                                request.superClassExpression.trim(), null, null, null, null, null, null, null, null),
+                        userId != null ? userId : "anonymous",
+                        username != null ? username : "Anonymous");
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
