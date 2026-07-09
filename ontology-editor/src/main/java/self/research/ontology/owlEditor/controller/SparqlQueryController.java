@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.model.SparqlQueryEntity;
 import self.research.ontology.owlEditor.repository.SparqlQueryRepository;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.util.TripleStoreErrors;
 
 import java.util.ArrayList;
@@ -34,6 +35,7 @@ public class SparqlQueryController {
     private final SparqlDatasetService datasetService;
     private final SimpMessagingTemplate messagingTemplate;
     private final SparqlQueryRepository queryRepository;
+    private final OntologyMutationService mutationService;
 
     // Desktop (lazy Fuseki): the store may still be starting when a query
     // arrives. Only in that mode do we map connection-refused to a retryable
@@ -53,10 +55,12 @@ public class SparqlQueryController {
 
     public SparqlQueryController(SparqlDatasetService datasetService,
                                 SimpMessagingTemplate messagingTemplate,
-                                SparqlQueryRepository queryRepository) {
+                                SparqlQueryRepository queryRepository,
+                                @org.springframework.context.annotation.Lazy OntologyMutationService mutationService) {
         this.datasetService = datasetService;
         this.messagingTemplate = messagingTemplate;
         this.queryRepository = queryRepository;
+        this.mutationService = mutationService;
     }
 
     // ==================== Saved Queries CRUD ====================
@@ -145,15 +149,23 @@ public class SparqlQueryController {
     public ResponseEntity<?> update(@PathVariable String projectId,
                                     @RequestBody SparqlRequest request,
                                     @RequestParam(required = false, defaultValue = "anonymous") String userId,
-                                    @RequestParam(required = false, defaultValue = "Anonymous") String username) {
+                                    @RequestParam(required = false, defaultValue = "Anonymous") String username,
+                                    @RequestParam(required = false, defaultValue = "false") boolean draft) {
         if (request.query() == null || request.query().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Query must not be empty"));
         }
         try {
-        datasetService.execUpdate(projectId, request.query());
+        // Route through the draft-aware path so a raw SPARQL UPDATE issued in draft mode
+        // hits the user's draft graph, not the shared main graph.
+        mutationService.applyRawUpdate(projectId, request.query(), draft, userId);
         // Derived-cache invalidation (hierarchy snapshot, top-level classes, class
-        // details) happens inside execUpdate — the shared choke point for all writers.
-        
+        // details) happens inside the mutation path — the shared choke point for all writers.
+
+        // Draft edits are private — never broadcast them to other collaborators.
+        if (draft) {
+            return ResponseEntity.ok(Map.of("success", true, "draft", true));
+        }
+
         // Broadcast a generic SPARQL update notification to collaborators
         // Since we can't parse the SPARQL to determine exact changes,
         // we notify clients to refresh their view
