@@ -1,6 +1,7 @@
 import apiClient from './apiClient';
 import ontologyMutationService from './ontologyMutationService';
 import { resolveMutationUserId } from '../utils/mutationActor';
+import { isDesktop } from '../utils/desktop';
 
 export interface AxiomAnnotation {
   property: string;
@@ -20,7 +21,8 @@ function unwrap<T extends Record<string, unknown>>(res: T): T {
  * The backend needs both draft=true and the userId (resolved the same way mutations are).
  */
 function appendDraftParams(params: URLSearchParams): URLSearchParams {
-  if (ontologyMutationService.isPrivateEditMode()) {
+  // Webapp-only: desktop is single-user with no public/draft split (keeps prior behavior).
+  if (!isDesktop() && ontologyMutationService.isPrivateEditMode()) {
     params.set('draft', 'true');
     const uid = resolveMutationUserId();
     if (uid) params.set('userId', uid);
