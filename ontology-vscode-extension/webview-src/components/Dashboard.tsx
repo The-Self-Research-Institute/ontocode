@@ -1350,6 +1350,27 @@ function withDraftScope(url: string): string {
   return url + (url.includes("?") ? "&draft=true" : "?draft=true");
 }
 
+/**
+ * Like withDraftScope but also appends userId — required by the ontology-metadata WRITE
+ * endpoints (annotations/imports/iri) to scope the write to the caller's draft graph. Reads
+ * can rely on the header userId, but these writes read userId explicitly from the request.
+ */
+function withDraftAndUser(url: string): string {
+  if (!ontologyMutationService.isPrivateEditMode()) return url;
+  const uid = resolveMutationActor().userId;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}draft=true&userId=${encodeURIComponent(uid || "")}`;
+}
+
+/**
+ * Body fields to merge into POST/PUT metadata writes so they route to the draft graph
+ * in private mode. Empty object in public mode (no draft, normal public write).
+ */
+function draftBodyFields(): Record<string, string> {
+  if (!ontologyMutationService.isPrivateEditMode()) return {};
+  return { draft: "true", userId: resolveMutationActor().userId || "" };
+}
+
 interface DashboardProps {
   onBackToProjects?: () => void;
   onGoToProjectDashboard?: () => void;
@@ -4528,7 +4549,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Adding annotation with payload:", payload);
-      await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, payload);
+      await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, { ...payload, ...draftBodyFields() });
 
       // Immediate optimistic UI update
       const newAnnotation: any = {
@@ -4581,7 +4602,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Updating annotation with payload:", payload);
-      await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, payload);
+      await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, { ...payload, ...draftBodyFields() });
 
       // Immediate optimistic UI update
       setOntologyAnnotations((prev) =>
@@ -4624,7 +4645,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       }
 
-      await apiClient.delete(`/api/ontology/metadata/${projectId}/annotations?${queryString}`);
+      await apiClient.delete(withDraftAndUser(`/api/ontology/metadata/${projectId}/annotations?${queryString}`));
 
       // Immediate UI update
       setOntologyAnnotations((prev) =>
@@ -4659,6 +4680,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
         importIri: importDraft.trim(),
+        ...draftBodyFields(),
       });
       setImportDraft("");
       setEditingImportIndex(null);
@@ -4725,7 +4747,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (isEdit && originalIri !== importIriForBackend) {
         // Delete old and add new
         await apiClient.delete(
-          `/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(originalIri)}`,
+          withDraftAndUser(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(originalIri)}`),
         );
       }
 
@@ -4747,6 +4769,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
           importIri: importIriForBackend,
+          ...draftBodyFields(),
         });
         console.log("[Dashboard] ✅ Import IRI saved to backend");
       }
@@ -4805,9 +4828,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId || !importDraft.trim()) return;
     try {
       // Remove old and add new
-      await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(oldIri)}`);
+      await apiClient.delete(withDraftAndUser(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(oldIri)}`));
       await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
         importIri: importDraft.trim(),
+        ...draftBodyFields(),
       });
       setImportDraft("");
       setEditingImportIndex(null);
@@ -4821,7 +4845,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleRemoveImport = async (iri: string) => {
     if (!projectId) return;
     try {
-      await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(iri)}`);
+      await apiClient.delete(withDraftAndUser(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(iri)}`));
 
       // Immediate UI update
       setOntologyImports((prev) => prev.filter((i) => i !== iri));
@@ -4869,7 +4893,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Saving prefix:", payload);
-      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, payload);
+      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, { ...payload, ...draftBodyFields() });
 
       // Refresh prefixes from server
       await refreshPrefixes();
@@ -4893,7 +4917,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       console.log("[Dashboard] Deleting prefix:", cleanedPrefix);
       await apiClient.delete(
-        `/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}`,
+        withDraftAndUser(`/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}`),
       );
 
       // Refresh from server
@@ -9023,6 +9047,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             value,
             language: lang,
             datatype,
+            ...draftBodyFields(),
           });
 
           await refreshOntologyAnnotations();
@@ -9145,6 +9170,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             newValue,
             language: lang,
             datatype,
+            ...draftBodyFields(),
           });
 
           await refreshOntologyAnnotations();
@@ -9190,7 +9216,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
         const response = await apiClient.put<{ success?: boolean; error?: string }>(
           `/api/ontology/metadata/${projectId}/iri`,
-          { ontologyIri: normalizedOntologyIri, versionIri: normalizedVersionIri },
+          { ontologyIri: normalizedOntologyIri, versionIri: normalizedVersionIri, ...draftBodyFields() },
         );
         if (response?.success === false) {
           throw new Error(response.error || "Failed to update ontology IRIs.");
@@ -11340,6 +11366,19 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Free-plan non-owners cannot edit or save — show the Pro upgrade dialog
       if (isViewOnlyMember) {
         setShowProPromptType('edit');
+        return;
+      }
+
+      // Code-view save does a whole-ontology reimport into the PUBLIC/main graph
+      // (bulkLoadChunked) — it has no draft-graph path. Saving it while in Draft mode
+      // would overwrite the shared public ontology, violating draft isolation. Block it
+      // and tell the user to switch to Public mode (or use the structured editors, which
+      // are fully draft-aware).
+      if (ontologyMutationService.isPrivateEditMode()) {
+        notificationService.error(
+          "Not available in Draft Mode",
+          "Source (code view) editing writes to the public ontology and isn't supported in Draft Mode. Switch to Public mode to edit source, or use the entity editors to make draft changes.",
+        );
         return;
       }
 
@@ -15879,7 +15918,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         onClose={() => setShowImportDialog(false)}
         onAdd={async (importIri) => {
           if (!projectId) return;
-          await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri });
+          await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri, ...draftBodyFields() });
           const importsRes = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${projectId}/imports`));
           const importsPayload = importsRes?.data?.data ?? importsRes?.data ?? importsRes;
           const importsData = Array.isArray(importsPayload) ? importsPayload : [];
@@ -17085,7 +17124,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 if (!projectId || !importIRI) return;
 
                 try {
-                  await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI });
+                  await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI, ...draftBodyFields() });
 
                   // Refresh all metadata related state sequentially
                   const metadataRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}`));
