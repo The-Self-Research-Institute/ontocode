@@ -1,4 +1,6 @@
 import apiClient from './apiClient';
+import ontologyMutationService from './ontologyMutationService';
+import { resolveMutationUserId } from '../utils/mutationActor';
 
 export interface AxiomAnnotation {
   property: string;
@@ -13,6 +15,23 @@ function unwrap<T extends Record<string, unknown>>(res: T): T {
   return res;
 }
 
+/**
+ * In private/draft mode, axiom-annotation writes must go to the user's draft graph.
+ * The backend needs both draft=true and the userId (resolved the same way mutations are).
+ */
+function appendDraftParams(params: URLSearchParams): URLSearchParams {
+  if (ontologyMutationService.isPrivateEditMode()) {
+    params.set('draft', 'true');
+    const uid = resolveMutationUserId();
+    if (uid) params.set('userId', uid);
+  }
+  return params;
+}
+
+function draftParams(): URLSearchParams {
+  return appendDraftParams(new URLSearchParams());
+}
+
 export const axiomAnnotationService = {
   async getAnnotations(
     projectId: string,
@@ -25,6 +44,7 @@ export const axiomAnnotationService = {
       relatedIri,
     });
     if (sectionName) params.set('sectionName', sectionName);
+    appendDraftParams(params);
     const res = await apiClient.get(
       `/api/ontology/${encodeURIComponent(projectId)}/axiom-annotations?${params.toString()}`,
     );
@@ -43,7 +63,11 @@ export const axiomAnnotationService = {
       language?: string;
     },
   ): Promise<void> {
-    await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/axiom-annotations`, payload);
+    const qs = draftParams().toString();
+    await apiClient.post(
+      `/api/ontology/${encodeURIComponent(projectId)}/axiom-annotations${qs ? `?${qs}` : ''}`,
+      payload,
+    );
   },
 
   async deleteAnnotation(
@@ -63,6 +87,7 @@ export const axiomAnnotationService = {
       value: payload.value,
     });
     if (payload.sectionName) params.set('sectionName', payload.sectionName);
+    appendDraftParams(params);
     await apiClient.delete(
       `/api/ontology/${encodeURIComponent(projectId)}/axiom-annotations?${params.toString()}`,
     );
