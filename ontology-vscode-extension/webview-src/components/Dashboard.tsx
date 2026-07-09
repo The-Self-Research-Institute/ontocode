@@ -1345,8 +1345,18 @@ const OpenFileDialog = ({
  * resolvable via the X-Ontocode-User-Id header/JWT, even on requests made while viewing
  * Public — so omitting/blanking userId doesn't stop a read from being scoped to draft.
  */
+/**
+ * True when reads/writes should carry draft=true. Draft/public graph scoping is a
+ * WEBAPP-only concern: desktop is single-user OWLAPI-first with its own local-graph model
+ * and no shared public/draft split, so we never send draft params there — that keeps
+ * desktop's read/write behavior byte-for-byte unchanged by the draft-isolation work.
+ */
+function isDraftScopeActive(): boolean {
+  return !isDesktop() && ontologyMutationService.isPrivateEditMode();
+}
+
 function withDraftScope(url: string): string {
-  if (!ontologyMutationService.isPrivateEditMode()) return url;
+  if (!isDraftScopeActive()) return url;
   return url + (url.includes("?") ? "&draft=true" : "?draft=true");
 }
 
@@ -1356,7 +1366,7 @@ function withDraftScope(url: string): string {
  * can rely on the header userId, but these writes read userId explicitly from the request.
  */
 function withDraftAndUser(url: string): string {
-  if (!ontologyMutationService.isPrivateEditMode()) return url;
+  if (!isDraftScopeActive()) return url;
   const uid = resolveMutationActor().userId;
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}draft=true&userId=${encodeURIComponent(uid || "")}`;
@@ -1367,7 +1377,7 @@ function withDraftAndUser(url: string): string {
  * in private mode. Empty object in public mode (no draft, normal public write).
  */
 function draftBodyFields(): Record<string, string> {
-  if (!ontologyMutationService.isPrivateEditMode()) return {};
+  if (!isDraftScopeActive()) return {};
   return { draft: "true", userId: resolveMutationActor().userId || "" };
 }
 
@@ -3484,7 +3494,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Explicit opt-in the backend requires before scoping reads to the draft graph —
         // userId alone isn't a scope signal (it's always resolvable via header/JWT, even
         // while viewing Public). See hierarchyUserId/draftScopeParam comment further below.
-        const entityDraftScopeQuery = ontologyMutationService.isPrivateEditMode()
+        const entityDraftScopeQuery = isDraftScopeActive()
           ? (cacheBuster ? "&draft=true" : "?draft=true")
           : "";
 
@@ -3727,7 +3737,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // userId alone isn't a scope signal — it's always resolvable via JWT even while
         // viewing Public. draft=true is the explicit, request-level opt-in the backend
         // requires before it will read from the draft graph instead of main.
-        const draftScopeParam = ontologyMutationService.isPrivateEditMode() ? "&draft=true" : "";
+        const draftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
         const topLevelClassesRes = (!desktopOwlapiReady && desktopHierarchyDeferredForProject.current === currentProjectId) ? null : await apiClient
           .get<any>(
             `/api/ontology/classes/top-level/${encodedProjectId}?limit=5000&userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
@@ -6943,7 +6953,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         const isOwlThing = nodeId === "http://www.w3.org/2002/07/owl#Thing";
         const childrenUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
         // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
-        const childrenDraftScopeParam = ontologyMutationService.isPrivateEditMode() ? "&draft=true" : "";
+        const childrenDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
         const endpoint = isOwlThing
           ? `/api/ontology/classes/top-level/${projectId}?limit=5000&scope=${hierarchyImportsScope}&userId=${encodeURIComponent(childrenUserId)}${childrenDraftScopeParam}`
           : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}&scope=${hierarchyImportsScope}&userId=${encodeURIComponent(childrenUserId)}${childrenDraftScopeParam}`;
@@ -7145,7 +7155,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       const refreshUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
       // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
-      const refreshDraftScopeParam = ontologyMutationService.isPrivateEditMode() ? "&draft=true" : "";
+      const refreshDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}?scope=${hierarchyImportsScope}&userId=${encodeURIComponent(refreshUserId)}${refreshDraftScopeParam}`);
 
       const hierarchyBuilding =
@@ -7869,7 +7879,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           // Generic refresh for other edit types
           // Only sent in private/draft mode — see hierarchyUserId comment above.
           apiClient
-            .get(`/api/ontology/metadata/${projectId}?userId=${encodeURIComponent(resolveMutationActor(user?.userId || user?.email, user?.username).userId)}${ontologyMutationService.isPrivateEditMode() ? "&draft=true" : ""}`)
+            .get(`/api/ontology/metadata/${projectId}?userId=${encodeURIComponent(resolveMutationActor(user?.userId || user?.email, user?.username).userId)}${isDraftScopeActive() ? "&draft=true" : ""}`)
             .then((response) => {
               setMetadata(response.data);
               console.log("[Dashboard] ✅ Metadata refreshed");
@@ -8357,7 +8367,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       ).length ?? 0;
       const loadMoreUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
       // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
-      const loadMoreDraftScopeParam = ontologyMutationService.isPrivateEditMode() ? "&draft=true" : "";
+      const loadMoreDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const res: any = await apiClient.get(
         `/api/ontology/classes/top-level/${encoded}?limit=5000&offset=${currentLoaded}&userId=${encodeURIComponent(loadMoreUserId)}${loadMoreDraftScopeParam}`
       );
@@ -8415,7 +8425,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       const metaUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
       // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
-      const metaDraftScopeParam = ontologyMutationService.isPrivateEditMode() ? "&draft=true" : "";
+      const metaDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}?userId=${encodeURIComponent(metaUserId)}${metaDraftScopeParam}`);
       const data = res?.data || res;
       if (data) {
@@ -11370,11 +11380,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       // Code-view save does a whole-ontology reimport into the PUBLIC/main graph
-      // (bulkLoadChunked) — it has no draft-graph path. Saving it while in Draft mode
-      // would overwrite the shared public ontology, violating draft isolation. Block it
-      // and tell the user to switch to Public mode (or use the structured editors, which
-      // are fully draft-aware).
-      if (ontologyMutationService.isPrivateEditMode()) {
+      // (bulkLoadChunked) — it has no draft-graph path. In the WEBAPP, saving it while in
+      // Draft mode would overwrite the shared public ontology, so block it there.
+      // Desktop is single-user and ALWAYS in "private" mode (Protégé-style, Save-to-publish);
+      // there is no shared public graph to protect and code-view save is a normal desktop
+      // operation, so it must NOT be blocked on desktop.
+      if (!isDesktop() && ontologyMutationService.isPrivateEditMode()) {
         notificationService.error(
           "Not available in Draft Mode",
           "Source (code view) editing writes to the public ontology and isn't supported in Draft Mode. Switch to Public mode to edit source, or use the entity editors to make draft changes.",
