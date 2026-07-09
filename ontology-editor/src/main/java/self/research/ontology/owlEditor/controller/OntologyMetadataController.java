@@ -95,8 +95,12 @@ public class OntologyMetadataController {
             String value = request.get("value");
             String language = request.get("language");
             String datatype = request.get("datatype");
-            metadataService.addOntologyAnnotation(projectId, propertyIri, value, language, datatype);
-            broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_ADDED, propertyIri, httpRequest);
+            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            String userId = request.get("userId");
+            metadataService.addOntologyAnnotation(projectId, propertyIri, value, language, datatype, draft, userId);
+            if (!draft) {
+                broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_ADDED, propertyIri, httpRequest);
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error adding annotation", e);
@@ -115,8 +119,13 @@ public class OntologyMetadataController {
             String newValue = request.get("newValue");
             String language = request.get("language");
             String datatype = request.get("datatype");
-            metadataService.updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype, originalPropertyIri);
-            broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_MODIFIED, propertyIri, httpRequest);
+            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            String userId = request.get("userId");
+            metadataService.updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype,
+                    originalPropertyIri, draft, userId);
+            if (!draft) {
+                broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_MODIFIED, propertyIri, httpRequest);
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error updating annotation", e);
@@ -129,10 +138,14 @@ public class OntologyMetadataController {
                                              @RequestParam String propertyIri,
                                              @RequestParam String value,
                                              @RequestParam(required = false) String language,
+                                             @RequestParam(required = false, defaultValue = "false") boolean draft,
+                                             @RequestParam(required = false) String userId,
                                              HttpServletRequest httpRequest) {
         try {
-            metadataService.deleteOntologyAnnotation(projectId, propertyIri, value, language);
-            broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_DELETED, propertyIri, httpRequest);
+            metadataService.deleteOntologyAnnotation(projectId, propertyIri, value, language, draft, userId);
+            if (!draft) {
+                broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_DELETED, propertyIri, httpRequest);
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error deleting annotation", e);
@@ -170,8 +183,12 @@ public class OntologyMetadataController {
                                        HttpServletRequest httpRequest) {
         try {
             String importIri = request.get("importIri");
-            metadataService.addOntologyImport(projectId, importIri);
-            broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_ADDED, importIri, httpRequest);
+            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            String userId = request.get("userId");
+            metadataService.addOntologyImport(projectId, importIri, draft, userId);
+            if (!draft) {
+                broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_ADDED, importIri, httpRequest);
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error adding import", e);
@@ -182,10 +199,14 @@ public class OntologyMetadataController {
     @DeleteMapping("/{projectId}/imports")
     public ResponseEntity<?> deleteImport(@PathVariable String projectId,
                                          @RequestParam String importIri,
+                                         @RequestParam(required = false, defaultValue = "false") boolean draft,
+                                         @RequestParam(required = false) String userId,
                                          HttpServletRequest httpRequest) {
         try {
-            metadataService.deleteOntologyImport(projectId, importIri);
-            broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_REMOVED, importIri, httpRequest);
+            metadataService.deleteOntologyImport(projectId, importIri, draft, userId);
+            if (!draft) {
+                broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_REMOVED, importIri, httpRequest);
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error deleting import", e);
@@ -201,7 +222,9 @@ public class OntologyMetadataController {
         try {
             String ontologyIri = request.get("ontologyIri");
             String versionIri = request.get("versionIri");
-            metadataService.updateOntologyIRIs(projectId, ontologyIri, versionIri);
+            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            String userId = request.get("userId");
+            metadataService.updateOntologyIRIs(projectId, ontologyIri, versionIri, draft, userId);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error updating ontology IRIs", e);

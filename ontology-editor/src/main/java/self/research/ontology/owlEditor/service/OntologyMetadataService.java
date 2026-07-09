@@ -200,13 +200,20 @@ public class OntologyMetadataService {
      * Add an ontology annotation
      */
     public void addOntologyAnnotation(String projectId, String propertyIri, String value, String language, String datatype) {
+        addOntologyAnnotation(projectId, propertyIri, value, language, datatype, false, null);
+    }
+
+    public void addOntologyAnnotation(String projectId, String propertyIri, String value, String language, String datatype,
+                                      boolean draft, String userId) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             // If no ontology triple exists, create one using a stable IRI based on project ID
             ontologyIri = "http://ontocode.org/resource/ontology/" + projectId;
             String initUpdate = PREFIXES + String.format("INSERT DATA { <%s> a owl:Ontology . }", ontologyIri);
-            datasetService.execUpdate(projectId, initUpdate);
-            ontologyIriCache.put(projectId, ontologyIri);
+            mutationService.applyRawUpdate(projectId, initUpdate, draft, userId);
+            if (!draft) {
+                ontologyIriCache.put(projectId, ontologyIri);
+            }
             ontologyIri = "<" + ontologyIri + ">";
         } else {
             // Format the ontology IRI for SPARQL
@@ -215,14 +222,14 @@ public class OntologyMetadataService {
 
         String prop = formatResource(propertyIri);
         String literal = formatLiteral(value, language, datatype);
-        
+
         String update = PREFIXES + String.format("""
             INSERT DATA {
               %s %s %s .
             }
             """, ontologyIri, prop, literal);
 
-        datasetService.execUpdate(projectId, update);
+        mutationService.applyRawUpdate(projectId, update, draft, userId);
     }
 
     /**
@@ -236,6 +243,20 @@ public class OntologyMetadataService {
                         String language,
                         String datatype,
                         String originalPropertyIri) {
+        updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype, originalPropertyIri,
+                false, null);
+    }
+
+    public void updateOntologyAnnotation(
+                    String projectId,
+                    String propertyIri,
+                    String oldValue,
+                    String newValue,
+                    String language,
+                    String datatype,
+                    String originalPropertyIri,
+                    boolean draft,
+                    String userId) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             throw new RuntimeException("Ontology IRI not found for project " + projectId);
@@ -264,13 +285,18 @@ public class OntologyMetadataService {
                                  ontologyIri, insertProp, newLiteral,
                                  ontologyIri, deleteProp, escapeString(oldValue));
 
-        datasetService.execUpdate(projectId, update);
+        mutationService.applyRawUpdate(projectId, update, draft, userId);
     }
 
     /**
      * Delete an ontology annotation
      */
     public void deleteOntologyAnnotation(String projectId, String propertyIri, String value, String language) {
+        deleteOntologyAnnotation(projectId, propertyIri, value, language, false, null);
+    }
+
+    public void deleteOntologyAnnotation(String projectId, String propertyIri, String value, String language,
+                                         boolean draft, String userId) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             throw new RuntimeException("Ontology IRI not found for project " + projectId);
@@ -291,7 +317,7 @@ public class OntologyMetadataService {
             """, ontologyIri, prop, 
                  ontologyIri, prop, escapeString(value));
 
-        datasetService.execUpdate(projectId, update);
+        mutationService.applyRawUpdate(projectId, update, draft, userId);
     }
 
     private String formatLiteral(String value, String language, String datatype) {
@@ -407,14 +433,18 @@ public class OntologyMetadataService {
      * Add an ontology import
      */
     public void addOntologyImport(String projectId, String importIri) {
-        log.info("Adding import '{}' to project {}", importIri, projectId);
+        addOntologyImport(projectId, importIri, false, null);
+    }
+
+    public void addOntologyImport(String projectId, String importIri, boolean draft, String userId) {
+        log.info("Adding import '{}' to project {} (draft={})", importIri, projectId, draft);
         
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             // If no ontology triple exists, create one using a stable IRI
             ontologyIri = "http://ontocode.org/resource/ontology/" + projectId;
             String initUpdate = PREFIXES + String.format("INSERT DATA { <%s> a owl:Ontology . }", ontologyIri);
-            datasetService.execUpdate(projectId, initUpdate);
+            mutationService.applyRawUpdate(projectId, initUpdate, draft, userId);
             ontologyIri = "<" + ontologyIri + ">";
             log.info("Created new ontology IRI: {}", ontologyIri);
         } else {
@@ -450,7 +480,7 @@ public class OntologyMetadataService {
             """, ontologyIri, formattedImportIri);
 
         log.debug("SPARQL Update: {}", update);
-        datasetService.execUpdate(projectId, update);
+        mutationService.applyRawUpdate(projectId, update, draft, userId);
         log.info("✅ Successfully added import '{}' to project {}", importIri, projectId);
     }
 
@@ -458,6 +488,10 @@ public class OntologyMetadataService {
      * Delete an ontology import
      */
     public void deleteOntologyImport(String projectId, String importIri) {
+        deleteOntologyImport(projectId, importIri, false, null);
+    }
+
+    public void deleteOntologyImport(String projectId, String importIri, boolean draft, String userId) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             throw new RuntimeException("Ontology IRI not found");
@@ -484,7 +518,7 @@ public class OntologyMetadataService {
             }
             """, ontologyIri, formattedImportIri, ontologyIri, formattedImportIri);
 
-        datasetService.execUpdate(projectId, update);
+        mutationService.applyRawUpdate(projectId, update, draft, userId);
     }
 
     /**
@@ -744,6 +778,11 @@ public class OntologyMetadataService {
      * Update ontology IRI and version IRI
      */
     public void updateOntologyIRIs(String projectId, String newOntologyIri, String newVersionIri) {
+        updateOntologyIRIs(projectId, newOntologyIri, newVersionIri, false, null);
+    }
+
+    public void updateOntologyIRIs(String projectId, String newOntologyIri, String newVersionIri,
+                                   boolean draft, String userId) {
         String oldOntologyIri = getOntologyIri(projectId);
         String formattedOld = oldOntologyIri != null ? formatResource(oldOntologyIri) : null;
         String formattedNew = formatResource(newOntologyIri);
@@ -764,20 +803,23 @@ public class OntologyMetadataService {
             update.append("\nINSERT DATA { ").append(formattedNew).append(" owl:versionIRI <").append(newVersionIri).append("> . }");
         }
 
-        datasetService.execUpdate(projectId, update.toString());
-        
-        // Update cache
-        ontologyIriCache.put(projectId, newOntologyIri);
-        projectMetadataService.readMeta(projectId).ifPresent(cached -> {
-            Map<String, Object> meta = new HashMap<>(cached);
-            meta.put("ontologyIRI", newOntologyIri);
-            if (newVersionIri != null && !newVersionIri.isEmpty()) {
-                meta.put("versionIRI", newVersionIri);
-            } else {
-                meta.remove("versionIRI");
-            }
-            projectMetadataService.writeMeta(projectId, meta);
-        });
+        mutationService.applyRawUpdate(projectId, update.toString(), draft, userId);
+
+        // The IRI cache and shared Mongo metadata reflect the PUBLIC graph only — a draft
+        // IRI change must not leak into what other users (or this user's public view) see.
+        if (!draft) {
+            ontologyIriCache.put(projectId, newOntologyIri);
+            projectMetadataService.readMeta(projectId).ifPresent(cached -> {
+                Map<String, Object> meta = new HashMap<>(cached);
+                meta.put("ontologyIRI", newOntologyIri);
+                if (newVersionIri != null && !newVersionIri.isEmpty()) {
+                    meta.put("versionIRI", newVersionIri);
+                } else {
+                    meta.remove("versionIRI");
+                }
+                projectMetadataService.writeMeta(projectId, meta);
+            });
+        }
     }
 
     /**
