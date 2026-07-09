@@ -62,6 +62,11 @@ k8s/
 # Configuration that will be provided via environment variables
 **/.env
 **/.env.*
+# Exception: the webapp's build-time env MUST be in the Docker context so
+# `vite build` in Dockerfile.webapp bakes in VITE_CLOUD_* (dev API host, publishable
+# Stripe key — no secrets). Without this, the build falls back to the prod default
+# (ontocodeapi) regardless of the file's contents.
+!ontology-vscode-extension/webview-src/.env.production
 **/application-local.properties
 **/application-dev.properties
 
