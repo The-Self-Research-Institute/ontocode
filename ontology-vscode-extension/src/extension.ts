@@ -15,9 +15,14 @@ import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 import { optimizedUpload, shouldCompressFile, ChunkMetadata } from './utils/uploadOptimizer';
 
-// Configure axios for browser compatibility - disable automatic decompression
-// to avoid zlib issues in web workers
-axios.defaults.decompress = false;
+// This file is bundled for two different runtimes: the desktop extension host
+// (real Node.js, full zlib support) and the web extension (browser web worker,
+// no zlib). Automatic decompression must stay off only for the latter — leaving
+// it off unconditionally corrupts every gzip/br response (Zotero, our own API)
+// in the desktop build, since axios still advertises gzip/br support in its
+// request headers regardless of this flag.
+const isNodeRuntime = typeof process !== 'undefined' && !!(process.versions && process.versions.node);
+axios.defaults.decompress = isNodeRuntime;
 
 /**
  * Utility: Convert Uint8Array to base64 string (web-compatible)

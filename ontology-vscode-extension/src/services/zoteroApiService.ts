@@ -251,10 +251,31 @@ class ZoteroApiService {
      */
     private async fetchUserIdFromApiKey(apiKey: string): Promise<string | null> {
         const response = await axios.get(`${this.baseUrl}/keys/${encodeURIComponent(apiKey)}`, {
-            headers: { 'Zotero-API-Version': '3' },
+            headers: { 'Zotero-API-Version': '3', 'Accept': 'application/json' },
             timeout: 10000
         });
-        return response.data?.userID ? String(response.data.userID) : null;
+        const data = response.data;
+        if (!data || typeof data !== 'object') {
+            // A non-JSON 200 (e.g. an HTML page) almost always means something between
+            // this Node process and Zotero rewrote the response — a corporate proxy/VPN
+            // or SSL-inspection appliance, not an invalid key.
+            const preview = typeof data === 'string' ? data.slice(0, 200) : String(data);
+            console.error(
+                `[ZoteroAPI] Unexpected /keys response — status ${response.status}, ` +
+                `content-type "${response.headers['content-type']}": ${preview}`
+            );
+            throw new Error(
+                `got a non-JSON response (status ${response.status}, content-type ${response.headers['content-type']}) ` +
+                `— likely a proxy/VPN intercepting the request`
+            );
+        }
+        if (!data.userID) {
+            console.error(
+                `[ZoteroAPI] /keys response had no userID — status ${response.status}, body: ${JSON.stringify(data)}`
+            );
+            return null;
+        }
+        return String(data.userID);
     }
 
     /**
