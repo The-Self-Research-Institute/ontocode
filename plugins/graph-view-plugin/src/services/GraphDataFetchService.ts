@@ -12,6 +12,9 @@
 import { OntologyNode, OntologyEdge } from '../types';
 import { authHeaders } from '../utils/authHeaders';
 
+// Gate for noisy per-fetch diagnostics (the ALL CLASSES dump maps every class on every fetch)
+const GRAPH_DEBUG = typeof window !== 'undefined' && window.localStorage?.getItem('ontocode.graphView.debug') === 'true';
+
 export class GraphDataFetchService {
   private apiBaseUrl: string;
   private ontologyId: string;
@@ -47,16 +50,17 @@ export class GraphDataFetchService {
         this.fetchDatatypes()
       ]);
 
-      console.log('[GraphDataFetchService] 📊📊📊 RAW DATA FETCHED:', {
-        allClasses: classesData.length,
-        individuals: individualsData.length,
-        objectProps: objectPropsData.length,
-        dataProps: dataPropsData.length,
-        annotationProps: annotationPropsData.length,
-        datatypes: datatypesData.length
-      });
-      
-      console.log('[GraphDataFetchService] 📋 ALL CLASSES:', classesData.map((c, i) => `${i+1}. ${c.label || c.name || c.iri}`));
+      if (GRAPH_DEBUG) {
+        console.log('[GraphDataFetchService] 📊📊📊 RAW DATA FETCHED:', {
+          allClasses: classesData.length,
+          individuals: individualsData.length,
+          objectProps: objectPropsData.length,
+          dataProps: dataPropsData.length,
+          annotationProps: annotationPropsData.length,
+          datatypes: datatypesData.length
+        });
+        console.log('[GraphDataFetchService] 📋 ALL CLASSES:', classesData.map((c, i) => `${i + 1}. ${c.label || c.name || c.iri}`));
+      }
 
       // Transform to graph format
       const nodes: OntologyNode[] = [];
