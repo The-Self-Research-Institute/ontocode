@@ -938,7 +938,7 @@ public class ProjectLoadController {
     }
 
     @GetMapping("/export/{projectId:.+}")
-    public ResponseEntity<Resource> export(@PathVariable String projectId,
+    public ResponseEntity<?> export(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "rdfxml") String format) {
         try {
             Path exportPath;
@@ -967,7 +967,8 @@ public class ProjectLoadController {
                     .body(resource);
         } catch (Exception e) {
             log.error("Export failed", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
         }
     }
 

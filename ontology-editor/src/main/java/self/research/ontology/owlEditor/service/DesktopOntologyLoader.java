@@ -351,6 +351,23 @@ public class DesktopOntologyLoader {
         triggerLazyLoadIfNeeded(projectId);
     }
 
+    /**
+     * Evicts any cached in-memory OWLAPI model for this project. Callers that just wrote a new
+     * on-disk ontology (merge, re-import) MUST call this before {@link #startParallelWarm} —
+     * otherwise its {@code cache.has(projectId)} fast-path silently keeps serving the stale,
+     * pre-write model instead of re-parsing the file that was just written.
+     */
+    public void evictCache(String projectId) {
+        cache.evict(projectId);
+    }
+
+    /** Number of classes in the cached ontology's signature, or 0 if nothing is cached. */
+    public long classCount(String projectId) {
+        return cache.get(projectId)
+                .map(cached -> cached.ontology().classesInSignature().count())
+                .orElse(0L);
+    }
+
     /** Start OWLAPI parse in parallel with Fuseki import (Protégé-style fast-open). */
     public void startParallelWarm(String projectId, Path owlFilePath) {
         startParallelWarm(projectId, owlFilePath, false);

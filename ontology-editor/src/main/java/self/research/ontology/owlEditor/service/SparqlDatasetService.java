@@ -2673,11 +2673,24 @@ public class SparqlDatasetService {
 
     /**
      * Strip GraphDB internal system namespace declarations from RDF/XML export output.
-     * GraphDB registers many internal namespaces in its repository config that pollute exports.
+     * GraphDB registers many internal namespaces in its repository config that pollute exports —
+     * but some of the "system" prefixes (e.g. skos, wgs, gn) are also real, commonly-used ontology
+     * vocabularies. Blindly deleting the xmlns declaration while leaving `prefix:something`
+     * elements/attributes in the body (because the ontology's own data genuinely uses that
+     * vocabulary) produces XML with an undefined namespace prefix, which any namespace-aware
+     * parser (OWLAPI, Protégé, xmllint) rejects as malformed. Only strip a declaration when the
+     * prefix is truly unused elsewhere in the document.
      */
     private String stripSystemNamespaces(String rdfXml) {
-        // Remove xmlns:PREFIX="..." declarations for known system namespaces
+        // Remove xmlns:PREFIX="..." declarations for known system namespaces, but only when
+        // that prefix isn't actually referenced as a QName anywhere else in the document.
         for (String prefix : GRAPHDB_SYSTEM_NAMESPACE_PREFIXES) {
+            java.util.regex.Pattern usagePattern = java.util.regex.Pattern.compile(
+                "[<\\s\"']" + java.util.regex.Pattern.quote(prefix) + ":[A-Za-z_]");
+            if (usagePattern.matcher(rdfXml).find()) {
+                // Genuinely used as an element/attribute prefix — keep its declaration.
+                continue;
+            }
             rdfXml = rdfXml.replaceAll(
                 "\\s+xmlns:" + java.util.regex.Pattern.quote(prefix) + "=\"[^\"]*\"", "");
         }
