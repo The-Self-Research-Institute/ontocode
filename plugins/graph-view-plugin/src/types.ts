@@ -205,6 +205,10 @@ export interface GraphSettings {
   multiSelect: boolean;
   contextMenu: boolean;
   tooltips: boolean;
+
+  // Rendering backend: 'svg' is the full-featured D3 renderer; 'webgl' is the
+  // high-performance Sigma.js renderer for large graphs (feature-flagged spike).
+  renderer?: 'svg' | 'webgl';
 }
 
 // Filter options
