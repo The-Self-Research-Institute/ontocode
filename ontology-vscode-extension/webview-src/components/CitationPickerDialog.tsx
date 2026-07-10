@@ -70,7 +70,7 @@ interface CitationPickerDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectCitation: (citation: CitationItem | "manual") => void;
-  format: "turtle" | "rdfxml";
+  format: "turtle" | "rdfxml" | "jsonld";
 }
 
 const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onClose, onSelectCitation, format }) => {
@@ -918,7 +918,9 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
                 </span>
               )}
             </span>
-            <span className="text-gray-500 font-medium">Format: {format.toUpperCase()}</span>
+            <span className="text-gray-500 font-medium">
+              Format: {format === "jsonld" ? "JSON-LD" : format.toUpperCase()}
+            </span>
           </div>
           {filteredCitations.length > 0 && (
             <p className="text-xs text-gray-600 text-center pt-2 border-t border-gray-300">
