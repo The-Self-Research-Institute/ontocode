@@ -85,6 +85,7 @@ import {
   buildZoteroCitationNode,
   insertCitationNodeIntoJsonLd,
   removeCitationNodeFromJsonLd,
+  findGraphInsertionIndex,
   DEFAULT_JSONLD_CONTEXT,
 } from "../utils/jsonLdCitation";
 import { useCollaboration } from "../contexts/CollaborationContext";
@@ -12134,8 +12135,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         if (codeViewFormat === "jsonld") {
           // JSON-LD is not line-oriented — splicing raw text at insertAtIndex would very
-          // likely break the JSON. Instead, parse the document and append the citation as a
-          // node in its `@graph` array (created if needed), then re-serialize.
+          // likely break the JSON. Instead, parse the document, figure out which @graph node
+          // the clicked line falls inside (so the citation lands right after it, mirroring how
+          // the other formats insert near the clicked entity), and re-serialize.
           const citationNode = buildZoteroCitationNode({
             key: citationKey,
             title,
@@ -12156,8 +12158,9 @@ const Dashboard: React.FC<DashboardProps> = ({
             language,
             rights,
           });
-          modifiedContent = insertCitationNodeIntoJsonLd(codeViewContent, citationNode);
-          console.log("[Dashboard] JSON-LD citation node inserted into @graph");
+          const afterIndex = findGraphInsertionIndex(codeViewContent, lineNumber);
+          modifiedContent = insertCitationNodeIntoJsonLd(codeViewContent, citationNode, afterIndex);
+          console.log("[Dashboard] JSON-LD citation node inserted into @graph after index", afterIndex ?? "(end)");
         } else {
           // For RDF/XML and OWL/XML formats, ensure insertion is AFTER the root element opening tag
           // to prevent "Content is not allowed in prolog" errors
