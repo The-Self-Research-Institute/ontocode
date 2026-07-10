@@ -245,6 +245,40 @@ class ZoteroApiService {
     }
 
     /**
+     * Resolve the numeric userID tied to an API key via GET /keys/{key}.
+     * Throws on failure so the caller can distinguish an actually-invalid key
+     * (HTTP 403/404) from a network/TLS/timeout failure reaching Zotero.
+     */
+    private async fetchUserIdFromApiKey(apiKey: string): Promise<string | null> {
+        const response = await axios.get(`${this.baseUrl}/keys/${encodeURIComponent(apiKey)}`, {
+            headers: { 'Zotero-API-Version': '3', 'Accept': 'application/json' },
+            timeout: 10000
+        });
+        const data = response.data;
+        if (!data || typeof data !== 'object') {
+            // A non-JSON 200 (e.g. an HTML page) almost always means something between
+            // this Node process and Zotero rewrote the response — a corporate proxy/VPN
+            // or SSL-inspection appliance, not an invalid key.
+            const preview = typeof data === 'string' ? data.slice(0, 200) : String(data);
+            console.error(
+                `[ZoteroAPI] Unexpected /keys response — status ${response.status}, ` +
+                `content-type "${response.headers['content-type']}": ${preview}`
+            );
+            throw new Error(
+                `got a non-JSON response (status ${response.status}, content-type ${response.headers['content-type']}) ` +
+                `— likely a proxy/VPN intercepting the request`
+            );
+        }
+        if (!data.userID) {
+            console.error(
+                `[ZoteroAPI] /keys response had no userID — status ${response.status}, body: ${JSON.stringify(data)}`
+            );
+            return null;
+        }
+        return String(data.userID);
+    }
+
+    /**
      * Prompt user to enter Zotero credentials
      */
     async promptForCredentials(): Promise<boolean> {
@@ -270,24 +304,31 @@ class ZoteroApiService {
             return false;
         }
 
-        // Step 2: Get User ID
-        const userId = await vscode.window.showInputBox({
-            prompt: 'Enter your Zotero User ID',
-            placeHolder: 'Find it on https://www.zotero.org/settings/keys (e.g., 123456)',
-            ignoreFocusOut: true,
-            validateInput: (value) => {
-                if (!value || value.trim().length === 0) {
-                    return 'User ID is required';
-                }
-                if (!/^\d+$/.test(value.trim())) {
-                    return 'User ID should be a number';
-                }
-                return null;
+        // Step 2: Auto-resolve User ID from the API key
+        let userId: string | null;
+        try {
+            userId = await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: 'Verifying Zotero API key...',
+                cancellable: false
+            }, () => this.fetchUserIdFromApiKey(apiKey.trim()));
+        } catch (error) {
+            console.error('[ZoteroAPI] Key verification failed:', error);
+            if (axios.isAxiosError(error) && error.response) {
+                vscode.window.showErrorMessage(
+                    `Invalid API key — Zotero returned ${error.response.status} ${error.response.statusText}.`
+                );
+            } else {
+                const detail = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(
+                    `Could not reach Zotero to verify the key (${detail}). This looks like a network/proxy issue rather than an invalid key — check your connection and try again.`
+                );
             }
-        });
+            return false;
+        }
 
         if (!userId) {
-            vscode.window.showWarningMessage('Zotero configuration cancelled.');
+            vscode.window.showErrorMessage('Invalid API key — could not retrieve your User ID from Zotero.');
             return false;
         }
 
@@ -295,8 +336,8 @@ class ZoteroApiService {
         try {
             const config = vscode.workspace.getConfiguration('ontocode.zotero');
             await config.update('apiKey', apiKey.trim(), vscode.ConfigurationTarget.Global);
-            await config.update('userId', userId.trim(), vscode.ConfigurationTarget.Global);
-            
+            await config.update('userId', userId, vscode.ConfigurationTarget.Global);
+
             vscode.window.showInformationMessage(
                 '✅ Zotero configured successfully! Your citations will now load from your library.',
                 'Test Connection'
@@ -305,12 +346,41 @@ class ZoteroApiService {
                     this.testConnection();
                 }
             });
-            
+
             return true;
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to save Zotero configuration: ${error}`);
             return false;
         }
+    }
+
+    /**
+     * Expose config for the webview to read (e.g. populate ZoteroSettingsDialog)
+     */
+    getPublicConfig(): ZoteroConfig | null {
+        return this.getConfig();
+    }
+
+    /**
+     * Save Zotero credentials to VS Code workspace settings (called from webview postMessage)
+     */
+    async saveConfig(cfg: ZoteroConfig): Promise<void> {
+        const config = vscode.workspace.getConfiguration('ontocode.zotero');
+        await config.update('apiKey', cfg.apiKey, vscode.ConfigurationTarget.Global);
+        await config.update('userId', cfg.userId, vscode.ConfigurationTarget.Global);
+        await config.update('libraryType', cfg.libraryType, vscode.ConfigurationTarget.Global);
+        await config.update('groupId', cfg.groupId || '', vscode.ConfigurationTarget.Global);
+    }
+
+    /**
+     * Clear Zotero credentials from VS Code workspace settings (called from webview postMessage)
+     */
+    async clearConfig(): Promise<void> {
+        const config = vscode.workspace.getConfiguration('ontocode.zotero');
+        await config.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
+        await config.update('userId', undefined, vscode.ConfigurationTarget.Global);
+        await config.update('libraryType', undefined, vscode.ConfigurationTarget.Global);
+        await config.update('groupId', undefined, vscode.ConfigurationTarget.Global);
     }
 
     /**

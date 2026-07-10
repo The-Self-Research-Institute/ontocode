@@ -1526,8 +1526,16 @@ public class ProjectController {
             }
             
             Workspace workspace = workspaceOpt.get();
-            String subscriptionPlan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
             String ownerId = workspace.getOwnerId();
+            // Prefer the owner's User-record plan (kept in sync by billing webhooks)
+            // over the workspace-level field, which may be null for older workspaces.
+            String subscriptionPlan;
+            Optional<User> ownerUserOpt = userRepository.findById(ownerId);
+            if (ownerUserOpt.isPresent() && ownerUserOpt.get().getSubscriptionPlanName() != null) {
+                subscriptionPlan = ownerUserOpt.get().getSubscriptionPlanName();
+            } else {
+                subscriptionPlan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+            }
 
             // Storage quota is shared across ALL workspaces owned by the same account.
             long currentStorageBytes = calculateOwnerStorageUsage(ownerId);

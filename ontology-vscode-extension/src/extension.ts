@@ -15,9 +15,14 @@ import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 import { optimizedUpload, shouldCompressFile, ChunkMetadata } from './utils/uploadOptimizer';
 
-// Configure axios for browser compatibility - disable automatic decompression
-// to avoid zlib issues in web workers
-axios.defaults.decompress = false;
+// This file is bundled for two different runtimes: the desktop extension host
+// (real Node.js, full zlib support) and the web extension (browser web worker,
+// no zlib). Automatic decompression must stay off only for the latter — leaving
+// it off unconditionally corrupts every gzip/br response (Zotero, our own API)
+// in the desktop build, since axios still advertises gzip/br support in its
+// request headers regardless of this flag.
+const isNodeRuntime = typeof process !== 'undefined' && !!(process.versions && process.versions.node);
+axios.defaults.decompress = isNodeRuntime;
 
 /**
  * Utility: Convert Uint8Array to base64 string (web-compatible)
@@ -216,6 +221,7 @@ type WebviewMessage =
     | { type: 'zoteroLibraryDataAppend'; items: any[]; hasMore?: boolean; totalResults?: number; loadedSoFar?: number; librarySessionId?: number }
     | { type: 'zoteroLibraryDataComplete'; librarySessionId?: number }
     | { type: 'zoteroLibraryError'; error: string; librarySessionId?: number }
+    | { type: 'zoteroConfigData'; config: { apiKey: string; userId: string; libraryType: string; groupId?: string } | null }
     | { type: 'citationFormatted'; citation: string; metadata: any; projectId: string }
     | { type: 'uploadOntologyContentDone'; success: boolean; projectId: string }; // Navigate to subscription plans page
 
@@ -257,7 +263,10 @@ type ExtensionMessage =
     | { type: 'insertManualCitation'; citation: any; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert manual citation
     | { type: 'insertCitationToGraphDB'; citation: string; format: string; projectId: string; metadata: any } // Insert citation directly to GraphDB
     | { type: 'removeCitationFromGraphDB'; citationUri: string; projectId: string } // Remove citation from GraphDB
-    | { type: 'uploadOntologyContent'; content: string; format: string; projectId: string }; // Upload modified ontology content
+    | { type: 'uploadOntologyContent'; content: string; format: string; projectId: string } // Upload modified ontology content
+    | { type: 'requestZoteroConfig' } // Request Zotero credentials from VS Code workspace settings
+    | { type: 'saveZoteroConfig'; config: { apiKey: string; userId: string; libraryType: 'user' | 'group'; groupId?: string } } // Save Zotero credentials to VS Code workspace settings
+    | { type: 'clearZoteroConfig' }; // Clear Zotero credentials from VS Code workspace settings
 
 type DuplicatePromptAction = 'open_existing' | 'replace' | 'create_copy' | 'cancel';
 type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string };
@@ -974,6 +983,20 @@ class OntoCodePanel {
                         // Load the next page of Zotero citations (infinite scroll)
                         await this.handleRequestZoteroLibraryMore();
                         break;
+                    case 'requestZoteroConfig': {
+                        const cfg = zoteroApiService.getPublicConfig();
+                        this.postMessage({ type: 'zoteroConfigData', config: cfg });
+                        break;
+                    }
+                    case 'saveZoteroConfig': {
+                        const { config: zCfg } = message as { config: { apiKey: string; userId: string; libraryType: 'user' | 'group'; groupId?: string } };
+                        await zoteroApiService.saveConfig(zCfg);
+                        break;
+                    }
+                    case 'clearZoteroConfig': {
+                        await zoteroApiService.clearConfig();
+                        break;
+                    }
                     case 'insertCitation':
                         // Handle citation insertion from Zotero
                         await this.handleInsertCitation(message.citationKey, message.format, message.projectId, message.lineNumber || 0);
@@ -3059,22 +3082,24 @@ class OntoCodePanel {
             }, async (progress) => {
                 progress.report({ message: 'Preparing upload...', increment: 10 });
 
-                const uploadPayload: any = {
-                    fileName: finalFileName,
-                    fileData: `data:application/rdf+xml;base64,${base64Content}`,
-                    fileSize: fileSize,
-                    fileType: 'owl'
-                };
-
-                // If replacing, include the replaceFileId
+                // Decode base64 to binary and build a Blob for multipart upload
+                const binaryStr = atob(base64Content);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                    bytes[i] = binaryStr.charCodeAt(i);
+                }
+                const fileBlob = new Blob([bytes], { type: 'application/rdf+xml' });
+                const formData = new FormData();
+                formData.append('file', fileBlob, finalFileName);
+                formData.append('fileName', finalFileName);
+                formData.append('fileType', 'application/rdf+xml');
                 if (replaceFileId) {
-                    uploadPayload.replaceFileId = replaceFileId;
+                    formData.append('replaceFileId', replaceFileId);
                 }
 
-                const uploadResponse = await axios.post(uploadUrl, uploadPayload, {
+                const uploadResponse = await axios.post(uploadUrl, formData, {
                     headers: {
                         'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
                     },
                     timeout: 7_200_000, // 2 hours for large ontology uploads (up to 1GB)
                     onUploadProgress: (progressEvent) => {
