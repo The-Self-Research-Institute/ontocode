@@ -974,6 +974,20 @@ class OntoCodePanel {
                         // Load the next page of Zotero citations (infinite scroll)
                         await this.handleRequestZoteroLibraryMore();
                         break;
+                    case 'requestZoteroConfig': {
+                        const cfg = zoteroApiService.getPublicConfig();
+                        this.postMessage({ type: 'zoteroConfigData', config: cfg });
+                        break;
+                    }
+                    case 'saveZoteroConfig': {
+                        const { config: zCfg } = message as { config: { apiKey: string; userId: string; libraryType: 'user' | 'group'; groupId?: string } };
+                        await zoteroApiService.saveConfig(zCfg);
+                        break;
+                    }
+                    case 'clearZoteroConfig': {
+                        await zoteroApiService.clearConfig();
+                        break;
+                    }
                     case 'insertCitation':
                         // Handle citation insertion from Zotero
                         await this.handleInsertCitation(message.citationKey, message.format, message.projectId, message.lineNumber || 0);
@@ -3053,22 +3067,24 @@ class OntoCodePanel {
             }, async (progress) => {
                 progress.report({ message: 'Preparing upload...', increment: 10 });
 
-                const uploadPayload: any = {
-                    fileName: finalFileName,
-                    fileData: `data:application/rdf+xml;base64,${base64Content}`,
-                    fileSize: fileSize,
-                    fileType: 'owl'
-                };
-
-                // If replacing, include the replaceFileId
+                // Decode base64 to binary and build a Blob for multipart upload
+                const binaryStr = atob(base64Content);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                    bytes[i] = binaryStr.charCodeAt(i);
+                }
+                const fileBlob = new Blob([bytes], { type: 'application/rdf+xml' });
+                const formData = new FormData();
+                formData.append('file', fileBlob, finalFileName);
+                formData.append('fileName', finalFileName);
+                formData.append('fileType', 'application/rdf+xml');
                 if (replaceFileId) {
-                    uploadPayload.replaceFileId = replaceFileId;
+                    formData.append('replaceFileId', replaceFileId);
                 }
 
-                const uploadResponse = await axios.post(uploadUrl, uploadPayload, {
+                const uploadResponse = await axios.post(uploadUrl, formData, {
                     headers: {
                         'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
                     },
                     timeout: 7_200_000, // 2 hours for large ontology uploads (up to 1GB)
                     onUploadProgress: (progressEvent) => {
