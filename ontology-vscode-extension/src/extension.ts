@@ -216,6 +216,7 @@ type WebviewMessage =
     | { type: 'zoteroLibraryDataAppend'; items: any[]; hasMore?: boolean; totalResults?: number; loadedSoFar?: number; librarySessionId?: number }
     | { type: 'zoteroLibraryDataComplete'; librarySessionId?: number }
     | { type: 'zoteroLibraryError'; error: string; librarySessionId?: number }
+    | { type: 'zoteroConfigData'; config: { apiKey: string; userId: string; libraryType: string; groupId?: string } | null }
     | { type: 'citationFormatted'; citation: string; metadata: any; projectId: string }
     | { type: 'uploadOntologyContentDone'; success: boolean; projectId: string }; // Navigate to subscription plans page
 
@@ -257,7 +258,10 @@ type ExtensionMessage =
     | { type: 'insertManualCitation'; citation: any; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert manual citation
     | { type: 'insertCitationToGraphDB'; citation: string; format: string; projectId: string; metadata: any } // Insert citation directly to GraphDB
     | { type: 'removeCitationFromGraphDB'; citationUri: string; projectId: string } // Remove citation from GraphDB
-    | { type: 'uploadOntologyContent'; content: string; format: string; projectId: string }; // Upload modified ontology content
+    | { type: 'uploadOntologyContent'; content: string; format: string; projectId: string } // Upload modified ontology content
+    | { type: 'requestZoteroConfig' } // Request Zotero credentials from VS Code workspace settings
+    | { type: 'saveZoteroConfig'; config: { apiKey: string; userId: string; libraryType: 'user' | 'group'; groupId?: string } } // Save Zotero credentials to VS Code workspace settings
+    | { type: 'clearZoteroConfig' }; // Clear Zotero credentials from VS Code workspace settings
 
 type DuplicatePromptAction = 'open_existing' | 'replace' | 'create_copy' | 'cancel';
 type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string };
