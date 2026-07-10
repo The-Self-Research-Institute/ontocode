@@ -7156,7 +7156,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const refreshUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
       // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
       const refreshDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
-      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}?scope=${hierarchyImportsScope}&userId=${encodeURIComponent(refreshUserId)}${refreshDraftScopeParam}`);
+      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}?scope=${hierarchyImportsScope}&userId=${encodeURIComponent(refreshUserId)}${refreshDraftScopeParam}&_t=${now}`);
 
       const hierarchyBuilding =
         topLevelRes?.hierarchyReady === false ||
@@ -10469,18 +10469,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         }
 
-        const newProp: AnnotationProperty = {
-          id: newIri,
-          label: name,
-          annotations: { "rdfs:label": name },
-        };
-
-        setAnnotationProperties((prev) => [...prev, newProp]);
-
         markAsUnsaved();
         setMetadata((prev) =>
           prev ? { ...prev, annotationPropertyCount: (prev.annotationPropertyCount || 0) + 1 } : prev,
         );
+        // Refresh from backend so the new property (with full data) appears in the list
+        await handleRefreshAnnotationProperties();
         showNotification("Annotation property created successfully!", "info");
         setAddPropertyDialogOpen(false);
       } catch (error) {
@@ -10488,7 +10482,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create annotation property. See console for details.", "error");
       }
     },
-    [projectId, metadata, markAsUnsaved, showNotification, addPropertyType, selectedItem],
+    [projectId, metadata, markAsUnsaved, showNotification, addPropertyType, selectedItem, handleRefreshAnnotationProperties],
   );
 
   const handleAddIndividual = useCallback(

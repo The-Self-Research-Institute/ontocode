@@ -2,6 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { X, Settings, CheckCircle, AlertCircle, Loader2, ExternalLink } from 'lucide-react';
 import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
 
+declare global {
+  interface Window {
+    vscode?: { postMessage: (message: any) => void };
+  }
+}
+
 interface ZoteroSettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -17,14 +23,40 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testError, setTestError] = useState('');
 
+  // Listen for VS Code extension replies (config data)
+  useEffect(() => {
+    if (!window.vscode) return;
+    const handler = (event: MessageEvent) => {
+      const msg = event.data;
+      if (msg?.type === 'zoteroConfigData' && msg.config) {
+        setApiKey(msg.config.apiKey || '');
+        setUserId(msg.config.userId || '');
+        setLibraryType(msg.config.libraryType || 'user');
+        setGroupId(msg.config.groupId || '');
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
   useEffect(() => {
     if (isOpen) {
-      const cfg = sci2CodeBrowserService.getConfig();
-      if (cfg) {
-        setApiKey(cfg.apiKey);
-        setUserId(cfg.userId);
-        setLibraryType(cfg.libraryType);
-        setGroupId(cfg.groupId || '');
+      if (window.vscode) {
+        // In VS Code: request config from extension host (stored in workspace settings)
+        setApiKey('');
+        setUserId('');
+        setLibraryType('user');
+        setGroupId('');
+        window.vscode.postMessage({ type: 'requestZoteroConfig' });
+      } else {
+        // In web/standalone: load from localStorage
+        const cfg = sci2CodeBrowserService.getConfig();
+        if (cfg) {
+          setApiKey(cfg.apiKey);
+          setUserId(cfg.userId);
+          setLibraryType(cfg.libraryType);
+          setGroupId(cfg.groupId || '');
+        }
       }
       setTestResult(null);
       setTestError('');
@@ -52,6 +84,18 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
         return;
       }
       setUserId(resolvedUserId);
+      // In VS Code, also persist to workspace settings via extension host
+      if (window.vscode) {
+        window.vscode.postMessage({
+          type: 'saveZoteroConfig',
+          config: {
+            apiKey: apiKey.trim(),
+            userId: resolvedUserId,
+            libraryType,
+            groupId: libraryType === 'group' ? groupId.trim() : '',
+          },
+        });
+      }
       onClose();
     } catch (err: any) {
       setTestResult('error');
@@ -86,6 +130,17 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
         libraryType,
         groupId: libraryType === 'group' ? groupId.trim() : undefined,
       });
+      if (window.vscode) {
+        window.vscode.postMessage({
+          type: 'saveZoteroConfig',
+          config: {
+            apiKey: apiKey.trim(),
+            userId: resolvedUserId,
+            libraryType,
+            groupId: libraryType === 'group' ? groupId.trim() : '',
+          },
+        });
+      }
       const ok = await sci2CodeBrowserService.testConnection();
       setTestResult(ok ? 'success' : 'error');
       if (!ok) setTestError('Connection failed. Check your credentials.');
@@ -99,6 +154,9 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
 
   const handleClear = () => {
     sci2CodeBrowserService.clearConfig();
+    if (window.vscode) {
+      window.vscode.postMessage({ type: 'clearZoteroConfig' });
+    }
     setApiKey('');
     setUserId('');
     setLibraryType('user');
