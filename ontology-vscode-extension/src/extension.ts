@@ -1631,7 +1631,13 @@ class OntoCodePanel {
         }
 
         const headers: any = {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            // Force uncompressed responses. When the API is fronted by a CDN (e.g. Cloudflare
+            // on the dev/cloud host) it gzip/brotli-compresses responses; the compressed body
+            // was reaching the webview undecoded (binary garbage → "No token received from
+            // server"). This proxy is server-to-server, so skipping compression is negligible
+            // and removes any dependency on the bundled axios version decoding it.
+            'Accept-Encoding': 'identity'
         };
 
         // Only add Authorization header if we have a token
