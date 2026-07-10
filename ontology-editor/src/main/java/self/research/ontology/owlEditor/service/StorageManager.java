@@ -7,7 +7,7 @@ import org.semanticweb.owlapi.formats.ManchesterSyntaxDocumentFormat;
 import org.semanticweb.owlapi.formats.OWLXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
-import org.coode.owlapi.obo12.parser.OBO12DocumentFormat;
+import org.semanticweb.owlapi.formats.OBODocumentFormat;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
@@ -192,7 +192,12 @@ public class StorageManager {
             case "owlxml" -> new OWLXMLDocumentFormat();
             case "manchester", "manchestersyntax" -> new ManchesterSyntaxDocumentFormat();
             case "functional", "functionalsyntax" -> new FunctionalSyntaxDocumentFormat();
-            case "obo" -> new OBO12DocumentFormat();
+            // OBO12DocumentFormat (org.coode.owlapi.obo12.parser) is the OWLAPI 3.x legacy
+            // class — it has no registered OWLStorerFactory in OWLAPI 5.x, so
+            // manager.saveOntology(...) always throws OWLStorerNotFoundException. The modern
+            // OBODocumentFormat (org.semanticweb.owlapi.formats) is backed by
+            // OBOFormatStorerFactory, which owlapi-oboformat registers correctly.
+            case "obo" -> new OBODocumentFormat();
             case "rdfxml", "rdf", "xml" -> new RDFXMLDocumentFormat();
             default -> new RDFXMLDocumentFormat();
         };

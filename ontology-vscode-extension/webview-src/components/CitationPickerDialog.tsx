@@ -821,7 +821,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
                 const authors =
                   citation?.data?.creators?.map((c) => `${c.firstName} ${c.lastName}`.trim()).join(", ") ||
                   "Unknown author";
-                const year = extractYear(citation.data.date);
+                const year = extractYear(citation?.data?.date || "");
                 return (
                   <div
                     key={citation.key}
@@ -830,7 +830,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-gray-800 mb-2 line-clamp-2">{citation.data.title}</h3>
+                        <h3 className="font-semibold text-gray-800 mb-2 line-clamp-2">{citation?.data?.title || "Untitled"}</h3>
                         <div className="flex flex-wrap gap-4 text-sm text-gray-600 mb-2">
                           <div className="flex items-center gap-1 min-w-0">
                             <User size={14} className="flex-shrink-0" />
