@@ -80,6 +80,14 @@ import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNav
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
 import { normalizeRole, parseWorkspaceRole, isWorkspaceViewerRole } from "../utils/roles";
+import {
+  validateJsonLdSyntax,
+  buildZoteroCitationNode,
+  insertCitationNodeIntoJsonLd,
+  removeCitationNodeFromJsonLd,
+  findGraphInsertionIndex,
+  DEFAULT_JSONLD_CONTEXT,
+} from "../utils/jsonLdCitation";
 import { useCollaboration } from "../contexts/CollaborationContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useSubscription } from "../hooks/useSubscription";
@@ -1113,9 +1121,18 @@ const OpenFileDialog = ({
       formData.append("file", file, trimmed);
       formData.append("fileName", trimmed);
       formData.append("fileType", "application/rdf+xml");
-      await apiClient.post(`/api/projects/${parentProjectId}/files`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      try {
+        await apiClient.post(`/api/projects/${parentProjectId}/files`, formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      } catch (error: any) {
+        console.error("[OpenFileDialog] Failed to create new file:", error);
+        notificationService.error(
+          "Create File Failed",
+          error?.response?.data?.error || error?.message || "Could not create the new file. See console for details.",
+        );
+        return;
+      }
       onCreateNewFile?.();
       onClose();
       return;
@@ -7161,7 +7178,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       const hierarchyBuilding =
         topLevelRes?.hierarchyReady === false ||
         topLevelRes?.status === 202 ||
-        topLevelRes?.success === false;
+        topLevelRes?.success === false ||
+        isOwlApiWarmingResponse(topLevelRes);
       if (hierarchyBuilding) {
         // Backend snapshot is stale/rebuilding after a recent mutation (e.g. add class).
         // Keep the current (optimistic) tree instead of overwriting it with an empty
@@ -8983,7 +9001,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleRefreshAnnotationProperties = useCallback(async () => {
     if (!projectId) return;
-    const res = await apiClient.get<any>(withDraftScope(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`));
+    // On desktop, a mutation can leave the OWLAPI in-memory model briefly evicted/re-warming
+    // (version-mismatch check in ensureFreshForRead) — a plain GET right after create/delete can
+    // land on that transient "warming" response (data: []), which would otherwise wipe the whole
+    // list. Retry instead of trusting the first empty response.
+    const res = await getOntologyListWithRetry<any>(
+      withDraftScope(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`),
+    );
+    if (res === null) {
+      console.warn("[Dashboard] Annotation properties still warming after retries — keeping current list");
+      return;
+    }
     const rawProperties = Array.isArray(res?.data)
       ? res.data
       : Array.isArray(res?.annotationProperties)
@@ -10250,6 +10278,10 @@ const Dashboard: React.FC<DashboardProps> = ({
             setExpandedNodes((prev) => [...prev, parentIri]);
           }
           setMetadata((prev) => (prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev));
+          // Reconcile with backend truth — the optimistic update above is what desktop's
+          // annotation-property "not displayed after add" bug was: relying solely on it left
+          // the list wrong whenever the desktop OWLAPI cache had to re-warm after the mutation.
+          await refreshProperties();
         }
 
         showNotification(`${entitiesTab === "Classes" ? "Class" : "Property"} created successfully!`, "info");
@@ -10259,7 +10291,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create entity. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved],
+    [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved, refreshProperties],
   );
 
   const handleCreateObjectProperty = useCallback(
@@ -10322,6 +10354,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         markAsUnsaved();
         setMetadata((prev) => (prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev));
+        // Reconcile with backend truth (see comment on the other object-property create path).
+        await refreshProperties();
         showNotification("Property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topObjectProperty");
@@ -10330,7 +10364,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create property. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved],
+    [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved, refreshProperties],
   );
 
   const handleCreateDataProperty = useCallback(
@@ -10393,6 +10427,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         markAsUnsaved();
         setMetadata((prev) => (prev ? { ...prev, dataPropertyCount: (prev.dataPropertyCount || 0) + 1 } : prev));
+        // Reconcile with backend truth (see comment on the object-property create paths).
+        await refreshProperties();
         showNotification("Data property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topDataProperty");
@@ -10401,7 +10437,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create data property. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, metadata, markAsUnsaved],
+    [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, metadata, markAsUnsaved, refreshProperties],
   );
 
   const handleCreateDatatype = useCallback(
@@ -10708,6 +10744,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                       node.children ? { ...node, children: removeOpRecursively(node.children, id) } : node,
                     );
                 setObjectPropertyHierarchy((prev) => removeOpRecursively(prev, item.id));
+                // Reconcile with backend truth — same rationale as the create paths above.
+                await refreshProperties();
                 break;
               }
               case "DataProperties": {
@@ -10719,10 +10757,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                       node.children ? { ...node, children: removeDpRecursively(node.children, id) } : node,
                     );
                 setDataPropertyHierarchy((prev) => removeDpRecursively(prev, item.id));
+                // Reconcile with backend truth — same rationale as the create paths above.
+                await refreshProperties();
                 break;
               }
               case "AnnotationProperties":
                 setAnnotationProperties((prev) => prev.filter((p) => p.id !== item.id));
+                await handleRefreshAnnotationProperties();
                 break;
               case "Datatypes":
                 setDatatypes((prev) => prev.filter((d) => d.id !== item.id));
@@ -10753,7 +10794,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         },
       });
     },
-    [selectedItem, entitiesTab, projectId],
+    [selectedItem, entitiesTab, projectId, refreshProperties, handleRefreshAnnotationProperties],
   );
 
   const handleChangeEntityIri = useCallback(
@@ -11357,12 +11398,21 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, []);
 
   // Handle code content changes from editable code view
-  const handleCodeContentChange = useCallback((newContent: string) => {
-    setCodeViewContent(newContent);
-    setHasLocalCodeViewChanges(true);
-    setCodeViewSyntaxError(null); // clear error as user edits
-    console.log("[Dashboard] Code view content updated via editing");
-  }, []);
+  const handleCodeContentChange = useCallback(
+    (newContent: string) => {
+      setCodeViewContent(newContent);
+      setHasLocalCodeViewChanges(true);
+      if (codeViewFormat === "jsonld") {
+        // JSON-LD errors are cheap to detect (JSON.parse) — validate live as the user types
+        // so the error gutter/banner in CodeHighlighter updates immediately, not just on save.
+        setCodeViewSyntaxError(validateJsonLdSyntax(newContent));
+      } else {
+        setCodeViewSyntaxError(null); // clear error as user edits; re-validated on save
+      }
+      console.log("[Dashboard] Code view content updated via editing");
+    },
+    [codeViewFormat],
+  );
 
   // Handle saving code content to backend
   const handleSaveCodeContent = useCallback(
@@ -11420,6 +11470,14 @@ const Dashboard: React.FC<DashboardProps> = ({
           const msg = 'Turtle/N-Triples content appears malformed: no statement-terminating dot (.) found.';
           setCodeViewSyntaxError(msg);
           notificationService.error('Validation Error', msg);
+          return;
+        }
+      } else if (codeViewFormat === 'jsonld') {
+        const err = validateJsonLdSyntax(content);
+        if (err) {
+          console.error('[Dashboard] Client-side JSON-LD validation failed:', err);
+          setCodeViewSyntaxError(err);
+          notificationService.error('JSON-LD Validation Error', 'Fix the highlighted error before saving.');
           return;
         }
       }
@@ -11541,6 +11599,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         const rdfResourceMatch = clickedLine.match(/rdf:resource="([^"]+)"/);
         const owlXmlIriMatch = clickedLine.match(/\bIRI="([^"]+)"/);
         const owlXmlAbbrevMatch = clickedLine.match(/abbreviatedIRI="([^"]+)"/);
+        // JSON-LD node identifier, e.g. "@id": "http://example.org/Foo"
+        const jsonLdIdMatch = clickedLine.match(/"@id"\s*:\s*"([^"]+)"/);
 
         // PRIORITY 2: Full URI patterns (all formats) - MUST be a valid URI, not an XML tag
         // Only match URIs that start with http(s):, urn:, file:, or contain ://
@@ -11616,6 +11676,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         } else if (rdfResourceMatch) {
           referencedEntity = rdfResourceMatch[1];
           console.log("[Dashboard] ✓ Extracted from rdf:resource:", referencedEntity);
+        } else if (jsonLdIdMatch) {
+          referencedEntity = jsonLdIdMatch[1];
+          console.log("[Dashboard] ✓ Extracted from JSON-LD @id:", referencedEntity);
         }
         // PRIORITY 2: Import declarations (HIGH priority for import lines)
         else if (importMatch) {
@@ -12101,74 +12164,106 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.log("[Dashboard] Citation lines count:", citationLines.length);
         console.log("[Dashboard] Total lines before insertion:", lines.length);
 
-        // For RDF/XML and OWL/XML formats, ensure insertion is AFTER the root element opening tag
-        // to prevent "Content is not allowed in prolog" errors
-        if (codeViewFormat === "rdfxml" || codeViewFormat === "owlxml") {
-          // Find the line with the opening <rdf:RDF> or <Ontology> root element
-          let rootElementLine = -1;
-          for (let i = 0; i < Math.min(50, lines.length); i++) {
-            const trimmed = lines[i].trim();
-            if (
-              trimmed.startsWith("<rdf:RDF") ||
-              trimmed.startsWith("<Ontology") ||
-              trimmed.startsWith("<owl:Ontology")
-            ) {
-              rootElementLine = i;
-              break;
-            }
-          }
+        let modifiedContent: string;
 
-          // Find the actual closing > of the root tag (may span multiple lines with xmlns)
-          let rootTagCloseLine = rootElementLine;
-          if (rootElementLine >= 0) {
-            for (let j = rootElementLine; j < Math.min(rootElementLine + 100, lines.length); j++) {
-              if (lines[j].includes(">")) {
-                const lastQuote = lines[j].lastIndexOf('"');
-                const lastGt = lines[j].lastIndexOf(">");
-                if (lastGt > lastQuote || lastQuote === -1) {
-                  rootTagCloseLine = j;
-                  break;
+        if (codeViewFormat === "jsonld") {
+          // JSON-LD is not line-oriented — splicing raw text at insertAtIndex would very
+          // likely break the JSON. Instead, parse the document, figure out which @graph node
+          // the clicked line falls inside (so the citation lands right after it, mirroring how
+          // the other formats insert near the clicked entity), and re-serialize.
+          const citationNode = buildZoteroCitationNode({
+            key: citationKey,
+            title,
+            authors,
+            year,
+            doi,
+            url,
+            abstractNote,
+            publicationTitle,
+            volume,
+            issue,
+            pages,
+            publisher,
+            itemType,
+            tags,
+            isbn,
+            issn,
+            language,
+            rights,
+          });
+          const afterIndex = findGraphInsertionIndex(codeViewContent, lineNumber);
+          modifiedContent = insertCitationNodeIntoJsonLd(codeViewContent, citationNode, afterIndex);
+          console.log("[Dashboard] JSON-LD citation node inserted into @graph after index", afterIndex ?? "(end)");
+        } else {
+          // For RDF/XML and OWL/XML formats, ensure insertion is AFTER the root element opening tag
+          // to prevent "Content is not allowed in prolog" errors
+          if (codeViewFormat === "rdfxml" || codeViewFormat === "owlxml") {
+            // Find the line with the opening <rdf:RDF> or <Ontology> root element
+            let rootElementLine = -1;
+            for (let i = 0; i < Math.min(50, lines.length); i++) {
+              const trimmed = lines[i].trim();
+              if (
+                trimmed.startsWith("<rdf:RDF") ||
+                trimmed.startsWith("<Ontology") ||
+                trimmed.startsWith("<owl:Ontology")
+              ) {
+                rootElementLine = i;
+                break;
+              }
+            }
+
+            // Find the actual closing > of the root tag (may span multiple lines with xmlns)
+            let rootTagCloseLine = rootElementLine;
+            if (rootElementLine >= 0) {
+              for (let j = rootElementLine; j < Math.min(rootElementLine + 100, lines.length); j++) {
+                if (lines[j].includes(">")) {
+                  const lastQuote = lines[j].lastIndexOf('"');
+                  const lastGt = lines[j].lastIndexOf(">");
+                  if (lastGt > lastQuote || lastQuote === -1) {
+                    rootTagCloseLine = j;
+                    break;
+                  }
                 }
               }
             }
-          }
 
-          if (rootElementLine >= 0 && insertAtIndex <= rootTagCloseLine) {
-            // User clicked before or inside the root element opening tag - insert after it
-            insertAtIndex = rootTagCloseLine + 1;
-            console.log(
-              `[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`,
-              insertAtIndex,
-              "to respect XML structure",
-            );
-          }
+            if (rootElementLine >= 0 && insertAtIndex <= rootTagCloseLine) {
+              // User clicked before or inside the root element opening tag - insert after it
+              insertAtIndex = rootTagCloseLine + 1;
+              console.log(
+                `[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`,
+                insertAtIndex,
+                "to respect XML structure",
+              );
+            }
 
-          // Also check if trying to insert after the closing tag
-          for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
-            const trimmed = lines[i].trim();
-            if (trimmed === "</rdf:RDF>" || trimmed === "</Ontology>" || trimmed === "</owl:Ontology>") {
-              if (insertAtIndex > i) {
-                insertAtIndex = i; // Insert before the closing tag
-                console.log(
-                  `[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`,
-                  insertAtIndex,
-                  "to stay inside root element",
-                );
+            // Also check if trying to insert after the closing tag
+            for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
+              const trimmed = lines[i].trim();
+              if (trimmed === "</rdf:RDF>" || trimmed === "</Ontology>" || trimmed === "</owl:Ontology>") {
+                if (insertAtIndex > i) {
+                  insertAtIndex = i; // Insert before the closing tag
+                  console.log(
+                    `[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`,
+                    insertAtIndex,
+                    "to stay inside root element",
+                  );
+                }
+                break;
               }
-              break;
             }
           }
+
+          console.log("[Dashboard] Final insertion index after adjustments:", insertAtIndex);
+
+          // Insert the citation details AT the adjusted line
+          lines.splice(insertAtIndex, 0, ...citationLines);
+
+          console.log("[Dashboard] Total lines after insertion:", lines.length);
+
+          // Create modified content with the citation details inserted
+          modifiedContent = lines.join("\n");
         }
-
-        console.log("[Dashboard] Final insertion index after adjustments:", insertAtIndex);
-
-        // Insert the citation details AT the adjusted line
-        lines.splice(insertAtIndex, 0, ...citationLines);
-
-        console.log("[Dashboard] Total lines after insertion:", lines.length);
-
-        // Create modified content with the citation details inserted
-        const modifiedContent = lines.join("\n");
         console.log("[Dashboard] Modified content length:", modifiedContent.length, "bytes");
 
         // Step 1: Update local code view immediately for UX feedback
@@ -12188,7 +12283,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         );
 
         // Define all supported formats for multi-format sync
-        const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional"] as const;
+        const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional", "jsonld"] as const;
         const otherFormats = allFormats.filter((f) => f !== codeViewFormat);
 
         // Helper to generate citation in Turtle format
@@ -12711,6 +12806,42 @@ const Dashboard: React.FC<DashboardProps> = ({
               );
             }
 
+            // JSON-LD is not line-oriented — handle it structurally and skip the generic
+            // skeleton/splice logic below entirely (which would corrupt JSON).
+            if (fmt === "jsonld") {
+              const jsonLdCitationNode = buildZoteroCitationNode({
+                key: citationKey,
+                title,
+                authors,
+                year,
+                doi,
+                url,
+                abstractNote,
+                publicationTitle,
+                volume,
+                issue,
+                pages,
+                publisher,
+                itemType,
+                tags,
+                isbn,
+                issn,
+                language,
+                rights,
+              });
+              const jsonLdBase = fmtContent || JSON.stringify({ "@context": DEFAULT_JSONLD_CONTEXT, "@graph": [] });
+              const fmtModifiedContent = insertCitationNodeIntoJsonLd(jsonLdBase, jsonLdCitationNode);
+              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+                content: fmtModifiedContent,
+                format: fmt,
+                citationUrn: citationUrn,
+                referencedEntity: referencedEntity || "",
+              });
+              console.log("[Dashboard] JSON-LD format cache stored with citation node");
+              succeededFormats.push(fmt);
+              continue;
+            }
+
             // If we couldn't get format content, generate a minimal skeleton
             if (!fmtContent) {
               console.log(`[Dashboard] Generating minimal ${fmt} skeleton for citation storage`);
@@ -12907,6 +13038,149 @@ const Dashboard: React.FC<DashboardProps> = ({
   );
 
   // Handler for removing citations from the code view
+  // Removes a citation (block or JSON-LD node) from every format's cache OTHER than
+  // `excludeFormat`, regardless of which format the removal was triggered from.
+  const syncCitationRemovalToOtherFormats = useCallback(
+    async (citationUri: string, excludeFormat: string) => {
+      const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional", "jsonld"] as const;
+      const otherFormats = allFormats.filter((f) => f !== excludeFormat);
+
+      for (const fmt of otherFormats) {
+        try {
+          const response = await apiClient.get<{ success: boolean; content: string }>(
+            `/api/ontology/${projectId}/content`,
+            { format: fmt, forceRefresh: "false" },
+          );
+          if (!response.success || !response.content) continue;
+
+          if (fmt === "jsonld") {
+            const result = removeCitationNodeFromJsonLd(response.content, citationUri);
+            if (result.removed) {
+              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+                content: result.content,
+                format: fmt,
+              });
+              console.log(`[Dashboard] Format ${fmt} cache updated after removal (JSON-LD node removed)`);
+            }
+            continue;
+          }
+
+          // Remove citation from this (line-oriented) format too, using the same
+          // comment-marker / closing-statement block detection as the primary removal path.
+          const fmtLines = response.content.split("\n");
+          const fmtLinesToRemove = new Set<number>();
+
+          const fmtIsXml = fmt === "rdfxml" || fmt === "owlxml";
+          const fmtIsTurtle = fmt === "turtle" || fmt === "ntriples";
+          const fmtIsManchester = fmt === "manchester";
+          const fmtIsFunctional = fmt === "functional";
+
+          const fmtCitationLines: number[] = [];
+          for (let i = 0; i < fmtLines.length; i++) {
+            if (fmtLines[i].includes(`urn:citation:${citationUri}`)) {
+              fmtCitationLines.push(i);
+            }
+          }
+
+          for (const uriLineNum of fmtCitationLines) {
+            let blockStart = uriLineNum;
+            for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 10); i--) {
+              const line = fmtLines[i].trim();
+              if (line.includes("Zotero Citation") || line.startsWith("###") || line.startsWith("<!--")) {
+                blockStart = i;
+                break;
+              }
+              if (line === "") break;
+              if (
+                fmtIsXml &&
+                (line.startsWith("<Declaration>") ||
+                  line.startsWith("<owl:NamedIndividual") ||
+                  line.startsWith("<ClassAssertion>"))
+              ) {
+                blockStart = i;
+              }
+            }
+
+            for (let i = uriLineNum; i < Math.min(fmtLines.length, uriLineNum + 50); i++) {
+              const line = fmtLines[i];
+              const trimmedLine = line.trim();
+              fmtLinesToRemove.add(i);
+
+              if (fmtIsXml) {
+                if (
+                  trimmedLine === "</owl:NamedIndividual>" ||
+                  trimmedLine === "</Declaration>" ||
+                  trimmedLine === "</ClassAssertion>" ||
+                  trimmedLine === "</AnnotationAssertion>"
+                ) {
+                  if (i + 1 < fmtLines.length && fmtLines[i + 1].trim() === "") {
+                    fmtLinesToRemove.add(i + 1);
+                  }
+                  break;
+                }
+              } else if (fmtIsTurtle) {
+                if (trimmedLine.endsWith(".") && !trimmedLine.startsWith("@") && !trimmedLine.startsWith("#")) {
+                  if (i + 1 < fmtLines.length && fmtLines[i + 1].trim() === "") {
+                    fmtLinesToRemove.add(i + 1);
+                  }
+                  break;
+                }
+              } else if (fmtIsManchester || fmtIsFunctional) {
+                if (
+                  trimmedLine === "" ||
+                  (fmtIsManchester &&
+                    trimmedLine.match(/^(Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/))
+                ) {
+                  if (trimmedLine === "") fmtLinesToRemove.add(i);
+                  break;
+                }
+              }
+            }
+
+            for (let i = blockStart; i < uriLineNum; i++) {
+              fmtLinesToRemove.add(i);
+            }
+          }
+
+          const sortedFmtLines = [...fmtLinesToRemove].sort((a, b) => a - b);
+          if (sortedFmtLines.length > 0) {
+            const firstLine = sortedFmtLines[0];
+            for (let i = firstLine - 1; i >= Math.max(0, firstLine - 3); i--) {
+              const line = fmtLines[i].trim();
+              if (line.includes("Zotero Citation") || (line.startsWith("#") && line.includes("Citation"))) {
+                fmtLinesToRemove.add(i);
+              } else if (line === "") {
+                if (i > 0 && fmtLines[i - 1].includes("Zotero Citation")) {
+                  fmtLinesToRemove.add(i);
+                }
+              } else {
+                break;
+              }
+            }
+          }
+
+          const uniqueFmtLinesToRemove = [...fmtLinesToRemove].sort((a, b) => b - a);
+          const newFmtLines = [...fmtLines];
+          for (const lineIdx of uniqueFmtLinesToRemove) {
+            newFmtLines.splice(lineIdx, 1);
+          }
+
+          const fmtModifiedContent = newFmtLines.join("\n");
+          await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+            content: fmtModifiedContent,
+            format: fmt,
+          });
+          console.log(
+            `[Dashboard] Format ${fmt} cache updated after removal (${uniqueFmtLinesToRemove.length} lines removed)`,
+          );
+        } catch (fmtError) {
+          console.warn(`[Dashboard] Failed to update format ${fmt} after removal:`, fmtError);
+        }
+      }
+    },
+    [projectId],
+  );
+
   const handleRemoveCitationAtLocation = useCallback(
     async (lineNumber: number) => {
       if (!codeViewContent) {
@@ -12968,6 +13242,71 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Citation URI to remove:", citationUri);
+
+      // JSON-LD is not line-oriented — the line-based block detection below (which relies on
+      // comment markers and closing tags/statements that don't exist in JSON) would corrupt
+      // the document. Remove the citation node structurally instead.
+      if (codeViewFormat === "jsonld") {
+        const jsonLdRemoval = removeCitationNodeFromJsonLd(codeViewContent, citationUri);
+        if (!jsonLdRemoval.removed) {
+          notificationService.warning("Remove Citation", "Could not find the citation node in the JSON-LD document.");
+          return;
+        }
+
+        setConfirmDialog({
+          isOpen: true,
+          title: "Remove Citation",
+          message: "Are you sure you want to remove this citation from the JSON-LD document?",
+          onConfirm: async () => {
+            try {
+              const modifiedContent = jsonLdRemoval.content;
+              setCodeViewContent(modifiedContent);
+              setHasLocalCodeViewChanges(true);
+
+              try {
+                await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+                  content: modifiedContent,
+                  format: "jsonld",
+                });
+              } catch (e) {
+                console.warn("[Dashboard] Failed to store jsonld cache after removal:", e);
+              }
+
+              if (window.vscode) {
+                window.vscode.postMessage({
+                  type: "uploadOntologyContent",
+                  content: modifiedContent,
+                  format: "jsonld",
+                  projectId: projectId,
+                });
+                await new Promise((resolve) => setTimeout(resolve, 500));
+              }
+
+              await syncCitationRemovalToOtherFormats(citationUri, "jsonld");
+
+              console.log("[Dashboard] Removing citation from GraphDB:", citationUri);
+              window.vscode?.postMessage({
+                type: "removeCitationFromGraphDB",
+                citationUri: `urn:citation:${citationUri}`,
+                projectId: projectId,
+              });
+
+              notificationService.success("Citation Removed", "Successfully removed citation from all formats");
+              setCitationRemovalMode(false);
+              setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+            } catch (error) {
+              console.error("[Dashboard] Error removing JSON-LD citation:", error);
+              notificationService.error("Citation Error", "Failed to remove citation");
+              setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+            }
+          },
+          onCancel: () => {
+            console.log("[Dashboard] Citation removal cancelled by user");
+            setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+          },
+        });
+        return;
+      }
 
       // Find citation block using a more reliable approach
       // Step 1: Find all lines that contain the citation URI
@@ -13196,139 +13535,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
 
             // Remove citation from all other format caches
-            const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional"] as const;
-            const otherFormats = allFormats.filter((f) => f !== codeViewFormat);
-
-            for (const fmt of otherFormats) {
-              try {
-                // Fetch content from cache to preserve other citations
-                const response = await apiClient.get<{ success: boolean; content: string }>(
-                  `/api/ontology/${projectId}/content`,
-                  { format: fmt, forceRefresh: "false" },
-                );
-
-                if (response.success && response.content) {
-                  // Remove citation from this format too using same logic
-                  const fmtLines = response.content.split("\n");
-                  const fmtLinesToRemove = new Set<number>();
-
-                  const fmtIsXml = fmt === "rdfxml" || fmt === "owlxml";
-                  const fmtIsTurtle = fmt === "turtle" || fmt === "ntriples";
-                  const fmtIsManchester = fmt === "manchester";
-                  const fmtIsFunctional = fmt === "functional";
-
-                  // Find all lines with citation URI
-                  const fmtCitationLines: number[] = [];
-                  for (let i = 0; i < fmtLines.length; i++) {
-                    if (fmtLines[i].includes(`urn:citation:${citationUri}`)) {
-                      fmtCitationLines.push(i);
-                    }
-                  }
-
-                  for (const uriLineNum of fmtCitationLines) {
-                    // Find block start
-                    let blockStart = uriLineNum;
-                    for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 10); i--) {
-                      const line = fmtLines[i].trim();
-                      if (line.includes("Zotero Citation") || line.startsWith("###") || line.startsWith("<!--")) {
-                        blockStart = i;
-                        break;
-                      }
-                      if (line === "") break;
-                      if (
-                        fmtIsXml &&
-                        (line.startsWith("<Declaration>") ||
-                          line.startsWith("<owl:NamedIndividual") ||
-                          line.startsWith("<ClassAssertion>"))
-                      ) {
-                        blockStart = i;
-                      }
-                    }
-
-                    // Find block end
-                    for (let i = uriLineNum; i < Math.min(fmtLines.length, uriLineNum + 50); i++) {
-                      const line = fmtLines[i];
-                      const trimmedLine = line.trim();
-                      fmtLinesToRemove.add(i);
-
-                      if (fmtIsXml) {
-                        if (
-                          trimmedLine === "</owl:NamedIndividual>" ||
-                          trimmedLine === "</Declaration>" ||
-                          trimmedLine === "</ClassAssertion>" ||
-                          trimmedLine === "</AnnotationAssertion>"
-                        ) {
-                          if (i + 1 < fmtLines.length && fmtLines[i + 1].trim() === "") {
-                            fmtLinesToRemove.add(i + 1);
-                          }
-                          break;
-                        }
-                      } else if (fmtIsTurtle) {
-                        if (trimmedLine.endsWith(".") && !trimmedLine.startsWith("@") && !trimmedLine.startsWith("#")) {
-                          if (i + 1 < fmtLines.length && fmtLines[i + 1].trim() === "") {
-                            fmtLinesToRemove.add(i + 1);
-                          }
-                          break;
-                        }
-                      } else if (fmtIsManchester || fmtIsFunctional) {
-                        if (
-                          trimmedLine === "" ||
-                          (fmtIsManchester &&
-                            trimmedLine.match(
-                              /^(Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/,
-                            ))
-                        ) {
-                          if (trimmedLine === "") fmtLinesToRemove.add(i);
-                          break;
-                        }
-                      }
-                    }
-
-                    // Add all lines from blockStart
-                    for (let i = blockStart; i < uriLineNum; i++) {
-                      fmtLinesToRemove.add(i);
-                    }
-                  }
-
-                  // Check for preceding comment lines
-                  const sortedFmtLines = [...fmtLinesToRemove].sort((a, b) => a - b);
-                  if (sortedFmtLines.length > 0) {
-                    const firstLine = sortedFmtLines[0];
-                    for (let i = firstLine - 1; i >= Math.max(0, firstLine - 3); i--) {
-                      const line = fmtLines[i].trim();
-                      if (line.includes("Zotero Citation") || (line.startsWith("#") && line.includes("Citation"))) {
-                        fmtLinesToRemove.add(i);
-                      } else if (line === "") {
-                        if (i > 0 && fmtLines[i - 1].includes("Zotero Citation")) {
-                          fmtLinesToRemove.add(i);
-                        }
-                      } else {
-                        break;
-                      }
-                    }
-                  }
-
-                  // Remove lines
-                  const uniqueFmtLinesToRemove = [...fmtLinesToRemove].sort((a, b) => b - a);
-                  const newFmtLines = [...fmtLines];
-                  for (const lineIdx of uniqueFmtLinesToRemove) {
-                    newFmtLines.splice(lineIdx, 1);
-                  }
-
-                  // Store in cache
-                  const fmtModifiedContent = newFmtLines.join("\n");
-                  await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
-                    content: fmtModifiedContent,
-                    format: fmt,
-                  });
-                  console.log(
-                    `[Dashboard] Format ${fmt} cache updated after removal (${uniqueFmtLinesToRemove.length} lines removed)`,
-                  );
-                }
-              } catch (fmtError) {
-                console.warn(`[Dashboard] Failed to update format ${fmt} after removal:`, fmtError);
-              }
-            }
+            await syncCitationRemovalToOtherFormats(citationUri, codeViewFormat);
 
             // Remove citation from GraphDB
             console.log("[Dashboard] Removing citation from GraphDB:", citationUri);
@@ -13359,7 +13566,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         },
       });
     },
-    [projectId, codeViewFormat, codeViewContent],
+    [projectId, codeViewFormat, codeViewContent, syncCitationRemovalToOtherFormats],
   );
 
   // Helper function to check if a line is related to a citation block
@@ -18012,7 +18219,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         isOpen={showCitationPicker}
         onClose={() => setShowCitationPicker(false)}
         onSelectCitation={handleCitationSelection}
-        format={codeViewFormat === "turtle" ? "turtle" : "rdfxml"}
+        format={codeViewFormat === "turtle" ? "turtle" : codeViewFormat === "jsonld" ? "jsonld" : "rdfxml"}
       />
 
       {/* Manual Citation Dialog */}
