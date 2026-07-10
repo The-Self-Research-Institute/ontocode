@@ -314,6 +314,35 @@ class ZoteroApiService {
     }
 
     /**
+     * Expose config for the webview to read (e.g. populate ZoteroSettingsDialog)
+     */
+    getPublicConfig(): ZoteroConfig | null {
+        return this.getConfig();
+    }
+
+    /**
+     * Save Zotero credentials to VS Code workspace settings (called from webview postMessage)
+     */
+    async saveConfig(cfg: ZoteroConfig): Promise<void> {
+        const config = vscode.workspace.getConfiguration('ontocode.zotero');
+        await config.update('apiKey', cfg.apiKey, vscode.ConfigurationTarget.Global);
+        await config.update('userId', cfg.userId, vscode.ConfigurationTarget.Global);
+        await config.update('libraryType', cfg.libraryType, vscode.ConfigurationTarget.Global);
+        await config.update('groupId', cfg.groupId || '', vscode.ConfigurationTarget.Global);
+    }
+
+    /**
+     * Clear Zotero credentials from VS Code workspace settings (called from webview postMessage)
+     */
+    async clearConfig(): Promise<void> {
+        const config = vscode.workspace.getConfiguration('ontocode.zotero');
+        await config.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
+        await config.update('userId', undefined, vscode.ConfigurationTarget.Global);
+        await config.update('libraryType', undefined, vscode.ConfigurationTarget.Global);
+        await config.update('groupId', undefined, vscode.ConfigurationTarget.Global);
+    }
+
+    /**
      * Test the Zotero connection
      */
     async testConnection(): Promise<void> {
