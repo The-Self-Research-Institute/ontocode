@@ -1374,6 +1374,12 @@ function handleBrowserMessage(message: any) {
  * this function does nothing in that case.
  */
 export function installBrowserBridge() {
+    // The Electron preload already installed its own, richer window.vscode (native
+    // dialogs, encrypted token storage, its own Zotero fetch, etc) — never overwrite it.
+    if ((window as any).__ONTOCODE_NATIVE_VSCODE_BRIDGE__) {
+        console.log('[BrowserBridge] Native (Electron) bridge detected — bridge NOT installed');
+        return;
+    }
     // Already running inside VS Code Desktop / a preload that set window.vscode
     if (window.vscode && !(window as any).__ONTOCODE_BROWSER_BRIDGE__) {
         console.log('[BrowserBridge] VS Code API detected — bridge NOT installed');

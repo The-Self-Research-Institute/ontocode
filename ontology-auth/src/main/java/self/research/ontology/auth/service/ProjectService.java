@@ -211,19 +211,43 @@ public class ProjectService {
      */
     public Optional<Project> getProject(String projectId) {
         List<Project> projects = projectRepository.findAllActiveByProjectId(projectId);
-        if (projects.isEmpty()) {
-            return Optional.empty();
+        Project project;
+        if (!projects.isEmpty()) {
+            if (projects.size() > 1) {
+                log.warn("Duplicate active project documents for projectId={} (count={}), using first", projectId, projects.size());
+            }
+            project = projects.get(0);
+        } else {
+            // Desktop-created projects are written by ontology-editor's ProjectMetadataService
+            // keyed only by Mongo _id (via upsert-by-_id), never populating the separate
+            // `projectId`/`workspaceId` fields this repository query filters on — so the query
+            // above never finds them. Fall back to a direct _id lookup and self-heal the missing
+            // fields so subsequent lookups succeed via the normal path without this fallback.
+            Optional<Project> byId = projectRepository.findById(projectId);
+            if (byId.isEmpty() || Boolean.TRUE.equals(byId.get().getIsDeleted())) {
+                return Optional.empty();
+            }
+            project = byId.get();
+            boolean needsBackfill = false;
+            if (project.getProjectId() == null || project.getProjectId().isEmpty()) {
+                project.setProjectId(projectId);
+                needsBackfill = true;
+            }
+            if (project.getWorkspaceId() == null || project.getWorkspaceId().isEmpty()) {
+                project.setWorkspaceId("desktop-workspace-local");
+                needsBackfill = true;
+            }
+            if (needsBackfill) {
+                log.info("[ProjectService] Backfilling projectId/workspaceId for desktop-created project {}", projectId);
+                project = projectRepository.save(project);
+            }
         }
-        if (projects.size() > 1) {
-            log.warn("Duplicate active project documents for projectId={} (count={}), using first", projectId, projects.size());
-        }
-        Optional<Project> projectOpt = Optional.of(projects.get(0));
-        if (!isWorkspaceAccessibleForUsage(projectOpt.get().getWorkspaceId())) {
+        if (!isWorkspaceAccessibleForUsage(project.getWorkspaceId())) {
             log.warn("[ProjectService] getProject blocked: projectId={} workspaceId={} — workspace not accessible (billing or enterprise check)",
-                    projectId, projectOpt.get().getWorkspaceId());
+                    projectId, project.getWorkspaceId());
             return Optional.empty();
         }
-        return projectOpt;
+        return Optional.of(project);
     }
 
     /**

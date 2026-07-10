@@ -1121,9 +1121,18 @@ const OpenFileDialog = ({
       formData.append("file", file, trimmed);
       formData.append("fileName", trimmed);
       formData.append("fileType", "application/rdf+xml");
-      await apiClient.post(`/api/projects/${parentProjectId}/files`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      try {
+        await apiClient.post(`/api/projects/${parentProjectId}/files`, formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      } catch (error: any) {
+        console.error("[OpenFileDialog] Failed to create new file:", error);
+        notificationService.error(
+          "Create File Failed",
+          error?.response?.data?.error || error?.message || "Could not create the new file. See console for details.",
+        );
+        return;
+      }
       onCreateNewFile?.();
       onClose();
       return;
@@ -7169,7 +7178,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       const hierarchyBuilding =
         topLevelRes?.hierarchyReady === false ||
         topLevelRes?.status === 202 ||
-        topLevelRes?.success === false;
+        topLevelRes?.success === false ||
+        isOwlApiWarmingResponse(topLevelRes);
       if (hierarchyBuilding) {
         // Backend snapshot is stale/rebuilding after a recent mutation (e.g. add class).
         // Keep the current (optimistic) tree instead of overwriting it with an empty
@@ -8991,7 +9001,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleRefreshAnnotationProperties = useCallback(async () => {
     if (!projectId) return;
-    const res = await apiClient.get<any>(withDraftScope(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`));
+    // On desktop, a mutation can leave the OWLAPI in-memory model briefly evicted/re-warming
+    // (version-mismatch check in ensureFreshForRead) — a plain GET right after create/delete can
+    // land on that transient "warming" response (data: []), which would otherwise wipe the whole
+    // list. Retry instead of trusting the first empty response.
+    const res = await getOntologyListWithRetry<any>(
+      withDraftScope(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`),
+    );
+    if (res === null) {
+      console.warn("[Dashboard] Annotation properties still warming after retries — keeping current list");
+      return;
+    }
     const rawProperties = Array.isArray(res?.data)
       ? res.data
       : Array.isArray(res?.annotationProperties)
@@ -10258,6 +10278,10 @@ const Dashboard: React.FC<DashboardProps> = ({
             setExpandedNodes((prev) => [...prev, parentIri]);
           }
           setMetadata((prev) => (prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev));
+          // Reconcile with backend truth — the optimistic update above is what desktop's
+          // annotation-property "not displayed after add" bug was: relying solely on it left
+          // the list wrong whenever the desktop OWLAPI cache had to re-warm after the mutation.
+          await refreshProperties();
         }
 
         showNotification(`${entitiesTab === "Classes" ? "Class" : "Property"} created successfully!`, "info");
@@ -10267,7 +10291,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create entity. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved],
+    [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved, refreshProperties],
   );
 
   const handleCreateObjectProperty = useCallback(
@@ -10330,6 +10354,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         markAsUnsaved();
         setMetadata((prev) => (prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev));
+        // Reconcile with backend truth (see comment on the other object-property create path).
+        await refreshProperties();
         showNotification("Property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topObjectProperty");
@@ -10338,7 +10364,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create property. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved],
+    [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved, refreshProperties],
   );
 
   const handleCreateDataProperty = useCallback(
@@ -10401,6 +10427,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         markAsUnsaved();
         setMetadata((prev) => (prev ? { ...prev, dataPropertyCount: (prev.dataPropertyCount || 0) + 1 } : prev));
+        // Reconcile with backend truth (see comment on the object-property create paths).
+        await refreshProperties();
         showNotification("Data property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topDataProperty");
@@ -10409,7 +10437,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create data property. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, metadata, markAsUnsaved],
+    [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, metadata, markAsUnsaved, refreshProperties],
   );
 
   const handleCreateDatatype = useCallback(
@@ -10716,6 +10744,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                       node.children ? { ...node, children: removeOpRecursively(node.children, id) } : node,
                     );
                 setObjectPropertyHierarchy((prev) => removeOpRecursively(prev, item.id));
+                // Reconcile with backend truth — same rationale as the create paths above.
+                await refreshProperties();
                 break;
               }
               case "DataProperties": {
@@ -10727,10 +10757,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                       node.children ? { ...node, children: removeDpRecursively(node.children, id) } : node,
                     );
                 setDataPropertyHierarchy((prev) => removeDpRecursively(prev, item.id));
+                // Reconcile with backend truth — same rationale as the create paths above.
+                await refreshProperties();
                 break;
               }
               case "AnnotationProperties":
                 setAnnotationProperties((prev) => prev.filter((p) => p.id !== item.id));
+                await handleRefreshAnnotationProperties();
                 break;
               case "Datatypes":
                 setDatatypes((prev) => prev.filter((d) => d.id !== item.id));
@@ -10761,7 +10794,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         },
       });
     },
-    [selectedItem, entitiesTab, projectId],
+    [selectedItem, entitiesTab, projectId, refreshProperties, handleRefreshAnnotationProperties],
   );
 
   const handleChangeEntityIri = useCallback(

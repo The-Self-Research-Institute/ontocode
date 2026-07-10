@@ -1441,8 +1441,8 @@ public class ProjectController {
                 return ResponseEntity.badRequest().body(Map.of("error", "File data is required"));
             }
             
-            if (!fileName.matches(".*\\.(owl|rdf|ttl|n3)$")) {
-                return ResponseEntity.badRequest().body(Map.of("error", "Invalid file type. Only .owl, .rdf, .ttl, .n3 files are allowed"));
+            if (!fileName.matches(".*\\.(owl|rdf|ttl|n3|nt|jsonld)$")) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Invalid file type. Only .owl, .rdf, .ttl, .n3, .nt, .jsonld files are allowed"));
             }
 
             // Extract file extension

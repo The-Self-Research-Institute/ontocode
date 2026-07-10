@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Settings, CheckCircle, AlertCircle, Loader2, ExternalLink } from 'lucide-react';
 import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
+import { isRealVSCode } from '../utils/desktop';
 
 declare global {
   interface Window {
@@ -23,9 +24,11 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testError, setTestError] = useState('');
 
-  // Listen for VS Code extension replies (config data)
+  // Listen for VS Code extension replies (config data) — real VS Code only; desktop
+  // and the plain webapp both install a same-named window.vscode shim, so a bare
+  // truthiness check here would misclassify them and this listener would never fire.
   useEffect(() => {
-    if (!window.vscode) return;
+    if (!isRealVSCode()) return;
     const handler = (event: MessageEvent) => {
       const msg = event.data;
       if (msg?.type === 'zoteroConfigData' && msg.config) {
@@ -41,7 +44,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
 
   useEffect(() => {
     if (isOpen) {
-      if (window.vscode) {
+      if (isRealVSCode()) {
         // In VS Code: request config from extension host (stored in workspace settings)
         setApiKey('');
         setUserId('');
@@ -85,8 +88,8 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
       }
       setUserId(resolvedUserId);
       // In VS Code, also persist to workspace settings via extension host
-      if (window.vscode) {
-        window.vscode.postMessage({
+      if (isRealVSCode()) {
+        window.vscode!.postMessage({
           type: 'saveZoteroConfig',
           config: {
             apiKey: apiKey.trim(),
@@ -130,8 +133,8 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
         libraryType,
         groupId: libraryType === 'group' ? groupId.trim() : undefined,
       });
-      if (window.vscode) {
-        window.vscode.postMessage({
+      if (isRealVSCode()) {
+        window.vscode!.postMessage({
           type: 'saveZoteroConfig',
           config: {
             apiKey: apiKey.trim(),
@@ -154,8 +157,8 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
 
   const handleClear = () => {
     sci2CodeBrowserService.clearConfig();
-    if (window.vscode) {
-      window.vscode.postMessage({ type: 'clearZoteroConfig' });
+    if (isRealVSCode()) {
+      window.vscode!.postMessage({ type: 'clearZoteroConfig' });
     }
     setApiKey('');
     setUserId('');
