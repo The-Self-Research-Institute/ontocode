@@ -114,8 +114,15 @@ export function buildZoteroCitationNode(fields: ZoteroCitationFields): Record<st
 /**
  * Inserts a citation node into a JSON-LD document's `@graph` array (creating one if needed),
  * returning the re-serialized document. Always produces syntactically valid JSON.
+ *
+ * `afterIndex`, if given, splices the node in right after that `@graph` array index (e.g. next
+ * to whichever node the user clicked) instead of appending it at the very end.
  */
-export function insertCitationNodeIntoJsonLd(content: string, node: Record<string, any>): string {
+export function insertCitationNodeIntoJsonLd(
+  content: string,
+  node: Record<string, any>,
+  afterIndex?: number | null,
+): string {
   const trimmed = content.trim();
   let parsed: any;
 
@@ -131,24 +138,124 @@ export function insertCitationNodeIntoJsonLd(content: string, node: Record<strin
     }
   }
 
+  let graphArray: any[];
   if (Array.isArray(parsed)) {
-    parsed.push(node);
+    graphArray = parsed;
   } else if (parsed && typeof parsed === "object") {
     if (Array.isArray(parsed["@graph"])) {
-      parsed["@graph"].push(node);
+      graphArray = parsed["@graph"];
     } else {
       const { "@context": context, ...rest } = parsed;
       const hasExistingNode = Object.keys(rest).length > 0;
-      parsed = {
-        ...(context ? { "@context": context } : {}),
-        "@graph": hasExistingNode ? [rest, node] : [node],
-      };
+      graphArray = hasExistingNode ? [rest] : [];
+      parsed = { ...(context ? { "@context": context } : {}), "@graph": graphArray };
     }
   } else {
-    parsed = { "@context": DEFAULT_JSONLD_CONTEXT, "@graph": [node] };
+    graphArray = [];
+    parsed = { "@context": DEFAULT_JSONLD_CONTEXT, "@graph": graphArray };
+  }
+
+  if (typeof afterIndex === "number" && afterIndex >= 0 && afterIndex < graphArray.length) {
+    graphArray.splice(afterIndex + 1, 0, node);
+  } else {
+    graphArray.push(node);
   }
 
   return JSON.stringify(parsed, null, 2);
+}
+
+function skipWhitespace(s: string, i: number): number {
+  while (i < s.length && /\s/.test(s[i])) i++;
+  return i;
+}
+
+/** Returns the index right after a complete JSON value (string/object/array/literal) starting at `i`. */
+function skipJsonValue(s: string, i: number): number {
+  i = skipWhitespace(s, i);
+  const ch = s[i];
+
+  const skipString = (pos: number): number => {
+    pos++; // opening quote
+    while (pos < s.length) {
+      if (s[pos] === "\\") { pos += 2; continue; }
+      if (s[pos] === '"') { pos++; break; }
+      pos++;
+    }
+    return pos;
+  };
+
+  if (ch === '"') return skipString(i);
+
+  if (ch === "{" || ch === "[") {
+    const open = ch;
+    const close = ch === "{" ? "}" : "]";
+    let depth = 1;
+    i++;
+    while (i < s.length && depth > 0) {
+      const c = s[i];
+      if (c === '"') { i = skipString(i); continue; }
+      if (c === open) depth++;
+      else if (c === close) depth--;
+      i++;
+    }
+    return i;
+  }
+
+  // number, true, false, null
+  while (i < s.length && !/[,\]\}\s]/.test(s[i])) i++;
+  return i;
+}
+
+function lineAt(s: string, pos: number): number {
+  let line = 0;
+  const end = Math.max(0, Math.min(pos, s.length));
+  for (let i = 0; i < end; i++) if (s[i] === "\n") line++;
+  return line;
+}
+
+/**
+ * Given the raw JSON-LD text as currently rendered and a 0-based line the user clicked,
+ * finds the index (within the top-level `@graph`/root array) of the element that line falls
+ * inside, or the nearest preceding element if the click landed between elements. Returns null
+ * if no usable array/position could be determined (caller should then append at the end).
+ */
+export function findGraphInsertionIndex(content: string, clickedLine: number): number | null {
+  const graphKeyMatch = content.match(/"@graph"\s*:\s*\[/);
+  let arrayOpen: number;
+  if (graphKeyMatch && graphKeyMatch.index !== undefined) {
+    arrayOpen = graphKeyMatch.index + graphKeyMatch[0].length - 1;
+  } else {
+    const firstNonWs = content.search(/\S/);
+    if (firstNonWs === -1 || content[firstNonWs] !== "[") return null;
+    arrayOpen = firstNonWs;
+  }
+
+  let i = arrayOpen + 1;
+  let index = -1;
+  let lastElementEndLine = -1;
+
+  while (i < content.length) {
+    i = skipWhitespace(content, i);
+    if (content[i] === "]" || i >= content.length) break;
+
+    const elemStartLine = lineAt(content, i);
+    i = skipJsonValue(content, i);
+    const elemEndLine = lineAt(content, i);
+    index++;
+
+    if (clickedLine >= elemStartLine && clickedLine <= elemEndLine) {
+      return index; // clicked inside this element — insert right after it
+    }
+    lastElementEndLine = elemEndLine;
+
+    i = skipWhitespace(content, i);
+    if (content[i] === ",") { i++; continue; }
+    break; // reached the array's closing ']' (or malformed content)
+  }
+
+  // Clicked below the last element (e.g. on trailing whitespace/brackets) — insert after it.
+  if (lastElementEndLine >= 0 && clickedLine > lastElementEndLine) return index;
+  return null;
 }
 
 /**
