@@ -48,9 +48,14 @@ const UsageTab: React.FC<{
     annotation_on_class: true
   });
 
-  // Reset state when class changes so the user must explicitly load usage
-  // for each class (this SPARQL query is expensive on large graphs).
+  const usageAbortRef = React.useRef<AbortController | null>(null);
+
+  // Reset state when the class changes; the auto-load effect below refetches.
+  // Abort any in-flight request so a slow response for the previous class can
+  // never paint under the new class's label.
   useEffect(() => {
+    usageAbortRef.current?.abort();
+    setLoading(false);
     setLoaded(false);
     setTimedOut(false);
     setUsages([]);
@@ -58,9 +63,11 @@ const UsageTab: React.FC<{
   }, [classIri, projectId]);
 
   const loadUsages = async () => {
+    usageAbortRef.current?.abort();
     setLoading(true);
     setTimedOut(false);
     const controller = new AbortController();
+    usageAbortRef.current = controller;
     const watchdog = setTimeout(() => {
       controller.abort();
       setLoading(false);
@@ -90,7 +97,17 @@ const UsageTab: React.FC<{
     }
   };
 
-  const filteredUsages = usages.filter(u => 
+  // Auto-load: the tab mounts when the user opens it, so this fires once per
+  // class per visit — no button click. Timeouts still require an explicit Retry
+  // (the query is a full-graph SPARQL scan).
+  useEffect(() => {
+    if (!loaded && !loading && !timedOut) {
+      void loadUsages();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classIri, projectId, loaded, loading, timedOut]);
+
+  const filteredUsages = usages.filter(u =>
     (u.subjectLabel || u.subject || '').toLowerCase().includes(filter.toLowerCase()) &&
     showTypes[u.type as keyof typeof showTypes] !== false
   );
@@ -127,19 +144,8 @@ const UsageTab: React.FC<{
             </button>
           </>
         ) : (
-          <>
-            <div className="text-sm text-gray-600 mb-3">
-              Usage lookup for <span className="font-semibold">{label}</span> runs a full-graph
-              SPARQL scan — this can take 30–60 s on large ontologies.
-            </div>
-            <button
-              onClick={loadUsages}
-              data-testid="load-usage-btn"
-              className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700"
-            >
-              Load usage
-            </button>
-          </>
+          // Auto-load kicks in right after mount — this is a one-frame placeholder
+          <div className="text-sm text-gray-500">Loading usage information...</div>
         )}
       </div>
     );
@@ -808,6 +814,16 @@ const ClassEditor: React.FC<{
       "The save succeeded but the new restriction is not showing. Refresh the Description tab or reload the project.",
     );
   };
+
+  // Auto-load the description when its tab is opened (Load button removed).
+  // Per-entity reset clears axiomsLoaded, so switching classes refetches; a
+  // timeout still requires an explicit Retry.
+  useEffect(() => {
+    if (activeTab === 'description' && !axiomsLoaded && !loadingDetails && !descriptionTimedOut) {
+      void loadDescription();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, axiomsLoaded, loadingDetails, descriptionTimedOut, item?.id]);
 
   const loadDescription = async () => {
     descriptionAbortRef.current?.abort();
@@ -2133,23 +2149,11 @@ const ClassEditor: React.FC<{
                     </button>
                   </>
                 ) : (
-                  <>
-                    <p className="text-sm text-gray-600 mb-1">
-                      Full class description (SubClassOf, EquivalentTo, restrictions, instances)
-                      matches Protégé once loaded.
-                    </p>
-                    <p className="text-xs text-gray-500 mb-4">
-                      On large ontologies this can take up to a minute — annotations are already available in the other tab.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void loadDescription()}
-                      data-testid="load-description-btn"
-                      className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700 shadow-sm"
-                    >
-                      Load description
-                    </button>
-                  </>
+                  // Auto-load starts as soon as the tab opens — one-frame placeholder
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <div className="animate-spin h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full" />
+                    <span>Loading description…</span>
+                  </div>
                 )}
               </div>
             )}

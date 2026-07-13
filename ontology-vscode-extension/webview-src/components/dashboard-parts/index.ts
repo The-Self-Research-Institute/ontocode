@@ -4,7 +4,7 @@ export { ReasonerExplanationModal } from "./ReasonerExplanationModal";
 export { ReasonerSettingsDialog } from "./ReasonerSettingsDialog";
 export { PluginPlaceholder } from "./PluginPlaceholder";
 export type { PluginPlaceholderProps } from "./PluginPlaceholder";
-export { ConfirmDialog, DuplicateFileDialog } from "./DashboardDialogs";
+export { ConfirmDialog, DuplicateFileDialog, SaveErrorDialog, LintProblemsPanel } from "./DashboardDialogs";
 export { DetailsPanel } from "./DetailsPanel";
 export {
   type TopLevelClass,
