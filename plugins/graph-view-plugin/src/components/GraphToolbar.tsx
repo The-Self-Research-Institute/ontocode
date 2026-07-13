@@ -26,7 +26,7 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import type { EdgeType, VisualizationType, OntologyNode } from '../types';
-import { OntographLayoutType } from '../viewMemory';
+import { OntographLayoutType, VowlDisplayOptions } from '../viewMemory';
 
 export const RELATIONSHIP_VISIBILITY_CONTROLS: Array<{
   label: string;
@@ -103,6 +103,8 @@ export interface GraphToolbarProps {
   lazyLoadingActive: boolean;
   webglRenderer: boolean;
   webglSupported: boolean;
+  vowlDisplayOptions: VowlDisplayOptions;
+  onChangeVowlOptions: (patch: Partial<VowlDisplayOptions>) => void;
   /** Pulse the overflow button for the first few sessions after the toolbar restructure */
   showOverflowHint: boolean;
 
@@ -455,6 +457,77 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
             />
             WebGL renderer (beta, large graphs)
           </label>
+
+          {(props.visualizationType === 'vowl' || props.visualizationType === 'force') && (
+            <>
+              <div style={sectionTitle}>Notation &amp; density</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }} title="Hide nodes with fewer connections than this — declutters dense graphs">
+                  <span style={{ minWidth: 110 }}>Collapse degree &lt; {props.vowlDisplayOptions.degreeCollapsing || 'off'}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={6}
+                    step={1}
+                    value={props.vowlDisplayOptions.degreeCollapsing}
+                    onChange={(e) => props.onChangeVowlOptions({ degreeCollapsing: Number(e.target.value) })}
+                    style={{ flex: 1 }}
+                    data-testid="graph-degree-collapsing"
+                  />
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }} title="Cap label length (labels always stay inside their shapes)">
+                  <span style={{ minWidth: 110 }}>Max label chars: {props.vowlDisplayOptions.maxLabelChars}</span>
+                  <input
+                    type="range"
+                    min={6}
+                    max={40}
+                    step={1}
+                    value={props.vowlDisplayOptions.maxLabelChars}
+                    onChange={(e) => props.onChangeVowlOptions({ maxLabelChars: Number(e.target.value) })}
+                    style={{ flex: 1 }}
+                  />
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Hide classes whose only relationship is a single subClassOf">
+                  <input
+                    type="checkbox"
+                    checked={props.vowlDisplayOptions.hideSolitarySubclasses}
+                    onChange={(e) => props.onChangeVowlOptions({ hideSolitarySubclasses: e.target.checked })}
+                    data-testid="graph-solitary-filter"
+                  />
+                  Hide solitary subclasses
+                </label>
+                {props.visualizationType === 'vowl' && (
+                  <>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Hide '(disjoint)' captions and property-characteristic suffixes">
+                      <input
+                        type="checkbox"
+                        checked={props.vowlDisplayOptions.compactNotation}
+                        onChange={(e) => props.onChangeVowlOptions({ compactNotation: e.target.checked })}
+                      />
+                      Compact notation
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Tint classes from foreign namespaces a deeper blue">
+                      <input
+                        type="checkbox"
+                        checked={props.vowlDisplayOptions.colorExternals}
+                        onChange={(e) => props.onChangeVowlOptions({ colorExternals: e.target.checked })}
+                      />
+                      Color externals
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Show owl:unionOf / intersectionOf / complementOf / oneOf operator nodes (∪ ∩ ¬)">
+                      <input
+                        type="checkbox"
+                        checked={props.vowlDisplayOptions.showSetOperators}
+                        onChange={(e) => props.onChangeVowlOptions({ showSetOperators: e.target.checked })}
+                        data-testid="graph-set-operators-filter"
+                      />
+                      Set operators
+                    </label>
+                  </>
+                )}
+              </div>
+            </>
+          )}
 
           <div style={sectionTitle}>Data</div>
           <div style={sectionRow}>

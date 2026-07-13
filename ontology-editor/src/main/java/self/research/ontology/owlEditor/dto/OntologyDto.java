@@ -23,6 +23,12 @@ public class OntologyDto {
         private List<Map<String, String>> equivalentClasses;
         /** IRI of the ontology that declares this class (null = active ontology). Populated when scope=closure. */
         private String sourceOntology;
+        /**
+         * Anonymous class expressions (set operators) this class participates in via
+         * owl:equivalentClass or rdfs:subClassOf. Consumed by the graph view to render
+         * VOWL set-operator nodes. Null when the class has none.
+         */
+        private List<ClassExpressionDto> classExpressions;
 
         // Getters & Setters
         public String getId() { return id; }
@@ -45,6 +51,37 @@ public class OntologyDto {
         public void setEquivalentClasses(List<Map<String, String>> equivalentClasses) { this.equivalentClasses = equivalentClasses; }
         public String getSourceOntology() { return sourceOntology; }
         public void setSourceOntology(String sourceOntology) { this.sourceOntology = sourceOntology; }
+        public List<ClassExpressionDto> getClassExpressions() { return classExpressions; }
+        public void setClassExpressions(List<ClassExpressionDto> classExpressions) { this.classExpressions = classExpressions; }
+    }
+
+    /**
+     * One anonymous class expression (owl:unionOf / owl:intersectionOf /
+     * owl:complementOf / owl:oneOf) attached to a named class.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class ClassExpressionDto {
+        /** Stable id derived from the owning class + axiom type + index (blank nodes have no IRI). */
+        private String id;
+        /** "union" | "intersection" | "complement" | "oneOf" */
+        private String expressionType;
+        /** "equivalentClass" | "subClassOf" */
+        private String axiomType;
+        /** Named operand members: {iri, label}. Nested anonymous operands are flattened into 'definition' only. */
+        private List<Map<String, String>> operands;
+        /** Human-readable Manchester-ish rendering, e.g. "A or B", used for tooltips. */
+        private String definition;
+
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getExpressionType() { return expressionType; }
+        public void setExpressionType(String expressionType) { this.expressionType = expressionType; }
+        public String getAxiomType() { return axiomType; }
+        public void setAxiomType(String axiomType) { this.axiomType = axiomType; }
+        public List<Map<String, String>> getOperands() { return operands; }
+        public void setOperands(List<Map<String, String>> operands) { this.operands = operands; }
+        public String getDefinition() { return definition; }
+        public void setDefinition(String definition) { this.definition = definition; }
     }
 
     // For PropertyEditor.tsx

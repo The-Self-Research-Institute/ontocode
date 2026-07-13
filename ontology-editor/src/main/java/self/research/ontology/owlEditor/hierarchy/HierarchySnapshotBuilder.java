@@ -110,6 +110,10 @@ public class HierarchySnapshotBuilder {
                 node.setSubClassOf(parents);
                 node.setParent(parents.get(0));
             }
+            List<OntologyDto.ClassExpressionDto> expressions = extractSetOperatorExpressions(ont, cls, importsScope);
+            if (!expressions.isEmpty()) {
+                node.setClassExpressions(expressions);
+            }
             result.add(node);
             if (result.size() >= Math.max(1, limit)) {
                 break;
@@ -117,6 +121,89 @@ public class HierarchySnapshotBuilder {
         }
         result.sort(Comparator.comparing(n -> (n.getLabel() == null ? n.getId() : n.getLabel()).toLowerCase(Locale.ROOT)));
         return result;
+    }
+
+    /**
+     * OWLAPI mirror of the SPARQL set-operator extraction in OntologyQueryService.allClasses:
+     * anonymous union/intersection/complement/oneOf expressions this class participates in
+     * via owl:equivalentClass or rdfs:subClassOf. Restrictions are intentionally excluded
+     * (they belong to the restrictions milestone, not set operators).
+     */
+    private List<OntologyDto.ClassExpressionDto> extractSetOperatorExpressions(OWLOntology ont, OWLClass cls,
+                                                                               Imports importsScope) {
+        List<OntologyDto.ClassExpressionDto> out = new ArrayList<>();
+        ont.equivalentClassesAxioms(cls).forEach(ax ->
+                ax.classExpressions()
+                        .filter(expr -> expr.isAnonymous() && !expr.equals(cls))
+                        .forEach(expr -> addSetOperatorExpression(ont, cls, expr, "equivalentClass", importsScope, out)));
+        ont.subClassAxiomsForSubClass(cls).forEach(ax -> {
+            OWLClassExpression sup = ax.getSuperClass();
+            if (sup.isAnonymous()) {
+                addSetOperatorExpression(ont, cls, sup, "subClassOf", importsScope, out);
+            }
+        });
+        return out;
+    }
+
+    private void addSetOperatorExpression(OWLOntology ont, OWLClass owner, OWLClassExpression expr,
+                                          String axiomType, Imports importsScope,
+                                          List<OntologyDto.ClassExpressionDto> out) {
+        String expressionType;
+        List<Map<String, String>> operands = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+
+        if (expr instanceof OWLObjectUnionOf union) {
+            expressionType = "union";
+            union.operands().filter(op -> !op.isAnonymous())
+                    .forEach(op -> addOperand(ont, op.asOWLClass().getIRI(), getLabel(ont, op.asOWLClass(), importsScope), operands, labels));
+        } else if (expr instanceof OWLObjectIntersectionOf intersection) {
+            expressionType = "intersection";
+            intersection.operands().filter(op -> !op.isAnonymous())
+                    .forEach(op -> addOperand(ont, op.asOWLClass().getIRI(), getLabel(ont, op.asOWLClass(), importsScope), operands, labels));
+        } else if (expr instanceof OWLObjectComplementOf complement) {
+            expressionType = "complement";
+            OWLClassExpression op = complement.getOperand();
+            if (!op.isAnonymous()) {
+                addOperand(ont, op.asOWLClass().getIRI(), getLabel(ont, op.asOWLClass(), importsScope), operands, labels);
+            }
+        } else if (expr instanceof OWLObjectOneOf oneOf) {
+            expressionType = "oneOf";
+            oneOf.individuals().filter(OWLIndividual::isNamed)
+                    .forEach(ind -> {
+                        IRI iri = ind.asOWLNamedIndividual().getIRI();
+                        addOperand(ont, iri, iri.getShortForm(), operands, labels);
+                    });
+        } else {
+            return; // restrictions and other expression kinds are out of scope here
+        }
+
+        if (operands.isEmpty()) return;
+
+        OntologyDto.ClassExpressionDto dto = new OntologyDto.ClassExpressionDto();
+        dto.setId(owner.getIRI() + "#expr-" + expressionType + "-" + out.size());
+        dto.setExpressionType(expressionType);
+        dto.setAxiomType(axiomType);
+        dto.setOperands(operands);
+        dto.setDefinition(switch (expressionType) {
+            case "union" -> String.join(" or ", labels);
+            case "intersection" -> String.join(" and ", labels);
+            case "complement" -> "not " + labels.get(0);
+            case "oneOf" -> "{" + String.join(", ", labels) + "}";
+            default -> String.join(", ", labels);
+        });
+        out.add(dto);
+    }
+
+    private void addOperand(OWLOntology ont, IRI iri, String label,
+                            List<Map<String, String>> operands, List<String> labels) {
+        for (Map<String, String> existing : operands) {
+            if (iri.toString().equals(existing.get("iri"))) return;
+        }
+        Map<String, String> operand = new LinkedHashMap<>();
+        operand.put("iri", iri.toString());
+        operand.put("label", label == null || label.isBlank() ? iri.getShortForm() : label);
+        operands.add(operand);
+        labels.add(operand.get("label"));
     }
 
     private Set<OWLClass> assertedTopLevelCandidates(OWLOntology ont, Imports importsScope) {

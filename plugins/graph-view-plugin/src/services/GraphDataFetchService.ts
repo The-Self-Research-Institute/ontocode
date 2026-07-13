@@ -508,6 +508,45 @@ export class GraphDataFetchService {
         label: 'disjointWith'
       });
     }
+
+    // Set-operator expressions (owl:unionOf / intersectionOf / complementOf / oneOf):
+    // each becomes a VOWL operator node linked to the owning class by its axiom type
+    // and to every named operand by an 'operand' edge.
+    const classExpressions = classData.classExpressions || [];
+    for (const expr of classExpressions) {
+      if (!expr?.id || !expr.expressionType || !Array.isArray(expr.operands) || expr.operands.length === 0) continue;
+      nodes.push({
+        id: expr.id,
+        label: expr.definition || expr.expressionType,
+        type: 'setOperator',
+        uri: expr.id,
+        metadata: {
+          setOperator: expr.expressionType,
+          axiomType: expr.axiomType,
+          definition: expr.definition,
+          ownerClass: classIri
+        }
+      });
+      // 'custom' (not 'subClassOf') for anonymous-superclass axioms so operator nodes
+      // never enter the class-hierarchy computations (tree layout, roots, expansion).
+      edges.push({
+        id: `${classIri}-${expr.axiomType}-${expr.id}`,
+        from: classIri,
+        to: expr.id,
+        type: expr.axiomType === 'equivalentClass' ? 'equivalentClass' : 'custom',
+        label: expr.axiomType === 'equivalentClass' ? 'equivalentClass' : 'subClassOf'
+      });
+      for (const operand of expr.operands) {
+        if (!operand?.iri) continue;
+        edges.push({
+          id: `${expr.id}-operand-${operand.iri}`,
+          from: expr.id,
+          to: operand.iri,
+          type: 'operand',
+          label: ''
+        });
+      }
+    }
   }
 
   /**
