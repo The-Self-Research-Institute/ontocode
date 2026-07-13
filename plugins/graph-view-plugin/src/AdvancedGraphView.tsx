@@ -200,6 +200,20 @@ const hexToRgba = (hex: string, alpha: number): string => {
   return `rgba(${r},${g},${b},${alpha})`;
 };
 
+// Picks black or white label text from a node's ACTUAL rendered fill (perceived
+// brightness, ITU-R BT.601). Callers must pass the same color the shape was
+// painted with — a mismatched guess (e.g. a raw accent instead of its pastel
+// tint) silently produces unreadable white-on-pale-blue text.
+const getReadableTextColor = (hex: string): string => {
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return '#111111';
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  return brightness > 140 ? '#111111' : '#ffffff';
+};
+
 // Default settings
 const DEFAULT_SETTINGS: GraphSettings = {
   layout: 'force',
@@ -2912,7 +2926,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (isInferredEntity(d)) {
         fill = isDark ? '#064e3b' : '#d1fae5';
       }
-      
+
+      // Record the color actually used to paint this node so the label-text
+      // callback further down can pick a readable black/white against it
+      // instead of re-deriving (and risking a mismatched) guess.
+      (d as any).__nodeFillColor = fill;
+
       const stroke = visualizationType === 'vowl'
         ? (isInferredEntity(d) ? '#10b981' : (isDark ? '#d1d5db' : '#000000'))
         : (isInferredEntity(d) ? '#10b981' : '#fff');
@@ -3197,9 +3216,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('fill', () => {
               // Flat tint + accent stroke + soft shadow — no glossy gradient.
               const paletteFill = nodeFill(d.type, isDark);
-              return colorByCluster && clusterFor(d.id) !== undefined
+              const finalFill = colorByCluster && clusterFor(d.id) !== undefined
                 ? (getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors) || paletteFill)
                 : paletteFill;
+              // Overrides the generic stash above — this ellipse ignores the
+              // outer `fill` var (that holds the raw accent, not this tint).
+              (d as any).__nodeFillColor = finalFill;
+              return finalFill;
             })
             .attr('stroke', isInferredEntity(d) ? '#10b981' : (
               colorByCluster && clusterFor(d.id) !== undefined
@@ -3387,44 +3410,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return 'inherit';
       })
       .attr('fill', d => {
-        if (visualizationType === 'vowl') {
-          const isDark = isDarkTheme;
-          const isExternal = isExternalNode(d);
-          if (d.type === 'class') {
-            const nodeFill = isExternal
-              ? (isDark ? '#60a5fa' : '#4682b4')
-              : (isDark ? '#6b92c4' : '#acd5f2');
-            const hex = nodeFill.replace('#', '');
-            const r = parseInt(hex.substring(0, 2), 16);
-            const g = parseInt(hex.substring(2, 4), 16);
-            const b = parseInt(hex.substring(4, 6), 16);
-            const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-            return brightness > 140 ? '#111111' : '#ffffff';
-          }
-          // Individuals / datatypes / properties: pick black or white from the
-          // node's actual fill luminance instead of hardcoded black (which was
-          // unreadable on purple individual boxes in dark theme).
-          const nodeFill = (d as any).color || TYPE_COLORS[(d as any).type as NodeType] || (isDark ? '#6b92c4' : '#acd5f2');
-          const hex2 = nodeFill.replace('#', '');
-          const r2 = parseInt(hex2.substring(0, 2), 16);
-          const g2 = parseInt(hex2.substring(2, 4), 16);
-          const b2 = parseInt(hex2.substring(4, 6), 16);
-          const brightness2 = (r2 * 299 + g2 * 587 + b2 * 114) / 1000;
-          return brightness2 > 140 ? '#111111' : '#ffffff';
+        if (visualizationType === 'vowl' || visualizationType === 'force') {
+          // Read the color the shape was ACTUALLY painted with (stashed in
+          // node.each above) instead of re-deriving a guess from TYPE_COLORS —
+          // that guess used the raw saturated accent, not the pastel tint most
+          // node types render with, which picked white text on light node fills.
+          const painted = (d as any).__nodeFillColor || (isDarkTheme ? '#6b92c4' : '#acd5f2');
+          return getReadableTextColor(painted);
         }
         if (visualizationType === 'ontograph') {
           const isDark = isDarkTheme;
           return isDark ? '#e2e8f0' : '#1e293b'; // Slate tones for modern look
-        }
-        if (visualizationType === 'force') {
-          // Pick white/black based on node fill luminance
-          const nodeFill = (d as any).color || TYPE_COLORS[(d as any).type as NodeType] || '#667eea';
-          const hex = nodeFill.replace('#', '');
-          const r = parseInt(hex.substring(0, 2), 16);
-          const g = parseInt(hex.substring(2, 4), 16);
-          const b = parseInt(hex.substring(4, 6), 16);
-          const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-          return brightness > 140 ? '#111111' : '#ffffff';
         }
         if (visualizationType === 'spatial3d') {
           return '#ffffff'; // White text — always readable against node fills
