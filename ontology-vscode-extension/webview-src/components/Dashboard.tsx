@@ -140,7 +140,8 @@ import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from "../ho
 import { useDebouncedVisible } from "../hooks/useDebouncedVisible";
 import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
-import { CodeHighlighter } from "./CodeHighlighter";
+import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
+import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
 import { PluginMarketplace } from "./PluginMarketplace";
 import { pluginLoader } from "../services/pluginLoader";
 import { checkForPluginUpdates, clearPluginUpdateCache } from "../services/pluginUpdateChecker";
@@ -155,6 +156,8 @@ import {
   PluginPlaceholder,
   ConfirmDialog,
   DuplicateFileDialog,
+  SaveErrorDialog,
+  LintProblemsPanel,
   DetailsPanel,
   type TopLevelClass,
   type FileInfo,
@@ -2255,6 +2258,16 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [codeViewLoading, setCodeViewLoading] = useState(false);
   const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false);
   const [codeViewSyntaxError, setCodeViewSyntaxError] = useState<string | null>(null);
+  // Blocking dialog for a genuine save failure (reimport into the ontology failed) — replaces
+  // the old silent cache-only fallback, which showed "Saved" even when nothing synced.
+  const [codeViewSaveError, setCodeViewSaveError] = useState<string | null>(null);
+  const [savingCodeView, setSavingCodeView] = useState(false);
+  const lastCodeViewSaveContentRef = useRef<string>("");
+  // Lint runs right before save (see handleSaveCodeContent) — non-blocking content
+  // warnings (e.g. an IRI outside the ontology's namespace), shown in a dockable
+  // Problems panel rather than a modal, since the user needs to see the editor to fix them.
+  const [codeViewLintIssues, setCodeViewLintIssues] = useState<LintIssue[]>([]);
+  const codeHighlighterRef = useRef<CodeHighlighterHandle>(null);
   const [citationJustInserted, setCitationJustInserted] = useState(false); // Track recent citation insertion for format refresh
   const [showCitationPicker, setShowCitationPicker] = useState(false);
   const [showManualCitationDialog, setShowManualCitationDialog] = useState(false);
@@ -11288,8 +11301,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     ) => {
       if (!projectId) return;
 
-      // Clear any previous syntax error when loading new content
+      // Clear any previous syntax error / lint warnings when loading new content
       setCodeViewSyntaxError(null);
+      setCodeViewLintIssues([]);
 
       // If clicking same format without force refresh/reload, just return (prevents unnecessary reloads)
       if (format === codeViewFormat && !forceRefresh && !forceReload && codeViewContent) {
@@ -11416,7 +11430,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Handle saving code content to backend
   const handleSaveCodeContent = useCallback(
-    async (content: string) => {
+    async (content: string, skipLintCheck: boolean = false) => {
       // Free-plan non-owners cannot edit or save — show the Pro upgrade dialog
       if (isViewOnlyMember) {
         setShowProPromptType('edit');
@@ -11483,6 +11497,25 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       // ─────────────────────────────────────────────────────────────────────
 
+      // ── Content lint: best-effort semantic checks the parser above can't catch ──
+      // A missing '#' or an undeclared-but-referenced entity is still syntactically
+      // valid XML/Turtle/etc., so it sails through the checks above. This is a
+      // warning, not a hard stop — show it and let the user decide whether to fix
+      // first or save anyway (e.g. a deliberate cross-ontology reference).
+      if (!skipLintCheck) {
+        const issues = lintOntologyContent(content, codeViewFormat);
+        if (issues.length > 0) {
+          setCodeViewLintIssues(issues);
+          lastCodeViewSaveContentRef.current = content;
+          return;
+        }
+      }
+      setCodeViewLintIssues([]);
+
+      // Remembered so the "Retry Save" button in SaveErrorDialog can resubmit the exact
+      // content that failed, even if the user keeps typing while the dialog is open.
+      lastCodeViewSaveContentRef.current = content;
+      setSavingCodeView(true);
       try {
         console.log(
           "[Dashboard] Saving code view content to backend, format:",
@@ -11491,67 +11524,45 @@ const Dashboard: React.FC<DashboardProps> = ({
           content.length,
         );
 
-        // Try the save-and-sync endpoint first (reimports into GraphDB, clears other format caches)
+        // Single path: reimport into the ontology and sync all format caches. No cache-only
+        // fallback — a save that didn't reach the ontology must never look like it succeeded,
+        // since Graph View / Hierarchy Tree / DL Query all read from the ontology, not this cache.
         let response: any;
-        let synced = false;
         try {
           response = await apiClient.post(`/api/ontology/${projectId}/code-view-save`, {
             content: content,
             format: codeViewFormat,
           });
-          synced = response.success;
         } catch (syncError: any) {
-          console.warn(
-            "[Dashboard] code-view-save endpoint not available, falling back to cache-only save:",
-            syncError.message,
-          );
-        }
-
-        if (!synced) {
-          // Fallback: save to cache only (old endpoint)
-          response = await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
-            content: content,
-            format: codeViewFormat,
-          });
-          // Also clear other format caches so they re-export fresh when switched to
-          const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional", "jsonld"] as const;
-          for (const fmt of allFormats) {
-            if (fmt !== codeViewFormat) {
-              try {
-                await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`, { format: fmt });
-              } catch {
-                /* ignore */
-              }
-            }
-          }
+          const errMsg = syncError?.message || "Failed to reach the save endpoint";
+          console.error("[Dashboard] code-view-save request failed:", errMsg);
+          setCodeViewSaveError(errMsg);
+          return;
         }
 
         if (response.success) {
-          console.log(`[MUTATION:code-save] ✓ synced=${synced} — ${synced ? "refreshing hierarchy+properties" : "cache-only, no refresh"}`);
-          notificationService.success(
-            "Saved",
-            synced ? "Code content saved and synced across all formats" : "Code content saved",
-          );
+          console.log("[MUTATION:code-save] ✓ synced — refreshing hierarchy+properties");
+          notificationService.success("Saved", "Code content saved and synced across all formats");
           setHasLocalCodeViewChanges(false);
           setCodeViewSyntaxError(null);
+          setCodeViewSaveError(null);
           // The ontology file was rewritten — reload all entity views to reflect the new state
-          if (synced) {
-            lastClassHierarchyRefreshAt.current = 0;
-            refreshClassHierarchy();
-            refreshProperties();
-          }
+          lastClassHierarchyRefreshAt.current = 0;
+          refreshClassHierarchy();
+          refreshProperties();
         } else {
-          const errMsg = response.error || "Failed to save content";
+          const errMsg = (response.error || "Failed to save content").replace(
+            "Failed to save and sync code view: ",
+            "",
+          );
           console.error("[Dashboard] Save failed:", errMsg);
-          // Show the error inline in the editor so the user can see what needs fixing
-          setCodeViewSyntaxError(errMsg.replace("Failed to save and sync code view: ", ""));
-          notificationService.error("Syntax/Parse Error", "Fix the highlighted error before saving.");
+          setCodeViewSaveError(errMsg);
         }
       } catch (error: any) {
         console.error("[Dashboard] Error saving code content:", error);
-        const errMsg = error.message || "Failed to save content to backend";
-        setCodeViewSyntaxError(errMsg);
-        notificationService.error("Save Failed", errMsg);
+        setCodeViewSaveError(error.message || "Failed to save content to backend");
+      } finally {
+        setSavingCodeView(false);
       }
     },
     [projectId, codeViewFormat, isViewOnlyMember, setShowProPromptType, refreshClassHierarchy, refreshProperties],
@@ -13885,7 +13896,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                     Sync from GraphDB
                   </button> */}
                 </div>
-                <div className="flex-1 overflow-hidden">
+                <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                   {citationInsertionMode && (
                     <div className="bg-blue-900 border-b-2 border-blue-600 p-3 text-blue-100 text-sm flex items-center gap-2">
                       <div className="flex-1">
@@ -13933,6 +13945,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     </div>
                   ) : (
                     <CodeHighlighter
+                      ref={codeHighlighterRef}
                       content={codeViewContent || "// No content available"}
                       format={codeViewFormat}
                       citationInsertionMode={citationInsertionMode}
@@ -13949,6 +13962,17 @@ const Dashboard: React.FC<DashboardProps> = ({
                       onExportProAction={handleExportProAction}
                     />
                   )}
+                </div>
+                <LintProblemsPanel
+                  issues={codeViewLintIssues}
+                  onJumpToLine={(line) => codeHighlighterRef.current?.goToLine(line)}
+                  onSaveAnyway={() => {
+                    const pending = lastCodeViewSaveContentRef.current;
+                    setCodeViewLintIssues([]);
+                    void handleSaveCodeContent(pending, true);
+                  }}
+                  onDismiss={() => setCodeViewLintIssues([])}
+                />
                 </div>
               </div>
             </div>
@@ -16499,6 +16523,15 @@ const Dashboard: React.FC<DashboardProps> = ({
         message={confirmDialog.message}
         confirmLabel={confirmDialog.confirmLabel}
         cancelLabel={confirmDialog.cancelLabel}
+      />
+      <SaveErrorDialog
+        isOpen={!!codeViewSaveError}
+        error={codeViewSaveError || ""}
+        onClose={() => setCodeViewSaveError(null)}
+        onRetry={() => {
+          setCodeViewSaveError(null);
+          void handleSaveCodeContent(lastCodeViewSaveContentRef.current);
+        }}
       />
       {publishConflictDialog.isOpen && (() => {
         const conflicts = publishConflictDialog.conflicts;

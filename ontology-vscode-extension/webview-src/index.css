@@ -712,11 +712,13 @@ body,
   color: var(--text-primary) !important;
 }
 
-/* Code editor textarea must keep its own dark theme colors */
+/* Code editor textarea must keep its own dark theme colors.
+   caret-color was #000000 — invisible against this near-black background,
+   which is why the text cursor appeared to vanish while typing. */
 textarea.code-editor-textarea {
   background-color: #1e1e1e !important;
   color: #ffffff !important;
-  caret-color: #000000 !important;
+  caret-color: #e879f9 !important;
   border-color: transparent !important;
 }
 

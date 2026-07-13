@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef, useCallback } from "react";
+import React, { useMemo, useState, useEffect, useRef, useCallback, useImperativeHandle } from "react";
 import { normalizeDoi as normalizeDoiUtil, isValidDoiFormat } from '../utils/doi';
 import {
   Search,
@@ -70,6 +70,11 @@ interface CodeHighlighterProps {
   onExportProAction?: () => void;
 }
 
+/** Imperative handle so callers outside the editor (e.g. a Problems panel) can jump to a line. */
+export interface CodeHighlighterHandle {
+  goToLine: (lineNumber: number) => void;
+}
+
 const MAX_LINES_INITIAL = 500; // Show first 500 lines initially
 const CHUNK_SIZE = 200; // Process 200 lines at a time
 const SEARCH_DEBOUNCE_MS = 400; // Debounce search input
@@ -78,7 +83,7 @@ const MAX_SEARCH_LINES = 10000; // Limit search to prevent hanging on huge files
 const SEARCH_CHUNK_SIZE = 100; // Process 100 lines per chunk for search
 const SEARCH_CHUNK_DELAY = 8; // 8ms delay between search chunks
 
-export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
+export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighlighterProps>(({
   content,
   format,
   citationInsertionMode = false,
@@ -93,7 +98,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
   syntaxError,
   canExport = true,
   onExportProAction,
-}) => {
+}, forwardedRef) => {
   const [displayedLines, setDisplayedLines] = useState(MAX_LINES_INITIAL);
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -148,6 +153,10 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
     }
     setShowErrorDialog(false);
   }, [isEditMode, currentContent, displayedLines]);
+
+  useImperativeHandle(forwardedRef, () => ({
+    goToLine: navigateToLine,
+  }), [navigateToLine]);
 
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const searchCancelRef = useRef<boolean>(false);
@@ -626,8 +635,94 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
     }
   }, [collapsedRanges]);
 
+  // Edit-mode gutters, memoized: without this, every re-render rebuilds one React
+  // element per line in the WHOLE document (not just the visible ones) — including
+  // re-renders that only moved the cursor (arrow keys, clicks) and didn't touch
+  // content at all. On a large ontology file that's thousands of wasted element
+  // allocations per keystroke and per cursor move, which is what made editing feel slow.
+  const lineNumberGutterItems = useMemo(() => {
+    const items: React.ReactNode[] = [];
+    const lines = currentContent.split("\n");
+    let skipUntil = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (i <= skipUntil) continue;
+      const isCollapsed = collapsedRanges.has(i);
+      if (isCollapsed) {
+        skipUntil = collapsedRanges.get(i)!;
+      }
+      const isErrLine = errorLineNumbers.has(i + 1);
+      items.push(
+        <div
+          key={i}
+          style={{
+            paddingRight: "4px",
+            minHeight: "22.4px",
+            lineHeight: "1.6",
+            color: isErrLine ? "#f87171" : undefined,
+            fontWeight: isErrLine ? "bold" : undefined,
+          }}
+          title={isErrLine ? "Syntax error on this line" : undefined}
+        >
+          {isErrLine ? "⚠" : ""}{i + 1}
+        </div>,
+      );
+    }
+    return items;
+  }, [currentContent, collapsedRanges, errorLineNumbers]);
+
+  const foldGutterItems = useMemo(() => {
+    const items: React.ReactNode[] = [];
+    const lines = currentContent.split("\n");
+    let skipUntil = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (i <= skipUntil) continue;
+      const isFoldable = foldableRanges.has(i);
+      const isCollapsed = collapsedRanges.has(i);
+      if (isCollapsed) {
+        skipUntil = collapsedRanges.get(i)!;
+      }
+      items.push(
+        <div
+          key={i}
+          style={{
+            minHeight: "22.4px",
+            lineHeight: "22.4px",
+            cursor: isFoldable ? "pointer" : "default",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onClick={isFoldable ? () => toggleFold(i) : undefined}
+          title={isFoldable ? (isCollapsed ? "Unfold" : "Fold") : undefined}
+        >
+          {isFoldable ? (
+            <span
+              style={{
+                color: isCollapsed ? "#c5c5c5" : "#858585",
+                fontSize: "8px",
+                transition: "transform 0.15s ease",
+                display: "inline-block",
+                transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)",
+              }}
+            >
+              &#9654;
+            </span>
+          ) : null}
+        </div>,
+      );
+    }
+    return items;
+  }, [currentContent, collapsedRanges, foldableRanges, toggleFold]);
+
+  // The plain-textarea edit mode (see the isEditMode branch below) never reads this
+  // value — only the view-mode dangerouslySetInnerHTML does. Without this guard, every
+  // keystroke while editing a large ontology re-ran full-document regex syntax
+  // highlighting plus citation/DOI block scanning for nothing, which is what made
+  // typing feel slow.
+  const skipHighlighting = isEditMode && !citationInsertionMode && !citationRemovalMode;
+
   const highlightedContent = useMemo(() => {
-    if (!content) return "";
+    if (!content || skipHighlighting) return "";
 
     console.log("🎨 useMemo: Re-rendering highlighted content", {
       contentLength: content.length,
@@ -887,6 +982,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
     foldableRanges,
     collapsedRanges,
     errorLineNumbers,
+    skipHighlighting,
   ]);
 
   const loadMore = () => {
@@ -1412,35 +1508,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
                   borderRight: "none",
                 }}
               >
-                {(() => {
-                  const items: React.ReactNode[] = [];
-                  const lines = currentContent.split("\n");
-                  let skipUntil = -1;
-                  for (let i = 0; i < lines.length; i++) {
-                    if (i <= skipUntil) continue;
-                    const isCollapsed = collapsedRanges.has(i);
-                    if (isCollapsed) {
-                      skipUntil = collapsedRanges.get(i)!;
-                    }
-                    const isErrLine = errorLineNumbers.has(i + 1);
-                    items.push(
-                      <div
-                        key={i}
-                        style={{
-                          paddingRight: "4px",
-                          minHeight: "22.4px",
-                          lineHeight: "1.6",
-                          color: isErrLine ? "#f87171" : undefined,
-                          fontWeight: isErrLine ? "bold" : undefined,
-                        }}
-                        title={isErrLine ? "Syntax error on this line" : undefined}
-                      >
-                        {isErrLine ? "⚠" : ""}{i + 1}
-                      </div>,
-                    );
-                  }
-                  return items;
-                })()}
+                {lineNumberGutterItems}
               </div>
               {/* Fold indicator gutter */}
               <div
@@ -1459,49 +1527,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
                   borderRight: "1px solid #333",
                 }}
               >
-                {(() => {
-                  const items: React.ReactNode[] = [];
-                  const lines = currentContent.split("\n");
-                  let skipUntil = -1;
-                  for (let i = 0; i < lines.length; i++) {
-                    if (i <= skipUntil) continue;
-                    const isFoldable = foldableRanges.has(i);
-                    const isCollapsed = collapsedRanges.has(i);
-                    if (isCollapsed) {
-                      skipUntil = collapsedRanges.get(i)!;
-                    }
-                    items.push(
-                      <div
-                        key={i}
-                        style={{
-                          minHeight: "22.4px",
-                          lineHeight: "22.4px",
-                          cursor: isFoldable ? "pointer" : "default",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                        onClick={isFoldable ? () => toggleFold(i) : undefined}
-                        title={isFoldable ? (isCollapsed ? "Unfold" : "Fold") : undefined}
-                      >
-                        {isFoldable ? (
-                          <span
-                            style={{
-                              color: isCollapsed ? "#c5c5c5" : "#858585",
-                              fontSize: "8px",
-                              transition: "transform 0.15s ease",
-                              display: "inline-block",
-                              transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)",
-                            }}
-                          >
-                            &#9654;
-                          </span>
-                        ) : null}
-                      </div>,
-                    );
-                  }
-                  return items;
-                })()}
+                {foldGutterItems}
               </div>
           {/* Textarea editor */}
               <textarea
@@ -1652,7 +1678,9 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
       )}
     </div>
   );
-};
+});
+
+CodeHighlighter.displayName = "CodeHighlighter";
 
 // Line-by-line highlighting functions (no background colors, only text colors)
 function highlightTurtleLine(line: string): string {

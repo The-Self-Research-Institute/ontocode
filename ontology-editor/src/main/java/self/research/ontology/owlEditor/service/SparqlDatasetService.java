@@ -3398,6 +3398,15 @@ public class SparqlDatasetService {
         if (topLevelCacheService != null) {
             topLevelCacheService.evict(projectId);
         }
+        // Mark the precomputed hierarchy snapshot stale + schedule a rebuild. Without this,
+        // /classes/children (and /classes/top-level) keep serving whatever was last built —
+        // bulkLoadChunked() is the write path behind code-view-save and bulk imports, and unlike
+        // execUpdate()'s invalidateDerivedCachesAfterUpdate() it never told the snapshot a write
+        // happened, so entities added via Code View correctly appeared in Graph View (reads live
+        // SPARQL) but never in the Entities hierarchy tree (reads the stale snapshot instead).
+        if (hierarchyIndexService != null) {
+            hierarchyIndexService.markStale(projectId);
+        }
         if (springCacheEviction != null) {
             springCacheEviction.evictForProject(projectId);
             log.info("[CACHE] Evicted Spring caches for project {} after import", projectId);
