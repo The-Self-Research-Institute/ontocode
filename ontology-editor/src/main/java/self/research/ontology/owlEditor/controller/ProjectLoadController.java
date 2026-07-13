@@ -1596,6 +1596,13 @@ public class ProjectLoadController {
             }
             log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
 
+            // bulkLoadChunked() above cleared the dirty marker as if disk now matched Fuseki,
+            // but code-view-save never touches ontology.original.*/ontology.current.* on disk —
+            // only the separate code-view cache below. Re-assert dirty so the next hierarchy
+            // snapshot rebuild (and any OWLAPI re-warm) re-exports fresh from Fuseki instead of
+            // silently parsing whatever stale file happens to be on disk.
+            datasetService.markProjectDirty(projectId);
+
             // Step 3: Clear ALL code-view caches (stale after reimport)
             storageManager.clearCodeViewCache(projectId);
             log.info("[CODE-VIEW-SAVE] All format caches cleared");
