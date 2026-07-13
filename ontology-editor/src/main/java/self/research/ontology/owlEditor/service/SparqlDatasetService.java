@@ -3354,10 +3354,13 @@ public class SparqlDatasetService {
 
     /**
      * Marker file recording that Fuseki has changes the on-disk OWL artifacts don't.
-     * DesktopOntologyLoader checks it before re-warming the OWLAPI model so a re-warm
-     * never resurrects pre-mutation data from a stale ontology.original.* file.
+     * DesktopOntologyLoader and HierarchySnapshotBuildService both check it before trusting
+     * an on-disk ontology.original.* or ontology.current.* file, re-exporting fresh from Fuseki
+     * instead when it's present. Public so callers whose write path reimports into Fuseki
+     * without also resyncing the on-disk file (e.g. code-view-save) can re-assert dirty after
+     * bulkLoadChunked()'s internal invalidateContextCaches() incorrectly clears it (see below).
      */
-    private void markProjectDirty(String projectId) {
+    public void markProjectDirty(String projectId) {
         if (projectId == null || projectId.isBlank()) return;
         try {
             java.nio.file.Path dir = java.nio.file.Path.of(dataDir).toAbsolutePath().normalize()
@@ -3389,6 +3392,11 @@ public class SparqlDatasetService {
     private void invalidateContextCaches(String projectId) {
         partitionGraphCache.remove(projectId);
         tripleCountCache.remove(projectId);
+        // Correct only for callers that resync the on-disk ontology.original.*/current.* file
+        // to match this same import (ProjectImportService copies the uploaded file to disk
+        // separately). bulkLoadChunked() is also the reimport path behind code-view-save, which
+        // never touches those on-disk files — that caller re-asserts dirty via markProjectDirty()
+        // right after this runs, overriding the clear below. See markProjectDirty() javadoc.
         clearProjectDirty(projectId);
         // Drop the in-memory project mirror so imports are visible.
         if (projectRepoCache != null) {
