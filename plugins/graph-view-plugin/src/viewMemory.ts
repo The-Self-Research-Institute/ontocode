@@ -12,12 +12,38 @@ export interface LastGraphView {
   updatedAt: string;
 }
 
+export interface VowlDisplayOptions {
+  /** Hide "(disjoint)" captions and property-characteristic suffixes. */
+  compactNotation: boolean;
+  /** Extra cap on label length, on top of the shape-fitted budget. */
+  maxLabelChars: number;
+  /** Hide nodes whose degree is below this value (0 = show all). */
+  degreeCollapsing: number;
+  /** Hide classes whose only relationship is a single subClassOf. */
+  hideSolitarySubclasses: boolean;
+  /** Tint external classes differently from internal ones. */
+  colorExternals: boolean;
+  /** Show owl:unionOf / intersectionOf / complementOf / oneOf operator nodes. */
+  showSetOperators: boolean;
+}
+
+export const DEFAULT_VOWL_OPTIONS: VowlDisplayOptions = {
+  compactNotation: false,
+  maxLabelChars: 25,
+  degreeCollapsing: 0,
+  hideSolitarySubclasses: false,
+  colorExternals: true,
+  showSetOperators: true
+};
+
 export interface GraphUiPrefs {
   version: 1;
   showLegend: boolean;
   showPropertyPanel: boolean;
   /** Sessions since the toolbar restructure shipped; drives the one-time overflow hint. */
   toolbarHintSessions?: number;
+  /** Notation/density options — persisted per user (WebVOWL forgets these on reload). */
+  vowlOptions?: VowlDisplayOptions;
 }
 
 const lastViewKey = (projectId: string) => `ontocode.graphView.lastView.${projectId}`;

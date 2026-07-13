@@ -72,7 +72,7 @@ import {
 } from './HierarchicalLazyLoading';
 import { useIsDarkTheme } from './hooks/useIsDarkTheme';
 import { usePrefersReducedMotion } from './hooks/usePrefersReducedMotion';
-import { loadLastView, saveLastView, loadUiPrefs, saveUiPrefs, OntographLayoutType } from './viewMemory';
+import { loadLastView, saveLastView, loadUiPrefs, saveUiPrefs, OntographLayoutType, VowlDisplayOptions, DEFAULT_VOWL_OPTIONS } from './viewMemory';
 import { GraphToolbar, RELATIONSHIP_VISIBILITY_CONTROLS } from './components/GraphToolbar';
 import { WebGLGraphView, buildBenchmarkData } from './renderers/WebGLGraphView';
 import { isWebGLAvailable } from './renderers/graphAdapter';
@@ -156,7 +156,16 @@ const TYPE_COLORS: Record<NodeType, string> = {
   dataProperty: NODE_ACCENTS.dataProperty,
   objectProperty: NODE_ACCENTS.objectProperty,
   annotation: NODE_ACCENTS.annotation,
-  datatype: NODE_ACCENTS.datatype
+  datatype: NODE_ACCENTS.datatype,
+  setOperator: NODE_ACCENTS.class // operator nodes are anonymous classes — class blue
+};
+
+// VOWL set-operator glyphs rendered inside operator nodes
+const SET_OPERATOR_SYMBOLS: Record<string, string> = {
+  union: '∪',
+  intersection: '∩',
+  complement: '¬',
+  oneOf: '{…}'
 };
 
 const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
@@ -172,7 +181,8 @@ const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
   temporal: '#34d399',
   spatial: '#3b82f6',
   probabilistic: '#fb923c',
-  subPropertyOf: '#2563eb'
+  subPropertyOf: '#2563eb',
+  operand: '#64748b' // set-operator member links (plain gray, no arrowhead)
 };
 
 // Per-type accent colors shared by node rendering, selection styling, and tooltips
@@ -207,8 +217,8 @@ const DEFAULT_SETTINGS: GraphSettings = {
 };
 
 const DEFAULT_FILTERS: GraphFilters = {
-  nodeTypes: new Set(['class', 'individual', 'datatype', 'objectProperty', 'dataProperty', 'annotation']), // All node types enabled by default
-  edgeTypes: new Set(['subClassOf', 'instanceOf', 'propertyRelation', 'equivalentClass', 'domain', 'range', 'disjointWith', 'inverseOf', 'custom', 'subPropertyOf'])
+  nodeTypes: new Set(['class', 'individual', 'datatype', 'objectProperty', 'dataProperty', 'annotation', 'setOperator']), // All node types enabled by default
+  edgeTypes: new Set(['subClassOf', 'instanceOf', 'propertyRelation', 'equivalentClass', 'domain', 'range', 'disjointWith', 'inverseOf', 'custom', 'subPropertyOf', 'operand'])
 };
 
 
@@ -612,7 +622,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       saveUiPrefs({
         showLegend: prefs?.showLegend ?? true,
         showPropertyPanel: prefs?.showPropertyPanel ?? false,
-        toolbarHintSessions: sessions + 1
+        toolbarHintSessions: sessions + 1,
+        vowlOptions: prefs?.vowlOptions
       });
     }
   }, []);
@@ -628,7 +639,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     saveUiPrefs({
       showLegend,
       showPropertyPanel,
-      toolbarHintSessions: prefs?.toolbarHintSessions ?? 0
+      toolbarHintSessions: prefs?.toolbarHintSessions ?? 0,
+      vowlOptions: prefs?.vowlOptions
     });
   }, [showLegend, showPropertyPanel]);
 
@@ -665,6 +677,26 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   });
   const [showClassHierarchy, setShowClassHierarchy] = useState(false);
   const [hierarchySelectedClass, setHierarchySelectedClass] = useState<OntologyNode | null>(null);
+
+  // Notation & density options (WebVOWL parity: compact notation, label width cap,
+  // degree-of-collapsing, solitary subclasses, color externals) — persisted per user.
+  const [vowlOptions, setVowlOptions] = useState<VowlDisplayOptions>(
+    () => ({ ...DEFAULT_VOWL_OPTIONS, ...(loadUiPrefs()?.vowlOptions ?? {}) })
+  );
+  const vowlOptionsMountedRef = useRef(false);
+  useEffect(() => {
+    if (!vowlOptionsMountedRef.current) {
+      vowlOptionsMountedRef.current = true;
+      return;
+    }
+    const prefs = loadUiPrefs();
+    saveUiPrefs({
+      showLegend: prefs?.showLegend ?? true,
+      showPropertyPanel: prefs?.showPropertyPanel ?? false,
+      toolbarHintSessions: prefs?.toolbarHintSessions ?? 0,
+      vowlOptions
+    });
+  }, [vowlOptions]);
   
   // Hierarchy Dialog State
   const [showHierarchyDialog, setShowHierarchyDialog] = useState(false);
@@ -1132,12 +1164,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (visualizationType === 'vowl' || visualizationType === 'ontograph') {
       const beforeFilter = filtered.length;
       
-      // In VOWL mode, we hide property nodes (they are edges)
+      // In VOWL mode, we hide property nodes (they are edges).
+      // Set-operator nodes (∪ ∩ ¬ {…}) are VOWL notation — shown unless filtered off.
       if (visualizationType === 'vowl') {
-        filtered = filtered.filter(node => 
-          node.type === 'class' || 
-          node.type === 'individual' || 
-          node.type === 'datatype'
+        filtered = filtered.filter(node =>
+          node.type === 'class' ||
+          node.type === 'individual' ||
+          node.type === 'datatype' ||
+          (node.type === 'setOperator' && vowlOptions.showSetOperators)
         );
       }
       
@@ -1160,28 +1194,60 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return true; // individuals always shown
       });
       
-      console.log(`[Filtering] ${visualizationType} mode: After vowlFilters, showing ${filtered.length} nodes (from ${beforeFilter})`);
+      if (GRAPH_DEBUG) console.log(`[Filtering] ${visualizationType} mode: After vowlFilters, showing ${filtered.length} nodes (from ${beforeFilter})`);
     }
-    
+
     // **Force Mode: Hide property nodes (objectProperty, dataProperty, annotation)**
     // Properties should only appear as edges, not as nodes in force mode
     if (visualizationType === 'force') {
-      filtered = filtered.filter(node => 
-        node.type === 'class' || 
-        node.type === 'individual' || 
+      filtered = filtered.filter(node =>
+        node.type === 'class' ||
+        node.type === 'individual' ||
         node.type === 'datatype'
       );
-      console.log(`[Filtering] Force mode: Filtered to classes, individuals, datatypes - ${filtered.length} nodes`);
+      if (GRAPH_DEBUG) console.log(`[Filtering] Force mode: Filtered to classes, individuals, datatypes - ${filtered.length} nodes`);
     }
 
     // OntoGraph Mode: focus on class hierarchy and individuals for clean Protégé-style layout
     if (visualizationType === 'ontograph') {
       const beforeFilter = filtered.length;
       filtered = filtered.filter(node => node.type === 'class' || node.type === 'individual');
-      console.log(`[Filtering] OntoGraph mode: Focused on classes and individuals ${beforeFilter} -> ${filtered.length}`);
+      if (GRAPH_DEBUG) console.log(`[Filtering] OntoGraph mode: Focused on classes and individuals ${beforeFilter} -> ${filtered.length}`);
     }
 
-    console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
+    // Density options (network views only — the ontograph hierarchy must stay complete):
+    // degree-of-collapsing hides weakly-connected nodes, solitary-subclasses hides
+    // classes whose only relationship is a single subClassOf.
+    if (
+      (visualizationType === 'vowl' || visualizationType === 'force') &&
+      (vowlOptions.degreeCollapsing > 0 || vowlOptions.hideSolitarySubclasses)
+    ) {
+      const inSet = new Set(filtered.map(n => n.id));
+      const degree = new Map<string, number>();
+      const hasNonSubClassEdge = new Set<string>();
+      for (const e of allEdges) {
+        if (!inSet.has(e.from) || !inSet.has(e.to)) continue;
+        degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
+        degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
+        if (e.type !== 'subClassOf') {
+          hasNonSubClassEdge.add(e.from);
+          hasNonSubClassEdge.add(e.to);
+        }
+      }
+      filtered = filtered.filter(node => {
+        const deg = degree.get(node.id) ?? 0;
+        if (vowlOptions.degreeCollapsing > 0 && deg < vowlOptions.degreeCollapsing) return false;
+        if (
+          vowlOptions.hideSolitarySubclasses &&
+          node.type === 'class' &&
+          deg === 1 &&
+          !hasNonSubClassEdge.has(node.id)
+        ) return false;
+        return true;
+      });
+    }
+
+    if (GRAPH_DEBUG) console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
 
     // Search filter: instead of hiding non-matching nodes, keep all visible nodes.
     // Matching nodes are highlighted via the visual update effect (glow/stroke).
@@ -1195,13 +1261,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         node.id.toLowerCase().includes(query) ||
         node.description?.toLowerCase().includes(query)
       );
-      console.log(`[Filtering] After sidebar search "${sidebarSearchTerm}": ${filtered.length} nodes`);
+      if (GRAPH_DEBUG) console.log(`[Filtering] After sidebar search "${sidebarSearchTerm}": ${filtered.length} nodes`);
     }
 
-    console.log(`[Filtering] Final filtered nodes: ${filtered.length}`);
+    if (GRAPH_DEBUG) console.log(`[Filtering] Final filtered nodes: ${filtered.length}`);
 
     return filtered;
-  }, [visibleNodes, filters, searchQuery, sidebarSearchTerm, visualizationType, vowlFilters, assertionView]);
+  }, [visibleNodes, filters, searchQuery, sidebarSearchTerm, visualizationType, vowlFilters, assertionView, vowlOptions, allEdges]);
 
   const filteredEdges = useMemo(() => {
     const nodeIds = new Set(filteredNodes.map(n => n.id));
@@ -1724,6 +1790,32 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .append('path').attr('d', 'M0,0 L10,5 L0,10 Z')
       .attr('fill', isDark ? '#a78bfa' : '#7c3aed');
 
+    // WebVOWL arrowhead convention: subClassOf/isA edges get a HOLLOW outlined
+    // triangle; type/property edges get filled triangles. The shape difference (not
+    // just color) is what makes relationship kinds readable at a glance.
+    const canvasBg = isDark ? '#111827' : '#ffffff';
+    const appendArrowMarker = (
+      id: string,
+      color: string,
+      hollow: boolean
+    ) => {
+      const marker = defs
+        .append('marker')
+        .attr('id', id)
+        .attr('viewBox', '-1 -1 12 12')
+        .attr('refX', hollow ? 11 : 10)
+        .attr('refY', 5)
+        .attr('markerWidth', hollow ? 11 : 8)
+        .attr('markerHeight', hollow ? 11 : 8)
+        .attr('orient', 'auto');
+      marker
+        .append('path')
+        .attr('d', 'M0,0 L10,5 L0,10 Z')
+        .attr('fill', hollow ? canvasBg : color)
+        .attr('stroke', color)
+        .attr('stroke-width', hollow ? 1.4 : 0);
+    };
+
     // Generic VOWL markers for other types
     Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
       // Determine VOWL color for this edge type
@@ -1733,21 +1825,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       else if (type === 'disjointWith') vowlColor = '#ef4444';
       else if (type === 'domain') vowlColor = '#666666';
       else if (type === 'range') vowlColor = '#666666';
-      
-      defs
-        .append('marker')
-        .attr('id', `arrow-vowl-${type}`)
-        .attr('viewBox', '0 0 10 10')
-        .attr('refX', 10)
-        .attr('refY', 5)
-        .attr('markerWidth', 8)
-        .attr('markerHeight', 8)
-        .attr('orient', 'auto')
-        .append('path')
-        .attr('d', 'M0,0 L10,5 L0,10 Z')
-        .attr('fill', vowlColor);
+
+      appendArrowMarker(`arrow-vowl-${type}`, vowlColor, type === 'subClassOf' || type === 'subPropertyOf');
     });
-    
+
     // Standard arrow markers using TRIANGLES for force and ontograph modes
     Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
       // Determine color for each edge type in force mode
@@ -1757,19 +1838,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       else if (type === 'propertyRelation') forceColor = isDark ? '#cbd5e1' : '#000000';
       else if (type === 'domain') forceColor = '#666666';
       else if (type === 'range') forceColor = '#666666';
-      
-      defs
-        .append('marker')
-        .attr('id', `arrow-${type}`)
-        .attr('viewBox', '0 0 10 10')
-        .attr('refX', 10)
-        .attr('refY', 5)
-        .attr('markerWidth', 8)
-        .attr('markerHeight', 8)
-        .attr('orient', 'auto')
-        .append('path')
-        .attr('d', 'M0,0 L10,5 L0,10 Z')
-        .attr('fill', forceColor);
+
+      appendArrowMarker(`arrow-${type}`, forceColor, type === 'subClassOf' || type === 'subPropertyOf');
     });
 
     // OntoGraph specific arrow markers
@@ -1782,17 +1852,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     };
 
     Object.entries(ontographColors).forEach(([type, color]) => {
-      defs.append('marker')
-        .attr('id', `arrow-ontograph-${type}`)
-        .attr('viewBox', '0 0 10 10')
-        .attr('refX', 10).attr('refY', 5)
-        .attr('markerWidth', 8).attr('markerHeight', 8)
-        .attr('orient', 'auto')
-        .append('path').attr('d', 'M0,0 L10,5 L0,10 Z')
-        .attr('fill', color);
+      appendArrowMarker(`arrow-ontograph-${type}`, color, type === 'subClassOf');
     });
-    
-    console.log('[AdvancedGraphView] ✅ Arrow markers created with specific property colors');
+
+    if (GRAPH_DEBUG) console.log('[AdvancedGraphView] ✅ Arrow markers created (hollow subClassOf, filled properties)');
 
     // ── Premium visual defs: gradients & glow filters ─────────────────────
     defs.selectAll('.premium-def').remove();
@@ -2386,6 +2449,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (d.type === 'subClassOf') {
             return isDark ? '#9ca3af' : '#374151'; // Light gray in dark mode, dark gray in light mode
           }
+          if (d.type === 'operand') {
+            return isDark ? '#94a3b8' : '#64748b'; // Plain gray member links for set operators
+          }
           if (d.type === 'propertyRelation') {
             // Annotation properties - purple
             if (sourceNode?.type === 'annotation') {
@@ -2468,6 +2534,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('marker-end', d => {
         // In VOWL mode, always show arrows with specific colors for properties
         if (visualizationType === 'vowl') {
+          if (d.type === 'operand') return null; // member links carry no arrowheads (VOWL)
           if (d.type === 'propertyRelation') {
             const sourceNode = allNodes.find(n => n.id === d.from);
             const targetNode = allNodes.find(n => n.id === d.to);
@@ -2518,54 +2585,59 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .join('rect')
       .attr('class', 'edge-label-bg')
       .attr('fill', d => {
+        // Theme-aware chips: dark surfaces in dark mode so the light label text stays
+        // readable (light-on-light chips were the "invisible subClassOf" bug).
+        const isDark = isDarkTheme;
         if (visualizationType === 'vowl') {
           // Determine property type for proper background coloring
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
           const isFunctional = d.metadata?.functional;
-          
+
           if (d.type === 'subClassOf') {
-            return '#E5E7EB'; // Light gray for subClassOf
+            return isDark ? '#374151' : '#E5E7EB'; // Gray chip
           }
-          
+
           if (d.type === 'propertyRelation') {
-            // Annotation properties - light purple
+            // Annotation properties - purple
             if (sourceNode?.type === 'annotation') {
-              return isFunctional ? '#E9D5FF' : '#F3E8FF'; // Lighter purple
+              return isDark ? (isFunctional ? '#5b21b6' : '#4c1d95') : (isFunctional ? '#E9D5FF' : '#F3E8FF');
             }
-            // Data properties - light pink
+            // Data properties - pink
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-              return isFunctional ? '#FCE7F3' : '#FDF2F8'; // Light pink
+              return isDark ? (isFunctional ? '#9d174d' : '#831843') : (isFunctional ? '#FCE7F3' : '#FDF2F8');
             }
-            // Object properties - light cyan
-            return isFunctional ? '#A7F3D0' : '#CFFAFE'; // Light cyan/green for functional
+            // Object properties - cyan/green
+            return isDark ? (isFunctional ? '#065f46' : '#155e75') : (isFunctional ? '#A7F3D0' : '#CFFAFE');
           }
-          
-          return '#BBDEFB'; // Default light blue
+
+          return isDark ? '#1e3a8a' : '#BBDEFB'; // Default blue
         }
-        
+
         // Add background colors for other modes too
         if (d.type === 'propertyRelation') {
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
           const isFunctional = d.metadata?.functional;
-          
-          // Annotation properties - light purple
+
+          // Annotation properties - purple
           if (sourceNode?.type === 'annotation') {
-            return isFunctional ? '#E9D5FF' : '#F3E8FF';
+            return isDark ? (isFunctional ? '#5b21b6' : '#4c1d95') : (isFunctional ? '#E9D5FF' : '#F3E8FF');
           }
-          // Data properties - light pink
+          // Data properties - pink
           if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-            return isFunctional ? '#FCE7F3' : '#FDF2F8';
+            return isDark ? (isFunctional ? '#9d174d' : '#831843') : (isFunctional ? '#FCE7F3' : '#FDF2F8');
           }
-          // Object properties - light cyan
-          return isFunctional ? '#A7F3D0' : '#CFFAFE';
+          // Object properties - cyan
+          return isDark ? (isFunctional ? '#065f46' : '#155e75') : (isFunctional ? '#A7F3D0' : '#CFFAFE');
         }
-        
-        return '#ffffff';
+
+        return isDark ? '#1f2937' : '#ffffff';
       })
       .attr('opacity', d => {
         if (visualizationType === 'vowl') {
+          // Disjointness is drawn as the VOWL twin-circle symbol, not a text chip
+          if (d.type === 'disjointWith') return 0;
           // Show label background when edge is selected or hovered
           return (selectedEdgeId === d.id || hoveredEdgeId === d.id) ? 1 : 0;
         }
@@ -2666,8 +2738,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         // Show full label in WebVOWL mode with characteristic indicators
         if (visualizationType === 'vowl') {
+          if (d.type === 'disjointWith') return ''; // rendered as the VOWL twin-circle symbol
           const baseLabel = d.label || d.type || '';
-          return `${baseLabel}${buildCharSuffix(d)}`;
+          return vowlOptions.compactNotation ? baseLabel : `${baseLabel}${buildCharSuffix(d)}`;
         }
 
         // Add property type prefix and characteristic indicators for clarity
@@ -2694,6 +2767,49 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         return settings.showLabels ? 1 : 0;
       });
+
+    // VOWL disjointness symbol (per the VOWL spec / WebVOWL's OwlDisjointWith):
+    // a small rect containing two separated circles, captioned "(disjoint)" —
+    // always visible on the dashed edge, replacing the text chip.
+    const disjointSymbol = g.append('g')
+      .attr('class', 'disjoint-symbols')
+      .selectAll('g')
+      .data(visualizationType === 'vowl' ? d3Edges.filter(d => d.type === 'disjointWith') : [])
+      .join('g')
+      .attr('class', 'disjoint-symbol')
+      .style('pointer-events', 'none');
+    disjointSymbol.append('rect')
+      .attr('x', -22).attr('y', -11)
+      .attr('width', 44).attr('height', 22)
+      .attr('rx', 2)
+      .attr('fill', isDark ? '#1e3a8a' : '#b9d4f5')
+      .attr('stroke', isDark ? '#60a5fa' : '#1f2937')
+      .attr('stroke-width', 0.8);
+    ([-9, 9] as const).forEach(cx => {
+      disjointSymbol.append('circle')
+        .attr('cx', cx).attr('cy', 0).attr('r', 7)
+        .attr('fill', isDark ? '#60a5fa' : '#6699cc')
+        .attr('stroke', isDark ? '#0b1220' : '#1f2937')
+        .attr('stroke-width', 0.8);
+    });
+    if (!vowlOptions.compactNotation) {
+      disjointSymbol.append('text')
+        .text('(disjoint)')
+        .attr('y', 21)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', 7.5)
+        .attr('fill', isDark ? '#cbd5e1' : '#1f2937');
+    }
+
+    const updateDisjointSymbols = () => {
+      disjointSymbol.attr('transform', (d: any) => {
+        const source = d.source as D3Node;
+        const target = d.target as D3Node;
+        if (source.x == null || source.y == null || target.x == null || target.y == null) return null;
+        return `translate(${(source.x + target.x) / 2},${(source.y + target.y) / 2})`;
+      });
+    };
+    updateDisjointSymbols();
 
     const updateLinkLabelBackgrounds = () => {
       linkLabelBg.each(function(_d, i) {
@@ -2771,11 +2887,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (visualizationType === 'vowl' && nodeType === 'class') {
         if (isThing) {
           fill = isDark ? '#374151' : '#ffffff'; // Dark gray in dark mode, white in light mode
-        } else if (isExternal) {
-          fill = isDark ? '#60a5fa' : '#4682b4'; // Lighter blue in dark mode
+        } else if (isExternal && vowlOptions.colorExternals) {
+          // WebVOWL "color externals": foreign-namespace classes get a deeper tint
+          fill = isDark ? '#60a5fa' : '#4682b4';
         } else {
           fill = isDark ? '#6b92c4' : '#acd5f2'; // Adjusted for dark mode
         }
+      } else if (visualizationType === 'vowl' && nodeType === 'setOperator') {
+        // Operator nodes are anonymous classes — class blue, dashed border below
+        fill = isDark ? '#6b92c4' : '#acd5f2';
       } else if (visualizationType === 'vowl') {
         fill = vowlNotationService.getVOWLNodeColor(d.type, isDark);
       } else {
@@ -2794,11 +2914,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         ? (isInferredEntity(d) ? 3 : 2)
         : (isInferredEntity(d) ? 3 : (hasChildren(d.id, allEdges, allNodes) ? 3 : 2));
       
-      // Thing nodes get dashed borders in WebVOWL
+      // Thing and anonymous set-operator nodes get dashed borders in WebVOWL
       const strokeDasharray = isInferredEntity(d)
         ? '8 4'
         : (visualizationType === 'vowl'
-          ? (isThing ? '5 3' : null)
+          ? (isThing || nodeType === 'setOperator' ? '5 3' : null)
           : null);
 
       // Glossy gradient version of the flat fill (depth without per-frame cost)
@@ -3242,7 +3362,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return 'start';
       })
       .attr('font-size', d => {
-        if (visualizationType === 'vowl') return 11;
+        if (visualizationType === 'vowl') return d.type === 'setOperator' ? 18 : 11; // big glyph for ∪ ∩ ¬
         if (visualizationType === 'ontograph') return 12;
         if (visualizationType === 'force') return 11; // Smaller font for better fit in ovals
         if (visualizationType === 'spatial3d') return 10; // Compact to fit inside circle
@@ -3317,6 +3437,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .style('paint-order', 'stroke')
       .text(d => {
         if (visualizationType === 'vowl') {
+          // Set-operator nodes render their VOWL glyph, not a text label
+          if (d.type === 'setOperator') {
+            return SET_OPERATOR_SYMBOLS[(d as any).metadata?.setOperator] || '∪';
+          }
           // Truncate labels in WebVOWL mode to fit within their shapes.
           // Char budget derives from the actual shape width (≈7px/char at 11px
           // font) so text can never spill outside the box.
@@ -3340,6 +3464,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             maxChars = Math.max(6, Math.floor((size * 3.6 - 8) / 7));
           }
 
+          // User-set cap layers on top of the shape-fitted budget
+          maxChars = Math.min(maxChars, vowlOptions.maxLabelChars);
           return label.length > maxChars ? label.substring(0, Math.max(1, maxChars - 2)) + '..' : label;
         }
         if (visualizationType === 'ontograph' && !showLabels) {
@@ -3354,7 +3480,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         if (visualizationType === 'force') {
           const label = d.label || '';
-          return label.length > 20 ? label.substring(0, 17) + '...' : label;
+          const maxChars = Math.min(20, vowlOptions.maxLabelChars);
+          return label.length > maxChars ? label.substring(0, Math.max(1, maxChars - 3)) + '...' : label;
         }
         if (visualizationType === 'spatial3d') {
           // Short truncation — text is centered inside the circle, so space is limited
@@ -3387,7 +3514,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('font-size', 9)
       .attr('fill', '#666')
       .attr('font-weight', '600')
-      .text(d => d.type.substring(0, 1).toUpperCase())
+      .text(d => {
+        // Set-operator caption: "(union)" / "(intersection)" / ... unless compact notation
+        if (d.type === 'setOperator') {
+          if (vowlOptions.compactNotation) return '';
+          const kind = (d as any).metadata?.setOperator;
+          return kind ? `(${kind})` : '';
+        }
+        return d.type.substring(0, 1).toUpperCase();
+      })
       .style('pointer-events', 'none')
       .style('opacity', 0.7);
 
@@ -3627,6 +3762,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (visualizationType !== 'vowl' && settings.showLabels !== false) {
             updateLinkLabelPositions();
           }
+          // Disjointness symbols are always visible and few — track the edge midpoint live
+          if (visualizationType === 'vowl') {
+            updateDisjointSymbols();
+          }
           // Label backgrounds sized once after layout — getBBox in tick forces layout thrash
 
           node.attr('transform', d => {
@@ -3657,6 +3796,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     simulation.on('end.render', () => {
       updateEdgePaths(true);
       updateLinkLabelPositions();
+      updateDisjointSymbols();
       updateLinkLabelBackgrounds();
       applyViewportCulling();
     });
@@ -3943,7 +4083,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   // Deliberately granular deps: edit-mode toggles, click-handler identity, and label/
   // tooltip toggles update in place (refs + visual-update effect) instead of tearing
   // down and rebuilding the whole scene.
-  }, [filteredNodes, filteredEdges, settings.nodeSize, settings.showArrows, settings.tooltips, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence, isDarkTheme, prefersReducedMotion, projectId]);
+  }, [filteredNodes, filteredEdges, settings.nodeSize, settings.showArrows, settings.tooltips, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence, isDarkTheme, prefersReducedMotion, projectId, vowlOptions]);
 
   // Auto-fit the viewport when switching to ontograph or changing its layout type
   // This ensures nodes are always in view after a layout recalculation
@@ -5002,7 +5142,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         key={node.id} 
         style={{ 
           marginLeft: level > 0 ? '16px' : '0',
-          borderLeft: level > 0 ? '2px solid #e5e7eb' : 'none',
+          borderLeft: level > 0 ? '2px solid var(--border, #e5e7eb)' : 'none',
           paddingLeft: level > 0 ? '8px' : '0',
           marginTop: '2px'
         }}
@@ -5100,7 +5240,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               style={{
                 fontSize: '13px',
                 fontWeight: selectedNodes.has(node.id) ? '600' : '400',
-                color: '#1f2937',
+                // Theme variable, not a hardcoded dark hex — rows sit on var(--surface-1),
+                // which is dark in dark mode (hardcoded #1f2937 made labels invisible there)
+                color: 'var(--text-primary, #1f2937)',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap'
@@ -5441,6 +5583,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             lazyLoadingActive={allNodes.length > 1000}
             webglRenderer={webglActive}
             webglSupported={webglSupported}
+            vowlDisplayOptions={vowlOptions}
+            onChangeVowlOptions={(patch) => setVowlOptions(prev => ({ ...prev, ...patch }))}
             onToggleWebGL={() => setSettings(prev => ({ ...prev, renderer: prev.renderer === 'webgl' ? 'svg' : 'webgl' }))}
             showOverflowHint={showToolbarHint}
             onRefresh={() => fetchGraphData({ bypassCache: true })}
@@ -5638,12 +5782,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   [data-testid="graph-svg"] .node > text {
                     transition: opacity 220ms ease;
                     paint-order: stroke;
-                    stroke: rgba(255,255,255,0.75);
-                    stroke-width: 2px;
+                    stroke: ${isDarkTheme ? 'rgba(10,15,28,0.85)' : 'rgba(255,255,255,0.75)'};
+                    stroke-width: 2.5px;
                     stroke-linejoin: round;
-                  }
-                  .dark [data-testid="graph-svg"] .node > text {
-                    stroke: rgba(15,23,42,0.7);
                   }
                   [data-testid="graph-svg"] .edge-path {
                     transition: stroke-opacity 200ms ease, stroke-width 160ms ease;
@@ -5821,6 +5962,31 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         {/* Graph View Sidebar - Second Column */}
         {showPropertyPanel && (
+          <div style={{ position: 'relative', display: 'flex', minWidth: 0 }}>
+          {/* Collapse chevron on the panel's left edge — mirrors the reopen rail on the canvas */}
+          <button
+            data-testid="graph-explorer-collapse"
+            onClick={() => setShowPropertyPanel(false)}
+            title="Collapse Explorer sidebar"
+            style={{
+              position: 'absolute',
+              left: -17,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              zIndex: 30,
+              padding: '12px 3px',
+              borderRadius: '6px 0 0 6px',
+              border: '1px solid var(--border)',
+              borderRight: 'none',
+              backgroundColor: 'var(--surface-2)',
+              color: 'var(--text-primary)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center'
+            }}
+          >
+            <ChevronRight size={14} />
+          </button>
           <GraphViewSidebar
             nodes={allNodes}
             edges={allEdges}
@@ -5920,6 +6086,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             onClearFocus={exitFocusMode}
             ontologyMetadata={ontologyMetadata}
           />
+          </div>
         )}
       </div>
 
@@ -5933,8 +6100,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               width: isDialogMinimized ? 'auto' : '300px',
               minWidth: isDialogMinimized ? '220px' : 'auto',
               maxHeight: isDialogMinimized ? 'auto' : '340px',
-              backgroundColor: '#fff',
-              border: '1px solid #d1d5db',
+              backgroundColor: 'var(--surface-1, #fff)',
+              border: '1px solid var(--border, #d1d5db)',
               borderRadius: '8px',
               boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
               zIndex: 1000,
@@ -6049,14 +6216,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 <div
                   style={{
                     padding: '8px 12px',
-                    backgroundColor: '#f9fafb',
-                    borderBottom: '1px solid #e5e7eb'
+                    backgroundColor: 'var(--surface-2, #f9fafb)',
+                    borderBottom: '1px solid var(--border, #e5e7eb)'
                   }}
                 >
-              <div style={{ fontSize: '13px', fontWeight: '600', color: '#1f2937', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary, #1f2937)', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {hierarchyRootNode.label}
               </div>
-              <div style={{ fontSize: '10px', color: '#9ca3af', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: '10px', color: 'var(--text-secondary, #9ca3af)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {hierarchyRootNode.id}
               </div>
             </div>
@@ -6067,10 +6234,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 flex: 1,
                 overflow: 'auto',
                 padding: '8px 10px',
-                backgroundColor: '#fafafa'
+                backgroundColor: 'var(--surface-2, #fafafa)'
               }}
             >
-              <div style={{ backgroundColor: '#ffffff', borderRadius: '6px', padding: '4px' }}>
+              <div style={{ backgroundColor: 'var(--surface-1, #ffffff)', borderRadius: '6px', padding: '4px' }}>
                 {renderHierarchyTree(hierarchyRootNode)}
               </div>
             </div>
@@ -6096,10 +6263,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             <div
               style={{
                 padding: '5px 10px',
-                backgroundColor: '#f9fafb',
-                borderTop: '1px solid #e5e7eb',
+                backgroundColor: 'var(--surface-2, #f9fafb)',
+                borderTop: '1px solid var(--border, #e5e7eb)',
                 fontSize: '10px',
-                color: '#9ca3af',
+                color: 'var(--text-secondary, #9ca3af)',
                 display: 'flex',
                 gap: '10px',
                 flexWrap: 'wrap'

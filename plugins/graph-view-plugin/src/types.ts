@@ -1,11 +1,14 @@
 // Advanced Graph Ontology Types
 
-export type NodeType = 'class' | 'individual' | 'property' | 'dataProperty' | 'objectProperty' | 'annotation' | 'datatype';
+export type NodeType = 'class' | 'individual' | 'property' | 'dataProperty' | 'objectProperty' | 'annotation' | 'datatype' | 'setOperator';
 
-export type EdgeType = 
-  | 'subClassOf' 
-  | 'instanceOf' 
-  | 'propertyRelation' 
+/** For setOperator nodes: which OWL construct the node represents. */
+export type SetOperatorKind = 'union' | 'intersection' | 'complement' | 'oneOf';
+
+export type EdgeType =
+  | 'subClassOf'
+  | 'instanceOf'
+  | 'propertyRelation'
   | 'equivalentClass'
   | 'disjointWith'
   | 'domain'
@@ -15,7 +18,8 @@ export type EdgeType =
   | 'temporal'
   | 'spatial'
   | 'probabilistic'
-  | 'subPropertyOf';
+  | 'subPropertyOf'
+  | 'operand';
 
 export type LayoutAlgorithm = 
   | 'force' 

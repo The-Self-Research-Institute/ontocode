@@ -556,11 +556,140 @@ public class OntologyQueryService {
             }
         }
 
+        attachClassExpressions(projectId, nodeMap);
+
         List<OntologyDto.TreeNode> result = new ArrayList<>(nodeMap.values());
         long duration = System.currentTimeMillis() - startTime;
         log.info("✅ [PERF] Loaded {} total classes in {}ms for project {}", result.size(), duration, projectId);
 
         return result;
+    }
+
+    /**
+     * Bulk-attach anonymous set-operator expressions (owl:unionOf / intersectionOf /
+     * complementOf / oneOf) to the given classes in ONE query, so the graph view can
+     * render VOWL operator nodes. Mirrors the per-class anonymous query used by
+     * classDetails, generalized over all classes to avoid an N+1 fan-out.
+     */
+    private void attachClassExpressions(String projectId, Map<String, OntologyDto.TreeNode> nodeMap) {
+        if (nodeMap.isEmpty()) return;
+        // Same large-graph threshold as children(): GO/Mondo-scale datasets stay on the
+        // fast path — set-operator decoration is a visualization nicety, never worth
+        // multi-second path-expression traversals there.
+        if (datasetService.getGraphTripleCount(projectId) >= 500_000L) {
+            log.info("⏭️ [PERF] attachClassExpressions skipped for large graph (>=500k triples), project {}", projectId);
+            return;
+        }
+        long start = System.currentTimeMillis();
+
+        // ORDER MATTERS: bind ?bnode from the rare set-operator predicates FIRST.
+        // Starting from `?c rdfs:subClassOf ?bnode` would scan every subclass axiom
+        // in the ontology — including every restriction (all blank-node superclasses) —
+        // which is catastrophically slow on large ontologies. Operator-first keeps the
+        // scan proportional to the number of actual set-operator expressions.
+        String query = PREFIXES + """
+            SELECT ?c ?rel ?bnode ?member ?memberLabel ?exprType WHERE {
+              {
+                { ?bnode owl:intersectionOf ?list . BIND("intersection" AS ?exprType) }
+                UNION
+                { ?bnode owl:unionOf ?list . BIND("union" AS ?exprType) }
+                ?list rdf:rest*/rdf:first ?member .
+                FILTER(isIRI(?member))
+              }
+              UNION
+              {
+                ?bnode owl:complementOf ?member . BIND("complement" AS ?exprType)
+                FILTER(isIRI(?member))
+              }
+              UNION
+              {
+                ?bnode owl:oneOf ?list . BIND("oneOf" AS ?exprType)
+                ?list rdf:rest*/rdf:first ?member .
+                FILTER(isIRI(?member))
+              }
+              FILTER(isBlank(?bnode))
+              {
+                ?c rdfs:subClassOf ?bnode . BIND("subClassOf" AS ?rel)
+              } UNION {
+                ?c owl:equivalentClass ?bnode . BIND("equivalentClass" AS ?rel)
+              }
+              FILTER(isIRI(?c))
+              OPTIONAL { ?member rdfs:label ?memberLabel }
+            }
+            LIMIT 5000
+            """;
+
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, query);
+            // Group rows by (class, blank node) — blank node ids are stable within one result set
+            Map<String, OntologyDto.ClassExpressionDto> byKey = new LinkedHashMap<>();
+            Map<String, List<String>> operandLabelsByKey = new LinkedHashMap<>();
+
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                String classIri = resource(sol, "c");
+                String memberIri = resource(sol, "member");
+                String exprType = literal(sol, "exprType");
+                String rel = literal(sol, "rel");
+                Value bnodeVal = sol.getValue("bnode");
+                if (classIri == null || memberIri == null || exprType.isBlank() || bnodeVal == null) continue;
+
+                OntologyDto.TreeNode owner = nodeMap.get(classIri);
+                if (owner == null) continue;
+
+                String key = classIri + " " + bnodeVal.stringValue();
+                OntologyDto.ClassExpressionDto expr = byKey.get(key);
+                if (expr == null) {
+                    expr = new OntologyDto.ClassExpressionDto();
+                    expr.setId(classIri + "#expr-" + exprType + "-" + byKey.size());
+                    expr.setExpressionType(exprType);
+                    expr.setAxiomType(rel);
+                    expr.setOperands(new ArrayList<>());
+                    byKey.put(key, expr);
+                    operandLabelsByKey.put(key, new ArrayList<>());
+
+                    List<OntologyDto.ClassExpressionDto> list = owner.getClassExpressions();
+                    if (list == null) {
+                        list = new ArrayList<>();
+                        owner.setClassExpressions(list);
+                    }
+                    list.add(expr);
+                }
+
+                boolean seen = false;
+                for (Map<String, String> op : expr.getOperands()) {
+                    if (memberIri.equals(op.get("iri"))) { seen = true; break; }
+                }
+                if (!seen) {
+                    String memberLabel = literal(sol, "memberLabel");
+                    if (memberLabel.isBlank()) memberLabel = localName(memberIri);
+                    Map<String, String> operand = new LinkedHashMap<>();
+                    operand.put("iri", memberIri);
+                    operand.put("label", memberLabel);
+                    expr.getOperands().add(operand);
+                    operandLabelsByKey.get(key).add(memberLabel);
+                }
+            }
+
+            // Human-readable Manchester-ish definition for tooltips
+            for (Map.Entry<String, OntologyDto.ClassExpressionDto> entry : byKey.entrySet()) {
+                OntologyDto.ClassExpressionDto expr = entry.getValue();
+                List<String> labels = operandLabelsByKey.get(entry.getKey());
+                switch (expr.getExpressionType()) {
+                    case "union" -> expr.setDefinition(String.join(" or ", labels));
+                    case "intersection" -> expr.setDefinition(String.join(" and ", labels));
+                    case "complement" -> expr.setDefinition("not " + (labels.isEmpty() ? "?" : labels.get(0)));
+                    case "oneOf" -> expr.setDefinition("{" + String.join(", ", labels) + "}");
+                    default -> expr.setDefinition(String.join(", ", labels));
+                }
+            }
+            log.info("⏱️ [PERF] attachClassExpressions: {} expressions in {}ms for project {}",
+                    byKey.size(), System.currentTimeMillis() - start, projectId);
+        } catch (Exception e) {
+            // Set-operator decoration is best-effort — the class hierarchy must never fail because of it
+            log.warn("Could not attach class expressions for project {} after {}ms: {}",
+                    projectId, System.currentTimeMillis() - start, e.getMessage());
+        }
     }
 
     /**
