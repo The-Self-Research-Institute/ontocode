@@ -438,6 +438,63 @@ export class GraphDataFetchService {
   }
 
   /**
+   * Build edges for the property restrictions (someValuesFrom/allValuesFrom/hasValue/
+   * cardinality) a class participates in via subClassOf/equivalentClass. Only restrictions
+   * with a real class/datatype filler get an edge — a literal hasValue restriction (e.g.
+   * hasStatus value "active") has no node on the other end to draw an edge to.
+   */
+  private addRestrictionEdges(classIri: string, restrictions: any[] | undefined, edges: OntologyEdge[]): void {
+    if (!Array.isArray(restrictions)) return;
+    for (const r of restrictions) {
+      const fillerIri = r?.fillerIri;
+      if (!fillerIri) continue;
+      const restrictionType = r.restrictionType || 'some';
+      const propertyLabel = r.propertyLabel || r.propertyIri?.split('#').pop()?.split('/').pop() || 'property';
+      const label = r.cardinality
+        ? `${propertyLabel} ${restrictionType} ${r.cardinality}`
+        : `${propertyLabel} ${restrictionType}`;
+      edges.push({
+        id: `${classIri}-restriction-${r.propertyIri}-${restrictionType}-${fillerIri}`,
+        from: classIri,
+        to: fillerIri,
+        type: 'restriction',
+        label,
+        metadata: {
+          propertyIri: r.propertyIri,
+          propertyLabel,
+          restrictionType,
+          cardinality: r.cardinality,
+          axiomType: r.axiomType
+        }
+      });
+    }
+  }
+
+  /**
+   * Build edges for owl:propertyChainAxiom compositions. Each chain string from the backend
+   * is "iri1 o iri2 o ..." (composition order, full IRIs). Drawn from the composed property
+   * to each chain member, labeled with its 1-based position in the chain.
+   */
+  private addPropertyChainEdges(propIri: string, propertyChains: string[] | undefined, edges: OntologyEdge[]): void {
+    if (!Array.isArray(propertyChains)) return;
+    propertyChains.forEach((chain, chainIndex) => {
+      if (typeof chain !== 'string') return;
+      const members = chain.split(' o ').map(s => s.trim()).filter(Boolean);
+      members.forEach((memberIri, position) => {
+        if (!memberIri || memberIri === propIri) return;
+        edges.push({
+          id: `${propIri}-propertyChain-${chainIndex}-${position}-${memberIri}`,
+          from: propIri,
+          to: memberIri,
+          type: 'propertyChain',
+          label: `chain[${position + 1}]`,
+          metadata: { chainIndex, position, chainLength: members.length }
+        });
+      });
+    });
+  }
+
+  /**
    * Process a single class node without recursing into children
    * Children will be loaded on-demand by the graph view
    */
@@ -485,29 +542,41 @@ export class GraphDataFetchService {
       });
     }
 
-    // Add equivalentClass edges
+    // Add equivalentClass edges. Backend entries are {iri, label} objects (not plain IRI
+    // strings) — using the entry directly as the edge's `to` produces an edge that can
+    // never match any node id (Set<string>.has(object) is always false), so it silently
+    // never renders. Accept both shapes defensively.
     const equivalentClasses = classData.equivalentClass || classData.equivalentClasses || [];
     for (const equiv of equivalentClasses) {
+      const equivIri = typeof equiv === 'string' ? equiv : equiv?.iri;
+      if (!equivIri) continue;
       edges.push({
-        id: `${classIri}-equivalentClass-${equiv}`,
+        id: `${classIri}-equivalentClass-${equivIri}`,
         from: classIri,
-        to: equiv,
+        to: equivIri,
         type: 'equivalentClass',
         label: 'equivalentClass'
       });
     }
 
-    // Add disjointWith edges
+    // Add disjointWith edges (same {iri, label}-vs-string defensiveness as equivalentClass above)
     const disjointClasses = classData.disjointWith || classData.disjointClasses || [];
     for (const disjoint of disjointClasses) {
+      const disjointIri = typeof disjoint === 'string' ? disjoint : disjoint?.iri;
+      if (!disjointIri) continue;
       edges.push({
-        id: `${classIri}-disjointWith-${disjoint}`,
+        id: `${classIri}-disjointWith-${disjointIri}`,
         from: classIri,
-        to: disjoint,
+        to: disjointIri,
         type: 'disjointWith',
         label: 'disjointWith'
       });
     }
+
+    // Add restriction edges (someValuesFrom/allValuesFrom/hasValue/cardinality). Only
+    // restrictions with a real class/datatype filler get an edge — a literal hasValue
+    // restriction (e.g. hasStatus value "active") has no node on the other end to draw to.
+    this.addRestrictionEdges(classIri, classData.restrictions, edges);
 
     // Set-operator expressions (owl:unionOf / intersectionOf / complementOf / oneOf):
     // each becomes a VOWL operator node linked to the owning class by its axiom type
@@ -621,29 +690,36 @@ export class GraphDataFetchService {
       });
     }
 
-    // Add equivalentClass edges
+    // Add equivalentClass edges (entries are {iri, label} objects — see comment in processClassNode)
     const equivalentClasses = classData.equivalentClass || classData.equivalentClasses || [];
     for (const equiv of equivalentClasses) {
+      const equivIri = typeof equiv === 'string' ? equiv : equiv?.iri;
+      if (!equivIri) continue;
       edges.push({
-        id: `${classIri}-equivalentClass-${equiv}`,
+        id: `${classIri}-equivalentClass-${equivIri}`,
         from: classIri,
-        to: equiv,
+        to: equivIri,
         type: 'equivalentClass',
         label: 'equivalentClass'
       });
     }
 
-    // Add disjointWith edges
+    // Add disjointWith edges (same {iri, label}-vs-string defensiveness as equivalentClass above)
     const disjointClasses = classData.disjointWith || classData.disjointClasses || [];
     for (const disjoint of disjointClasses) {
+      const disjointIri = typeof disjoint === 'string' ? disjoint : disjoint?.iri;
+      if (!disjointIri) continue;
       edges.push({
-        id: `${classIri}-disjointWith-${disjoint}`,
+        id: `${classIri}-disjointWith-${disjointIri}`,
         from: classIri,
-        to: disjoint,
+        to: disjointIri,
         type: 'disjointWith',
         label: 'disjointWith'
       });
     }
+
+    // Add restriction edges (see addRestrictionEdges / processClassNode for details)
+    this.addRestrictionEdges(classIri, classData.restrictions, edges);
 
     // Fetch and process children
     try {
@@ -746,8 +822,11 @@ export class GraphDataFetchService {
         irreflexive: hasNodeChar('Irreflexive', 'IRREFLEXIVE', 'IrreflexiveProperty'),
         domains: prop.domains || [],
         ranges: prop.ranges || [],
-        inverseOf: prop.inverseOf || null,
-        subPropertyOf: prop.subPropertyOf || []
+        // Backend field names are inverseProperties (list) / superProperties — not the
+        // singular inverseOf / subPropertyOf this code used to read, which never matched
+        // anything the backend actually returns.
+        inverseOf: (prop.inverseProperties && prop.inverseProperties[0]) || null,
+        subPropertyOf: prop.superProperties || []
       };
 
       nodes.push({
@@ -832,9 +911,10 @@ export class GraphDataFetchService {
         console.warn(`  ⚠️ Property ${propLabel} has no domain or range - SKIPPING`);
       }
 
-      // SubPropertyOf edges
-      if (prop.subPropertyOf && Array.isArray(prop.subPropertyOf)) {
-        for (const parent of prop.subPropertyOf) {
+      // SubPropertyOf edges — backend calls this property's parents `superProperties`
+      const superProperties = prop.superProperties || prop.subPropertyOf || [];
+      if (Array.isArray(superProperties)) {
+        for (const parent of superProperties) {
           edges.push({
             id: `${propIri}-subPropertyOf-${parent}`,
             from: propIri,
@@ -845,17 +925,48 @@ export class GraphDataFetchService {
         }
       }
 
-      // InverseOf edges
-      if (prop.inverseOf) {
+      // InverseOf edges — backend field is `inverseProperties` (a list, usually one entry)
+      const inverseProps = prop.inverseProperties || (prop.inverseOf ? [prop.inverseOf] : []);
+      for (const inverse of inverseProps) {
+        if (!inverse) continue;
         edges.push({
-          id: `${propIri}-inverseOf-${prop.inverseOf}`,
+          id: `${propIri}-inverseOf-${inverse}`,
           from: propIri,
-          to: prop.inverseOf,
+          to: inverse,
           type: 'inverseOf',
           label: 'inverseOf',
           bidirectional: true
         });
       }
+
+      // owl:equivalentProperty / owl:propertyDisjointWith edges — reuse the equivalentClass/
+      // disjointWith edge types (identical VOWL styling applies regardless of node kind), with
+      // a property-specific label so the on-screen text still reads correctly.
+      for (const equiv of prop.equivalentProperties || []) {
+        if (!equiv) continue;
+        edges.push({
+          id: `${propIri}-equivalentProperty-${equiv}`,
+          from: propIri,
+          to: equiv,
+          type: 'equivalentClass',
+          label: 'equivalentProperty'
+        });
+      }
+      for (const disjoint of prop.disjointProperties || []) {
+        if (!disjoint) continue;
+        edges.push({
+          id: `${propIri}-disjointWithProperty-${disjoint}`,
+          from: propIri,
+          to: disjoint,
+          type: 'disjointWith',
+          label: 'propertyDisjointWith'
+        });
+      }
+
+      // owl:propertyChainAxiom edges — each chain is "iri1 o iri2 o ..." (composition order).
+      // Drawn from the composed property to each chain member, labeled with its position,
+      // the same "composed-of" pattern used for set-operator 'operand' edges on classes.
+      this.addPropertyChainEdges(propIri, prop.propertyChains, edges);
     }
   }
 
@@ -887,7 +998,8 @@ export class GraphDataFetchService {
           functional: dpHasChar('Functional', 'FUNCTIONAL'),
           domains: prop.domains || [],
           ranges: prop.ranges || [],
-          subPropertyOf: prop.subPropertyOf || []
+          // Backend field is `superProperties`, not `subPropertyOf` (see processObjectProperties).
+          subPropertyOf: prop.superProperties || prop.subPropertyOf || []
         }
       });
 
@@ -973,9 +1085,10 @@ export class GraphDataFetchService {
         console.warn(`  ⚠️ Data Property ${propLabel} has no domain or range - SKIPPING`);
       }
 
-      // SubPropertyOf edges
-      if (prop.subPropertyOf && Array.isArray(prop.subPropertyOf)) {
-        for (const parent of prop.subPropertyOf) {
+      // SubPropertyOf edges — backend calls this property's parents `superProperties`
+      const dpSuperProperties = prop.superProperties || prop.subPropertyOf || [];
+      if (Array.isArray(dpSuperProperties)) {
+        for (const parent of dpSuperProperties) {
           edges.push({
             id: `${propIri}-subPropertyOf-${parent}`,
             from: propIri,
@@ -984,6 +1097,29 @@ export class GraphDataFetchService {
             label: 'subPropertyOf'
           });
         }
+      }
+
+      // owl:equivalentProperty / owl:propertyDisjointWith edges (see processObjectProperties
+      // for why these reuse the equivalentClass/disjointWith edge types)
+      for (const equiv of prop.equivalentProperties || []) {
+        if (!equiv) continue;
+        edges.push({
+          id: `${propIri}-equivalentProperty-${equiv}`,
+          from: propIri,
+          to: equiv,
+          type: 'equivalentClass',
+          label: 'equivalentProperty'
+        });
+      }
+      for (const disjoint of prop.disjointProperties || []) {
+        if (!disjoint) continue;
+        edges.push({
+          id: `${propIri}-disjointWithProperty-${disjoint}`,
+          from: propIri,
+          to: disjoint,
+          type: 'disjointWith',
+          label: 'propertyDisjointWith'
+        });
       }
     }
   }

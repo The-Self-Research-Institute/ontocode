@@ -19,7 +19,9 @@ export type EdgeType =
   | 'spatial'
   | 'probabilistic'
   | 'subPropertyOf'
-  | 'operand';
+  | 'operand'
+  | 'restriction'
+  | 'propertyChain';
 
 export type LayoutAlgorithm = 
   | 'force' 
