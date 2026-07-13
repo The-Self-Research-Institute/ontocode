@@ -135,7 +135,17 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
   const versionLabel = release?.version || "…";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 text-white">
+    <div className="relative min-h-screen text-white">
+      {/* Fixed, viewport-pinned background layer — NOT the box-height-dependent
+          background this div used to carry directly. This page must always render
+          dark/violet regardless of the app's light/dark theme (it's a marketing/
+          download page, not themed app chrome), and a background tied to this div's
+          own content height can be outrun by taller content inside html/body/#root's
+          independently-scrolling containers (see index.css), letting the theme's
+          light body background show through past wherever this div's box ended —
+          exactly what made the feature checklist unreadable in light mode. A fixed
+          layer covers the full viewport unconditionally, at any scroll position. */}
+      <div className="fixed inset-0 -z-10 bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900" />
       <div className="border-b border-white/10 bg-white/5 backdrop-blur-sm">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">

@@ -23,6 +23,15 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.1.0-beta.14",
+    date: "July 13, 2026",
+    title: "Save Reliability · Graph View Overhaul",
+    highlights: [
+      "TSRI-189: Code View / Graph View / DLQuery — Fixed a caching bug where classes and edits made in Code View (or directly in Graph View) could silently fail to persist, or appear in one view (e.g. Graph View) but not others (Entities hierarchy tree, DLQuery). A stale hierarchy cache wasn't being invalidated after saves, and failed saves were silently falling back to a local cache instead of surfacing an error — saving now fails loudly with a clear dialog if it doesn't actually persist.",
+    ],
+    videoUrl: ""
+  },
+  {
     version: "1.1.0-beta.13",
     date: "June 29, 2026",
     title: "Label/ID Toggle · JSON-LD Code View",
