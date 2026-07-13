@@ -21,6 +21,14 @@ public class OntologyDto {
         private Map<String, String> annotations;
         /** Each entry: {iri, label} — populated for asserted hierarchy nodes that have owl:equivalentClass */
         private List<Map<String, String>> equivalentClasses;
+        /** Each entry: {iri, label} — populated for nodes that have a pairwise owl:disjointWith axiom. */
+        private List<Map<String, String>> disjointWith;
+        /**
+         * Property restrictions (someValuesFrom/allValuesFrom/hasValue/cardinality) this class
+         * participates in via subClassOf or equivalentClass. Each entry: {propertyIri,
+         * propertyLabel, restrictionType, fillerIri, fillerLabel, cardinality?, axiomType}.
+         */
+        private List<Map<String, String>> restrictions;
         /** IRI of the ontology that declares this class (null = active ontology). Populated when scope=closure. */
         private String sourceOntology;
         /**
@@ -49,6 +57,10 @@ public class OntologyDto {
         public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
         public List<Map<String, String>> getEquivalentClasses() { return equivalentClasses; }
         public void setEquivalentClasses(List<Map<String, String>> equivalentClasses) { this.equivalentClasses = equivalentClasses; }
+        public List<Map<String, String>> getDisjointWith() { return disjointWith; }
+        public void setDisjointWith(List<Map<String, String>> disjointWith) { this.disjointWith = disjointWith; }
+        public List<Map<String, String>> getRestrictions() { return restrictions; }
+        public void setRestrictions(List<Map<String, String>> restrictions) { this.restrictions = restrictions; }
         public String getSourceOntology() { return sourceOntology; }
         public void setSourceOntology(String sourceOntology) { this.sourceOntology = sourceOntology; }
         public List<ClassExpressionDto> getClassExpressions() { return classExpressions; }

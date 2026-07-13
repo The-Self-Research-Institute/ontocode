@@ -172,8 +172,10 @@ const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
   subClassOf: '#2563eb', // Blue for Protégé style
   instanceOf: '#f59e0b', // Gold/Orange for Protégé style
   propertyRelation: '#059669', // Green for properties
-  equivalentClass: '#ec4899',
-  disjointWith: '#ef4444',
+  equivalentClass: '#3b82f6', // Blue — was pink here / green in VOWLNotationService; unified
+  disjointWith: '#f97316', // Orange — was red, paired with equivalentClass's old green (a
+  // red/green combination color-vision-deficiency guidance warns against for two
+  // opposite-meaning edge types); matches VOWLNotationService.edgeToVOWLEdge now
   domain: '#06b6d4',
   range: '#8b5cf6',
   inverseOf: '#fbbf24',
@@ -182,7 +184,10 @@ const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
   spatial: '#3b82f6',
   probabilistic: '#fb923c',
   subPropertyOf: '#2563eb',
-  operand: '#64748b' // set-operator member links (plain gray, no arrowhead)
+  operand: '#64748b', // set-operator member links (plain gray, no arrowhead)
+  restriction: '#d97706', // someValuesFrom/allValuesFrom/hasValue/cardinality — amber
+  propertyChain: '#ec4899' // owl:propertyChainAxiom composition — pink (was violet, same hue
+  // as annotationProperty edges elsewhere and only distinguishable by dash spacing)
 };
 
 // Per-type accent colors shared by node rendering, selection styling, and tooltips
@@ -1821,8 +1826,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       // Determine VOWL color for this edge type
       let vowlColor = color;
       if (type === 'subClassOf') vowlColor = isDark ? '#9ca3af' : '#374151';
-      else if (type === 'equivalentClass') vowlColor = '#10b981';
-      else if (type === 'disjointWith') vowlColor = '#ef4444';
+      // Blue/orange, not green/red — matches VOWLNotationService.edgeToVOWLEdge (avoids the
+      // red-green color-vision-deficiency pairing for these two opposite-meaning edge types).
+      else if (type === 'equivalentClass') vowlColor = '#2563eb';
+      else if (type === 'disjointWith') vowlColor = '#f97316';
       else if (type === 'domain') vowlColor = '#666666';
       else if (type === 'range') vowlColor = '#666666';
 
@@ -3512,7 +3519,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .attr('text-anchor', 'middle')
       .attr('font-size', 9)
-      .attr('fill', '#666')
+      .attr('fill', isDarkTheme ? '#cbd5e1' : '#666')
       .attr('font-weight', '600')
       .text(d => {
         // Set-operator caption: "(union)" / "(intersection)" / ... unless compact notation

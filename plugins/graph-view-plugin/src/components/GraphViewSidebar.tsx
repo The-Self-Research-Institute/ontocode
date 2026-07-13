@@ -29,7 +29,7 @@ interface GraphViewSidebarProps {
   };
   onFilterChange: (filters: any) => void;
   projectId: string;
-  viewMode?: 'graph' | 'vowl' | 'force' | 'ontograph';
+  viewMode?: 'force' | 'vowl' | 'ontograph' | 'spatial3d';
   vowlLegend?: Array<{ 
     name: string; 
     type: string; 
@@ -83,7 +83,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   filters,
   onFilterChange,
   projectId,
-  viewMode = 'graph',
+  viewMode = 'force',
   vowlLegend = [],
   onSearchChange,
   classDistance = 50,
@@ -364,7 +364,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
       <div style={styles.scrollableContent}>
 
       {/* Mode Toggle: Hierarchy vs Entities */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--surface-2)' }}>
         <button
           onClick={() => setSidebarMode('hierarchy')}
           style={{
@@ -372,10 +372,10 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
             padding: '8px 4px',
             fontSize: '12px',
             fontWeight: sidebarMode === 'hierarchy' ? 600 : 400,
-            color: sidebarMode === 'hierarchy' ? '#4f46e5' : '#6b7280',
-            backgroundColor: sidebarMode === 'hierarchy' ? '#fff' : 'transparent',
+            color: sidebarMode === 'hierarchy' ? 'var(--accent)' : 'var(--text-secondary)',
+            backgroundColor: sidebarMode === 'hierarchy' ? 'var(--surface-1)' : 'transparent',
             border: 'none',
-            borderBottom: sidebarMode === 'hierarchy' ? '2px solid #4f46e5' : '2px solid transparent',
+            borderBottom: sidebarMode === 'hierarchy' ? '2px solid var(--accent)' : '2px solid transparent',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -392,10 +392,10 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
             padding: '8px 4px',
             fontSize: '12px',
             fontWeight: sidebarMode === 'entities' ? 600 : 400,
-            color: sidebarMode === 'entities' ? '#4f46e5' : '#6b7280',
-            backgroundColor: sidebarMode === 'entities' ? '#fff' : 'transparent',
+            color: sidebarMode === 'entities' ? 'var(--accent)' : 'var(--text-secondary)',
+            backgroundColor: sidebarMode === 'entities' ? 'var(--surface-1)' : 'transparent',
             border: 'none',
-            borderBottom: sidebarMode === 'entities' ? '2px solid #4f46e5' : '2px solid transparent',
+            borderBottom: sidebarMode === 'entities' ? '2px solid var(--accent)' : '2px solid transparent',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -932,7 +932,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         </a>
                       ))}
                       {imports.length > 10 && (
-                        <span style={{ fontSize: 11, color: '#6b7280', fontStyle: 'italic' }}>… and {imports.length - 10} more</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontStyle: 'italic' }}>… and {imports.length - 10} more</span>
                       )}
                     </div>
                   </div>
@@ -945,12 +945,12 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {annotationKeys.slice(0, 8).map((k) => (
                         <div key={k} style={{ fontSize: 12 }}>
-                          <span style={{ fontWeight: 600, color: '#374151' }}>{k}:</span>{' '}
-                          <span style={{ color: '#6b7280' }}>{String((annotations as any)[k]).slice(0, 120)}</span>
+                          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{k}:</span>{' '}
+                          <span style={{ color: 'var(--text-secondary)' }}>{String((annotations as any)[k]).slice(0, 120)}</span>
                         </div>
                       ))}
                       {annotationKeys.length > 8 && (
-                        <span style={{ fontSize: 11, color: '#6b7280', fontStyle: 'italic' }}>… and {annotationKeys.length - 8} more</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontStyle: 'italic' }}>… and {annotationKeys.length - 8} more</span>
                       )}
                     </div>
                   </div>

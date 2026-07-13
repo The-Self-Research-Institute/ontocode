@@ -28,7 +28,7 @@ const isHierarchyEdge = (edge: OntologyEdge): boolean =>
 
 /** True when the given node objects expose a `parent` field (precomputed by backend). */
 const nodesHaveParentField = (nodes?: OntologyNode[]): boolean =>
-  Array.isArray(nodes) && nodes.length > 0 && 'parent' in (nodes[0] as Record<string, unknown>);
+  Array.isArray(nodes) && nodes.length > 0 && 'parent' in (nodes[0] as unknown as Record<string, unknown>);
 
 const getParentField = (node: OntologyNode): string | string[] | null | undefined =>
   (node as unknown as { parent?: string | string[] | null }).parent;
@@ -172,7 +172,7 @@ export const hasChildren = (
   edges: OntologyEdge[],
   nodes?: OntologyNode[]
 ): boolean => {
-  if (Array.isArray(nodes) && nodes.length > 0 && 'hasChildren' in (nodes[0] as Record<string, unknown>)) {
+  if (Array.isArray(nodes) && nodes.length > 0 && 'hasChildren' in (nodes[0] as unknown as Record<string, unknown>)) {
     const node = nodes.find(n => n.id === nodeId);
     if (node && 'hasChildren' in node) {
       return (node as unknown as { hasChildren?: boolean }).hasChildren === true;

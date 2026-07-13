@@ -559,6 +559,13 @@ public class OntologyQueryService {
         attachClassExpressions(projectId, nodeMap);
 
         List<OntologyDto.TreeNode> result = new ArrayList<>(nodeMap.values());
+        // Unlike topLevelClasses()/children(), this method previously never queried plain
+        // owl:equivalentClass axioms at all (only equivalentClass-as-intersectionOf, above) —
+        // so two classes joined by a simple equivalentClass axiom rendered as fully disconnected
+        // nodes in any view backed by this method (e.g. the graph view's bulk fetch), unlike the
+        // hierarchy views which do show the relationship. One extra batched query, consistent
+        // with the other two entry points.
+        enrichWithEquivalentClasses(projectId, result);
         long duration = System.currentTimeMillis() - startTime;
         log.info("✅ [PERF] Loaded {} total classes in {}ms for project {}", result.size(), duration, projectId);
 
@@ -873,9 +880,132 @@ public class OntologyQueryService {
             dto.setSuperProperties(splitPipe(literal(sol, "superProperties")));
             results.add(dto);
         }
+        enrichProperties(projectId, results);
         long duration = System.currentTimeMillis() - startTime;
         log.info("✅ [PERF] Loaded {} properties in {}ms for project {}", results.size(), duration, projectId);
         return results;
+    }
+
+    /**
+     * Batched version of the domain/range/inverseOf/disjoint/equivalent/characteristics
+     * portion of propertyDetail() — one query for the whole page instead of one per property.
+     * The graph view's main data fetch uses the bulk properties() list above, which — before
+     * this — never populated any of these fields (only the per-property on-demand detail did),
+     * so the graph view could never draw domain/range edges or characteristic badges for object/
+     * data properties. Intentionally skips the restriction-based domain/range encoding and
+     * property chains that propertyDetail() also computes — those are per-property-detail-panel
+     * concerns, not needed for the graph view's edges/badges.
+     */
+    private void enrichProperties(String projectId, List<PropertyDto> props) {
+        if (props.isEmpty()) return;
+
+        String values = props.stream()
+                .map(p -> "(<" + p.getId() + ">)")
+                .collect(java.util.stream.Collectors.joining(" "));
+
+        String q = PREFIXES + """
+            SELECT ?prop
+                   (GROUP_CONCAT(DISTINCT STR(?domain); SEPARATOR="|") AS ?domains)
+                   (GROUP_CONCAT(DISTINCT STR(?range); SEPARATOR="|") AS ?ranges)
+                   (GROUP_CONCAT(DISTINCT STR(?inverse); SEPARATOR="|") AS ?inverseProperties)
+                   (GROUP_CONCAT(DISTINCT STR(?disjoint); SEPARATOR="|") AS ?disjointProperties)
+                   (GROUP_CONCAT(DISTINCT STR(?equiv); SEPARATOR="|") AS ?equivalentProperties)
+                   (GROUP_CONCAT(DISTINCT STR(?char); SEPARATOR="|") AS ?characteristics)
+            WHERE {
+              VALUES (?prop) { %s }
+              OPTIONAL { ?prop rdfs:domain ?domain . FILTER(isIRI(?domain)) }
+              OPTIONAL { ?prop rdfs:range ?range . FILTER(isIRI(?range)) }
+              OPTIONAL { { ?prop owl:inverseOf ?inverse } UNION { ?inverse owl:inverseOf ?prop } FILTER(isIRI(?inverse)) }
+              OPTIONAL { { ?prop owl:propertyDisjointWith ?disjoint } UNION { ?disjoint owl:propertyDisjointWith ?prop } FILTER(isIRI(?disjoint) && ?disjoint != ?prop) }
+              OPTIONAL { { ?prop owl:equivalentProperty ?equiv } UNION { ?equiv owl:equivalentProperty ?prop } FILTER(isIRI(?equiv) && ?equiv != ?prop) }
+              OPTIONAL {
+                ?prop a ?char .
+                FILTER(?char IN (
+                  owl:FunctionalProperty,
+                  owl:InverseFunctionalProperty,
+                  owl:TransitiveProperty,
+                  owl:SymmetricProperty,
+                  owl:AsymmetricProperty,
+                  owl:ReflexiveProperty,
+                  owl:IrreflexiveProperty
+                ))
+              }
+            }
+            GROUP BY ?prop
+            """.formatted(values);
+
+        TupleQueryResult rs = datasetService.execSelect(projectId, q);
+        Map<String, PropertyDto> byIri = props.stream()
+                .collect(java.util.stream.Collectors.toMap(PropertyDto::getId, p -> p, (a, b) -> a));
+        while (rs.hasNext()) {
+            BindingSet sol = rs.next();
+            String iri = resource(sol, "prop");
+            if (iri == null) continue;
+            PropertyDto dto = byIri.get(iri);
+            if (dto == null) continue;
+            dto.setDomains(splitPipe(literal(sol, "domains")));
+            dto.setRanges(splitPipe(literal(sol, "ranges")));
+            dto.setInverseProperties(splitPipe(literal(sol, "inverseProperties")));
+            dto.setDisjointProperties(splitPipe(literal(sol, "disjointProperties")));
+            dto.setEquivalentProperties(splitPipe(literal(sol, "equivalentProperties")));
+            List<String> chars = splitPipe(literal(sol, "characteristics"));
+            if (chars != null && !chars.isEmpty()) {
+                dto.setCharacteristics(chars.stream()
+                    .map(charIri -> localName(charIri).replace("Property", ""))
+                    .toList());
+            }
+        }
+
+        enrichPropertyChains(projectId, byIri);
+    }
+
+    /**
+     * Batched owl:propertyChainAxiom lookup (up to 5 properties per chain), mirroring
+     * propertyDetail()'s per-property chainQuery but bound to every property in the page via
+     * VALUES. Property chains only apply to object properties, same as the per-property version.
+     */
+    private void enrichPropertyChains(String projectId, Map<String, PropertyDto> byIri) {
+        if (byIri.isEmpty()) return;
+
+        String values = byIri.keySet().stream()
+                .map(iri -> "(<" + iri + ">)")
+                .collect(java.util.stream.Collectors.joining(" "));
+
+        String q = PREFIXES + """
+            SELECT ?prop ?chainHead ?p0 ?p1 ?p2 ?p3 ?p4 WHERE {
+              VALUES (?prop) { %s }
+              ?prop owl:propertyChainAxiom ?chainHead .
+              ?chainHead rdf:first ?p0 .
+              OPTIONAL { ?chainHead rdf:rest ?n1 . ?n1 rdf:first ?p1 .
+                OPTIONAL { ?n1 rdf:rest ?n2 . ?n2 rdf:first ?p2 .
+                  OPTIONAL { ?n2 rdf:rest ?n3 . ?n3 rdf:first ?p3 .
+                    OPTIONAL { ?n3 rdf:rest ?n4 . ?n4 rdf:first ?p4 . }
+                  }
+                }
+              }
+            }
+            """.formatted(values);
+
+        TupleQueryResult rs = datasetService.execSelect(projectId, q);
+        Map<String, List<String>> byProp = new java.util.LinkedHashMap<>();
+        while (rs.hasNext()) {
+            BindingSet sol = rs.next();
+            String prop = resource(sol, "prop");
+            if (prop == null) continue;
+            List<String> parts = new ArrayList<>();
+            for (String var : java.util.List.of("p0", "p1", "p2", "p3", "p4")) {
+                String val = resource(sol, var);
+                if (val != null && !val.isBlank()) parts.add(val);
+                else break;
+            }
+            if (parts.size() >= 2) {
+                byProp.computeIfAbsent(prop, k -> new ArrayList<>()).add(String.join(" o ", parts));
+            }
+        }
+        byProp.forEach((prop, chains) -> {
+            PropertyDto dto = byIri.get(prop);
+            if (dto != null) dto.setPropertyChains(chains);
+        });
     }
 
     /**
@@ -1521,11 +1651,23 @@ public class OntologyQueryService {
     }
 
     /**
+     * Enrich a list of tree nodes with their owl:equivalentClass AND owl:disjointWith
+     * partners AND property restrictions — every existing call site wants all three, so this
+     * stays a single entry point rather than requiring each of the 6 call sites to remember to
+     * call three methods.
+     */
+    private void enrichWithEquivalentClasses(String projectId, List<OntologyDto.TreeNode> nodes) {
+        enrichWithEquivalentClassAxiom(projectId, nodes);
+        enrichWithDisjointClasses(projectId, nodes);
+        enrichWithRestrictions(projectId, nodes);
+    }
+
+    /**
      * Enrich a list of tree nodes with their owl:equivalentClass partners.
      * Runs one SPARQL query for the entire batch using a VALUES clause.
      * Nodes with no equivalences are left unchanged.
      */
-    private void enrichWithEquivalentClasses(String projectId, List<OntologyDto.TreeNode> nodes) {
+    private void enrichWithEquivalentClassAxiom(String projectId, List<OntologyDto.TreeNode> nodes) {
         if (nodes.isEmpty()) return;
 
         String values = nodes.stream()
@@ -1590,6 +1732,115 @@ public class OntologyQueryService {
         byClass.forEach((cls, equivList) -> {
             OntologyDto.TreeNode node = nodeMap.get(cls);
             if (node != null) node.setEquivalentClasses(equivList);
+        });
+    }
+
+    /**
+     * Enrich a list of tree nodes with their pairwise owl:disjointWith partners.
+     * Runs one SPARQL query for the entire batch using a VALUES clause, mirroring
+     * enrichWithEquivalentClasses(). Does not cover n-ary owl:AllDisjointClasses axioms —
+     * those are handled separately for the per-class detail/usage views.
+     */
+    private void enrichWithDisjointClasses(String projectId, List<OntologyDto.TreeNode> nodes) {
+        if (nodes.isEmpty()) return;
+
+        String values = nodes.stream()
+                .map(n -> "(<" + n.getId() + ">)")
+                .collect(java.util.stream.Collectors.joining(" "));
+
+        String q = PREFIXES + """
+            SELECT DISTINCT ?cls ?disjoint ?disjointLabel WHERE {
+              VALUES (?cls) { %s }
+              {
+                ?cls owl:disjointWith ?disjoint .
+              } UNION {
+                ?disjoint owl:disjointWith ?cls .
+              }
+              FILTER(?disjoint != ?cls && isIRI(?disjoint))
+              OPTIONAL { ?disjoint rdfs:label ?disjointLabel }
+            }
+            """.formatted(values);
+
+        TupleQueryResult rs = datasetService.execSelect(projectId, q);
+        Map<String, List<Map<String, String>>> byClass = new java.util.LinkedHashMap<>();
+        while (rs.hasNext()) {
+            BindingSet sol = rs.next();
+            String cls = resource(sol, "cls");
+            String disjoint = resource(sol, "disjoint");
+            if (cls == null || disjoint == null) continue;
+            String disjointLabel = literal(sol, "disjointLabel");
+            if (disjointLabel.isBlank()) disjointLabel = localName(disjoint);
+            Map<String, String> entry = new java.util.LinkedHashMap<>();
+            entry.put("iri", disjoint);
+            entry.put("label", disjointLabel);
+            byClass.computeIfAbsent(cls, k -> new ArrayList<>()).add(entry);
+        }
+
+        Map<String, OntologyDto.TreeNode> nodeMap = nodes.stream()
+                .collect(java.util.stream.Collectors.toMap(OntologyDto.TreeNode::getId, n -> n, (a, b) -> a));
+        byClass.forEach((cls, disjointList) -> {
+            OntologyDto.TreeNode node = nodeMap.get(cls);
+            if (node != null) node.setDisjointWith(disjointList);
+        });
+    }
+
+    /**
+     * Enrich a list of tree nodes with the property restrictions they participate in via
+     * subClassOf/equivalentClass (someValuesFrom/allValuesFrom/hasValue/cardinality). One
+     * batched query for the whole page, reusing buildRestrictionSparqlBody (the same query
+     * body classDetails() uses per-class) with the owning class bound via VALUES instead of
+     * a single literal IRI. Before this, restrictions were never surfaced by allClasses()/
+     * topLevelClasses()/children() at all — only the per-class detail panel computed them —
+     * so the graph view could never draw a restriction edge.
+     */
+    private void enrichWithRestrictions(String projectId, List<OntologyDto.TreeNode> nodes) {
+        if (nodes.isEmpty()) return;
+
+        String values = nodes.stream()
+                .map(n -> "(<" + n.getId() + ">)")
+                .collect(java.util.stream.Collectors.joining(" "));
+        String link = "?owner ?axProp ?restriction .\n?restriction owl:onProperty ?prop .";
+        String preamble = """
+            VALUES (?owner) { %s }
+            VALUES (?axProp ?rel) { (rdfs:subClassOf "sub") (owl:equivalentClass "equiv") }
+            """.formatted(values);
+        String q = buildRestrictionSparqlBody("SELECT DISTINCT", "?owner ?rel", preamble, link);
+
+        TupleQueryResult rs = datasetService.execSelect(projectId, q);
+        Map<String, List<Map<String, String>>> byClass = new java.util.LinkedHashMap<>();
+        Set<String> seen = new java.util.LinkedHashSet<>();
+        while (rs.hasNext()) {
+            BindingSet sol = rs.next();
+            String owner = resource(sol, "owner");
+            String restrictionNode = resourceOrBlank(sol, "restriction");
+            if (owner == null || restrictionNode == null) continue;
+            String rel = sol.hasBinding("rel") ? literal(sol, "rel") : "sub";
+            String dedupeKey = owner + "|" + rel + "|" + restrictionNode;
+            if (!seen.add(dedupeKey)) continue;
+
+            String propIri = resource(sol, "prop");
+            String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : localName(propIri);
+            String restrictionType = sol.hasBinding("restrictionType") ? literal(sol, "restrictionType") : "some";
+            String fillerIri = sol.hasBinding("filler") ? sol.getValue("filler").stringValue() : "";
+            String fillerLabel = sol.hasBinding("fillerLabel") ? literal(sol, "fillerLabel") : localName(fillerIri);
+            String cardinality = sol.hasBinding("card") ? literal(sol, "card") : "";
+
+            Map<String, String> entry = new java.util.LinkedHashMap<>();
+            entry.put("propertyIri", propIri);
+            entry.put("propertyLabel", propLabel);
+            entry.put("restrictionType", restrictionType);
+            entry.put("fillerIri", fillerIri);
+            entry.put("fillerLabel", fillerLabel);
+            if (!cardinality.isEmpty()) entry.put("cardinality", cardinality);
+            entry.put("axiomType", "equiv".equals(rel) ? "equivalentClass" : "subClassOf");
+            byClass.computeIfAbsent(owner, k -> new ArrayList<>()).add(entry);
+        }
+
+        Map<String, OntologyDto.TreeNode> nodeMap = nodes.stream()
+                .collect(java.util.stream.Collectors.toMap(OntologyDto.TreeNode::getId, n -> n, (a, b) -> a));
+        byClass.forEach((cls, restrictionList) -> {
+            OntologyDto.TreeNode node = nodeMap.get(cls);
+            if (node != null) node.setRestrictions(restrictionList);
         });
     }
 

@@ -36,17 +36,36 @@ public class OwlApiPropertyQueryService {
         String norm = type == null ? "" : type.trim().toLowerCase(Locale.ROOT);
         List<PropertyDto> all = new ArrayList<>();
 
+        // Domain/range/inverseOf/disjoint/equivalent/characteristics are pure in-memory OWLAPI
+        // signature lookups (no query cost), so — unlike the SPARQL side, which needs a single
+        // batched query to avoid N round-trips — there's no reason not to compute them for every
+        // property here directly, same as buildDetail() does for one. Before this, the graph
+        // view's main data fetch (which calls list(), not detail()) never got this data at all,
+        // so it could never draw property edges or characteristic badges.
         if (!"data".equals(norm)) {
             ont.objectPropertiesInSignature(IMPORTS_EXCLUDED).forEach(prop -> {
                 if (!prop.isBuiltIn()) {
-                    all.add(summaryDto(ont, prop.getIRI(), "ObjectProperty", superObjectProperties(ont, prop)));
+                    PropertyDto dto = summaryDto(ont, prop.getIRI(), "ObjectProperty", superObjectProperties(ont, prop));
+                    dto.setDomains(domainIris(ont.objectPropertyDomainAxioms(prop)));
+                    dto.setRanges(rangeIris(ont.objectPropertyRangeAxioms(prop)));
+                    dto.setInverseProperties(inverseIris(ont, prop));
+                    dto.setDisjointProperties(disjointObjectIris(ont, prop));
+                    dto.setEquivalentProperties(equivalentObjectIris(ont, prop));
+                    dto.setCharacteristics(objectCharacteristics(ont, prop));
+                    dto.setPropertyChains(propertyChains(ont, prop.getIRI()));
+                    all.add(dto);
                 }
             });
         }
         if (!"object".equals(norm)) {
             ont.dataPropertiesInSignature(IMPORTS_EXCLUDED).forEach(prop -> {
                 if (!prop.isBuiltIn()) {
-                    all.add(summaryDto(ont, prop.getIRI(), "DatatypeProperty", superDataProperties(ont, prop)));
+                    PropertyDto dto = summaryDto(ont, prop.getIRI(), "DatatypeProperty", superDataProperties(ont, prop));
+                    dto.setDomains(domainIris(ont.dataPropertyDomainAxioms(prop)));
+                    dto.setRanges(dataRangeIris(ont.dataPropertyRangeAxioms(prop)));
+                    dto.setEquivalentProperties(equivalentDataIris(ont, prop));
+                    dto.setCharacteristics(dataCharacteristics(ont, prop));
+                    all.add(dto);
                 }
             });
         }

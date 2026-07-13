@@ -43,8 +43,8 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
       if (node.type === 'class') stats.classCount++;
       else if (node.type === 'individual') stats.individualCount++;
       else if (node.type === 'objectProperty') stats.objectPropertyCount++;
-      else if (node.type === 'datatypeProperty') stats.datatypePropertyCount++;
-      else if (node.type === 'annotationProperty') stats.annotationPropertyCount++;
+      else if (node.type === 'dataProperty') stats.datatypePropertyCount++;
+      else if (node.type === 'annotation') stats.annotationPropertyCount++;
       else if (node.type === 'datatype') stats.datatypeCount++;
     });
 
@@ -56,8 +56,8 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
     return {
       classes: allNodes.filter(n => n.type === 'class'),
       objectProperties: allNodes.filter(n => n.type === 'objectProperty'),
-      datatypeProperties: allNodes.filter(n => n.type === 'datatypeProperty'),
-      annotationProperties: allNodes.filter(n => n.type === 'annotationProperty'),
+      datatypeProperties: allNodes.filter(n => n.type === 'dataProperty'),
+      annotationProperties: allNodes.filter(n => n.type === 'annotation'),
       individuals: allNodes.filter(n => n.type === 'individual')
     };
   }, [allNodes]);
@@ -304,12 +304,12 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
                 <div style={propertyPanelStyles.propertyLabel}>Superclasses ({selectedNodeInfo.superClasses.length})</div>
                 <div style={propertyPanelStyles.propertyValue}>
                   {selectedNodeInfo.superClasses.slice(0, 5).map((sc, idx) => (
-                    <div key={idx} style={{ marginBottom: '4px', fontSize: '11px', padding: '4px', background: '#f3f4f6', borderRadius: '4px' }}>
+                    <div key={idx} style={{ marginBottom: '4px', fontSize: '11px', padding: '4px', background: 'var(--surface-2)', borderRadius: '4px' }}>
                       {sc.split('#').pop() || sc.split('/').pop() || sc}
                     </div>
                   ))}
                   {selectedNodeInfo.superClasses.length > 5 && (
-                    <div style={{ fontSize: '11px', color: '#666', fontStyle: 'italic' }}>+ {selectedNodeInfo.superClasses.length - 5} more</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>+ {selectedNodeInfo.superClasses.length - 5} more</div>
                   )}
                 </div>
               </div>
@@ -320,7 +320,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
                 <div style={propertyPanelStyles.propertyLabel}>Equivalent Classes</div>
                 <div style={propertyPanelStyles.propertyValue}>
                   {selectedNodeInfo.equivalentClasses.slice(0, 3).map((ec, idx) => (
-                    <div key={idx} style={{ marginBottom: '4px', fontSize: '11px', padding: '4px', background: '#f3f4f6', borderRadius: '4px' }}>
+                    <div key={idx} style={{ marginBottom: '4px', fontSize: '11px', padding: '4px', background: 'var(--surface-2)', borderRadius: '4px' }}>
                       {ec.split('#').pop() || ec.split('/').pop() || ec}
                     </div>
                   ))}
@@ -334,8 +334,8 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
                 <div style={propertyPanelStyles.propertyValue}>
                   {Object.entries(selectedNodeInfo.annotations).slice(0, 3).map(([key, value], idx) => (
                     <div key={idx} style={{ marginBottom: '6px', fontSize: '10px' }}>
-                      <div style={{ fontWeight: '600', color: '#4b5563' }}>{key}:</div>
-                      <div style={{ padding: '2px 4px', background: '#f9fafb', borderRadius: '2px', wordBreak: 'break-word' }}>
+                      <div style={{ fontWeight: '600', color: 'var(--text-secondary)' }}>{key}:</div>
+                      <div style={{ padding: '2px 4px', background: 'var(--surface-2)', borderRadius: '2px', wordBreak: 'break-word' }}>
                         {typeof value === 'object' ? JSON.stringify(value) : String(value).substring(0, 50)}
                       </div>
                     </div>
@@ -365,7 +365,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
                     key={node.id}
                     style={{
                       ...propertyPanelStyles.listItem,
-                      backgroundColor: selectedNodeInfo?.id === node.id ? '#dbeafe' : '#f3f4f6'
+                      backgroundColor: selectedNodeInfo?.id === node.id ? 'var(--surface-3)' : 'var(--surface-2)'
                     }}
                     onClick={() => onNodeSelect(node)}
                   >
@@ -384,7 +384,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
           <div>
             {categorizedNodes.objectProperties.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
-                <div style={{ fontWeight: '600', marginBottom: '6px', color: '#4b5563', fontSize: '11px' }}>
+                <div style={{ fontWeight: '600', marginBottom: '6px', color: 'var(--text-secondary)', fontSize: '11px' }}>
                   Object Properties
                 </div>
                 <div style={propertyPanelStyles.itemList}>
@@ -393,7 +393,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
                       key={node.id}
                       style={{
                         ...propertyPanelStyles.listItem,
-                        backgroundColor: selectedNodeInfo?.id === node.id ? '#dbeafe' : '#f3f4f6'
+                        backgroundColor: selectedNodeInfo?.id === node.id ? 'var(--surface-3)' : 'var(--surface-2)'
                       }}
                       onClick={() => onNodeSelect(node)}
                     >
@@ -405,7 +405,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
             )}
             {categorizedNodes.datatypeProperties.length > 0 && (
               <div>
-                <div style={{ fontWeight: '600', marginBottom: '6px', color: '#4b5563', fontSize: '11px' }}>
+                <div style={{ fontWeight: '600', marginBottom: '6px', color: 'var(--text-secondary)', fontSize: '11px' }}>
                   Datatype Properties
                 </div>
                 <div style={propertyPanelStyles.itemList}>
@@ -414,7 +414,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
                       key={node.id}
                       style={{
                         ...propertyPanelStyles.listItem,
-                        backgroundColor: selectedNodeInfo?.id === node.id ? '#dbeafe' : '#f3f4f6'
+                        backgroundColor: selectedNodeInfo?.id === node.id ? 'var(--surface-3)' : 'var(--surface-2)'
                       }}
                       onClick={() => onNodeSelect(node)}
                     >
@@ -440,7 +440,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
                     key={node.id}
                     style={{
                       ...propertyPanelStyles.listItem,
-                      backgroundColor: selectedNodeInfo?.id === node.id ? '#dbeafe' : '#f3f4f6'
+                      backgroundColor: selectedNodeInfo?.id === node.id ? 'var(--surface-3)' : 'var(--surface-2)'
                     }}
                     onClick={() => onNodeSelect(node)}
                   >
@@ -458,7 +458,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
         {activeTab === 'statistics' && (
           <div>
             <div style={{ marginBottom: '16px' }}>
-              <div style={{ fontWeight: '600', marginBottom: '8px', color: '#374151' }}>Ontology Statistics</div>
+              <div style={{ fontWeight: '600', marginBottom: '8px', color: 'var(--text-primary)' }}>Ontology Statistics</div>
               <div>
                 <div style={propertyPanelStyles.statItem}>
                   <span style={propertyPanelStyles.statLabel}>Classes</span>
@@ -494,7 +494,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
             {/* VOWL Legend in Statistics Tab */}
             {viewMode === 'vowl' && vowlLegend && (
               <div>
-                <div style={{ fontWeight: '600', marginBottom: '8px', color: '#374151' }}>VOWL Notation Legend</div>
+                <div style={{ fontWeight: '600', marginBottom: '8px', color: 'var(--text-primary)' }}>VOWL Notation Legend</div>
                 {vowlLegend.map((item, idx) => (
                   <div key={idx} style={propertyPanelStyles.legendItem}>
                     {item.type === 'node' ? (
@@ -504,13 +504,13 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
                         height: '14px',
                         borderRadius: '50%',
                         backgroundColor: vowlNotationService?.getVOWLNodeColor(item.nodeType || '') || '#3b82f6',
-                        border: '1px solid #1f2937'
+                        border: '1px solid var(--border)'
                       }} />
                     ) : (
                       <svg width="14" height="2" style={propertyPanelStyles.legendIcon}>
-                        <line 
-                          x1="0" y1="1" x2="14" y2="1" 
-                          stroke={item.stroke || '#000'}
+                        <line
+                          x1="0" y1="1" x2="14" y2="1"
+                          stroke={item.stroke || 'var(--text-secondary)'}
                           strokeWidth="1.5"
                           strokeDasharray={item.strokeDasharray}
                         />

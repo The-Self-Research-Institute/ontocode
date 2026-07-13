@@ -114,6 +114,23 @@ public class HierarchySnapshotBuilder {
             if (!expressions.isEmpty()) {
                 node.setClassExpressions(expressions);
             }
+            // extractSetOperatorExpressions only covers anonymous equivalentClass expressions
+            // (intersection/union/...) — a plain `A owl:equivalentClass B` between two named
+            // classes was never surfaced here, unlike toTreeNode() below, so two such classes
+            // rendered as fully disconnected nodes in any view backed by buildAllClasses (e.g.
+            // the graph view's bulk fetch), unlike the hierarchy views which do show it.
+            List<Map<String, String>> equivalentClasses = getEquivalentClasses(ont, cls);
+            if (!equivalentClasses.isEmpty()) {
+                node.setEquivalentClasses(equivalentClasses);
+            }
+            List<Map<String, String>> disjointClasses = getDisjointClasses(ont, cls);
+            if (!disjointClasses.isEmpty()) {
+                node.setDisjointWith(disjointClasses);
+            }
+            List<Map<String, String>> restrictions = getRestrictions(ont, cls);
+            if (!restrictions.isEmpty()) {
+                node.setRestrictions(restrictions);
+            }
             result.add(node);
             if (result.size() >= Math.max(1, limit)) {
                 break;
@@ -353,6 +370,8 @@ public class HierarchySnapshotBuilder {
         }
         boolean hasChildren = childrenIndex.containsKey(cls);
         List<Map<String, String>> equivalentClasses = getEquivalentClasses(ont, cls);
+        List<Map<String, String>> disjointClasses = getDisjointClasses(ont, cls);
+        List<Map<String, String>> restrictions = getRestrictions(ont, cls);
 
         OntologyDto.TreeNode node = new OntologyDto.TreeNode();
         node.setId(iri);
@@ -362,6 +381,12 @@ public class HierarchySnapshotBuilder {
         node.setHasChildren(hasChildren);
         if (!equivalentClasses.isEmpty()) {
             node.setEquivalentClasses(equivalentClasses);
+        }
+        if (!disjointClasses.isEmpty()) {
+            node.setDisjointWith(disjointClasses);
+        }
+        if (!restrictions.isEmpty()) {
+            node.setRestrictions(restrictions);
         }
         if (importsScope == Imports.INCLUDED) {
             node.setSourceOntology(findSourceOntologyIri(ont, cls));
@@ -380,6 +405,8 @@ public class HierarchySnapshotBuilder {
         }
         boolean hasChildren = childrenIndex.containsKey(cls);
         List<Map<String, String>> equivalentClasses = getEquivalentClasses(ont, cls);
+        List<Map<String, String>> disjointClasses = getDisjointClasses(ont, cls);
+        List<Map<String, String>> restrictions = getRestrictions(ont, cls);
 
         OntologyDto.TreeNode node = new OntologyDto.TreeNode();
         node.setId(iri);
@@ -390,6 +417,12 @@ public class HierarchySnapshotBuilder {
         if (!equivalentClasses.isEmpty()) {
             node.setEquivalentClasses(equivalentClasses);
         }
+        if (!disjointClasses.isEmpty()) {
+            node.setDisjointWith(disjointClasses);
+        }
+        if (!restrictions.isEmpty()) {
+            node.setRestrictions(restrictions);
+        }
         if (importsScope == Imports.INCLUDED) {
             node.setSourceOntology(findSourceOntologyIri(ont, cls));
         }
@@ -397,14 +430,19 @@ public class HierarchySnapshotBuilder {
     }
 
     private String getLabel(OWLOntology ont, OWLClass cls, Imports importsScope) {
+        return getEntityLabel(ont, cls.getIRI(), importsScope);
+    }
+
+    /** IRI-based rdfs:label lookup usable for any entity kind (class, property, individual). */
+    private String getEntityLabel(OWLOntology ont, IRI iri, Imports importsScope) {
         IRI rdfsLabel = IRI.create("http://www.w3.org/2000/01/rdf-schema#label");
-        Optional<String> label = ont.annotationAssertionAxioms(cls.getIRI(), importsScope)
+        Optional<String> label = ont.annotationAssertionAxioms(iri, importsScope)
                 .filter(a -> a.getProperty().getIRI().equals(rdfsLabel))
                 .sorted(Comparator.comparing(a -> langPriority(a.getValue())))
                 .findFirst()
                 .flatMap(a -> a.getValue().asLiteral())
                 .map(OWLLiteral::getLiteral);
-        return label.orElseGet(() -> cls.getIRI().getShortForm());
+        return label.orElseGet(iri::getShortForm);
     }
 
     private String getAnnotation(OWLOntology ont, OWLClass cls, String propertyIri, Imports importsScope) {
@@ -456,6 +494,116 @@ public class HierarchySnapshotBuilder {
                     m.put("label", getLabel(ont, eq, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED));
                     return m;
                 })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Property restrictions (someValuesFrom/allValuesFrom/hasValue/cardinality) this class
+     * participates in via subClassOf or equivalentClass. Mirrors the SPARQL side's
+     * buildRestrictionSparqlBody (OntologyQueryService.java) so both paths produce the same
+     * {propertyIri, propertyLabel, restrictionType, fillerIri, fillerLabel, cardinality?,
+     * axiomType} shape the graph view consumes.
+     */
+    private List<Map<String, String>> getRestrictions(OWLOntology ont, OWLClass cls) {
+        List<Map<String, String>> result = new ArrayList<>();
+        ont.subClassAxiomsForSubClass(cls).forEach(ax ->
+                addRestrictionIfPresent(ont, ax.getSuperClass(), "subClassOf", result));
+        ont.equivalentClassesAxioms(cls).forEach(ax ->
+                ax.classExpressions()
+                        .filter(ce -> !ce.equals(cls))
+                        .forEach(ce -> addRestrictionIfPresent(ont, ce, "equivalentClass", result)));
+        return result;
+    }
+
+    private void addRestrictionIfPresent(OWLOntology ont, OWLClassExpression ce, String axiomType,
+                                         List<Map<String, String>> out) {
+        Imports imp = Imports.EXCLUDED;
+        OWLPropertyExpression prop;
+        OWLObject filler;
+        String restrictionType;
+        String cardinality = null;
+
+        if (ce instanceof OWLObjectSomeValuesFrom r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "some";
+        } else if (ce instanceof OWLObjectAllValuesFrom r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "only";
+        } else if (ce instanceof OWLObjectHasValue r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "value";
+        } else if (ce instanceof OWLObjectMinCardinality r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "min"; cardinality = String.valueOf(r.getCardinality());
+        } else if (ce instanceof OWLObjectMaxCardinality r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "max"; cardinality = String.valueOf(r.getCardinality());
+        } else if (ce instanceof OWLObjectExactCardinality r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "exactly"; cardinality = String.valueOf(r.getCardinality());
+        } else if (ce instanceof OWLDataSomeValuesFrom r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "some";
+        } else if (ce instanceof OWLDataAllValuesFrom r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "only";
+        } else if (ce instanceof OWLDataHasValue r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "value";
+        } else if (ce instanceof OWLDataMinCardinality r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "min"; cardinality = String.valueOf(r.getCardinality());
+        } else if (ce instanceof OWLDataMaxCardinality r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "max"; cardinality = String.valueOf(r.getCardinality());
+        } else if (ce instanceof OWLDataExactCardinality r) {
+            prop = r.getProperty(); filler = r.getFiller(); restrictionType = "exactly"; cardinality = String.valueOf(r.getCardinality());
+        } else {
+            return; // anonymous set-operator expressions are handled separately (extractSetOperatorExpressions)
+        }
+
+        if (prop == null || prop.isAnonymous()) return;
+        IRI propertyIri = prop instanceof OWLObjectPropertyExpression ope
+                ? ope.asOWLObjectProperty().getIRI()
+                : ((OWLDataPropertyExpression) prop).asOWLDataProperty().getIRI();
+        String propIri = propertyIri.toString();
+        String propLabel = getEntityLabel(ont, propertyIri, imp);
+
+        String fillerIri;
+        String fillerLabel;
+        if (filler instanceof OWLClass fc) {
+            fillerIri = fc.getIRI().toString();
+            fillerLabel = getEntityLabel(ont, fc.getIRI(), imp);
+        } else if (filler instanceof OWLDatatype dt) {
+            fillerIri = dt.getIRI().toString();
+            fillerLabel = dt.getIRI().getShortForm();
+        } else if (filler instanceof OWLIndividual ind && ind.isNamed()) {
+            fillerIri = ind.asOWLNamedIndividual().getIRI().toString();
+            fillerLabel = ind.asOWLNamedIndividual().getIRI().getShortForm();
+        } else if (filler instanceof OWLLiteral lit) {
+            fillerIri = "";
+            fillerLabel = lit.getLiteral();
+        } else {
+            return; // anonymous filler (nested restriction/class expression) — out of scope here
+        }
+
+        Map<String, String> entry = new LinkedHashMap<>();
+        entry.put("propertyIri", propIri);
+        entry.put("propertyLabel", propLabel);
+        entry.put("restrictionType", restrictionType);
+        entry.put("fillerIri", fillerIri);
+        entry.put("fillerLabel", fillerLabel);
+        if (cardinality != null) entry.put("cardinality", cardinality);
+        entry.put("axiomType", axiomType);
+        out.add(entry);
+    }
+
+    /**
+     * Pairwise and n-ary (owl:AllDisjointClasses) disjointness partners for a class.
+     * OWLAPI models both as OWLDisjointClassesAxiom, whose classExpressions() lists every
+     * member of the disjoint group (2 for a pairwise disjointWith, N for AllDisjointClasses).
+     */
+    private List<Map<String, String>> getDisjointClasses(OWLOntology ont, OWLClass cls) {
+        return ont.disjointClassesAxioms(cls)
+                .flatMap(ax -> ax.classExpressions())
+                .filter(ce -> !ce.equals(cls) && !ce.isAnonymous())
+                .map(ce -> {
+                    OWLClass dc = ce.asOWLClass();
+                    Map<String, String> m = new LinkedHashMap<>();
+                    m.put("iri", dc.getIRI().toString());
+                    m.put("label", getLabel(ont, dc, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED));
+                    return m;
+                })
+                .distinct()
                 .collect(Collectors.toList());
     }
 }
