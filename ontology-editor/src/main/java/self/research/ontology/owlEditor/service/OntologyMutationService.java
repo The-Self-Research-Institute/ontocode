@@ -43,6 +43,7 @@ public class OntologyMutationService {
     private final ProjectMetadataService metadataService;
     private final GraphGeneratingService graphGeneratingService;
     private final TopLevelClassCacheService topLevelCacheService;
+    private final StorageManager storageManager;
     private final Executor metadataExecutor;
 
     @Autowired @Lazy
@@ -74,13 +75,29 @@ public class OntologyMutationService {
                                    ProjectMetadataService metadataService,
                                    GraphGeneratingService graphGeneratingService,
                                    TopLevelClassCacheService topLevelCacheService,
+                                   StorageManager storageManager,
                                    @Qualifier("metadataExecutor") Executor metadataExecutor) {
         this.datasetService = datasetService;
         this.indexService = indexService;
         this.metadataService = metadataService;
         this.graphGeneratingService = graphGeneratingService;
         this.topLevelCacheService = topLevelCacheService;
+        this.storageManager = storageManager;
         this.metadataExecutor = metadataExecutor;
+    }
+
+    /**
+     * Invalidates the Code View content cache after a mutation lands in the PUBLIC graph.
+     * A stale cached snapshot would otherwise (a) hide the new/changed entity when Code View
+     * is opened, and (b) if the user then edits and saves Code View, get treated as the
+     * complete authoritative ontology — code-view-save does a full graph clear + reload, not
+     * a merge, so anything real missing from that stale text is silently destroyed. Draft
+     * mutations don't touch the public graph, so they must not evict this cache.
+     */
+    private void invalidatePublicCodeViewCache(String projectId, boolean draft) {
+        if (!draft) {
+            storageManager.clearCodeViewCache(projectId);
+        }
     }
 
     /**
@@ -133,6 +150,7 @@ public class OntologyMutationService {
                     ontologyCache.updateCachedVersion(projectId, version);
                 }
                 topLevelCacheService.evict(projectId);
+                invalidatePublicCodeViewCache(projectId, draft);
                 if (hierarchyIndexService != null) {
                     hierarchyIndexService.markStale(projectId);
                 }
@@ -171,6 +189,7 @@ public class OntologyMutationService {
             // draft mutations leave the public graph unchanged so L2 stays valid.
             if (!draft) {
                 topLevelCacheService.evict(projectId);
+                invalidatePublicCodeViewCache(projectId, draft);
             }
             if (hierarchyIndexService != null) {
                 hierarchyIndexService.markStale(projectId);
@@ -272,6 +291,7 @@ public class OntologyMutationService {
             }
         }
         topLevelCacheService.evict(projectId);
+        invalidatePublicCodeViewCache(projectId, draft);
         graphGeneratingService.clearGraphCache();
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
@@ -322,6 +342,7 @@ public class OntologyMutationService {
             }
         }
         topLevelCacheService.evict(projectId);
+        invalidatePublicCodeViewCache(projectId, draft);
 
         // Clear graph cache
         graphGeneratingService.clearGraphCache();
