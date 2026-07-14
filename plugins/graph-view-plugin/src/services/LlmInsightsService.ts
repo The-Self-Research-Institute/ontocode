@@ -25,11 +25,11 @@ const PROVIDERS: Record<LlmProvider, ProviderConfig> = {
     name: 'gemini',
     displayName: 'Google Gemini',
     models: [
-      { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (fast, free)' },
-      { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (powerful)' },
-      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (latest)' },
+      { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (fast, free)' },
+      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (powerful)' },
+      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash (latest)' },
     ],
-    defaultModel: 'gemini-1.5-flash',
+    defaultModel: 'gemini-2.5-flash-lite',
   },
   claude: {
     name: 'claude',
@@ -125,7 +125,12 @@ export function hasApiKey(): boolean {
 export function getStoredModel(): string {
   try {
     const provider = getStoredProvider();
-    return localStorage.getItem(MODEL_STORAGE) || PROVIDERS[provider].defaultModel;
+    const stored = localStorage.getItem(MODEL_STORAGE);
+    // A previously-stored model id can go stale when a provider retires a model
+    // generation (e.g. Gemini shut down the entire 1.0/1.5 line) — fall back to
+    // the current default instead of repeating a 404 the user can't self-diagnose.
+    const isKnownModel = stored != null && PROVIDERS[provider].models.some((m) => m.id === stored);
+    return isKnownModel ? stored : PROVIDERS[provider].defaultModel;
   } catch {
     return PROVIDERS[DEFAULT_PROVIDER].defaultModel;
   }
