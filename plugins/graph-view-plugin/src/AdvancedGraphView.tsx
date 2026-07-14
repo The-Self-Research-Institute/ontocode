@@ -214,6 +214,33 @@ const getReadableTextColor = (hex: string): string => {
   return brightness > 140 ? '#111111' : '#ffffff';
 };
 
+// Evicts the graph-view sessionStorage cache the moment the ontology changes elsewhere
+// (Code View save, entity-editor mutations, etc.) — registered at MODULE scope rather
+// than inside the component's mount effect. Switching to another top-level tab (Code
+// View, Entities, ...) fully unmounts this component (Dashboard.tsx renders exactly one
+// active tab), so a mount-time listener would miss any mutation that happens while this
+// view isn't the active tab — the very common "edit in Code View, switch back to Graph"
+// path. A module-level listener stays registered for the whole page session regardless
+// of mount state, so by the time the component next mounts, the stale cache is already
+// gone and its plain (non-bypassing) initial fetch reads fresh data instead.
+if (typeof window !== 'undefined') {
+  window.addEventListener('ontology:mutated', ((e: CustomEvent) => {
+    try {
+      const mutatedProjectId = e?.detail?.projectId;
+      if (mutatedProjectId) {
+        sessionStorage.removeItem(`ontocode:graphView:${mutatedProjectId}`);
+      } else {
+        // No projectId on the event — clear every graph-view cache entry to be safe.
+        Object.keys(sessionStorage)
+          .filter((k) => k.startsWith('ontocode:graphView:'))
+          .forEach((k) => sessionStorage.removeItem(k));
+      }
+    } catch {
+      /* sessionStorage unavailable/full — non-fatal, next Refresh click still bypasses it */
+    }
+  }) as EventListener);
+}
+
 // Default settings
 const DEFAULT_SETTINGS: GraphSettings = {
   layout: 'force',
@@ -3458,6 +3485,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const label = d.label || '';
           const size = d.size || settings.nodeSize;
           const charWidthPx = vowlOptions.labelFontSize * (7 / 11); // 7px/char was calibrated at 11px font
+          // Recomputed here (not read from node.each's closure — this is a sibling D3
+          // callback on the same selection, not a nested function, so those locals
+          // aren't in scope).
+          const widthScale = vowlOptions.nodeWidthScale;
+          const heightScale = vowlOptions.nodeHeightScale;
           let maxChars = 18;
 
           if (d.type === 'datatype') {
@@ -3499,6 +3531,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const label = d.label || '';
           const size = d.size || settings.nodeSize;
           const charWidthPx = vowlOptions.labelFontSize * (7 / 11);
+          // Recomputed here — sibling D3 callback, not nested inside node.each.
+          const widthScale = vowlOptions.nodeWidthScale;
           let maxChars = 18;
 
           if (d.type === 'datatype') {

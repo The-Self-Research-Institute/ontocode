@@ -1375,6 +1375,14 @@ function isDraftScopeActive(): boolean {
   return !isDesktop() && ontologyMutationService.isPrivateEditMode();
 }
 
+// Webapp + public/live sync: every mutation already writes straight to the shared
+// graph (no per-user draft record), so there's nothing pending to flush and the
+// "unsaved changes" dot should never light up. Desktop always tracks its own
+// unsaved-to-disk state regardless of sync mode.
+function isLiveWriteMode(): boolean {
+  return !isDesktop() && !ontologyMutationService.isPrivateEditMode();
+}
+
 function withDraftScope(url: string): string {
   if (!isDraftScopeActive()) return url;
   return url + (url.includes("?") ? "&draft=true" : "?draft=true");
@@ -7157,8 +7165,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
       }
 
-      // Mark as unsaved to enable Save button (only if markUnsaved is true)
-      if (markUnsaved) {
+      // Mark as unsaved to enable Save button (only if markUnsaved is true).
+      // Skipped in webapp public/live sync since the mutation already landed live.
+      if (markUnsaved && !isLiveWriteMode()) {
         setHasUnsavedChanges(true);
       }
     },
@@ -8479,10 +8488,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Mark as unsaved (called after mutations)
   const markAsUnsaved = useCallback(() => {
     console.log("[DEBUG] markAsUnsaved called");
-    setHasUnsavedChanges(true);
     codeViewDirtyRef.current = true;
-    // Wait 1.5 s before polling draft count — gives the backend time to persist the draft record
-    setTimeout(() => updateDraftCount(), 1500);
+    if (!isLiveWriteMode()) {
+      setHasUnsavedChanges(true);
+      // Wait 1.5 s before polling draft count — gives the backend time to persist the draft record
+      setTimeout(() => updateDraftCount(), 1500);
+    }
     // Debounced silent stats refresh (1.5s after last mutation)
     if (metadataRefreshTimerRef.current) clearTimeout(metadataRefreshTimerRef.current);
     metadataRefreshTimerRef.current = setTimeout(() => silentRefreshMetadata(), 1500);
@@ -11550,6 +11561,17 @@ const Dashboard: React.FC<DashboardProps> = ({
           lastClassHierarchyRefreshAt.current = 0;
           refreshClassHierarchy();
           refreshProperties();
+          // Let other open views (Graph View plugin, etc.) know the ontology changed so they
+          // can drop their caches and refetch too — mirrors ontologyMutationService's broadcast
+          // for normal entity-editor mutations, which this save path bypasses (it POSTs directly
+          // to code-view-save, not through applyMutations()).
+          try {
+            window.dispatchEvent(new CustomEvent("ontology:mutated", {
+              detail: { projectId, ops: ["codeViewSave"] },
+            }));
+          } catch {
+            /* non-fatal */
+          }
         } else {
           const errMsg = (response.error || "Failed to save content").replace(
             "Failed to save and sync code view: ",
