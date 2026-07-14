@@ -93,6 +93,36 @@ public class StorageManager {
         return exportPath;
     }
 
+    /**
+     * Streaming variant for the async export job: writes straight from GraphDB to the
+     * export file via SparqlDatasetService.exportDatasetToStream(), skipping the
+     * in-memory String buffer that exportOntology() builds — a large win for big
+     * ontologies. Falls back to the buffered exportOntology() for RDF/XML (needs the
+     * full string for stripSystemNamespaces()) and for citation-mapped projects (needs
+     * the full string for repositionCitations()), so output is identical either way —
+     * only the "no cleanup/repositioning needed" case gets the faster path.
+     */
+    public Path exportOntologyForJob(String projectId, String format) throws IOException {
+        if (requiresOwlApiFormat(format)) {
+            return exportOntologyWithOwlApi(projectId, format);
+        }
+        RDFFormat rdfFormat = resolveLang(format);
+        boolean needsBufferedPath = rdfFormat == org.eclipse.rdf4j.rio.RDFFormat.RDFXML
+                || !getCitationEntityMappings(projectId).isEmpty();
+        if (needsBufferedPath) {
+            return exportOntology(projectId, format);
+        }
+
+        String extension = extensionFor(format);
+        Path exportPath = projectDir(projectId).resolve("ontology.original." + extension);
+        Files.createDirectories(exportPath.getParent());
+        try (OutputStream out = Files.newOutputStream(exportPath)) {
+            datasetService.exportDatasetToStream(projectId, rdfFormat, out);
+        }
+        log.info("Exported ontology (streamed) to: {} ({} bytes)", exportPath, Files.size(exportPath));
+        return exportPath;
+    }
+
     private RDFFormat resolveLang(String format) {
         if (format == null) {
             return org.eclipse.rdf4j.rio.RDFFormat.RDFXML;

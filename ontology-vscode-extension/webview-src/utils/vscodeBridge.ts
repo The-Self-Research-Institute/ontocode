@@ -28,6 +28,7 @@ import { notificationService } from '../services/notificationService';
 import { openOntologyFile, fileContentToBase64 } from './fileAccess';
 import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
 import { getGatewayUrl } from '../config/deploymentConfig';
+import { exportOntologyAsBlob } from '../services/exportService';
 import { uploadFormDataWithProgress } from './uploadWithProgress';
 
 let browserZoteroLibrarySessionCounter = 0;
@@ -267,11 +268,14 @@ function handleBrowserMessage(message: any) {
         // ──────── Download ──────────────────────────────────────────────────
 
         case 'downloadOntology': {
-            // Fetch the ontology export from the API and trigger download
+            // Submit the export as a background job and poll until ready, rather than one
+            // long-blocking request — a large ontology's export can take longer than axios's
+            // client-side timeout even though the backend supports far longer. See
+            // exportService.ts / OntologyExportJobService.java for the job this polls against.
             (async () => {
                 try {
-                    const response = await apiClient.get(message.url, undefined, { responseType: 'blob' as any });
-                    triggerBlobDownload(response, message.filename);
+                    const blob = await exportOntologyAsBlob(getGatewayUrl(), message.projectId, message.format);
+                    triggerBlobDownload(blob, message.filename);
                 } catch (err) {
                     console.error('[BrowserBridge] downloadOntology failed:', err);
                     notificationService.error('Download Failed', 'Could not download ontology file');

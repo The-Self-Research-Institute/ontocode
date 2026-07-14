@@ -242,7 +242,7 @@ type ExtensionMessage =
     | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
     | { type: 'proxyRequest'; reqId: string; config: any }
     | { type: 'webviewReady' }
-    | { type: 'downloadOntology'; url: string; filename: string }
+    | { type: 'downloadOntology'; url: string; filename: string; projectId: string; format: string }
     | { type: 'downloadCurrentOntology' }
     | { type: 'downloadFile'; content: string; filename: string; format: string }
     | { type: 'openExternalUrl'; url: string } // Open a URL in the OS default browser (webview navigation is sandboxed)
@@ -856,7 +856,7 @@ class OntoCodePanel {
                         this.handleProxyRequest(message);
                         break;
                     case 'downloadOntology':
-                        this.handleDownload(message.url, message.filename);
+                        this.handleDownload(message.projectId, message.format, message.filename);
                         break;
                     case 'downloadCurrentOntology':
                         this.handleDownloadCurrent();
@@ -3203,40 +3203,74 @@ class OntoCodePanel {
     /**
      * Handle download request for a specific file
      */
-    private async handleDownload(url: string, filename: string) {
-        try {
-            console.log(`[OntoCode] Downloading file from: ${url}`);
-            console.log(`[OntoCode] Filename: ${filename}`);
+    // Client-side ceiling for polling, comfortably above the backend's own 45-min
+    // stuck-job watchdog (OntologyExportJobService.java) — that watchdog is what
+    // actually converts a hung job into an error; this is just a last-resort guard.
+    private static readonly EXPORT_POLL_INTERVAL_MS = 3000;
+    private static readonly EXPORT_MAX_POLL_MS = 60 * 60 * 1000;
 
-            // Get auth token
+    /**
+     * Submits the export as a background job and polls until it's ready, instead of
+     * one long-blocking request. The previous single `axios.get(..., {timeout: 300000})`
+     * gave up after 5 minutes even though the backend/gateway/ingress support up to 2
+     * hours — for a large ontology the server was often still working when this client
+     * gave up. See OntologyExportJobService.java for the job lifecycle this polls against.
+     */
+    private async handleDownload(projectId: string, format: string, filename: string) {
+        try {
+            console.log(`[OntoCode] Downloading export for project: ${projectId}, format: ${format}`);
+
             const token = await (this._context as any).secrets.get(TOKEN_KEY);
             if (!token) {
                 vscode.window.showErrorMessage('You must be logged in to download files.');
                 return;
             }
+            const authHeaders = { 'Authorization': `Bearer ${token}` };
 
-            // Make request to download file
-            const fullUrl = `${GATEWAY_URL}${url}`;
-            console.log(`[OntoCode] Full URL: ${fullUrl}`);
-
-            // Show progress notification for large ontologies
-            vscode.window.withProgress({
+            await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
-                title: `Downloading ${filename}...`,
+                title: `Exporting ${filename}...`,
                 cancellable: false
             }, async (progress) => {
                 progress.report({ message: 'This may take several minutes for large ontologies' });
 
-                const response = await axios.get(fullUrl, {
-                    headers: { 'Authorization': `Bearer ${token}` },
-                    responseType: 'arraybuffer',
-                    timeout: 300000 // 5 minutes for large files like go-plus.owl
-                });
+                const submitRes = await axios.post(
+                    `${GATEWAY_URL}/api/ontology/export-async/${encodeURIComponent(projectId)}?format=${encodeURIComponent(format)}`,
+                    undefined,
+                    { headers: authHeaders, timeout: 30000 }
+                );
+                const jobId = submitRes.data?.jobId;
+                if (!jobId) {
+                    throw new Error('Export could not be started.');
+                }
+
+                const deadline = Date.now() + OntoCodePanel.EXPORT_MAX_POLL_MS;
+                let jobStatus = 'PENDING';
+                while (jobStatus !== 'COMPLETED') {
+                    const statusRes = await axios.get(
+                        `${GATEWAY_URL}/api/ontology/export-async/status/${jobId}`,
+                        { headers: authHeaders, timeout: 30000 }
+                    );
+                    jobStatus = statusRes.data?.status;
+                    if (jobStatus === 'ERROR') {
+                        throw new Error(statusRes.data?.error || 'Export failed.');
+                    }
+                    if (jobStatus !== 'COMPLETED') {
+                        if (Date.now() >= deadline) {
+                            throw new Error('Export is taking much longer than expected. Please try again later.');
+                        }
+                        await new Promise(resolve => setTimeout(resolve, OntoCodePanel.EXPORT_POLL_INTERVAL_MS));
+                    }
+                }
+
+                const response = await axios.get(
+                    `${GATEWAY_URL}/api/ontology/export-async/download/${jobId}`,
+                    { headers: authHeaders, responseType: 'arraybuffer', timeout: 300000 }
+                );
 
                 console.log(`[OntoCode] Response status: ${response.status}`);
                 console.log(`[OntoCode] Response data length: ${response.data.byteLength} bytes`);
 
-                // Show save dialog
                 const saveUri = await vscode.window.showSaveDialog({
                     defaultUri: vscode.Uri.file(filename),
                     filters: {
@@ -3247,7 +3281,6 @@ class OntoCodePanel {
 
                 if (saveUri) {
                     console.log(`[OntoCode] Saving to: ${saveUri.fsPath}`);
-                    // Save file
                     await (vscode.workspace as any).fs.writeFile(saveUri, new Uint8Array(response.data));
                     vscode.window.showInformationMessage(`File saved successfully to ${saveUri.fsPath}`);
                 } else {
@@ -3269,7 +3302,7 @@ class OntoCodePanel {
                     vscode.window.showErrorMessage(`Download failed: ${axiosError.message}`);
                 }
             } else {
-                vscode.window.showErrorMessage('Failed to download file. See console for details.');
+                vscode.window.showErrorMessage((error as Error)?.message || 'Failed to download file. See console for details.');
             }
         }
     }

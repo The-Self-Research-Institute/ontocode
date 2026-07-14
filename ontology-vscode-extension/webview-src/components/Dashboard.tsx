@@ -835,7 +835,7 @@ const TopMenuBar = ({
                               const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(currentProjectId)}?format=${format}`;
                               try {
                                 if (window.vscode) {
-                                  window.vscode.postMessage({ type: "downloadOntology", url, filename });
+                                  window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId: currentProjectId, format });
                                   notificationService.success("Export Started", `Downloading ${filename}`);
                                 } else {
                                   const res = await fetch(url, {
