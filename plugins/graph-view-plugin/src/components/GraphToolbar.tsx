@@ -487,6 +487,45 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
                     style={{ flex: 1 }}
                   />
                 </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }} title="Scale node box width — label truncation adjusts automatically so text always stays inside">
+                  <span style={{ minWidth: 110 }}>Box width: {props.vowlDisplayOptions.nodeWidthScale.toFixed(1)}x</span>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={2}
+                    step={0.1}
+                    value={props.vowlDisplayOptions.nodeWidthScale}
+                    onChange={(e) => props.onChangeVowlOptions({ nodeWidthScale: Number(e.target.value) })}
+                    style={{ flex: 1 }}
+                    data-testid="graph-node-width-scale"
+                  />
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }} title="Scale node box height">
+                  <span style={{ minWidth: 110 }}>Box height: {props.vowlDisplayOptions.nodeHeightScale.toFixed(1)}x</span>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={2}
+                    step={0.1}
+                    value={props.vowlDisplayOptions.nodeHeightScale}
+                    onChange={(e) => props.onChangeVowlOptions({ nodeHeightScale: Number(e.target.value) })}
+                    style={{ flex: 1 }}
+                    data-testid="graph-node-height-scale"
+                  />
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }} title="Label font size — label truncation adjusts automatically so text always stays inside">
+                  <span style={{ minWidth: 110 }}>Label font size: {props.vowlDisplayOptions.labelFontSize}px</span>
+                  <input
+                    type="range"
+                    min={8}
+                    max={16}
+                    step={1}
+                    value={props.vowlDisplayOptions.labelFontSize}
+                    onChange={(e) => props.onChangeVowlOptions({ labelFontSize: Number(e.target.value) })}
+                    style={{ flex: 1 }}
+                    data-testid="graph-label-font-size"
+                  />
+                </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Hide classes whose only relationship is a single subClassOf">
                   <input
                     type="checkbox"
