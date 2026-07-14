@@ -150,6 +150,24 @@ export const ontologyMutationService = {
   },
 
   /**
+   * Delete a class and one or more descendant classes in a single atomic request.
+   */
+  async deleteClasses(projectId: string, iris: string[], userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(
+      projectId,
+      iris.map((iri) => ({ type: 'deleteClass', iri })),
+      undefined, userId, username,
+    );
+  },
+
+  /**
+   * All asserted descendants of a class, for the "delete class + descendants" dialog.
+   */
+  async getDescendants(projectId: string, iri: string): Promise<{ iris: string[]; labels: Record<string, string>; truncated: boolean }> {
+    return apiClient.get(`/api/ontology/classes/descendants/${projectId}`, { parentIri: iri });
+  },
+
+  /**
    * Update class label
    */
   async updateClassLabel(projectId: string, iri: string, label: string, 

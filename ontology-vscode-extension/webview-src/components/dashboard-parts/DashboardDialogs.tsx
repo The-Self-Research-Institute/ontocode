@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import type { LintIssue } from "../../utils/ontologyLinter";
 
@@ -184,6 +184,103 @@ export const ConfirmDialog = ({
             className="px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700"
           >
             {confirmText}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Protégé-style class delete confirmation: lets the user choose between deleting
+ * just the target class or cascading to all its asserted descendants. Kept separate
+ * from the generic ConfirmDialog above (which many other flows depend on) so this
+ * radio-choice + descendant-fetch behavior can't regress unrelated confirm dialogs.
+ */
+export const DeleteClassDialog = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  label,
+  fetchDescendants,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (withDescendants: boolean, descendantIris: string[]) => void;
+  label: string;
+  fetchDescendants: () => Promise<{ iris: string[]; truncated: boolean }>;
+}) => {
+  const [withDescendants, setWithDescendants] = useState(false);
+  const [descendants, setDescendants] = useState<{ iris: string[]; truncated: boolean } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setWithDescendants(false);
+    setDescendants(null);
+    setLoading(true);
+    fetchDescendants()
+      .then((result) => setDescendants(result))
+      .catch(() => setDescendants({ iris: [], truncated: false }))
+      .finally(() => setLoading(false));
+    // fetchDescendants is re-created per render in the caller; only re-fetch when the dialog opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const descendantCount = descendants?.iris.length ?? 0;
+  const cascadeDisabled = loading || !!descendants?.truncated;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
+      <div
+        className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-lg font-semibold mb-2" style={{ color: "var(--color-text)" }}>
+          Delete {label}
+        </h3>
+        <p className="text-sm mb-4" style={{ color: "var(--color-text-secondary)" }}>
+          Delete {label}? All references to {label} will be removed from the ontology.
+        </p>
+        <div className="flex flex-col gap-2 mb-6">
+          <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "var(--color-text)" }}>
+            <input type="radio" checked={!withDescendants} onChange={() => setWithDescendants(false)} />
+            Delete {label} only
+          </label>
+          <label
+            className="flex items-center gap-2 text-sm"
+            style={{ color: cascadeDisabled ? "var(--color-text-secondary)" : "var(--color-text)", cursor: cascadeDisabled ? "not-allowed" : "pointer" }}
+          >
+            <input
+              type="radio"
+              checked={withDescendants}
+              disabled={cascadeDisabled}
+              onChange={() => setWithDescendants(true)}
+            />
+            Delete {label} and asserted descendant classes
+            {loading && " (checking for descendants…)"}
+            {!loading && !descendants?.truncated && descendantCount > 0 && ` (${descendantCount} found)`}
+            {!loading && descendants?.truncated &&
+              " — too many descendants to delete safely here; delete some children individually first"}
+          </label>
+        </div>
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              onConfirm(withDescendants, descendants?.iris ?? []);
+              onClose();
+            }}
+            className="px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700"
+          >
+            Delete
           </button>
         </div>
       </div>

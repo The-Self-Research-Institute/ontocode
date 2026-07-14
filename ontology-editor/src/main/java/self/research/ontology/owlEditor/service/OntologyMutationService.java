@@ -387,7 +387,12 @@ public class OntologyMutationService {
                 + "INSERT { <" + op.iri() + "> rdfs:label " + literal(op.label()) + " }\n"
                 + "WHERE  { OPTIONAL { <" + op.iri() + "> rdfs:label ?o } }";
         } else if (type.equals("deleteClass")) {
-            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+            // Dangling-expression cleanup MUST run first: SPARQL Update executes ';'-joined
+            // statements sequentially against progressively mutated state, so if it ran after
+            // the direct-triple deletes below, the filler triple (e.g. owl:someValuesFrom <iri>)
+            // it searches for would already be gone and it would find nothing to clean up.
+            return buildDeleteDanglingExpressionsSparql(op.iri(), CLASS_EXPR_FILLER_PREDICATES, CLASS_EXPR_ANCHOR_PREDICATES) + ";\n"
+                + "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("addAnnotation")) {
             return "INSERT DATA {\n"
@@ -498,11 +503,15 @@ public class OntologyMutationService {
                 + optionalLabel(op.iri(), op.label()) + "\n"
                 + "}";
         } else if (type.equals("deleteObjectProperty")) {
-            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+            // Cleanup runs first — see the comment on deleteClass above for why.
+            return buildDeleteDanglingExpressionsSparql(op.iri(), "owl:onProperty", PROPERTY_EXPR_ANCHOR_PREDICATES) + ";\n"
+                + "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
                 + "DELETE { ?s <" + op.iri() + "> ?o } WHERE { ?s <" + op.iri() + "> ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("deleteDataProperty")) {
-            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+            // Cleanup runs first — see the comment on deleteClass above for why.
+            return buildDeleteDanglingExpressionsSparql(op.iri(), "owl:onProperty", PROPERTY_EXPR_ANCHOR_PREDICATES) + ";\n"
+                + "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
                 + "DELETE { ?s <" + op.iri() + "> ?o } WHERE { ?s <" + op.iri() + "> ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("deleteAnnotationProperty")) {
@@ -745,7 +754,9 @@ public class OntologyMutationService {
                 + optionalLabel(op.iri(), op.label()) + "\n"
                 + "}";
         } else if (type.equals("deleteDatatype")) {
-            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+            // Cleanup runs first — see the comment on deleteClass above for why.
+            return buildDeleteDanglingExpressionsSparql(op.iri(), "owl:someValuesFrom|owl:allValuesFrom", DATATYPE_EXPR_ANCHOR_PREDICATES) + ";\n"
+                + "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("addObjectPropertyAssertion")) {
             return "INSERT DATA {\n"
@@ -1818,6 +1829,53 @@ public class OntologyMutationService {
             }
             """.formatted(propertyIri, predicate, propertyIri, predicate);
     }
+
+    /**
+     * After deleting <iri>, remove any blank-node expression elsewhere in the ontology that used
+     * it as a restriction filler (fillerPredicates, e.g. someValuesFrom/onProperty) or as a plain
+     * unionOf/intersectionOf/propertyChain list member — otherwise the expression is left dangling
+     * (still linked from its ancestor, missing the triple that named it). Walks up through nested
+     * list/expression wrapper predicates to the root blank node, then deletes the ancestor's link
+     * to that root plus every triple in the whole expression subtree.
+     *
+     * @param fillerPredicates SPARQL property-path alternation (e.g. "owl:someValuesFrom|owl:onClass")
+     *                         matching predicates whose object being <iri> makes their subject a
+     *                         restriction that references it.
+     * @param anchorPredicates comma-separated predicate list (for a SPARQL IN(...) clause) that can
+     *                         link a named ancestor to the root of such an expression.
+     */
+    private String buildDeleteDanglingExpressionsSparql(String iri, String fillerPredicates, String anchorPredicates) {
+        return """
+            DELETE {
+              ?ancestor ?axiomPred ?root .
+              ?node ?p ?o .
+            }
+            WHERE {
+              {
+                ?restr (%s) <%s> .
+                ?root (owl:intersectionOf|owl:unionOf|owl:oneOf|rdf:first|rdf:rest)* ?restr .
+              } UNION {
+                ?listNode rdf:first <%s> .
+                ?root (owl:intersectionOf|owl:unionOf|owl:oneOf|rdf:first|rdf:rest)* ?listNode .
+              }
+              ?ancestor ?axiomPred ?root .
+              FILTER(?axiomPred IN (%s))
+              FILTER(isIRI(?ancestor))
+              # Deliberately excludes rdf:first from this path: rdf:first's object is a list MEMBER
+              # (e.g. a named class like HamTopping in a unionOf), not part of the expression's own
+              # scaffolding. Walking into it would delete that unrelated member's own declaration —
+              # only tear down the wrapper/list-cell scaffold itself (isBlank(?node) as a hard guard).
+              ?root (owl:intersectionOf|owl:unionOf|owl:oneOf|rdf:rest)* ?node .
+              FILTER(isBlank(?node))
+              ?node ?p ?o .
+            }
+            """.formatted(fillerPredicates, iri, iri, anchorPredicates);
+    }
+
+    private static final String CLASS_EXPR_FILLER_PREDICATES = "owl:someValuesFrom|owl:allValuesFrom|owl:hasValue|owl:onClass";
+    private static final String CLASS_EXPR_ANCHOR_PREDICATES = "rdfs:subClassOf, owl:equivalentClass, owl:disjointWith, rdfs:domain, rdfs:range";
+    private static final String PROPERTY_EXPR_ANCHOR_PREDICATES = "rdfs:subClassOf, owl:equivalentClass, owl:disjointWith, owl:propertyChainAxiom";
+    private static final String DATATYPE_EXPR_ANCHOR_PREDICATES = "rdfs:subClassOf, owl:equivalentClass, rdfs:range";
 
     private String buildDeleteBlankNodeAxiomSparql(String blankNodeId, String ancestorIri) {
         if (blankNodeId == null || blankNodeId.isBlank()) {
