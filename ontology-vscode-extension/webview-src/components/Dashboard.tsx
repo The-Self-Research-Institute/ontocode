@@ -2008,6 +2008,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   const classHierarchyRefreshInFlight = useRef(false);
   const lastClassHierarchyRefreshAt = useRef(0);
   const classHierarchyRefreshRetryCount = useRef(0);
+  // Set when a caller's refresh request is dropped by the in-flight/throttle guards below —
+  // ensures that request isn't silently lost (e.g. two classes saved back-to-back: the
+  // second save's refresh used to just vanish if the first was still resolving, with
+  // nothing to pick it up again except an unrelated tab switch).
+  const classHierarchyRefreshQueued = useRef(false);
 
   useEffect(() => {
     hasUserSelectedFileRef.current = hasUserSelectedFile;
@@ -7182,11 +7187,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
     const now = Date.now();
     if (classHierarchyRefreshInFlight.current) {
-      console.warn("[Dashboard] Skipping class hierarchy refresh: already in flight");
+      console.warn("[Dashboard] Skipping class hierarchy refresh: already in flight — queuing a follow-up so this request isn't lost");
+      classHierarchyRefreshQueued.current = true;
       return;
     }
     if (now - lastClassHierarchyRefreshAt.current < 2000) {
-      console.warn("[Dashboard] Skipping class hierarchy refresh: throttled");
+      console.warn("[Dashboard] Skipping class hierarchy refresh: throttled — queuing a follow-up so this request isn't lost");
+      classHierarchyRefreshQueued.current = true;
       return;
     }
     classHierarchyRefreshInFlight.current = true;
@@ -7282,6 +7289,13 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     } finally {
       classHierarchyRefreshInFlight.current = false;
+      // A refresh request arrived while this one was in flight (or throttled) and got
+      // queued instead of dropped — run it now so that mutation is never permanently lost.
+      if (classHierarchyRefreshQueued.current) {
+        classHierarchyRefreshQueued.current = false;
+        lastClassHierarchyRefreshAt.current = 0;
+        refreshClassHierarchy();
+      }
     }
   }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree, shouldDeferHierarchyDuringFileOpen, user]);
 
