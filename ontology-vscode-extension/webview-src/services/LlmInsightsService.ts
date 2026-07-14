@@ -35,21 +35,21 @@ const PROVIDERS: Record<LlmProvider, ProviderConfig> = {
     name: 'claude',
     displayName: 'Anthropic Claude',
     models: [
-      { id: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (fast, cheap)' },
-      { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (balanced)' },
-      { id: 'claude-opus-4-1-20250805', label: 'Claude Opus (most capable)' },
+      { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (fast, cheap)' },
+      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5 (balanced)' },
+      { id: 'claude-opus-4-8', label: 'Claude Opus 4.8 (most capable)' },
     ],
-    defaultModel: 'claude-3-5-sonnet-20241022',
+    defaultModel: 'claude-sonnet-5',
   },
   openai: {
     name: 'openai',
     displayName: 'OpenAI',
     models: [
-      { id: 'gpt-4o-mini', label: 'GPT-4o Mini (fast, cheap)' },
-      { id: 'gpt-4o', label: 'GPT-4o (balanced)' },
-      { id: 'o1', label: 'o1 (reasoning, slower)' },
+      { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (fast, cheap)' },
+      { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (balanced)' },
+      { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (most capable)' },
     ],
-    defaultModel: 'gpt-4o-mini',
+    defaultModel: 'gpt-5.6-terra',
   },
 };
 
@@ -221,9 +221,10 @@ async function callClaude(key: string, model: string, prompt: string, signal?: A
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
+      // No `temperature` — current Claude models (Sonnet 5, Opus 4.8, etc.) reject
+      // non-default sampling parameters with a 400. Omit rather than risk a stale value.
       model,
       max_tokens: 512,
-      temperature: 0.4,
       messages: [{ role: 'user', content: prompt }],
     }),
     signal,
