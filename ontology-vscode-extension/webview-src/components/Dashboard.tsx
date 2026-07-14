@@ -17694,60 +17694,31 @@ const Dashboard: React.FC<DashboardProps> = ({
               setSelectedItem(null);
               setClassInstanceCounts({});
 
-              // Poll the backend status until the GraphDB re-import completes.
-              // After merge, the backend calls importService.submitImport() which sets
-              // status to PROCESSING and does an async GraphDB bulk load. We must wait
-              // for it to reach COMPLETED before fetching data, otherwise the queries
-              // will return stale/empty results.
-              // Use escalating backoff so small ontologies finish fast while
-              // large ones (90k+ classes) get up to ~10 minutes of polling.
-              const maxPollAttempts = 90;
-              const getPollDelay = (att: number) => {
-                if (att <= 5) return 2000; // first 5: 2s  (10s)
-                if (att <= 15) return 3000; // next 10: 3s  (30s)
-                if (att <= 30) return 5000; // next 15: 5s  (75s)
-                return 10000; // rest 60: 10s (600s)  => total ~715s ≈ 12 min
-              };
-              let importCompleted = false;
+              // Wait for the merge's re-import to fully complete — including the
+              // async class-hierarchy rebuild, not just the GraphDB bulk load.
+              // Reuses the same gate the normal file-open path uses (rather than
+              // a bespoke COMPLETED-only poll) so merge can't race ahead of a
+              // hierarchy that's still warming: that race is why classes could
+              // come back wrong in the live editor while the merged file on
+              // disk (read by the unrelated download path) was always correct.
+              console.log("[Dashboard] ⏳ Waiting for merge re-import (including hierarchy rebuild) to complete...");
+              const mergeWaitResult = await waitForProcessingComplete(targetProjectId);
 
-              console.log("[Dashboard] ⏳ Polling for GraphDB import completion...");
-              for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
-                try {
-                  const statusRes = await apiClient.get<any>(
-                    `/api/ontology/status/${encodeURIComponent(targetProjectId)}?_t=${Date.now()}`,
-                  );
-                  const status = statusRes?.data?.status || statusRes?.status;
-                  if (attempt <= 10 || attempt % 10 === 0) {
-                    console.log(`[Dashboard] Poll attempt ${attempt}/${maxPollAttempts}: status = ${status}`);
-                  }
-
-                  if (status === "COMPLETED") {
-                    importCompleted = true;
-                    console.log("[Dashboard] ✅ GraphDB import completed!");
-                    break;
-                  }
-
-                  if (status === "ERROR") {
-                    console.error("[Dashboard] ❌ Import failed during merge re-import");
-                    notificationService.error("Import Failed", "The merged file failed to import.");
-                    setIsInitialLoading(false);
-                    return;
-                  }
-
-                  // Still PROCESSING - wait and try again
-                  await new Promise((resolve) => setTimeout(resolve, getPollDelay(attempt)));
-                } catch (pollError) {
-                  console.warn(`[Dashboard] Poll attempt ${attempt} error:`, pollError);
-                  await new Promise((resolve) => setTimeout(resolve, getPollDelay(attempt)));
-                }
+              if (!mergeWaitResult.ready && mergeWaitResult.status === "ERROR") {
+                console.error("[Dashboard] ❌ Import failed during merge re-import");
+                notificationService.error("Import Failed", mergeWaitResult.error || "The merged file failed to import.");
+                setIsInitialLoading(false);
+                return;
               }
 
-              if (!importCompleted) {
-                console.warn("[Dashboard] ⚠️ Timed out waiting for import to complete, attempting to fetch anyway");
+              if (!mergeWaitResult.ready) {
+                console.warn("[Dashboard] ⚠️ Timed out waiting for import/hierarchy to complete, attempting to fetch anyway");
                 notificationService.warning(
                   "Import Taking Long",
-                  "Import is taking longer than expected. Attempting to load current data…",
+                  mergeWaitResult.error || "Import is taking longer than expected. Attempting to load current data…",
                 );
+              } else {
+                console.log("[Dashboard] ✅ GraphDB import and hierarchy rebuild completed!");
               }
 
               console.log("[Dashboard] 🔄 Starting data fetch with force refresh...");
@@ -17783,32 +17754,11 @@ const Dashboard: React.FC<DashboardProps> = ({
               // Merge was to a different existing file
               console.log("[Dashboard] ⚠️ Merge targeted a different existing file:", targetProjectId);
 
-              // Poll for the target file's import completion
-              const maxPollAttempts2 = 90;
-              const getPollDelay2 = (att: number) => {
-                if (att <= 5) return 2000;
-                if (att <= 15) return 3000;
-                if (att <= 30) return 5000;
-                return 10000;
-              };
-
-              let importCompleted = false;
-              for (let attempt = 1; attempt <= maxPollAttempts2; attempt++) {
-                try {
-                  const statusRes = await apiClient.get<any>(
-                    `/api/ontology/status/${encodeURIComponent(targetProjectId)}?_t=${Date.now()}`,
-                  );
-                  const status = statusRes?.data?.status || statusRes?.status;
-                  if (status === "COMPLETED") {
-                    importCompleted = true;
-                    break;
-                  }
-                  if (status === "ERROR") break;
-                  await new Promise((resolve) => setTimeout(resolve, getPollDelay2(attempt)));
-                } catch {
-                  await new Promise((resolve) => setTimeout(resolve, getPollDelay2(attempt)));
-                }
-              }
+              // Same hierarchy-aware wait as the "merge into current file" branch
+              // above — plain COMPLETED status doesn't guarantee the class
+              // hierarchy rebuild has finished.
+              const mergeWaitResult2 = await waitForProcessingComplete(targetProjectId);
+              const importCompleted = mergeWaitResult2.ready;
 
               // FIX: If merge target is actually the currently opened file (projectId), refresh the data
               // This handles the case where merge into existing file merged into the same file that's open
