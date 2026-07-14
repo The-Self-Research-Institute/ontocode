@@ -25,6 +25,13 @@ export interface VowlDisplayOptions {
   colorExternals: boolean;
   /** Show owl:unionOf / intersectionOf / complementOf / oneOf operator nodes. */
   showSetOperators: boolean;
+  /** Multiplier on the base shape width (1 = default size). */
+  nodeWidthScale: number;
+  /** Multiplier on the base shape height (1 = default size). */
+  nodeHeightScale: number;
+  /** Label font size in px. Truncation budgets are derived from this, so labels
+   *  always stay inside their shape regardless of the chosen size. */
+  labelFontSize: number;
 }
 
 export const DEFAULT_VOWL_OPTIONS: VowlDisplayOptions = {
@@ -33,7 +40,10 @@ export const DEFAULT_VOWL_OPTIONS: VowlDisplayOptions = {
   degreeCollapsing: 0,
   hideSolitarySubclasses: false,
   colorExternals: true,
-  showSetOperators: true
+  showSetOperators: true,
+  nodeWidthScale: 1,
+  nodeHeightScale: 1,
+  labelFontSize: 11
 };
 
 export interface GraphUiPrefs {

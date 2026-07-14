@@ -2894,7 +2894,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const nodeGroup = d3.select(this);
       const size = d.size || settings.nodeSize;
       const nodeType = d.type;
-      
+      // User-configurable box scale (Notation & density panel) — vowl/force only,
+      // where shape size is otherwise a fixed multiple of `size` regardless of label length.
+      const widthScale = (visualizationType === 'vowl' || visualizationType === 'force') ? vowlOptions.nodeWidthScale : 1;
+      const heightScale = (visualizationType === 'vowl' || visualizationType === 'force') ? vowlOptions.nodeHeightScale : 1;
+
       // Check if this is owl:Thing or external/internal node
       const isThing = d.label === 'Thing' || d.id.includes('owl#Thing');
       const isExternal = isExternalNode(d);
@@ -2976,8 +2980,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       } else if (nodeType === 'datatype') {
         // Force mode: White rectangle for datatypes/literals
         if (visualizationType === 'force') {
-          const rectWidth = size * 2.2;
-          const rectHeight = size * 1.1;
+          const rectWidth = size * 2.2 * widthScale;
+          const rectHeight = size * 1.1 * heightScale;
           nodeGroup.append('rect')
             .attr('class', 'node-shape')
             .attr('x', -rectWidth / 2)
@@ -2996,8 +3000,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseout', handleNodeMouseOut);
         } else {
           // VOWL/OntoGraph: Yellow Rounded Rectangle for datatypes - larger for both modes
-          const rectWidth = visualizationType === 'vowl' ? size * 4.2 : (visualizationType === 'ontograph' ? size * 3.5 : size * 3);
-          const rectHeight = visualizationType === 'vowl' ? size * 2.0 : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6);
+          const rectWidth = (visualizationType === 'vowl' ? size * 4.2 * widthScale : (visualizationType === 'ontograph' ? size * 3.5 : size * 3));
+          const rectHeight = (visualizationType === 'vowl' ? size * 2.0 * heightScale : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6));
           nodeGroup.append('rect')
             .attr('class', 'node-shape')
             .attr('x', -rectWidth / 2)
@@ -3018,8 +3022,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       } else if (nodeType === 'individual') {
         // Force mode: Blue rounded rectangle for individuals
         if (visualizationType === 'force') {
-          const rectWidth = size * 3.2;
-          const rectHeight = size * 1.6;
+          const rectWidth = size * 3.2 * widthScale;
+          const rectHeight = size * 1.6 * heightScale;
           nodeGroup.append('rect')
             .attr('class', 'node-shape')
             .attr('x', -rectWidth / 2)
@@ -3039,13 +3043,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         } else {
           // VOWL/OntoGraph: Rectangle for individuals (purple/pink) - dynamic width based on label length
           const label = d.label || '';
-          const baseWidth = visualizationType === 'vowl' ? size * 2.8 : (visualizationType === 'ontograph' ? size * 2.8 : size * 2.4);
+          const baseWidth = (visualizationType === 'vowl' ? size * 2.8 * widthScale : (visualizationType === 'ontograph' ? size * 2.8 : size * 2.4));
           // Calculate width based on label length (approximately 7 pixels per character), capped
           const labelWidth = Math.min(label.length * 7, 180);
           const rectWidth = Math.max(baseWidth, labelWidth + 16); // Add padding
-          const maxWidth = visualizationType === 'vowl' ? size * 5.0 : size * 4.5;
+          const maxWidth = visualizationType === 'vowl' ? size * 5.0 * widthScale : size * 4.5;
           const finalWidth = Math.min(rectWidth, maxWidth);
-          const rectHeight = visualizationType === 'vowl' ? size * 1.8 : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6);
+          const rectHeight = (visualizationType === 'vowl' ? size * 1.8 * heightScale : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6));
           nodeGroup.append('rect')
             .attr('class', 'node-shape')
             .attr('x', -finalWidth / 2)
@@ -3205,8 +3209,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         // Force mode classes OR default circle rendering
         if (visualizationType === 'force' && nodeType === 'class') {
           // Classes as light orange/peach ovals (ellipse) - larger size for better label fit
-          const ellipseWidth = size * 3.5;  // Wider for text
-          const ellipseHeight = size * 2.0; // Taller oval
+          const ellipseWidth = size * 3.5 * widthScale;  // Wider for text
+          const ellipseHeight = size * 2.0 * heightScale; // Taller oval
           nodeGroup.append('ellipse')
             .attr('class', 'node-shape')
             .attr('cx', 0)
@@ -3237,11 +3241,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
             .on('mouseout', handleNodeMouseOut);
         } else {
-          // Circle for classes, object properties, and other types - larger for OntoGraph
-          const circleRadius = visualizationType === 'vowl' 
-            ? size * 1.8 
+          // Circle for classes, object properties, and other types - larger for OntoGraph.
+          // A circle can't have independent width/height without becoming an ellipse, so
+          // the two user scale sliders are averaged here — vowl class truncation below
+          // uses the same average so the label budget always matches this radius.
+          const circleRadius = visualizationType === 'vowl'
+            ? size * 1.8 * ((widthScale + heightScale) / 2)
             // @ts-ignore - Type narrowing limitation: visualizationType can be 'ontograph' in other code paths
-            : (visualizationType === 'ontograph' ? size * 1.6 : size * 1.2);
+            : (visualizationType === 'ontograph' ? size * 1.6 : size * 1.2 * ((widthScale + heightScale) / 2));
           nodeGroup.append('circle')
             .attr('class', 'node-shape')
             .attr('r', circleRadius)
@@ -3392,9 +3399,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return 'start';
       })
       .attr('font-size', d => {
-        if (visualizationType === 'vowl') return d.type === 'setOperator' ? 18 : 11; // big glyph for ∪ ∩ ¬
+        if (visualizationType === 'vowl') return d.type === 'setOperator' ? 18 : vowlOptions.labelFontSize;
         if (visualizationType === 'ontograph') return 12;
-        if (visualizationType === 'force') return 11; // Smaller font for better fit in ovals
+        if (visualizationType === 'force') return vowlOptions.labelFontSize;
         if (visualizationType === 'spatial3d') return 10; // Compact to fit inside circle
         return 13;
       })
@@ -3444,27 +3451,30 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (d.type === 'setOperator') {
             return SET_OPERATOR_SYMBOLS[(d as any).metadata?.setOperator] || '∪';
           }
-          // Truncate labels in WebVOWL mode to fit within their shapes.
-          // Char budget derives from the actual shape width (≈7px/char at 11px
-          // font) so text can never spill outside the box.
+          // Truncate labels in WebVOWL mode to fit within their shapes. Char budget
+          // derives from the actual (scaled) shape width and chosen font size, so
+          // text can never spill outside the box regardless of the Notation &
+          // density panel's width/height/font-size sliders.
           const label = d.label || '';
           const size = d.size || settings.nodeSize;
+          const charWidthPx = vowlOptions.labelFontSize * (7 / 11); // 7px/char was calibrated at 11px font
           let maxChars = 18;
 
           if (d.type === 'datatype') {
-            // Rect width = size * 4.2, minus padding
-            maxChars = Math.max(4, Math.floor((size * 4.2 - 12) / 7));
+            // Rect width = size * 4.2 * widthScale, minus padding
+            maxChars = Math.max(4, Math.floor((size * 4.2 * widthScale - 12) / charWidthPx));
           } else if (d.type === 'individual') {
-            // Rect width capped at size * 5.0, minus padding
+            // Mirrors the rect sizing above (base/label-driven width, capped at size * 5.0 * widthScale)
             const label2 = d.label || '';
-            const baseWidth = size * 2.8;
+            const baseWidth = size * 2.8 * widthScale;
             const labelWidth = Math.min(label2.length * 7, 180);
             const rectWidth = Math.max(baseWidth, labelWidth + 16);
-            const finalWidth = Math.min(rectWidth, size * 5.0);
-            maxChars = Math.max(4, Math.floor((finalWidth - 10) / 7));
+            const finalWidth = Math.min(rectWidth, size * 5.0 * widthScale);
+            maxChars = Math.max(4, Math.floor((finalWidth - 10) / charWidthPx));
           } else if (d.type === 'class') {
-            // Circle radius = size * 1.8 → diameter-based budget
-            maxChars = Math.max(6, Math.floor((size * 3.6 - 8) / 7));
+            // Circle radius = size * 1.8 * avg(scale) → diameter-based budget
+            const diameter = size * 3.6 * ((widthScale + heightScale) / 2);
+            maxChars = Math.max(6, Math.floor((diameter - 8) / charWidthPx));
           }
 
           // User-set cap layers on top of the shape-fitted budget
@@ -3482,8 +3492,24 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return label.length > maxChars ? label.substring(0, maxChars - 2) + '..' : label;
         }
         if (visualizationType === 'force') {
+          // Shape-aware budget mirroring the vowl branch above — force-mode box sizes
+          // are fixed (not label-length-driven), so without this a long label simply
+          // spilled outside its oval/rect. Char budget derives from the actual (scaled)
+          // shape width and chosen font size.
           const label = d.label || '';
-          const maxChars = Math.min(20, vowlOptions.maxLabelChars);
+          const size = d.size || settings.nodeSize;
+          const charWidthPx = vowlOptions.labelFontSize * (7 / 11);
+          let maxChars = 18;
+
+          if (d.type === 'datatype') {
+            maxChars = Math.max(4, Math.floor((size * 2.2 * widthScale - 10) / charWidthPx));
+          } else if (d.type === 'individual') {
+            maxChars = Math.max(4, Math.floor((size * 3.2 * widthScale - 10) / charWidthPx));
+          } else if (d.type === 'class') {
+            maxChars = Math.max(6, Math.floor((size * 7.0 * widthScale - 10) / charWidthPx));
+          }
+
+          maxChars = Math.min(maxChars, vowlOptions.maxLabelChars);
           return label.length > maxChars ? label.substring(0, Math.max(1, maxChars - 3)) + '...' : label;
         }
         if (visualizationType === 'spatial3d') {
