@@ -1573,20 +1573,30 @@ public class ProjectController {
                 ));
             }
             
-            // If replaceFileId is provided, delete the old file first
+            // If replaceFileId is provided, delete the old file first.
+            // The GridFS blob delete and the metadata removal are intentionally in SEPARATE
+            // try/catch blocks: if the GridFS delete throws, the old file's metadata must
+            // still be marked removed, or it keeps counting toward the user's storage quota
+            // forever (a leaked GridFS blob just wastes disk space — far less harmful than
+            // silently double-billing a user's quota against a file that's no longer active).
             if (replaceFileId != null && !replaceFileId.isEmpty()) {
-                try {
-                    Optional<FileMetadata> oldFileMeta = fileMetadataRepository.findById(replaceFileId);
-                    if (oldFileMeta.isPresent() && oldFileMeta.get().getGridfsId() != null) {
+                Optional<FileMetadata> oldFileMeta = fileMetadataRepository.findById(replaceFileId);
+                if (oldFileMeta.isPresent() && oldFileMeta.get().getGridfsId() != null) {
+                    try {
                         gridFsTemplate.delete(Query.query(Criteria.where("_id").is(new ObjectId(oldFileMeta.get().getGridfsId()))));
                         log.info("Deleted old GridFS object during replace: {}", oldFileMeta.get().getGridfsId());
+                    } catch (Exception e) {
+                        log.warn("Failed to delete old GridFS object {} during replace — continuing so the " +
+                                "metadata is still marked removed: {}", oldFileMeta.get().getGridfsId(), e.getMessage());
                     }
+                }
+                try {
                     projectService.removeFile(projectId, user.getId(), replaceFileId);
                     fileMetadataRepository.deleteById(replaceFileId);
                     log.info("Replaced existing file: {} with ID: {}", fileName, replaceFileId);
                 } catch (Exception e) {
-                    log.warn("Error deleting old file during replacement: {}", e.getMessage());
-                    // Continue with upload even if deletion fails
+                    log.warn("Error removing old file metadata during replacement: {}", e.getMessage());
+                    // Continue with upload even if this fails
                 }
             }
             
