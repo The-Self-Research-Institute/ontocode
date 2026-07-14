@@ -587,8 +587,14 @@ public class ProjectImportService {
                     message = String.format("Importing... (%d%%)", percent);
                 } else if (elapsedMs > 0) {
                     long elapsedSec = elapsedMs / 1000;
-                    percent = (int) Math.min(85, 10 + (elapsedSec / 30));
-                    message = String.format("Loading ontology data… (%dm %02ds elapsed)",
+                    // Byte-level progress isn't available for a direct GSP PUT upload (the JDK
+                    // HTTP client's file body publisher has no progress hook — see directHttpUpload's
+                    // 5s heartbeat in SparqlDatasetService). The old formula only advanced 1% every
+                    // 30s, so between heartbeat ticks the number sat frozen for ~25s stretches even
+                    // while the upload was actively running — users read that as "stuck". Advance it
+                    // every heartbeat tick instead and be explicit this is a time estimate, not a byte count.
+                    percent = (int) Math.min(90, 10 + (elapsedSec / 5));
+                    message = String.format("Uploading large file… still in progress (%dm %02ds elapsed) — this can take several minutes",
                             elapsedSec / 60, elapsedSec % 60);
                 } else {
                     percent = 5;
