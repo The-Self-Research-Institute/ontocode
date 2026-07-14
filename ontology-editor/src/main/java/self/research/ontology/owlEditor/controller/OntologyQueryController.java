@@ -462,6 +462,86 @@ public class OntologyQueryController {
         }
     }
 
+    /**
+     * Best-effort children fetch shared by {@code children()} and {@code descendants()} below.
+     * Empty means "not ready yet" (hierarchy index still building, or SPARQL query still
+     * running) — callers must treat that as retry-later, not "no children".
+     */
+    private Optional<List<self.research.ontology.owlEditor.dto.OntologyDto.TreeNode>> fetchChildrenOrEmpty(
+            String projectId, String parentIri,
+            org.semanticweb.owlapi.model.parameters.Imports importsScope) {
+        if (preferOwlApiPath(projectId)
+                && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            return Optional.of(desktopHierarchyService.children(projectId, parentIri, MAX_DESCENDANTS, 0, importsScope));
+        }
+        String userId = SparqlQueryContext.getUserId();
+        boolean hasDraft = userId != null && datasetService != null
+                && datasetService.hasActiveDraftOverlay(projectId, userId);
+        if (!hasDraft) {
+            Optional<List<self.research.ontology.owlEditor.dto.OntologyDto.TreeNode>> snap =
+                    hierarchyIndexService.children(projectId, parentIri, MAX_DESCENDANTS, 0);
+            if (snap.isPresent()) return snap;
+            if (hierarchyIndexService.isEnabled() && !hierarchyIndexService.allowsLegacySparqlFallback()) {
+                return Optional.empty();
+            }
+        }
+        try {
+            return Optional.of(queryService.children(projectId, parentIri, MAX_DESCENDANTS, 0));
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    private static final int MAX_DESCENDANTS = 5000;
+
+    /**
+     * All asserted descendants of a class (BFS over the same children source used by
+     * /classes/children), for the "delete class + descendants" confirmation dialog.
+     */
+    @GetMapping("/classes/descendants/{projectId:.+}")
+    public ResponseEntity<?> descendants(@PathVariable String projectId,
+                                         @RequestParam String parentIri,
+                                         @RequestParam(defaultValue = "active") String scope) {
+        org.semanticweb.owlapi.model.parameters.Imports importsScope =
+                "closure".equalsIgnoreCase(scope)
+                        ? org.semanticweb.owlapi.model.parameters.Imports.INCLUDED
+                        : org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
+
+        java.util.LinkedHashMap<String, String> found = new java.util.LinkedHashMap<>();
+        java.util.ArrayDeque<String> frontier = new java.util.ArrayDeque<>();
+        frontier.add(parentIri);
+        boolean truncated = false;
+
+        while (!frontier.isEmpty()) {
+            String node = frontier.poll();
+            Optional<List<self.research.ontology.owlEditor.dto.OntologyDto.TreeNode>> kids =
+                    fetchChildrenOrEmpty(projectId, node, importsScope);
+            if (kids.isEmpty()) {
+                Map<String, Object> pending = new java.util.LinkedHashMap<>();
+                pending.put("success", false);
+                pending.put("message", "Class hierarchy is still loading. Please retry.");
+                return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
+            }
+            for (self.research.ontology.owlEditor.dto.OntologyDto.TreeNode child : kids.get()) {
+                if (child.getId() == null || found.containsKey(child.getId())) continue; // already visited (asserted-hierarchy cycle guard)
+                if (found.size() >= MAX_DESCENDANTS) {
+                    truncated = true;
+                    break;
+                }
+                found.put(child.getId(), child.getLabel());
+                frontier.add(child.getId());
+            }
+            if (truncated) break;
+        }
+
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("success", true);
+        body.put("iris", new java.util.ArrayList<>(found.keySet()));
+        body.put("labels", found);
+        body.put("truncated", truncated);
+        return ResponseEntity.ok(body);
+    }
+
     @GetMapping("/properties/{projectId:.+}")
     public ResponseEntity<?> properties(@PathVariable String projectId,
                                         @RequestParam(required = false) String type,

@@ -155,6 +155,7 @@ import {
   ReasonerSettingsDialog,
   PluginPlaceholder,
   ConfirmDialog,
+  DeleteClassDialog,
   DuplicateFileDialog,
   SaveErrorDialog,
   LintProblemsPanel,
@@ -2086,6 +2087,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Prevents concurrent mutations (delete, rename, etc.) that would fire multiple simultaneous
   // SPARQL UPDATEs against GraphDB Free (2-connection cap) and trigger 504s.
   const isMutatingRef = useRef(false);
+
+  // Protégé-style class delete dialog (radio choice: class only vs. class + asserted descendants).
+  // Separate from confirmDialog above since it needs its own descendant-fetch + radio state.
+  const [deleteClassDialog, setDeleteClassDialog] = useState<{
+    isOpen: boolean;
+    iri: string;
+    label: string;
+  }>({ isOpen: false, iri: "", label: "" });
 
   // Dedicated unsaved-changes warning dialog (separate from generic confirmDialog)
   const [unsavedChangesDialog, setUnsavedChangesDialog] = useState<{
@@ -10665,6 +10674,61 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
   }, [projectId, mainTab, selectedItem, selectedClassForIndividuals, entitiesTab, classHierarchy, updateItemInState, showNotification, user, refreshClassHierarchy]);
 
+  // Deletes one or more classes (a single class, or a class + its asserted descendants
+  // from DeleteClassDialog) in one atomic request, then reconciles local state for all of them.
+  const performDeleteClasses = useCallback(
+    async (iris: string[]) => {
+      if (!projectId || iris.length === 0) return;
+      if (isMutatingRef.current) {
+        showNotification("Please wait for the current operation to finish before deleting another item.", "warning");
+        return;
+      }
+      isMutatingRef.current = true;
+      try {
+        if (iris.length === 1) {
+          await ontologyMutationService.deleteClass(
+            projectId, iris[0], user?.email || "anonymous", user?.username || "Anonymous",
+          );
+        } else {
+          await ontologyMutationService.deleteClasses(
+            projectId, iris, user?.email || "anonymous", user?.username || "Anonymous",
+          );
+        }
+
+        const idSet = new Set(iris);
+        const removeNodesRecursively = (nodes: TreeNode[]): TreeNode[] =>
+          nodes
+            .filter((node) => !idSet.has(node.id))
+            .map((node) => (node.children ? { ...node, children: removeNodesRecursively(node.children) } : node));
+        setClassHierarchy((prev) => removeNodesRecursively(prev));
+        // Remove individuals whose only type(s) were among the deleted classes
+        setIndividuals((prev) => prev.filter((ind) => !(ind as any).types?.some((t: string) => idSet.has(t))));
+        // Evict deleted classes from annotation cache
+        setHierarchyAnnotationValues((prev) => {
+          const m = new Map(prev);
+          idSet.forEach((id) => m.delete(id));
+          return m;
+        });
+        idSet.forEach((id) => fetchedAnnotationIrisRef.current.delete(id));
+        setSelectedItem((prev) => (prev && idSet.has(prev.id) ? null : prev));
+        setMetadata((prev) =>
+          prev ? { ...prev, classCount: Math.max(0, ((prev as any).classCount || 0) - iris.length) } : prev,
+        );
+        console.log(`[MUTATION:delete] ✓ Classes:${iris.join(", ")}`);
+        showNotification(
+          iris.length > 1 ? `Deleted ${iris.length} classes successfully!` : "Class deleted successfully!",
+          "info",
+        );
+      } catch (error) {
+        console.error("Failed to delete class(es):", error);
+        showNotification("Failed to delete item. See console for details.", "error");
+      } finally {
+        isMutatingRef.current = false;
+      }
+    },
+    [projectId, user, showNotification],
+  );
+
   const handleDeleteItem = useCallback(
     async (itemOverride?: SelectableItem, tabOverride?: typeof entitiesTab) => {
       const item = itemOverride || selectedItem;
@@ -10691,6 +10755,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      // Classes get the Protégé-style "delete only" vs "delete + descendants" dialog instead
+      // of the generic confirm dialog — see performDeleteClasses/DeleteClassDialog.
+      if (activeTab === "Classes") {
+        setDeleteClassDialog({ isOpen: true, iri: item.id, label: item.label });
+        return;
+      }
+
       // Show confirm dialog instead of using confirm()
       setConfirmDialog({
         isOpen: true,
@@ -10701,16 +10772,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           try {
             console.log("[DELETE] Deleting item:", { id: item.id, label: item.label, tab: activeTab });
 
-            // Call backend API based on entity type
+            // Call backend API based on entity type (Classes are handled by performDeleteClasses)
             switch (activeTab) {
-              case "Classes":
-                await ontologyMutationService.deleteClass(
-                  projectId,
-                  item.id,
-                  user?.email || "anonymous",
-                  user?.username || "Anonymous",
-                );
-                break;
               case "Individuals":
                 await ontologyMutationService.deleteIndividual(
                   projectId,
@@ -10753,23 +10816,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                 break;
             }
 
-            // Update local state
+            // Update local state (Classes are handled by performDeleteClasses)
             switch (activeTab) {
-              case "Classes": {
-                const removeNodeRecursively = (nodes: TreeNode[], id: string): TreeNode[] =>
-                  nodes
-                    .filter((node) => node.id !== id)
-                    .map((node) =>
-                      node.children ? { ...node, children: removeNodeRecursively(node.children, id) } : node,
-                    );
-                setClassHierarchy((prev) => removeNodeRecursively(prev, item.id));
-                // Remove individuals whose only type was the deleted class
-                setIndividuals((prev) => prev.filter((ind) => !(ind as any).types?.includes(item.id)));
-                // Evict deleted class from annotation cache
-                setHierarchyAnnotationValues((prev) => { const m = new Map(prev); m.delete(item.id); return m; });
-                fetchedAnnotationIrisRef.current.delete(item.id);
-                break;
-              }
               case "Individuals":
                 setIndividuals((prev) => prev.filter((ind) => ind.id !== item.id));
                 break;
@@ -16559,6 +16607,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         message={confirmDialog.message}
         confirmLabel={confirmDialog.confirmLabel}
         cancelLabel={confirmDialog.cancelLabel}
+      />
+      <DeleteClassDialog
+        isOpen={deleteClassDialog.isOpen}
+        onClose={() => setDeleteClassDialog((prev) => ({ ...prev, isOpen: false }))}
+        label={deleteClassDialog.label}
+        fetchDescendants={() =>
+          projectId
+            ? ontologyMutationService.getDescendants(projectId, deleteClassDialog.iri)
+            : Promise.resolve({ iris: [], truncated: false })
+        }
+        onConfirm={(withDescendants, descendantIris) => {
+          void performDeleteClasses(withDescendants ? [deleteClassDialog.iri, ...descendantIris] : [deleteClassDialog.iri]);
+        }}
       />
       <SaveErrorDialog
         isOpen={!!codeViewSaveError}
