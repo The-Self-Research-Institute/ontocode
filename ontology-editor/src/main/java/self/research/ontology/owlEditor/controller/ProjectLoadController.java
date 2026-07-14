@@ -98,6 +98,7 @@ public class ProjectLoadController {
     private final SimpMessagingTemplate messagingTemplate;
     private final SparqlDatasetService datasetService;
     private final ProjectRepository projectRepository;
+    private final self.research.ontology.owlEditor.service.OntologyExportJobService exportJobService;
 
     // Desktop-only — null in cloud
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -146,7 +147,8 @@ public class ProjectLoadController {
                                  ProjectRepository projectRepository,
                                  OntologyPreparseService preparseService,
                                  ImportWorkerDispatcher importWorkerDispatcher,
-                                 MongoTemplate mongoTemplate) {
+                                 MongoTemplate mongoTemplate,
+                                 self.research.ontology.owlEditor.service.OntologyExportJobService exportJobService) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
@@ -161,6 +163,7 @@ public class ProjectLoadController {
         this.preparseService = preparseService;
         this.importWorkerDispatcher = importWorkerDispatcher;
         this.mongoTemplate = mongoTemplate;
+        this.exportJobService = exportJobService;
     }
 
     @PostMapping("/upload/{projectId:.+}")  // Allow slashes in path variable
@@ -969,6 +972,81 @@ public class ProjectLoadController {
             log.error("Export failed", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Async export: submit-then-poll variant of /export/{projectId} above.
+    // Large ontologies can take longer to export than the frontend's client-side
+    // timeouts (10 min in the browser, 5 min in the VS Code extension host) even
+    // though the backend/gateway/ingress are all configured for up to 2 hours —
+    // the client gives up while the server is still working, which surfaces as a
+    // misleading "blocked by CORS policy" network error since no response ever
+    // completed. The old synchronous endpoint above is left untouched for any
+    // other caller; these are purely additive.
+    // ──────────────────────────────────────────────────────────────────────
+
+    @PostMapping("/export-async/{projectId:.+}")
+    public ResponseEntity<Map<String, Object>> submitExportJob(@PathVariable String projectId,
+                                                                @RequestParam(defaultValue = "rdfxml") String format) {
+        try {
+            self.research.ontology.owlEditor.model.ExportJob job = exportJobService.submit(projectId, format);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "jobId", job.getJobId(),
+                    "status", job.getStatus().name()
+            ));
+        } catch (Exception e) {
+            log.error("Failed to submit export job for project {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+        }
+    }
+
+    @GetMapping("/export-async/status/{jobId}")
+    public ResponseEntity<Map<String, Object>> exportJobStatus(@PathVariable String jobId) {
+        return exportJobService.getStatus(jobId)
+                .map(job -> {
+                    Map<String, Object> data = new java.util.LinkedHashMap<>();
+                    data.put("success", true);
+                    data.put("status", job.getStatus().name());
+                    if (job.getError() != null) {
+                        data.put("error", job.getError());
+                    }
+                    return ResponseEntity.ok(data);
+                })
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("success", false, "error", "Export job not found. It may have expired — please retry the export.")));
+    }
+
+    @GetMapping("/export-async/download/{jobId}")
+    public ResponseEntity<?> downloadExportJobResult(@PathVariable String jobId) {
+        Optional<self.research.ontology.owlEditor.model.ExportJob> jobOpt = exportJobService.getStatus(jobId);
+        if (jobOpt.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("success", false, "error", "Export job not found. It may have expired — please retry the export."));
+        }
+        self.research.ontology.owlEditor.model.ExportJob job = jobOpt.get();
+        if (job.getStatus() == self.research.ontology.owlEditor.model.ExportJob.Status.ERROR) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error", job.getError() != null ? job.getError() : "Export failed"));
+        }
+        if (job.getStatus() != self.research.ontology.owlEditor.model.ExportJob.Status.COMPLETED || job.getResultPath() == null) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("success", false, "error", "Export is still processing", "status", job.getStatus().name()));
+        }
+        try {
+            Path exportPath = job.getResultPath();
+            InputStreamResource resource = new InputStreamResource(Files.newInputStream(exportPath));
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .contentLength(Files.size(exportPath))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + exportPath.getFileName())
+                    .body(resource);
+        } catch (IOException e) {
+            log.error("Failed to stream completed export job {}", jobId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
         }
     }
 
