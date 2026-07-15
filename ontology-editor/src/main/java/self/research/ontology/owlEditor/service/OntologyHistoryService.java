@@ -70,6 +70,33 @@ public class OntologyHistoryService {
         IRI editIRI = vf.createIRI(HISTORY_NS + "edit/" + editId);
         long timestamp = System.currentTimeMillis();
 
+        // Mongo first: history_changes powers the Change Assistant and collaboration
+        // views, and must survive Fuseki being down (desktop defers Fuseki startup —
+        // OWLAPI-first mode — so the RDF write below can fail with connection refused).
+        try {
+            Map<String, Object> changeData = new HashMap<>();
+            changeData.put("userId", userId);
+            changeData.put("username", username);
+            changeData.put("operationType", operationType);
+            changeData.put("timestamp", timestamp);
+
+            if (entityIRI != null) changeData.put("entityIRI", entityIRI);
+            if (entityLabel != null) changeData.put("entityLabel", entityLabel);
+            if (oldValue != null) changeData.put("oldValue", oldValue);
+            if (newValue != null) changeData.put("newValue", newValue);
+            if (description != null) changeData.put("description", description);
+            if (annotationProperty != null) changeData.put("annotationProperty", annotationProperty);
+
+            // Determine entity type from operation
+            String entityType = determineEntityType(operationType);
+            changeData.put("entityType", entityType);
+
+            historySyncService.syncChange(projectId, editId, changeData);
+        } catch (Exception e) {
+            log.error("[OntologyHistory] Failed to sync change to MongoDB", e);
+        }
+
+        // RDF history graph: best-effort mirror in the triple store.
         try (RepositoryConnection conn = datasetService.getRepository().getConnection()) {
             conn.begin();
 
@@ -102,32 +129,9 @@ public class OntologyHistoryService {
 
             conn.commit();
             log.debug("[OntologyHistory] Recorded edit: {} by {} on {}", operationType, username, entityIRI);
-
-            // Sync to MongoDB for collaboration features
-            try {
-                Map<String, Object> changeData = new HashMap<>();
-                changeData.put("userId", userId);
-                changeData.put("username", username);
-                changeData.put("operationType", operationType);
-                changeData.put("timestamp", timestamp);
-
-                if (entityIRI != null) changeData.put("entityIRI", entityIRI);
-                if (entityLabel != null) changeData.put("entityLabel", entityLabel);
-                if (oldValue != null) changeData.put("oldValue", oldValue);
-                if (newValue != null) changeData.put("newValue", newValue);
-                if (description != null) changeData.put("description", description);
-                if (annotationProperty != null) changeData.put("annotationProperty", annotationProperty);
-
-                // Determine entity type from operation
-                String entityType = determineEntityType(operationType);
-                changeData.put("entityType", entityType);
-
-                historySyncService.syncChange(projectId, editId, changeData);
-            } catch (Exception e) {
-                log.error("[OntologyHistory] Failed to sync change to MongoDB", e);
-            }
         } catch (Exception e) {
-            log.error("[OntologyHistory] Failed to record edit history", e);
+            log.warn("[OntologyHistory] Failed to record edit in triple store (change is saved in MongoDB): {}",
+                    e.getMessage());
         }
     }
 

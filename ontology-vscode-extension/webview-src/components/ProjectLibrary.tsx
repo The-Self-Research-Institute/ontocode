@@ -945,20 +945,22 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-4">
-              <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0">
                 <ArrowLeft size={20} className="text-gray-600" />
               </button>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">{projectName}</h1>
-                <p className="text-sm text-gray-500">Project Library</p>
+              <div className="min-w-0">
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate" title={projectName}>
+                  {projectName}
+                </h1>
+                <p className="text-xs sm:text-sm text-gray-500">Project Library</p>
               </div>
             </div>
 
             {storageUsage && (
-              <div className="flex flex-col gap-1 min-w-[180px]">
+              <div className="flex flex-col gap-1 min-w-0 sm:min-w-[180px] flex-shrink-0">
                 <div className="flex items-center justify-between text-xs text-gray-500">
                   <span>{storageUsage.usedMB} MB used</span>
                   <span>{storageUsage.limitGB === -1 ? "Unlimited" : `${storageUsage.limitGB} GB`}</span>
@@ -978,11 +980,11 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               </div>
             )}
 
-            <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col items-start sm:items-end gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
               <button
                 onClick={handleCreateNewFile}
-                className={`px-2.5 py-1.5 text-xs border rounded-md transition-colors flex items-center gap-1.5 font-medium ${
+                className={`px-2 sm:px-2.5 py-1.5 text-xs border rounded-md transition-colors flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap ${
                   userProjectRole === "VIEWER"
                     ? "text-gray-400 border-gray-200 bg-gray-50 cursor-not-allowed opacity-60"
                     : "text-green-600 border-green-300 bg-green-50 hover:bg-green-100"
@@ -991,7 +993,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 disabled={userProjectRole === "VIEWER"}
               >
                 <Plus size={14} />
-                New File
+                <span className="hidden sm:inline">New File</span>
+                <span className="sm:hidden">+</span>
               </button>
               {onOpenEditor && (
                 <button
@@ -1017,7 +1020,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 Report Issue
               </button>
               <label
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${
                   userProjectRole === "VIEWER"
                     ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-60"
                     : "hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
@@ -1025,12 +1028,15 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 title={userProjectRole === "VIEWER" ? "Viewers cannot upload files" : ""}
               >
                 <Upload
-                  size={18}
+                  size={16}
                   className={uploading ? "animate-bounce" : ""}
                   style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}
                 />
-                <span style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
+                <span className="hidden sm:inline" style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
                   {uploading ? "Uploading..." : "Upload File"}
+                </span>
+                <span className="sm:hidden" style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
+                  {uploading ? "..." : "📤"}
                 </span>
                 {userProjectRole !== "VIEWER" && (
                   <input
@@ -1043,13 +1049,13 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 )}
               </label>
             </div>
-            <p className="text-xs text-gray-500 max-w-xl text-right">
+            <p className="text-xs text-gray-500 max-w-xl text-left sm:text-right w-full sm:w-auto">
               {FILE_UPLOAD_GUIDANCE}
             </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
             <div className="flex-1 relative">
               <Search size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
               <input
@@ -1057,11 +1063,11 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search files..."
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
               />
             </div>
 
-            <div className="flex items-center gap-2 border border-gray-300 rounded-lg p-1">
+            <div className="flex items-center gap-2 border border-gray-300 rounded-lg p-1 flex-shrink-0">
               <button
                 onClick={() => setViewMode("grid")}
                 className={`p-2 rounded ${viewMode === "grid" ? "bg-purple-100 text-purple-600" : "text-gray-600 hover:bg-gray-100"}`}
@@ -1133,7 +1139,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         )}
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-6 py-6 overflow-y-auto" style={{ maxHeight: "calc(100vh - 280px)" }}>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 overflow-y-auto" style={{ maxHeight: "calc(100vh - 240px)" }}>
         {loading ? (
           <div className="py-4">
             <div className="flex items-center gap-2 mb-4 text-sm text-purple-600">

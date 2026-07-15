@@ -20,18 +20,27 @@ public class AxiomAnnotationService {
     private final StorageManager storageManager;
     private final SparqlDatasetService datasetService;
     private final AxiomLookupService axiomLookupService;
+    private final OntologyMutationService mutationService;
 
     public AxiomAnnotationService(StorageManager storageManager,
                                   SparqlDatasetService datasetService,
-                                  AxiomLookupService axiomLookupService) {
+                                  AxiomLookupService axiomLookupService,
+                                  @org.springframework.context.annotation.Lazy OntologyMutationService mutationService) {
         this.storageManager = storageManager;
         this.datasetService = datasetService;
         this.axiomLookupService = axiomLookupService;
+        this.mutationService = mutationService;
     }
 
     public List<Map<String, String>> getAnnotations(String projectId, String entityIri,
                                                     String relatedIri, String sectionName) throws Exception {
-        OWLOntology ontology = loadOntology(projectId);
+        return getAnnotations(projectId, entityIri, relatedIri, sectionName, false, null);
+    }
+
+    public List<Map<String, String>> getAnnotations(String projectId, String entityIri,
+                                                    String relatedIri, String sectionName,
+                                                    boolean draft, String userId) throws Exception {
+        OWLOntology ontology = loadOntology(projectId, draft, userId);
         OWLAxiom axiom = axiomLookupService.findFirst(ontology, entityIri, relatedIri, sectionName);
         if (axiom == null) {
             return List.of();
@@ -45,6 +54,12 @@ public class AxiomAnnotationService {
 
     public void addAnnotation(String projectId, String entityIri, String relatedIri, String sectionName,
                               String annotationProperty, String value, String language) throws Exception {
+        addAnnotation(projectId, entityIri, relatedIri, sectionName, annotationProperty, value, language, false, null);
+    }
+
+    public void addAnnotation(String projectId, String entityIri, String relatedIri, String sectionName,
+                              String annotationProperty, String value, String language,
+                              boolean draft, String userId) throws Exception {
         if (annotationProperty == null || annotationProperty.isBlank()) {
             throw new IllegalArgumentException("annotationProperty is required");
         }
@@ -52,7 +67,7 @@ public class AxiomAnnotationService {
             throw new IllegalArgumentException("value is required");
         }
 
-        OWLOntology ontology = loadOntology(projectId);
+        OWLOntology ontology = loadOntology(projectId, draft, userId);
         OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
         OWLAxiom axiom = axiomLookupService.findFirst(ontology, entityIri, relatedIri, sectionName);
         if (axiom == null) {
@@ -65,12 +80,17 @@ public class AxiomAnnotationService {
 
         OWLAxiom base = axiom.getAxiomWithoutAnnotations();
         OWLAxiom annotated = base.getAnnotatedAxiom(merged);
-        replaceAxiom(projectId, base, annotated);
+        replaceAxiom(projectId, base, annotated, draft, userId);
     }
 
     public void deleteAnnotation(String projectId, String entityIri, String relatedIri, String sectionName,
                                  String annotationProperty, String value) throws Exception {
-        OWLOntology ontology = loadOntology(projectId);
+        deleteAnnotation(projectId, entityIri, relatedIri, sectionName, annotationProperty, value, false, null);
+    }
+
+    public void deleteAnnotation(String projectId, String entityIri, String relatedIri, String sectionName,
+                                 String annotationProperty, String value, boolean draft, String userId) throws Exception {
+        OWLOntology ontology = loadOntology(projectId, draft, userId);
         OWLAxiom axiom = axiomLookupService.findFirst(ontology, entityIri, relatedIri, sectionName);
         if (axiom == null) {
             throw new IllegalArgumentException("Could not locate axiom for annotation removal");
@@ -91,10 +111,11 @@ public class AxiomAnnotationService {
 
         OWLAxiom base = axiom.getAxiomWithoutAnnotations();
         OWLAxiom updated = remaining.isEmpty() ? base : base.getAnnotatedAxiom(remaining);
-        replaceAxiom(projectId, base, updated);
+        replaceAxiom(projectId, base, updated, draft, userId);
     }
 
-    private void replaceAxiom(String projectId, OWLAxiom previous, OWLAxiom next) throws Exception {
+    private void replaceAxiom(String projectId, OWLAxiom previous, OWLAxiom next, boolean draft, String userId)
+            throws Exception {
         String delete = OwlAxiomSparqlWriter.toDeleteData(Set.of(previous));
         if (delete.isBlank()) {
             throw new IllegalStateException("Failed to serialize axiom for replacement");
@@ -103,8 +124,8 @@ public class AxiomAnnotationService {
         if (insert.isBlank()) {
             throw new IllegalStateException("Failed to serialize annotated axiom");
         }
-        datasetService.execUpdate(projectId, delete + ";\n" + insert);
-        log.info("Updated axiom annotations for project {}", projectId);
+        mutationService.applyRawUpdate(projectId, delete + ";\n" + insert, draft, userId);
+        log.info("Updated axiom annotations for project {} (draft={})", projectId, draft);
     }
 
     private OWLAnnotation buildAnnotation(OWLDataFactory df, String propertyIri, String value, String language) {
@@ -145,6 +166,25 @@ public class AxiomAnnotationService {
     }
 
     private OWLOntology loadOntology(String projectId) throws Exception {
+        return loadOntology(projectId, false, null);
+    }
+
+    /**
+     * Draft-aware load: in draft mode, parse the copy-on-switch draft graph (a full snapshot
+     * including the user's edits) so axiom lookups find draft-only axioms. Public mode reads
+     * the main-graph export as before.
+     */
+    private OWLOntology loadOntology(String projectId, boolean draft, String userId) throws Exception {
+        if (draft && userId != null && !userId.isBlank()) {
+            String draftGraph = datasetService.getDraftGraphUri(projectId, userId);
+            String rdf = datasetService.exportNamedGraph(
+                    projectId, draftGraph, org.eclipse.rdf4j.rio.RDFFormat.RDFXML);
+            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
+                    .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
+            return manager.loadOntologyFromOntologyDocument(
+                    new org.semanticweb.owlapi.io.StringDocumentSource(rdf), config);
+        }
         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         return manager.loadOntologyFromOntologyDocument(exportPath.toFile());

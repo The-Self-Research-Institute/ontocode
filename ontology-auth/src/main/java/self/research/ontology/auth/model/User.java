@@ -79,6 +79,11 @@ public class User {
     // Pending checkout lock — cleared once checkout.session.completed fires
     private String pendingCheckoutSessionId;
     private LocalDateTime pendingCheckoutCreatedAt;
+    // Subscription-create lock — claimed atomically to prevent a double-submit
+    // (e.g. retried /subscribe request) from creating two Stripe subscriptions.
+    // Cleared once the create attempt finishes (success or failure); stale
+    // locks expire after StripeService.CREATION_LOCK_TTL_SECONDS.
+    private LocalDateTime subscriptionCreationLockedAt;
 
     // Constructors
     public User() {
@@ -311,4 +316,7 @@ public class User {
 
     public LocalDateTime getPendingCheckoutCreatedAt() { return pendingCheckoutCreatedAt; }
     public void setPendingCheckoutCreatedAt(LocalDateTime pendingCheckoutCreatedAt) { this.pendingCheckoutCreatedAt = pendingCheckoutCreatedAt; }
+
+    public LocalDateTime getSubscriptionCreationLockedAt() { return subscriptionCreationLockedAt; }
+    public void setSubscriptionCreationLockedAt(LocalDateTime subscriptionCreationLockedAt) { this.subscriptionCreationLockedAt = subscriptionCreationLockedAt; }
 }

@@ -1441,8 +1441,8 @@ public class ProjectController {
                 return ResponseEntity.badRequest().body(Map.of("error", "File data is required"));
             }
             
-            if (!fileName.matches(".*\\.(owl|rdf|ttl|n3)$")) {
-                return ResponseEntity.badRequest().body(Map.of("error", "Invalid file type. Only .owl, .rdf, .ttl, .n3 files are allowed"));
+            if (!fileName.matches(".*\\.(owl|rdf|ttl|n3|nt|jsonld)$")) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Invalid file type. Only .owl, .rdf, .ttl, .n3, .nt, .jsonld files are allowed"));
             }
 
             // Extract file extension
@@ -1526,8 +1526,16 @@ public class ProjectController {
             }
             
             Workspace workspace = workspaceOpt.get();
-            String subscriptionPlan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
             String ownerId = workspace.getOwnerId();
+            // Prefer the owner's User-record plan (kept in sync by billing webhooks)
+            // over the workspace-level field, which may be null for older workspaces.
+            String subscriptionPlan;
+            Optional<User> ownerUserOpt = userRepository.findById(ownerId);
+            if (ownerUserOpt.isPresent() && ownerUserOpt.get().getSubscriptionPlanName() != null) {
+                subscriptionPlan = ownerUserOpt.get().getSubscriptionPlanName();
+            } else {
+                subscriptionPlan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+            }
 
             // Storage quota is shared across ALL workspaces owned by the same account.
             long currentStorageBytes = calculateOwnerStorageUsage(ownerId);
@@ -1565,20 +1573,30 @@ public class ProjectController {
                 ));
             }
             
-            // If replaceFileId is provided, delete the old file first
+            // If replaceFileId is provided, delete the old file first.
+            // The GridFS blob delete and the metadata removal are intentionally in SEPARATE
+            // try/catch blocks: if the GridFS delete throws, the old file's metadata must
+            // still be marked removed, or it keeps counting toward the user's storage quota
+            // forever (a leaked GridFS blob just wastes disk space — far less harmful than
+            // silently double-billing a user's quota against a file that's no longer active).
             if (replaceFileId != null && !replaceFileId.isEmpty()) {
-                try {
-                    Optional<FileMetadata> oldFileMeta = fileMetadataRepository.findById(replaceFileId);
-                    if (oldFileMeta.isPresent() && oldFileMeta.get().getGridfsId() != null) {
+                Optional<FileMetadata> oldFileMeta = fileMetadataRepository.findById(replaceFileId);
+                if (oldFileMeta.isPresent() && oldFileMeta.get().getGridfsId() != null) {
+                    try {
                         gridFsTemplate.delete(Query.query(Criteria.where("_id").is(new ObjectId(oldFileMeta.get().getGridfsId()))));
                         log.info("Deleted old GridFS object during replace: {}", oldFileMeta.get().getGridfsId());
+                    } catch (Exception e) {
+                        log.warn("Failed to delete old GridFS object {} during replace — continuing so the " +
+                                "metadata is still marked removed: {}", oldFileMeta.get().getGridfsId(), e.getMessage());
                     }
+                }
+                try {
                     projectService.removeFile(projectId, user.getId(), replaceFileId);
                     fileMetadataRepository.deleteById(replaceFileId);
                     log.info("Replaced existing file: {} with ID: {}", fileName, replaceFileId);
                 } catch (Exception e) {
-                    log.warn("Error deleting old file during replacement: {}", e.getMessage());
-                    // Continue with upload even if deletion fails
+                    log.warn("Error removing old file metadata during replacement: {}", e.getMessage());
+                    // Continue with upload even if this fails
                 }
             }
             
@@ -1912,11 +1930,11 @@ public class ProjectController {
         @NotBlank(message = "Email is required")
         public String email;
 
-        /** Project-level role: ADMIN, EDITOR, or VIEWER */
+        /** Project-level role: ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER */
         @NotBlank(message = "Role is required")
         @Pattern(
-            regexp = "^(ADMIN|EDITOR|VIEWER)$",
-            message = "Invalid role. Must be ADMIN, EDITOR, or VIEWER"
+            regexp = "^(ADMIN|EDITOR|DRAFT_EDITOR|VIEWER)$",
+            message = "Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER"
         )
         public String role;
     }

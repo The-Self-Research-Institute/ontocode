@@ -26,10 +26,12 @@ public class AxiomAnnotationController {
     public ResponseEntity<?> getAnnotations(@PathVariable String projectId,
                                             @RequestParam String entityIri,
                                             @RequestParam String relatedIri,
-                                            @RequestParam(required = false) String sectionName) {
+                                            @RequestParam(required = false) String sectionName,
+                                            @RequestParam(required = false, defaultValue = "false") boolean draft,
+                                            @RequestParam(required = false) String userId) {
         try {
             List<Map<String, String>> annotations = axiomAnnotationService.getAnnotations(
-                    projectId, entityIri, relatedIri, sectionName);
+                    projectId, entityIri, relatedIri, sectionName, draft, userId);
             return ResponseEntity.ok(Map.of("success", true, "annotations", annotations));
         } catch (Exception e) {
             log.error("Failed to get axiom annotations for project {}", projectId, e);
@@ -41,7 +43,9 @@ public class AxiomAnnotationController {
 
     @PostMapping("/{projectId}/axiom-annotations")
     public ResponseEntity<?> addAnnotation(@PathVariable String projectId,
-                                           @RequestBody AxiomAnnotationRequest request) {
+                                           @RequestBody AxiomAnnotationRequest request,
+                                           @RequestParam(required = false, defaultValue = "false") boolean draft,
+                                           @RequestParam(required = false) String userId) {
         try {
             axiomAnnotationService.addAnnotation(
                     projectId,
@@ -50,7 +54,9 @@ public class AxiomAnnotationController {
                     request.sectionName,
                     request.annotationProperty,
                     request.value,
-                    request.language);
+                    request.language,
+                    draft,
+                    userId);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
@@ -68,10 +74,12 @@ public class AxiomAnnotationController {
                                               @RequestParam String relatedIri,
                                               @RequestParam String annotationProperty,
                                               @RequestParam String value,
-                                              @RequestParam(required = false) String sectionName) {
+                                              @RequestParam(required = false) String sectionName,
+                                              @RequestParam(required = false, defaultValue = "false") boolean draft,
+                                              @RequestParam(required = false) String userId) {
         try {
             axiomAnnotationService.deleteAnnotation(
-                    projectId, entityIri, relatedIri, sectionName, annotationProperty, value);
+                    projectId, entityIri, relatedIri, sectionName, annotationProperty, value, draft, userId);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));

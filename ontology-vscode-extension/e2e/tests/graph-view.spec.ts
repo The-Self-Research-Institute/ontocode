@@ -5,11 +5,22 @@ import { test, expect } from '@playwright/test';
 import { EditorPage } from '../helpers/EditorPage';
 
 test.beforeEach(async ({ page }) => {
+  // Deterministic rendering: disables the entrance bloom and camera transitions
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   const editor = new EditorPage(page);
   await editor.login();
   await editor.openFirstProject();
   await editor.openFirstFile();
 });
+
+/** Remove per-user graph view memory so tests exercise the first-open path. */
+async function clearGraphViewMemory(page: import('@playwright/test').Page) {
+  await page.evaluate(() => {
+    Object.keys(localStorage)
+      .filter(k => k.startsWith('ontocode.graphView.'))
+      .forEach(k => localStorage.removeItem(k));
+  });
+}
 
 test.describe('Graph view', () => {
 
@@ -26,8 +37,26 @@ test.describe('Graph view', () => {
     expect(stats.visible).toBeGreaterThan(0);
   });
 
-  test('defaults to tree (ontograph) mode', async ({ page }) => {
+  test('first-ever open defaults to force mode (the bloom view)', async ({ page }) => {
     const editor = new EditorPage(page);
+    await clearGraphViewMemory(page);
+    await editor.openGraphTab();
+    await expect(page.locator('[data-testid="graph-view"]')).toHaveAttribute('data-graph-mode', 'force');
+    // Entrance lifecycle attribute settles to 'done' (instantly under reduced motion)
+    await expect(page.locator('[data-testid="graph-view"]')).toHaveAttribute('data-graph-entrance', 'done', { timeout: 10_000 });
+  });
+
+  test('remembers last-used mode across reopen', async ({ page }) => {
+    const editor = new EditorPage(page);
+    await clearGraphViewMemory(page);
+    await editor.openGraphTab();
+    await page.locator('[data-testid="graph-preset-tree"]').click();
+    await expect(page.locator('[data-testid="graph-view"]')).toHaveAttribute('data-graph-mode', 'ontograph');
+    await page.waitForTimeout(600); // allow the view-memory write to flush
+
+    await page.reload();
+    await editor.openFirstProject();
+    await editor.openFirstFile();
     await editor.openGraphTab();
     await expect(page.locator('[data-testid="graph-view"]')).toHaveAttribute('data-graph-mode', 'ontograph');
   });

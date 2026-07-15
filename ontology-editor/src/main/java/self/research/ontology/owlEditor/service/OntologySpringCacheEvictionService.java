@@ -19,13 +19,13 @@ public class OntologySpringCacheEvictionService {
 
     private static final Logger log = LoggerFactory.getLogger(OntologySpringCacheEvictionService.class);
 
-    // All caches use keys of the form: projectId_..._userId
+    // All caches use keys of the form: projectId_...[_'public'|_'draft:'userId]
+    // (see SparqlQueryContext.cacheKeyComponent()) — a plain prefix scan on "projectId_"
+    // covers every one of them, public or draft, regardless of how many segments precede
+    // the scope component.
     private static final List<String> PREFIX_KEY_CACHES = List.of(
             "topLevelClasses", "classChildren", "allClasses", "ontologyProperties",
-            "ontologyAnnotationProperties", "ontologyIndividuals", "classInstances"
-    );
-
-    private static final List<String> EXACT_KEY_CACHES = List.of(
+            "ontologyAnnotationProperties", "ontologyIndividuals", "classInstances",
             "individualCount", "debugInfo", "classInstanceCounts"
     );
 
@@ -40,13 +40,6 @@ public class OntologySpringCacheEvictionService {
         int evicted = 0;
         for (String cacheName : PREFIX_KEY_CACHES) {
             evicted += evictKeysWithPrefix(cacheName, prefix);
-        }
-        for (String cacheName : EXACT_KEY_CACHES) {
-            org.springframework.cache.Cache cache = cacheManager.getCache(cacheName);
-            if (cache != null) {
-                cache.evict(projectId);
-                evicted++;
-            }
         }
         org.springframework.cache.Cache topLevel = cacheManager.getCache("topLevelClasses");
         if (topLevel != null) {
@@ -73,18 +66,18 @@ public class OntologySpringCacheEvictionService {
             return;
         }
         String prefix = projectId + "_";
-        String suffix = "_" + userId;
+        // Matches SparqlQueryContext.cacheKeyComponent()'s "draft:" + userId format, not bare
+        // userId — these keys never end in a bare userId (see cacheKeyComponent doc).
+        String suffix = "draft:" + userId;
         int evicted = 0;
         for (String cacheName : PREFIX_KEY_CACHES) {
             evicted += evictKeysWithPrefixAndSuffix(cacheName, prefix, suffix);
         }
-        // EXACT_KEY_CACHES (individualCount, debugInfo, classInstanceCounts) are project-scoped
-        // with no user segment — skip them; they reflect public graph state, unchanged by draft.
 
-        // statusCount entry also ends with userId when in draft mode
+        // statusCount entry also ends with draft:userId when in draft mode
         org.springframework.cache.Cache topLevel = cacheManager.getCache("topLevelClasses");
         if (topLevel != null) {
-            topLevel.evict(projectId + "_statusCount_" + userId);
+            topLevel.evict(projectId + "_statusCount_draft:" + userId);
             evicted++;
         }
         // graphCache: clear all — graph view may render draft data visible to the draft user.

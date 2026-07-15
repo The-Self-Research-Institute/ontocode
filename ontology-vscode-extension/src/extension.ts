@@ -15,9 +15,14 @@ import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 import { optimizedUpload, shouldCompressFile, ChunkMetadata } from './utils/uploadOptimizer';
 
-// Configure axios for browser compatibility - disable automatic decompression
-// to avoid zlib issues in web workers
-axios.defaults.decompress = false;
+// This file is bundled for two different runtimes: the desktop extension host
+// (real Node.js, full zlib support) and the web extension (browser web worker,
+// no zlib). Automatic decompression must stay off only for the latter — leaving
+// it off unconditionally corrupts every gzip/br response (Zotero, our own API)
+// in the desktop build, since axios still advertises gzip/br support in its
+// request headers regardless of this flag.
+const isNodeRuntime = typeof process !== 'undefined' && !!(process.versions && process.versions.node);
+axios.defaults.decompress = isNodeRuntime;
 
 /**
  * Utility: Convert Uint8Array to base64 string (web-compatible)
@@ -216,6 +221,7 @@ type WebviewMessage =
     | { type: 'zoteroLibraryDataAppend'; items: any[]; hasMore?: boolean; totalResults?: number; loadedSoFar?: number; librarySessionId?: number }
     | { type: 'zoteroLibraryDataComplete'; librarySessionId?: number }
     | { type: 'zoteroLibraryError'; error: string; librarySessionId?: number }
+    | { type: 'zoteroConfigData'; config: { apiKey: string; userId: string; libraryType: string; groupId?: string } | null }
     | { type: 'citationFormatted'; citation: string; metadata: any; projectId: string }
     | { type: 'uploadOntologyContentDone'; success: boolean; projectId: string }; // Navigate to subscription plans page
 
@@ -236,9 +242,10 @@ type ExtensionMessage =
     | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
     | { type: 'proxyRequest'; reqId: string; config: any }
     | { type: 'webviewReady' }
-    | { type: 'downloadOntology'; url: string; filename: string }
+    | { type: 'downloadOntology'; url: string; filename: string; projectId: string; format: string }
     | { type: 'downloadCurrentOntology' }
     | { type: 'downloadFile'; content: string; filename: string; format: string }
+    | { type: 'openExternalUrl'; url: string } // Open a URL in the OS default browser (webview navigation is sandboxed)
     | { type: 'fileLoaded'; projectId: string } // File selected from menu
     | { type: 'requestCollaborationStatus' } // Request current collaboration status
     | { type: 'showNotification'; notification: { type: string; title: string; message: string; actions?: string[] } } // System notification
@@ -256,7 +263,10 @@ type ExtensionMessage =
     | { type: 'insertManualCitation'; citation: any; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert manual citation
     | { type: 'insertCitationToGraphDB'; citation: string; format: string; projectId: string; metadata: any } // Insert citation directly to GraphDB
     | { type: 'removeCitationFromGraphDB'; citationUri: string; projectId: string } // Remove citation from GraphDB
-    | { type: 'uploadOntologyContent'; content: string; format: string; projectId: string }; // Upload modified ontology content
+    | { type: 'uploadOntologyContent'; content: string; format: string; projectId: string } // Upload modified ontology content
+    | { type: 'requestZoteroConfig' } // Request Zotero credentials from VS Code workspace settings
+    | { type: 'saveZoteroConfig'; config: { apiKey: string; userId: string; libraryType: 'user' | 'group'; groupId?: string } } // Save Zotero credentials to VS Code workspace settings
+    | { type: 'clearZoteroConfig' }; // Clear Zotero credentials from VS Code workspace settings
 
 type DuplicatePromptAction = 'open_existing' | 'replace' | 'create_copy' | 'cancel';
 type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string };
@@ -846,13 +856,22 @@ class OntoCodePanel {
                         this.handleProxyRequest(message);
                         break;
                     case 'downloadOntology':
-                        this.handleDownload(message.url, message.filename);
+                        this.handleDownload(message.projectId, message.format, message.filename);
                         break;
                     case 'downloadCurrentOntology':
                         this.handleDownloadCurrent();
                         break;
                     case 'downloadFile':
                         this.handleDownloadFile(message.content, message.filename);
+                        break;
+                    case 'openExternalUrl':
+                        // VS Code webviews are sandboxed iframes — a programmatic
+                        // window.location.href / window.open to an external URL is silently
+                        // blocked. The webview must postMessage here instead so the extension
+                        // host can hand the URL to the OS's default browser.
+                        if (message.url) {
+                            vscode.env.openExternal(vscode.Uri.parse(message.url));
+                        }
                         break;
                     case 'fileLoaded':
                         // User selected a file from the File menu
@@ -964,6 +983,20 @@ class OntoCodePanel {
                         // Load the next page of Zotero citations (infinite scroll)
                         await this.handleRequestZoteroLibraryMore();
                         break;
+                    case 'requestZoteroConfig': {
+                        const cfg = zoteroApiService.getPublicConfig();
+                        this.postMessage({ type: 'zoteroConfigData', config: cfg });
+                        break;
+                    }
+                    case 'saveZoteroConfig': {
+                        const { config: zCfg } = message as { config: { apiKey: string; userId: string; libraryType: 'user' | 'group'; groupId?: string } };
+                        await zoteroApiService.saveConfig(zCfg);
+                        break;
+                    }
+                    case 'clearZoteroConfig': {
+                        await zoteroApiService.clearConfig();
+                        break;
+                    }
                     case 'insertCitation':
                         // Handle citation insertion from Zotero
                         await this.handleInsertCitation(message.citationKey, message.format, message.projectId, message.lineNumber || 0);
@@ -1621,7 +1654,13 @@ class OntoCodePanel {
         }
 
         const headers: any = {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            // Force uncompressed responses. When the API is fronted by a CDN (e.g. Cloudflare
+            // on the dev/cloud host) it gzip/brotli-compresses responses; the compressed body
+            // was reaching the webview undecoded (binary garbage → "No token received from
+            // server"). This proxy is server-to-server, so skipping compression is negligible
+            // and removes any dependency on the bundled axios version decoding it.
+            'Accept-Encoding': 'identity'
         };
 
         // Only add Authorization header if we have a token
@@ -3043,22 +3082,24 @@ class OntoCodePanel {
             }, async (progress) => {
                 progress.report({ message: 'Preparing upload...', increment: 10 });
 
-                const uploadPayload: any = {
-                    fileName: finalFileName,
-                    fileData: `data:application/rdf+xml;base64,${base64Content}`,
-                    fileSize: fileSize,
-                    fileType: 'owl'
-                };
-
-                // If replacing, include the replaceFileId
+                // Decode base64 to binary and build a Blob for multipart upload
+                const binaryStr = atob(base64Content);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                    bytes[i] = binaryStr.charCodeAt(i);
+                }
+                const fileBlob = new Blob([bytes], { type: 'application/rdf+xml' });
+                const formData = new FormData();
+                formData.append('file', fileBlob, finalFileName);
+                formData.append('fileName', finalFileName);
+                formData.append('fileType', 'application/rdf+xml');
                 if (replaceFileId) {
-                    uploadPayload.replaceFileId = replaceFileId;
+                    formData.append('replaceFileId', replaceFileId);
                 }
 
-                const uploadResponse = await axios.post(uploadUrl, uploadPayload, {
+                const uploadResponse = await axios.post(uploadUrl, formData, {
                     headers: {
                         'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
                     },
                     timeout: 7_200_000, // 2 hours for large ontology uploads (up to 1GB)
                     onUploadProgress: (progressEvent) => {
@@ -3162,40 +3203,74 @@ class OntoCodePanel {
     /**
      * Handle download request for a specific file
      */
-    private async handleDownload(url: string, filename: string) {
-        try {
-            console.log(`[OntoCode] Downloading file from: ${url}`);
-            console.log(`[OntoCode] Filename: ${filename}`);
+    // Client-side ceiling for polling, comfortably above the backend's own 45-min
+    // stuck-job watchdog (OntologyExportJobService.java) — that watchdog is what
+    // actually converts a hung job into an error; this is just a last-resort guard.
+    private static readonly EXPORT_POLL_INTERVAL_MS = 3000;
+    private static readonly EXPORT_MAX_POLL_MS = 60 * 60 * 1000;
 
-            // Get auth token
+    /**
+     * Submits the export as a background job and polls until it's ready, instead of
+     * one long-blocking request. The previous single `axios.get(..., {timeout: 300000})`
+     * gave up after 5 minutes even though the backend/gateway/ingress support up to 2
+     * hours — for a large ontology the server was often still working when this client
+     * gave up. See OntologyExportJobService.java for the job lifecycle this polls against.
+     */
+    private async handleDownload(projectId: string, format: string, filename: string) {
+        try {
+            console.log(`[OntoCode] Downloading export for project: ${projectId}, format: ${format}`);
+
             const token = await (this._context as any).secrets.get(TOKEN_KEY);
             if (!token) {
                 vscode.window.showErrorMessage('You must be logged in to download files.');
                 return;
             }
+            const authHeaders = { 'Authorization': `Bearer ${token}` };
 
-            // Make request to download file
-            const fullUrl = `${GATEWAY_URL}${url}`;
-            console.log(`[OntoCode] Full URL: ${fullUrl}`);
-
-            // Show progress notification for large ontologies
-            vscode.window.withProgress({
+            await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
-                title: `Downloading ${filename}...`,
+                title: `Exporting ${filename}...`,
                 cancellable: false
             }, async (progress) => {
                 progress.report({ message: 'This may take several minutes for large ontologies' });
 
-                const response = await axios.get(fullUrl, {
-                    headers: { 'Authorization': `Bearer ${token}` },
-                    responseType: 'arraybuffer',
-                    timeout: 300000 // 5 minutes for large files like go-plus.owl
-                });
+                const submitRes = await axios.post(
+                    `${GATEWAY_URL}/api/ontology/export-async/${encodeURIComponent(projectId)}?format=${encodeURIComponent(format)}`,
+                    undefined,
+                    { headers: authHeaders, timeout: 30000 }
+                );
+                const jobId = submitRes.data?.jobId;
+                if (!jobId) {
+                    throw new Error('Export could not be started.');
+                }
+
+                const deadline = Date.now() + OntoCodePanel.EXPORT_MAX_POLL_MS;
+                let jobStatus = 'PENDING';
+                while (jobStatus !== 'COMPLETED') {
+                    const statusRes = await axios.get(
+                        `${GATEWAY_URL}/api/ontology/export-async/status/${jobId}`,
+                        { headers: authHeaders, timeout: 30000 }
+                    );
+                    jobStatus = statusRes.data?.status;
+                    if (jobStatus === 'ERROR') {
+                        throw new Error(statusRes.data?.error || 'Export failed.');
+                    }
+                    if (jobStatus !== 'COMPLETED') {
+                        if (Date.now() >= deadline) {
+                            throw new Error('Export is taking much longer than expected. Please try again later.');
+                        }
+                        await new Promise(resolve => setTimeout(resolve, OntoCodePanel.EXPORT_POLL_INTERVAL_MS));
+                    }
+                }
+
+                const response = await axios.get(
+                    `${GATEWAY_URL}/api/ontology/export-async/download/${jobId}`,
+                    { headers: authHeaders, responseType: 'arraybuffer', timeout: 300000 }
+                );
 
                 console.log(`[OntoCode] Response status: ${response.status}`);
                 console.log(`[OntoCode] Response data length: ${response.data.byteLength} bytes`);
 
-                // Show save dialog
                 const saveUri = await vscode.window.showSaveDialog({
                     defaultUri: vscode.Uri.file(filename),
                     filters: {
@@ -3206,7 +3281,6 @@ class OntoCodePanel {
 
                 if (saveUri) {
                     console.log(`[OntoCode] Saving to: ${saveUri.fsPath}`);
-                    // Save file
                     await (vscode.workspace as any).fs.writeFile(saveUri, new Uint8Array(response.data));
                     vscode.window.showInformationMessage(`File saved successfully to ${saveUri.fsPath}`);
                 } else {
@@ -3228,7 +3302,7 @@ class OntoCodePanel {
                     vscode.window.showErrorMessage(`Download failed: ${axiosError.message}`);
                 }
             } else {
-                vscode.window.showErrorMessage('Failed to download file. See console for details.');
+                vscode.window.showErrorMessage((error as Error)?.message || 'Failed to download file. See console for details.');
             }
         }
     }
@@ -3613,10 +3687,11 @@ class OntoCodePanel {
             <meta http-equiv="Content-Security-Policy" content="
                 default-src 'none'; 
                 img-src ${webview.cspSource} https: data: blob:; 
-                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${webview.cspSource} 'unsafe-eval' ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} http://localhost:* http://127.0.0.1:*;
+                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com https://js.stripe.com ${webview.cspSource} 'unsafe-eval' ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} http://localhost:* http://127.0.0.1:*;
                 style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
                 font-src ${webview.cspSource} https://unpkg.com data:; 
                 connect-src 'self' https://ontocodeapi.selfresearch.org https: wss: ws: https://ontocodeapi.selfresearch.org:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
+                frame-src https://js.stripe.com https://hooks.stripe.com;
             ">
             ${vscodeApiInjectionScript}`
         );

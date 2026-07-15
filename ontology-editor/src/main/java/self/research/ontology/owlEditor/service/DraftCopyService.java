@@ -30,15 +30,18 @@ public class DraftCopyService {
     private final DraftSessionRepository sessionRepository;
     private final MainGraphRevisionService revisionService;
     private final ImportQueueManager importQueueManager;
+    private final DraftPublishMergeService publishMergeService;
 
     public DraftCopyService(SparqlDatasetService datasetService,
                             DraftSessionRepository sessionRepository,
                             MainGraphRevisionService revisionService,
-                            ImportQueueManager importQueueManager) {
+                            ImportQueueManager importQueueManager,
+                            DraftPublishMergeService publishMergeService) {
         this.datasetService = datasetService;
         this.sessionRepository = sessionRepository;
         this.revisionService = revisionService;
         this.importQueueManager = importQueueManager;
+        this.publishMergeService = publishMergeService;
     }
 
     public record InitiateResult(
@@ -70,6 +73,14 @@ public class DraftCopyService {
         session.setBaselineMainTripleCount(tripleCount);
         session.setBaselineAt(LocalDateTime.now());
         session.setCopyStatus(DraftCopyStatus.COPYING);
+        try {
+            // Snapshot main now so the "Pull" button can later do a real three-way merge
+            // (baseline / draft / main) instead of a destructive overwrite.
+            session.setBaselineSnapshotPath(publishMergeService.captureBaselineSnapshot(projectId, userId));
+        } catch (Exception e) {
+            log.warn("[DRAFT-COPY] Could not capture baseline snapshot for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+        }
         sessionRepository.save(session);
 
         datasetService.clearDraftGraph(projectId, userId);

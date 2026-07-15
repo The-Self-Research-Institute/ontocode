@@ -425,7 +425,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                     <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>
                       LLM Provider
                     </label>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(70px, 1fr))', gap: 4 }}>
                       {providersList.map((p) => (
                         <button
                           key={p.id}

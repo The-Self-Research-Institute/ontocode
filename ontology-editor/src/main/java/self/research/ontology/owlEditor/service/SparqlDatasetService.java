@@ -21,6 +21,7 @@ import org.eclipse.rdf4j.rio.RDFWriter;
 import org.eclipse.rdf4j.rio.Rio;
 import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
 import org.eclipse.rdf4j.rio.helpers.BasicParserSettings;
+import org.eclipse.rdf4j.rio.helpers.StatementCollector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -650,30 +651,14 @@ public class SparqlDatasetService {
     }
 
     /**
-     * Copy-on-switch reads use the draft graph only while it is still current with main.
-     * After a public ({@code draft=false}) mutation bumps the main revision, fall back to
-     * main-graph reads so direct edits are visible (regression fix for draft-only FROM).
+     * Copy-on-switch reads always use the draft graph while the session is READY, even after
+     * main has advanced past the draft's baseline. Reconciling that divergence is the "Pull"
+     * button's job (a real per-entity merge into the draft graph) — silently falling back to
+     * main-graph reads here used to hide the user's own draft edits behind whatever the public
+     * graph currently looks like as soon as anyone made an unrelated public change.
      */
     private boolean shouldScopeReadsToDraftCopy(String projectId, String userId) {
-        if (!isDraftCopyReady(projectId, userId)) {
-            return false;
-        }
-        if (mainGraphRevisionService == null || draftSessionRepository == null) {
-            return true;
-        }
-        long revisionAtCopy = draftSessionRepository.findByProjectIdAndUserId(projectId, userId)
-                .map(DraftSession::getBaselineMainRevision)
-                .orElse(-1L);
-        if (revisionAtCopy < 0) {
-            return true;
-        }
-        long currentRevision = mainGraphRevisionService.getRevision(projectId);
-        if (currentRevision > revisionAtCopy) {
-            log.debug("[DRAFT-GRAPH] Main revision {} > draft baseline {} — reading main graph for {}",
-                    currentRevision, revisionAtCopy, projectId);
-            return false;
-        }
-        return true;
+        return isDraftCopyReady(projectId, userId);
     }
 
     /**
@@ -1233,6 +1218,12 @@ public class SparqlDatasetService {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     private boolean isDraftCopyReady(String projectId, String userId) {
+        // userId is resolved from the JWT/X-Ontocode-User-Id header on every request
+        // (including ones made while viewing Public), so it alone can't signal "this
+        // request wants draft scope" — that requires the explicit draft=true parameter.
+        if (!SparqlQueryContext.wantsDraft()) {
+            return false;
+        }
         if (userId == null || userId.isBlank() || draftSessionRepository == null) {
             return false;
         }
@@ -1295,17 +1286,38 @@ public class SparqlDatasetService {
         if (rdfContent == null || rdfContent.isBlank()) {
             throw new IllegalArgumentException("RDF content is empty");
         }
+        // Parse locally and re-emit as a plain "CLEAR GRAPH; INSERT DATA" SPARQL Update string,
+        // executed the same way every other mutation in this class is (conn.prepareUpdate().execute()).
+        // RDF4J's SPARQLConnection.add(InputStream, format, graphIri) — a different RDF4J API that
+        // streams the parsed statements to Fuseki itself rather than going through a SPARQL Update
+        // string — silently fails ("error executing transaction", no useful detail) for some
+        // ontologies produced by the merge/publish pipeline, even though the identical triples
+        // load fine via a raw SPARQL INSERT DATA or the Graph Store Protocol. Sidestep it entirely.
+        List<Statement> statements = new ArrayList<>();
+        RDFParser parser = Rio.createParser(format);
+        parser.setRDFHandler(new StatementCollector(statements));
+        try (ByteArrayInputStream in = new ByteArrayInputStream(rdfContent.getBytes(StandardCharsets.UTF_8))) {
+            parser.parse(in, graphUri);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to parse RDF content for graph " + graphUri, e);
+        }
+
+        java.io.StringWriter triplesOut = new java.io.StringWriter();
+        RDFWriter writer = Rio.createWriter(org.eclipse.rdf4j.rio.RDFFormat.NTRIPLES, triplesOut);
+        writer.startRDF();
+        for (Statement st : statements) {
+            writer.handleStatement(st);
+        }
+        writer.endRDF();
+
+        String updateText = "CLEAR SILENT GRAPH <" + graphUri + ">;\n"
+                + "INSERT DATA { GRAPH <" + graphUri + "> {\n" + triplesOut + "\n} }";
+
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
-            IRI graphIri = conn.getValueFactory().createIRI(graphUri);
-            conn.begin();
-            clearGraph(conn, graphIri, graphUri, projectId);
-            try (ByteArrayInputStream in = new ByteArrayInputStream(rdfContent.getBytes(StandardCharsets.UTF_8))) {
-                conn.add(in, format, graphIri);
-            }
-            conn.commit();
+            conn.prepareUpdate(updateText).execute();
             invalidateDerivedCachesAfterUpdate(projectId);
-            log.info("[DRAFT-GRAPH] Replaced graph {} for project {} ({} bytes)", graphUri, projectId, rdfContent.length());
+            log.info("[DRAFT-GRAPH] Replaced graph {} for project {} ({} triples)", graphUri, projectId, statements.size());
         } catch (Exception e) {
             log.error("Failed to replace graph {} for project {}", graphUri, projectId, e);
             throw new RuntimeException("Failed to replace named graph", e);
@@ -2661,11 +2673,24 @@ public class SparqlDatasetService {
 
     /**
      * Strip GraphDB internal system namespace declarations from RDF/XML export output.
-     * GraphDB registers many internal namespaces in its repository config that pollute exports.
+     * GraphDB registers many internal namespaces in its repository config that pollute exports —
+     * but some of the "system" prefixes (e.g. skos, wgs, gn) are also real, commonly-used ontology
+     * vocabularies. Blindly deleting the xmlns declaration while leaving `prefix:something`
+     * elements/attributes in the body (because the ontology's own data genuinely uses that
+     * vocabulary) produces XML with an undefined namespace prefix, which any namespace-aware
+     * parser (OWLAPI, Protégé, xmllint) rejects as malformed. Only strip a declaration when the
+     * prefix is truly unused elsewhere in the document.
      */
     private String stripSystemNamespaces(String rdfXml) {
-        // Remove xmlns:PREFIX="..." declarations for known system namespaces
+        // Remove xmlns:PREFIX="..." declarations for known system namespaces, but only when
+        // that prefix isn't actually referenced as a QName anywhere else in the document.
         for (String prefix : GRAPHDB_SYSTEM_NAMESPACE_PREFIXES) {
+            java.util.regex.Pattern usagePattern = java.util.regex.Pattern.compile(
+                "[<\\s\"']" + java.util.regex.Pattern.quote(prefix) + ":[A-Za-z_]");
+            if (usagePattern.matcher(rdfXml).find()) {
+                // Genuinely used as an element/attribute prefix — keep its declaration.
+                continue;
+            }
             rdfXml = rdfXml.replaceAll(
                 "\\s+xmlns:" + java.util.regex.Pattern.quote(prefix) + "=\"[^\"]*\"", "");
         }
@@ -3294,7 +3319,11 @@ public class SparqlDatasetService {
     private void invalidateDerivedCachesAfterUpdate(String projectId) {
         tripleCountCache.remove(projectId);
         String userId = SparqlQueryContext.getUserId();
-        boolean isDraftMutation = userId != null && !userId.isBlank();
+        // userId alone doesn't mean "this was a draft mutation" — it's resolvable via
+        // header/JWT on every authenticated request, draft or public alike. The mutation
+        // endpoint's explicit draft=true/false request param (mirrored into wantsDraft by
+        // SparqlQueryContextInterceptor) is the real signal.
+        boolean isDraftMutation = SparqlQueryContext.wantsDraft() && userId != null && !userId.isBlank();
         if (isDraftMutation) {
             // Draft: evict only this user's Caffeine L1 entries — public users' cache is unaffected.
             // MongoDB L2 (topLevelCacheService) is skipped: it reflects the public graph, unchanged.
@@ -3325,10 +3354,13 @@ public class SparqlDatasetService {
 
     /**
      * Marker file recording that Fuseki has changes the on-disk OWL artifacts don't.
-     * DesktopOntologyLoader checks it before re-warming the OWLAPI model so a re-warm
-     * never resurrects pre-mutation data from a stale ontology.original.* file.
+     * DesktopOntologyLoader and HierarchySnapshotBuildService both check it before trusting
+     * an on-disk ontology.original.* or ontology.current.* file, re-exporting fresh from Fuseki
+     * instead when it's present. Public so callers whose write path reimports into Fuseki
+     * without also resyncing the on-disk file (e.g. code-view-save) can re-assert dirty after
+     * bulkLoadChunked()'s internal invalidateContextCaches() incorrectly clears it (see below).
      */
-    private void markProjectDirty(String projectId) {
+    public void markProjectDirty(String projectId) {
         if (projectId == null || projectId.isBlank()) return;
         try {
             java.nio.file.Path dir = java.nio.file.Path.of(dataDir).toAbsolutePath().normalize()
@@ -3360,6 +3392,11 @@ public class SparqlDatasetService {
     private void invalidateContextCaches(String projectId) {
         partitionGraphCache.remove(projectId);
         tripleCountCache.remove(projectId);
+        // Correct only for callers that resync the on-disk ontology.original.*/current.* file
+        // to match this same import (ProjectImportService copies the uploaded file to disk
+        // separately). bulkLoadChunked() is also the reimport path behind code-view-save, which
+        // never touches those on-disk files — that caller re-asserts dirty via markProjectDirty()
+        // right after this runs, overriding the clear below. See markProjectDirty() javadoc.
         clearProjectDirty(projectId);
         // Drop the in-memory project mirror so imports are visible.
         if (projectRepoCache != null) {
@@ -3368,6 +3405,15 @@ public class SparqlDatasetService {
         // Drop the MongoDB persistent top-level class cache for this project.
         if (topLevelCacheService != null) {
             topLevelCacheService.evict(projectId);
+        }
+        // Mark the precomputed hierarchy snapshot stale + schedule a rebuild. Without this,
+        // /classes/children (and /classes/top-level) keep serving whatever was last built —
+        // bulkLoadChunked() is the write path behind code-view-save and bulk imports, and unlike
+        // execUpdate()'s invalidateDerivedCachesAfterUpdate() it never told the snapshot a write
+        // happened, so entities added via Code View correctly appeared in Graph View (reads live
+        // SPARQL) but never in the Entities hierarchy tree (reads the stale snapshot instead).
+        if (hierarchyIndexService != null) {
+            hierarchyIndexService.markStale(projectId);
         }
         if (springCacheEviction != null) {
             springCacheEviction.evictForProject(projectId);

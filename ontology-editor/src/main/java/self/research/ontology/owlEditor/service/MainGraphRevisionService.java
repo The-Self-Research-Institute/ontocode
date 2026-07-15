@@ -2,9 +2,6 @@ package self.research.ontology.owlEditor.service;
 
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
-import java.util.Map;
-
 /**
  * Monotonic revision counter for the project main graph (incremented on every publish / direct apply).
  */
@@ -27,12 +24,12 @@ public class MainGraphRevisionService {
                 .orElse(0L);
     }
 
+    /**
+     * Atomic $inc — a read-then-writeMeta round trip here would race the hierarchy
+     * snapshot rebuild's own read-then-writeMeta (mergeMetaIntoProject), which can
+     * clobber this counter on its write-back. See ProjectMetadataService.incrementMainGraphRevision.
+     */
     public long incrementRevision(String projectId) {
-        long next = getRevision(projectId) + 1;
-        Map<String, Object> patch = new HashMap<>();
-        metadataService.readMeta(projectId).ifPresent(patch::putAll);
-        patch.put(META_KEY, next);
-        metadataService.writeMeta(projectId, patch);
-        return next;
+        return metadataService.incrementMainGraphRevision(projectId);
     }
 }

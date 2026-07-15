@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Download, Monitor, CheckCircle, ArrowLeft, Cpu, HardDrive, MemoryStick } from "lucide-react";
 import { getGatewayUrl } from "../config/deploymentConfig";
+import { isRealVSCode } from "../utils/desktop";
 import { OntoCodeLogo } from "./OntoCodeLogo";
 import { AppVersionBadge } from "./AppVersionBadge";
 
@@ -116,14 +117,35 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
   const handleDownload = () => {
     setDownloading(true);
     const clientOs = detectClientOs();
-    window.location.href = `${RELEASE_BASE}/${PLATFORM}?clientOs=${encodeURIComponent(clientOs)}`;
+    const url = `${RELEASE_BASE}/${PLATFORM}?clientOs=${encodeURIComponent(clientOs)}`;
+    // VS Code webviews are sandboxed iframes — a programmatic window.location.href
+    // navigation to an external URL is silently blocked (unlike a real <a> click,
+    // which the webview host intercepts). Route through the extension host instead.
+    // Note: window.vscode alone isn't enough to detect this — the plain-browser
+    // bridge (vscodeBridge.ts) installs a same-named shim so browser code keeps
+    // working, so isRealVSCode() is needed to tell the two apart.
+    if (isRealVSCode()) {
+      window.vscode!.postMessage({ type: "openExternalUrl", url });
+    } else {
+      window.location.href = url;
+    }
     setTimeout(() => setDownloading(false), 3000);
   };
 
   const versionLabel = release?.version || "…";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 text-white">
+    <div className="relative min-h-screen text-white">
+      {/* Fixed, viewport-pinned background layer — NOT the box-height-dependent
+          background this div used to carry directly. This page must always render
+          dark/violet regardless of the app's light/dark theme (it's a marketing/
+          download page, not themed app chrome), and a background tied to this div's
+          own content height can be outrun by taller content inside html/body/#root's
+          independently-scrolling containers (see index.css), letting the theme's
+          light body background show through past wherever this div's box ended —
+          exactly what made the feature checklist unreadable in light mode. A fixed
+          layer covers the full viewport unconditionally, at any scroll position. */}
+      <div className="fixed inset-0 -z-10 bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900" />
       <div className="border-b border-white/10 bg-white/5 backdrop-blur-sm">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">

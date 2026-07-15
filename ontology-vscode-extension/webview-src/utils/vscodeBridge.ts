@@ -28,6 +28,7 @@ import { notificationService } from '../services/notificationService';
 import { openOntologyFile, fileContentToBase64 } from './fileAccess';
 import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
 import { getGatewayUrl } from '../config/deploymentConfig';
+import { exportOntologyAsBlob } from '../services/exportService';
 import { uploadFormDataWithProgress } from './uploadWithProgress';
 
 let browserZoteroLibrarySessionCounter = 0;
@@ -267,11 +268,14 @@ function handleBrowserMessage(message: any) {
         // ──────── Download ──────────────────────────────────────────────────
 
         case 'downloadOntology': {
-            // Fetch the ontology export from the API and trigger download
+            // Submit the export as a background job and poll until ready, rather than one
+            // long-blocking request — a large ontology's export can take longer than axios's
+            // client-side timeout even though the backend supports far longer. See
+            // exportService.ts / OntologyExportJobService.java for the job this polls against.
             (async () => {
                 try {
-                    const response = await apiClient.get(message.url, undefined, { responseType: 'blob' as any });
-                    triggerBlobDownload(response, message.filename);
+                    const blob = await exportOntologyAsBlob(getGatewayUrl(), message.projectId, message.format);
+                    triggerBlobDownload(blob, message.filename);
                 } catch (err) {
                     console.error('[BrowserBridge] downloadOntology failed:', err);
                     notificationService.error('Download Failed', 'Could not download ontology file');
@@ -1348,6 +1352,16 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
+        // In a real VS Code webview this goes through the extension host
+        // (vscode.env.openExternal) because sandboxed iframes block direct
+        // navigation. A plain browser tab has no such sandbox — just navigate.
+        case 'openExternalUrl': {
+            if (message.url) {
+                window.location.href = message.url;
+            }
+            break;
+        }
+
         default:
             console.log('[BrowserBridge] Unhandled message type:', message.type);
     }
@@ -1364,6 +1378,12 @@ function handleBrowserMessage(message: any) {
  * this function does nothing in that case.
  */
 export function installBrowserBridge() {
+    // The Electron preload already installed its own, richer window.vscode (native
+    // dialogs, encrypted token storage, its own Zotero fetch, etc) — never overwrite it.
+    if ((window as any).__ONTOCODE_NATIVE_VSCODE_BRIDGE__) {
+        console.log('[BrowserBridge] Native (Electron) bridge detected — bridge NOT installed');
+        return;
+    }
     // Already running inside VS Code Desktop / a preload that set window.vscode
     if (window.vscode && !(window as any).__ONTOCODE_BROWSER_BRIDGE__) {
         console.log('[BrowserBridge] VS Code API detected — bridge NOT installed');

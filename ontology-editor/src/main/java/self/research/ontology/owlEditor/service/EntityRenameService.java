@@ -69,6 +69,13 @@ public class EntityRenameService {
                 out.size(),
                 ImportOptions.builder().mode(ImportOptions.ImportMode.FULL).build());
 
+        // bulkLoadChunked() clears the dirty marker as if disk now matched Fuseki, but this
+        // rename never wrote the mutated ontology back to ontology.original.*/current.* on
+        // disk — only exportPath (a temp read used for the in-memory OWLAPI rename). Re-assert
+        // dirty so the next hierarchy snapshot rebuild re-exports fresh instead of reading the
+        // pre-rename file still on disk.
+        datasetService.markProjectDirty(projectId);
+
         log.info("Renamed entity {} -> {} in project {}", oldIri, newIri, projectId);
     }
 

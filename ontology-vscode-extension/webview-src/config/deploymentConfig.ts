@@ -75,8 +75,10 @@ export function getGatewayUrl(type?: DeploymentType): string {
         if (typeof window !== 'undefined') {
             const proto = window.location.protocol;
             const hostname = window.location.hostname;
-            const isOfficialCloudHost =
-                hostname === 'ontocode.selfresearch.org' || hostname === 'ontocodeapi.selfresearch.org';
+           const isOfficialCloudHost =
+    hostname === 'ontocode.selfresearch.org' || 
+    hostname === 'ontocodeapi.selfresearch.org' ||
+    hostname.includes('ontocodedev');
             if ((proto === 'http:' || proto === 'https:') && !isLocalhost && !isOfficialCloudHost) {
                 return proto + '//' + hostname;
             }

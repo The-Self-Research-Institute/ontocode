@@ -587,8 +587,14 @@ public class ProjectImportService {
                     message = String.format("Importing... (%d%%)", percent);
                 } else if (elapsedMs > 0) {
                     long elapsedSec = elapsedMs / 1000;
-                    percent = (int) Math.min(85, 10 + (elapsedSec / 30));
-                    message = String.format("Loading ontology data… (%dm %02ds elapsed)",
+                    // Byte-level progress isn't available for a direct GSP PUT upload (the JDK
+                    // HTTP client's file body publisher has no progress hook — see directHttpUpload's
+                    // 5s heartbeat in SparqlDatasetService). The old formula only advanced 1% every
+                    // 30s, so between heartbeat ticks the number sat frozen for ~25s stretches even
+                    // while the upload was actively running — users read that as "stuck". Advance it
+                    // every heartbeat tick instead and be explicit this is a time estimate, not a byte count.
+                    percent = (int) Math.min(90, 10 + (elapsedSec / 5));
+                    message = String.format("Uploading large file… still in progress (%dm %02ds elapsed) — this can take several minutes",
                             elapsedSec / 60, elapsedSec % 60);
                 } else {
                     percent = 5;
@@ -789,8 +795,12 @@ public class ProjectImportService {
             Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
             log.info("[Import {}] [TIMING] File copy to current: {} ms", projectId, elapsedMillis(stageStart));
 
-            // Ensure OWLAPI warm is queued from persisted file if parallel parse did not finish
+            // Ensure OWLAPI warm is queued from persisted file if parallel parse did not finish.
+            // Evict first: this file may be replacing a previously-loaded project (e.g. a
+            // merge/re-import), and startParallelWarm's cache-hit fast-path would otherwise
+            // keep serving the stale pre-write model instead of re-parsing what was just copied.
             if (desktopOntologyLoader != null) {
+                desktopOntologyLoader.evictCache(projectId);
                 desktopOntologyLoader.startParallelWarm(projectId, current);
             }
 
@@ -1605,6 +1615,12 @@ public class ProjectImportService {
         Files.createDirectories(current.getParent());
         Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
 
+        // This path runs for re-imports (e.g. merge results) as well as first-time imports —
+        // if the project's OWLAPI model is already cached from before this file was written,
+        // startParallelWarm's cache-hit fast-path would report success without ever re-parsing
+        // the file we just copied, leaving the UI showing pre-merge/pre-import content. Evict
+        // first so the warm below always reflects what's actually on disk now.
+        desktopOntologyLoader.evictCache(projectId);
         desktopOntologyLoader.startParallelWarm(projectId, current);
         Map<String, Object> warm = desktopOntologyLoader.warmProject(projectId, 600_000L);
         boolean ready = Boolean.TRUE.equals(warm.get("ready")) || Boolean.TRUE.equals(warm.get("owlapiReady"));
@@ -1612,6 +1628,19 @@ public class ProjectImportService {
         if (!ready) {
             log.warn("[Import {}] OWLAPI-first import failed: {}", projectId, warm.get("error"));
             return false;
+        }
+
+        // Non-blocking sanity check: warmProject() intentionally doesn't gate readiness on class
+        // count (a legitimately empty ontology must not block open for minutes), but a 0-class
+        // result after importing an existing file is almost always a sign the source content was
+        // deficient (e.g. an export bug) rather than a genuinely empty ontology — this app's own
+        // "new file" template always declares at least owl:Thing. Log loudly so this is visible
+        // in server logs instead of silently reporting "ready" with an empty tree.
+        long classCount = desktopOntologyLoader.classCount(projectId);
+        if (classCount == 0) {
+            log.warn("[Import {}] OWLAPI-first import reports ready but parsed 0 classes from {} — " +
+                    "the source file may be empty/malformed rather than this being a genuinely empty ontology",
+                    projectId, current);
         }
 
         markFusekiSyncPending(projectId);

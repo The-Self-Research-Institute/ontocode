@@ -172,9 +172,15 @@ public class OntologyCrudController {
     public ResponseEntity<?> makeSiblingsDisjoint(@PathVariable String projectId,
                                                   @RequestBody MakeSiblingsDisjointRequest request,
                                                   @RequestParam(required = false, defaultValue = "anonymous") String userId,
-                                                  @RequestParam(required = false, defaultValue = "Anonymous") String username) {
-        mutationService.makeSiblingsDisjoint(projectId, request.classIds());
-        
+                                                  @RequestParam(required = false, defaultValue = "Anonymous") String username,
+                                                  @RequestParam(required = false, defaultValue = "false") boolean draft) {
+        mutationService.makeSiblingsDisjoint(projectId, request.classIds(), draft, userId);
+
+        // Draft edits are private — never broadcast them to other collaborators.
+        if (draft) {
+            return ResponseEntity.ok(Map.of("success", true, "draft", true));
+        }
+
         // Broadcast disjoint axiom changes to collaborators
         for (int i = 0; i < request.classIds().size(); i++) {
             for (int j = i + 1; j < request.classIds().size(); j++) {
