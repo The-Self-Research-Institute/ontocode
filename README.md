@@ -123,7 +123,7 @@ Extensible architecture with **3 built-in plugins**:
 ### Import and Export
 
 - **Import**: OWL Functional, Manchester, RDF/XML, Turtle, N-Triples, OWL/XML
-  - Automatic format conversion for GraphDB compatibility
+  - Automatic format conversion for Fuseki compatibility
   - Streaming import for large files (100MB+)
   - Batch optimization: 10k triples per transaction
 - **Export**: One-click download in any of the 6 supported formats
@@ -143,7 +143,7 @@ OntoCode automatically formats and inserts citations into the ontology file and 
 - FIFO fair processing with position tracking
 - Estimated wait time calculation
 - Real-time WebSocket notifications for queue status
-- Max 1 concurrent import to prevent GraphDB conflicts
+- Max 1 concurrent import to prevent Fuseki conflicts
 
 ### Jira Integration
 
@@ -166,12 +166,12 @@ Interactive guide accessible from the editor covering 9 sections: workspace crea
 | **OWL Editor**        | Core ontology editing and operations     | `8083`  |
 | **SWRL Service**      | SWRL rules engine                        | `8084`  |
 | **Plugin Service**    | Plugin management and execution          | `8087`  |
-| **GraphDB**           | RDF triple store (Ontotext GraphDB)      | `7200`  |
+| **Fuseki**            | RDF triple store (Apache Jena Fuseki)    | `3030`  |
 | **MongoDB**           | Metadata, version control, collaboration | `27017` |
 | **Web App**           | Browser-based editor UI                  | `3000`  |
 | **VS Code Extension** | Desktop editor client                    | —       |
 
-**Data flow:** GraphDB stores RDF triples (primary). MongoDB stores metadata, collaboration data, and change history. Changes sync automatically between the two.
+**Data flow:** Fuseki stores RDF triples (primary). MongoDB stores metadata, collaboration data, and change history. Changes sync automatically between the two.
 
 ---
 
@@ -261,23 +261,15 @@ See [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md) for detailed comparison of al
 - **JDK 21**
 - **Maven 3.8+**
 - **MongoDB 6.0+**
-- **GraphDB 10.0+** with a repository named `ontocode`
+- **Apache Jena Fuseki** with a dataset named `ontocode`
 
-#### Setup GraphDB
+#### Setup Fuseki
 
 ```bash
-# Using Docker
-docker run -d -p 7200:7200 --name graphdb ontotext/graphdb:10.7.0-free
+docker compose up -d fuseki mongo
 ```
 
-Then create the `ontocode` repository:
-
-1. Open http://localhost:7200
-2. Navigate to **Setup > Repositories > Create new repository**
-3. Set Repository ID: `ontocode`, Ruleset: `OWL2-RL (Optimized)`
-4. Click **Create**
-
-See [GRAPHDB_SETUP.md](GRAPHDB_SETUP.md) for complete instructions.
+Fuseki comes up pre-configured with the `ontocode` dataset — no manual setup needed. Available at http://localhost:3030.
 
 #### Build and Run
 
@@ -366,7 +358,7 @@ npm run bundle:extension
 - **Maven 3.8+**
 - **Node.js 18+**
 - **MongoDB 6.0+**
-- **GraphDB 10.0+**
+- **Apache Jena Fuseki**
 - **Docker** (for containerized deployment)
 - **VS Code** (for extension development)
 
