@@ -616,32 +616,67 @@ export async function activate(context: vscode.ExtensionContext) {
         },
         formatCitationForOntology: async (key: string, format?: 'turtle' | 'rdfxml'): Promise<string> => {
             console.log('[OntoCode] formatCitationForOntology called for key:', key, 'format:', format);
-            const item = mockZoteroLibrary.find(i => i.key === key);
-            if (!item) return '';
 
-            const data = item.data;
-            const isTurtle = format === 'turtle' || !format;
-            if (isTurtle) {
-                return `@prefix bibo: <http://purl.org/ontology/bibo/> .
-@prefix dc: <http://purl.org/dc/elements/1.1/> .
-@prefix foaf: <http://xmlns.com/foaf/0.1/> .
-
-<http://example.org/citation/${item.key}> a bibo:Article ;
-    dc:title "${data.title}" ;
-    dc:date "${data.date}" ;
-    dc:creator [ a foaf:Person ; foaf:name "${data.creators[0].firstName} ${data.creators[0].lastName}" ] .
-`;
-            } else {
-                return `<?xml version="1.0"?>
-<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-         xmlns:dc="http://purl.org/dc/elements/1.1/"
-         xmlns:bibo="http://purl.org/ontology/bibo/">
-  <bibo:Article rdf:about="http://example.org/citation/${item.key}">
-    <dc:title>${data.title}</dc:title>
-    <dc:date>${data.date}</dc:date>
-  </bibo:Article>
-</rdf:RDF>`;
+            // Try to fetch the real item from Zotero first — the old version only ever
+            // looked in mockZoteroLibrary, so any real (non-demo) citation key always
+            // fell through to `return ''`, which the caller in citationInsertion.ts
+            // treats as failure ("Failed to format citation.").
+            let data: { title: string; creators: Array<{ firstName: string; lastName: string }>; date?: string; DOI?: string; url?: string } | undefined;
+            if (zoteroApiService.isConfigured()) {
+                const realItem = await zoteroApiService.fetchItem(key);
+                if (realItem) data = realItem.data;
             }
+            if (!data) return '';
+
+            const escapeTurtle = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+            const escapeXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const escapedKey = key.replace(/[^a-zA-Z0-9]/g, '');
+            const authors = data.creators?.map(c => `${c.firstName} ${c.lastName}`).join(', ') || 'Unknown';
+            const year = data.date ? (data.date.match(/\d{4}/)?.[0] || '') : '';
+
+            // Same prov:/dc:/foaf:/rdfs: shape ensurePrefixes() in citationInsertion.ts
+            // provisions in the document — the previous bibo:-based template declared
+            // a prefix ensurePrefixes never inserts.
+            if (format === 'rdfxml') {
+                let xml = `<?xml version="1.0"?>\n`;
+                xml += `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n`;
+                xml += `         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n`;
+                xml += `         xmlns:owl="http://www.w3.org/2002/07/owl#"\n`;
+                xml += `         xmlns:dc="http://purl.org/dc/elements/1.1/"\n`;
+                xml += `         xmlns:foaf="http://xmlns.com/foaf/0.1/"\n`;
+                xml += `         xmlns:prov="http://www.w3.org/ns/prov#"\n`;
+                xml += `         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">\n\n`;
+                xml += `    <!-- Zotero Citation: ${escapeXml(data.title)} -->\n`;
+                xml += `    <owl:NamedIndividual rdf:about="urn:citation:${escapedKey}">\n`;
+                xml += `        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
+                xml += `        <dc:title>${escapeXml(data.title)}</dc:title>\n`;
+                xml += `        <dc:creator>${escapeXml(authors)}</dc:creator>\n`;
+                if (year) xml += `        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
+                if (data.DOI) xml += `        <dc:identifier>doi:${escapeXml(data.DOI)}</dc:identifier>\n`;
+                if (data.url) xml += `        <foaf:homepage rdf:resource="${escapeXml(data.url)}"/>\n`;
+                xml += `        <rdfs:comment>Zotero citation</rdfs:comment>\n`;
+                xml += `    </owl:NamedIndividual>\n`;
+                xml += `</rdf:RDF>`;
+                return xml;
+            }
+
+            let ttl = `@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n`;
+            ttl += `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n`;
+            ttl += `@prefix owl: <http://www.w3.org/2002/07/owl#> .\n`;
+            ttl += `@prefix dc: <http://purl.org/dc/elements/1.1/> .\n`;
+            ttl += `@prefix foaf: <http://xmlns.com/foaf/0.1/> .\n`;
+            ttl += `@prefix prov: <http://www.w3.org/ns/prov#> .\n`;
+            ttl += `@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n`;
+            ttl += `###  Zotero Citation: ${data.title}\n`;
+            ttl += `<urn:citation:${escapedKey}> rdf:type owl:NamedIndividual ,\n`;
+            ttl += `         prov:Entity ;\n`;
+            ttl += `    dc:title "${escapeTurtle(data.title)}" ;\n`;
+            ttl += `    dc:creator "${escapeTurtle(authors)}" ;\n`;
+            if (year) ttl += `    dc:date "${year}"^^xsd:gYear ;\n`;
+            if (data.DOI) ttl += `    dc:identifier "doi:${escapeTurtle(data.DOI)}" ;\n`;
+            if (data.url) ttl += `    foaf:homepage <${data.url}> ;\n`;
+            ttl += `    rdfs:comment "Zotero citation" .\n`;
+            return ttl;
         },
         getCitationMetadata: async (key: string): Promise<any | null> => {
             console.log('[OntoCode] getCitationMetadata called for key:', key);
