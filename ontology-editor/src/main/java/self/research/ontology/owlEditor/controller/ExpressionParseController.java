@@ -64,7 +64,8 @@ public class ExpressionParseController {
     public ResponseEntity<?> addPropertyExpressionAxiom(@PathVariable String projectId,
                                                         @RequestBody AddPropertyAxiomRequest request,
                                                         @RequestParam(required = false) String userId,
-                                                        @RequestParam(required = false) String username) {
+                                                        @RequestParam(required = false) String username,
+                                                        @RequestParam(required = false, defaultValue = "false") boolean draft) {
         if (request == null || request.propertyIri == null || request.propertyIri.isBlank()
                 || request.expression == null || request.expression.isBlank()
                 || request.relationType == null || request.relationType.isBlank()) {
@@ -77,22 +78,24 @@ public class ExpressionParseController {
             String relation = request.relationType.trim();
             if ("Domain".equalsIgnoreCase(relation)) {
                 manchesterExpressionService.addPropertyDomainAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty);
+                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId);
             } else if ("Range".equalsIgnoreCase(relation)) {
                 manchesterExpressionService.addPropertyRangeAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty);
+                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId);
             } else {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
                         "error", "relationType must be Domain or Range"));
             }
-            collaborativeEditService.broadcastMutation(projectId,
-                    new OntologyMutationService.MutationOp(
-                            "Domain".equalsIgnoreCase(relation) ? "addPropertyDomain" : "addPropertyRange",
-                            request.propertyIri, null, null, null, request.expression,
-                            null, null, null, null, null, null, null, null, null),
-                    userId != null ? userId : "anonymous",
-                    username != null ? username : "Anonymous");
+            if (!draft) {
+                collaborativeEditService.broadcastMutation(projectId,
+                        new OntologyMutationService.MutationOp(
+                                "Domain".equalsIgnoreCase(relation) ? "addPropertyDomain" : "addPropertyRange",
+                                request.propertyIri, null, null, null, request.expression,
+                                null, null, null, null, null, null, null, null, null),
+                        userId != null ? userId : "anonymous",
+                        username != null ? username : "Anonymous");
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
@@ -108,7 +111,8 @@ public class ExpressionParseController {
     public ResponseEntity<?> deletePropertyExpressionAxiom(@PathVariable String projectId,
                                                          @RequestBody AddPropertyAxiomRequest request,
                                                          @RequestParam(required = false) String userId,
-                                                         @RequestParam(required = false) String username) {
+                                                         @RequestParam(required = false) String username,
+                                                         @RequestParam(required = false, defaultValue = "false") boolean draft) {
         if (request == null || request.propertyIri == null || request.propertyIri.isBlank()
                 || request.expression == null || request.expression.isBlank()
                 || request.relationType == null || request.relationType.isBlank()) {
@@ -121,22 +125,24 @@ public class ExpressionParseController {
             String relation = request.relationType.trim();
             if ("Domain".equalsIgnoreCase(relation)) {
                 manchesterExpressionService.deletePropertyDomainAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty);
+                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId);
             } else if ("Range".equalsIgnoreCase(relation)) {
                 manchesterExpressionService.deletePropertyRangeAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty);
+                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId);
             } else {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
                         "error", "relationType must be Domain or Range"));
             }
-            collaborativeEditService.broadcastMutation(projectId,
-                    new OntologyMutationService.MutationOp(
-                            "Domain".equalsIgnoreCase(relation) ? "deletePropertyDomain" : "deletePropertyRange",
-                            request.propertyIri, null, null, null, request.expression,
-                            null, null, null, null, null, null, null, null, null),
-                    userId != null ? userId : "anonymous",
-                    username != null ? username : "Anonymous");
+            if (!draft) {
+                collaborativeEditService.broadcastMutation(projectId,
+                        new OntologyMutationService.MutationOp(
+                                "Domain".equalsIgnoreCase(relation) ? "deletePropertyDomain" : "deletePropertyRange",
+                                request.propertyIri, null, null, null, request.expression,
+                                null, null, null, null, null, null, null, null, null),
+                        userId != null ? userId : "anonymous",
+                        username != null ? username : "Anonymous");
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
@@ -152,7 +158,8 @@ public class ExpressionParseController {
     public ResponseEntity<?> addGeneralClassAxiom(@PathVariable String projectId,
                                                   @RequestBody AddGcaRequest request,
                                                   @RequestParam(required = false) String userId,
-                                                  @RequestParam(required = false) String username) {
+                                                  @RequestParam(required = false) String username,
+                                                  @RequestParam(required = false, defaultValue = "false") boolean draft) {
         if (request == null || request.subClassExpression == null || request.subClassExpression.isBlank()
                 || request.superClassExpression == null || request.superClassExpression.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of(
@@ -161,14 +168,17 @@ public class ExpressionParseController {
         }
         try {
             manchesterExpressionService.addGeneralClassAxiom(
-                    projectId, request.subClassExpression.trim(), request.superClassExpression.trim());
-            collaborativeEditService.broadcastMutation(projectId,
-                    new OntologyMutationService.MutationOp(
-                            "addGCA", null, null, null, null,
-                            request.subClassExpression.trim() + " SubClassOf " + request.superClassExpression.trim(),
-                            request.superClassExpression.trim(), null, null, null, null, null, null, null, null),
-                    userId != null ? userId : "anonymous",
-                    username != null ? username : "Anonymous");
+                    projectId, request.subClassExpression.trim(), request.superClassExpression.trim(), draft, userId);
+            // Draft edits are private to the author — do not broadcast them to other collaborators.
+            if (!draft) {
+                collaborativeEditService.broadcastMutation(projectId,
+                        new OntologyMutationService.MutationOp(
+                                "addGCA", null, null, null, null,
+                                request.subClassExpression.trim() + " SubClassOf " + request.superClassExpression.trim(),
+                                request.superClassExpression.trim(), null, null, null, null, null, null, null, null),
+                        userId != null ? userId : "anonymous",
+                        username != null ? username : "Anonymous");
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
@@ -184,7 +194,8 @@ public class ExpressionParseController {
     public ResponseEntity<?> addClassExpressionAxiom(@PathVariable String projectId,
                                                      @RequestBody AddClassAxiomRequest request,
                                                      @RequestParam(required = false) String userId,
-                                                     @RequestParam(required = false) String username) {
+                                                     @RequestParam(required = false) String username,
+                                                     @RequestParam(required = false, defaultValue = "false") boolean draft) {
         if (request == null || request.classIri == null || request.classIri.isBlank()
                 || request.expression == null || request.expression.isBlank()
                 || request.axiomType == null || request.axiomType.isBlank()) {
@@ -194,13 +205,15 @@ public class ExpressionParseController {
         }
         try {
             manchesterExpressionService.addClassExpressionAxiom(
-                    projectId, request.classIri, request.axiomType, request.expression);
-            collaborativeEditService.broadcastMutation(projectId,
-                    new OntologyMutationService.MutationOp(
-                            "addClassExpression", request.classIri, null, null, null, request.expression,
-                            null, request.classIri, null, null, request.axiomType, null, null, null, null),
-                    userId != null ? userId : "anonymous",
-                    username != null ? username : "Anonymous");
+                    projectId, request.classIri, request.axiomType, request.expression, draft, userId);
+            if (!draft) {
+                collaborativeEditService.broadcastMutation(projectId,
+                        new OntologyMutationService.MutationOp(
+                                "addClassExpression", request.classIri, null, null, null, request.expression,
+                                null, request.classIri, null, null, request.axiomType, null, null, null, null),
+                        userId != null ? userId : "anonymous",
+                        username != null ? username : "Anonymous");
+            }
             return ResponseEntity.ok(Map.of("success", true));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));

@@ -301,7 +301,7 @@ public class OwlApiMutationPatcher {
             case "deleteClass" -> {
                 Optional<OWLClass> cls = namedClass(op.iri(), df);
                 if (cls.isEmpty()) yield false;
-                toRemove.addAll(ontology.getAxioms(cls.get()));
+                toRemove.addAll(ontology.getReferencingAxioms(cls.get()));
                 yield true;
             }
             case "addObjectRestriction" -> {
@@ -394,7 +394,7 @@ public class OwlApiMutationPatcher {
             case "deleteDatatype" -> {
                 if (op.iri() == null) yield false;
                 OWLDatatype dt = df.getOWLDatatype(IRI.create(op.iri()));
-                toRemove.addAll(ontology.getAxioms(dt));
+                toRemove.addAll(ontology.getReferencingAxioms(dt));
                 yield true;
             }
             default -> false;
@@ -450,19 +450,19 @@ public class OwlApiMutationPatcher {
 
     private boolean deleteObjectProperty(OWLOntology ontology, OWLDataFactory df, String iri, Set<OWLAxiom> toRemove) {
         if (iri == null) return false;
-        toRemove.addAll(ontology.getAxioms(df.getOWLObjectProperty(IRI.create(iri))));
+        toRemove.addAll(ontology.getReferencingAxioms(df.getOWLObjectProperty(IRI.create(iri))));
         return true;
     }
 
     private boolean deleteDataProperty(OWLOntology ontology, OWLDataFactory df, String iri, Set<OWLAxiom> toRemove) {
         if (iri == null) return false;
-        toRemove.addAll(ontology.getAxioms(df.getOWLDataProperty(IRI.create(iri))));
+        toRemove.addAll(ontology.getReferencingAxioms(df.getOWLDataProperty(IRI.create(iri))));
         return true;
     }
 
     private boolean deleteAnnotationProperty(OWLOntology ontology, OWLDataFactory df, String iri, Set<OWLAxiom> toRemove) {
         if (iri == null) return false;
-        toRemove.addAll(ontology.getAxioms(df.getOWLAnnotationProperty(IRI.create(iri))));
+        toRemove.addAll(ontology.getReferencingAxioms(df.getOWLAnnotationProperty(IRI.create(iri))));
         return true;
     }
 

@@ -113,6 +113,45 @@ public class WorkspaceOwnershipService {
     }
 
     /**
+     * True if userId is an ADMIN member of the given workspace. Repository failures → false.
+     */
+    public boolean isUserAdminOfWorkspace(String userId, String workspaceId) {
+        if (userId == null || workspaceId == null || workspaceId.isBlank()) {
+            return false;
+        }
+        try {
+            Query q = new Query(Criteria.where("workspaceId").is(workspaceId.trim())
+                    .and("members").elemMatch(
+                            Criteria.where("userId").is(userId).and("role").regex("^ADMIN$", "i")));
+            return mongoTemplate.exists(q, "workspaces");
+        } catch (Exception e) {
+            log.debug("isUserAdminOfWorkspace failed userId={} workspaceId={}: {}", userId, workspaceId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * True if the user is a workspace-level ADMIN for the workspace associated with this project
+     * (direct or parent project doc) — same "workspace admin = privileged everywhere" convention
+     * already used by ontology-auth's ProjectController (e.g. its getProjectFiles endpoint
+     * synthesizes userProjectRole="ADMIN" for these users), so the UI shows the Approve action to
+     * them. This is the project-scoped counterpart to isUserOwnerOfProject.
+     */
+    public boolean isUserAdminOfProject(String userId, String projectId) {
+        if (userId == null) {
+            return false;
+        }
+        try {
+            return resolveWorkspaceIdForProject(projectId)
+                    .filter(wsId -> isUserAdminOfWorkspace(userId, wsId))
+                    .isPresent();
+        } catch (Exception e) {
+            log.debug("isUserAdminOfProject failed userId={} projectId={}: {}", userId, projectId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Extract workspaceId from request URI by scanning path segments {@code proj-*}
      * (same semantics as legacy path walk: first segment that yields a workspace wins).
      */
@@ -191,6 +230,12 @@ public class WorkspaceOwnershipService {
     public boolean canPublishToProject(String userId, String projectId) {
         if (userId == null || projectId == null || projectId.isBlank()) return false;
         if (isUserOwnerOfProject(userId, projectId)) return true;
+        // Workspace-level ADMINs are treated as project ADMINs everywhere else (e.g.
+        // ontology-auth's ProjectController synthesizes userProjectRole="ADMIN" for them,
+        // which is what makes the frontend show the Approve action to them in the first
+        // place) — without this check, a workspace admin who isn't also an explicit
+        // per-project member got a 403 here despite seeing the Approve button.
+        if (isUserAdminOfProject(userId, projectId)) return true;
         String parentProjectId = projectId.contains("--")
                 ? projectId.substring(0, projectId.indexOf("--"))
                 : projectId;

@@ -529,10 +529,8 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-pulse delay-1000"></div>
       </div>
 
-      <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-4xl flex flex-col my-auto">
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex-1" />
-          <div className="flex items-center gap-2">
+      <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-4 sm:p-8 w-full max-w-4xl flex flex-col my-auto">
+        <div className="flex flex-wrap items-center justify-end gap-2 mb-4">
           {!(onManageAccountBilling || onUpgradeAccountPlan) ? null : (
             accountSubscription && (accountSubscription.status === "active" || accountSubscription.status === "trialing") && accountSubscription.planName !== "FREE" ? (
               <button
@@ -582,7 +580,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
             Desktop App
           </button>
-          </div>
         </div>
 
         <div className="text-center mb-8">
@@ -644,13 +641,13 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                       : "hover:bg-white/10 hover:border-purple-400/50 cursor-pointer border-white/10"
                   }`}
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div className="flex items-start space-x-4 flex-1 min-w-0">
                       <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 ${isPending ? "bg-gradient-to-br from-amber-500 to-orange-600" : "bg-gradient-to-br from-purple-500 to-indigo-600"}`}>
                         {isPending ? <Mail size={24} className="text-white" /> : <Building2 size={24} className="text-white" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center space-x-2 mb-1 min-w-0">
+                        <div className="flex items-center flex-wrap gap-2 mb-1 min-w-0">
                           <h3 className="text-xl font-semibold text-white truncate flex-shrink min-w-0" title={workspace.name}>
                             {workspace.name}
                           </h3>
@@ -669,7 +666,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                             {workspace.description}
                           </p>
                         )}
-                        <div className="flex items-center space-x-4 text-sm text-gray-400">
+                        <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-sm text-gray-400">
                           <span className="flex items-center space-x-1">
                             <Users size={14} />
                             <span>
@@ -685,7 +682,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 self-end sm:self-auto flex-shrink-0">
                       {(!isPending && selfMember?.role?.toUpperCase() === "OWNER") && (
                         <button
                           onClick={(e) => confirmDelete(workspace, e)}

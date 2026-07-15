@@ -833,9 +833,21 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
     const projectMemberUsernames = new Set(projectSettingsModal.members?.map((m) => m.username.toLowerCase()) || []);
 
-    return teamMembers.filter(
-      (member) => !projectMemberUsernames.has(member.username.toLowerCase()) && member.status === "ACTIVE",
-    );
+    return teamMembers.filter((member) => {
+      if (projectMemberUsernames.has(member.username.toLowerCase()) || member.status !== "ACTIVE") {
+        return false;
+      }
+      // Workspace owner/admins always get implicit access to shared projects
+      // (backend auto-links them — see applyImplicitWorkspaceLeadershipEditors),
+      // but that backfill only runs at project creation or after the first
+      // member is added. Until then they aren't literally in project.members
+      // yet, so exclude them here too rather than offering a redundant
+      // "add" that's already guaranteed.
+      return !member.roles.some((r) => {
+        const upper = r.toUpperCase();
+        return upper === "OWNER" || upper === "ADMIN";
+      });
+    });
   };
 
   const filteredProjects = useMemo(() => {

@@ -92,6 +92,13 @@ export const ontologyMutationService = {
         username: actor.username,
         sessionId: sessionId || `session_${Date.now()}`
       });
+      // Let open views (e.g. Graph View plugin) know the ontology changed so they
+      // can drop their caches and refetch.
+      try {
+        window.dispatchEvent(new CustomEvent('ontology:mutated', {
+          detail: { projectId, ops: ops.map(o => o.type) },
+        }));
+      } catch { /* non-fatal */ }
     } catch (err: any) {
       if (err?.status === 403 && err?.data?.requiresUpgrade) {
         const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
@@ -140,6 +147,24 @@ export const ontologyMutationService = {
       type: 'deleteClass',
       iri
     }], undefined, userId, username);
+  },
+
+  /**
+   * Delete a class and one or more descendant classes in a single atomic request.
+   */
+  async deleteClasses(projectId: string, iris: string[], userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(
+      projectId,
+      iris.map((iri) => ({ type: 'deleteClass', iri })),
+      undefined, userId, username,
+    );
+  },
+
+  /**
+   * All asserted descendants of a class, for the "delete class + descendants" dialog.
+   */
+  async getDescendants(projectId: string, iri: string): Promise<{ iris: string[]; labels: Record<string, string>; truncated: boolean }> {
+    return apiClient.get(`/api/ontology/classes/descendants/${projectId}`, { parentIri: iri });
   },
 
   /**

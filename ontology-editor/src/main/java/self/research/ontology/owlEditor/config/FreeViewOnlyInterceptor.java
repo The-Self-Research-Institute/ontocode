@@ -110,10 +110,12 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
                 return false;
             }
             if (workspaceOwnershipService.isDraftEditorInProject(userId, projectId)) {
-                // DRAFT_EDITOR: allow draft mutations and all /draft* endpoints; block direct writes
+                // DRAFT_EDITOR: allow draft mutations and all /draft* endpoints; block direct writes.
+                // pull-from-public is a draft mutation too — it merges public changes into the
+                // CALLER'S OWN DRAFT, never into public (403 here was the draft-editor pull bug).
                 boolean isDraftMutation = "true".equalsIgnoreCase(request.getParameter("draft"))
                         || "true".equalsIgnoreCase(request.getParameter("useDraft"));
-                boolean isDraftEndpoint = path.contains("/draft");
+                boolean isDraftEndpoint = path.contains("/draft") || path.contains("/pull-from-public/");
                 if (isDraftMutation || isDraftEndpoint) {
                     return true;
                 }

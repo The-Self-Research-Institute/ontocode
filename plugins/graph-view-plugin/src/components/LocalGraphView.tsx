@@ -43,6 +43,8 @@ import {
   EyeOff
 } from 'lucide-react';
 import type { OntologyNode, OntologyEdge, NodeType } from '../types';
+import { useIsDarkTheme } from '../hooks/useIsDarkTheme';
+import { nodeAccent } from '../utils/nodePalette';
 
 interface LocalGraphViewProps {
   nodes: OntologyNode[];
@@ -63,15 +65,10 @@ interface LocalGraphViewProps {
   height?: number | string;
 }
 
-const TYPE_COLOR: Record<NodeType, string> = {
-  class: '#3b82f6',
-  individual: '#10b981',
-  property: '#f59e0b',
-  dataProperty: '#ec4899',
-  objectProperty: '#06b6d4',
-  annotation: '#8b5cf6',
-  datatype: '#f97316'
-};
+// Node color comes from the canonical NODE_ACCENTS palette (utils/nodePalette) via
+// nodeAccent() — this used to be its own hardcoded set of colors, different from what the
+// main graph view uses for the same entity types (e.g. individuals were green here, violet
+// there), which looked inconsistent switching between the two views.
 
 interface SimNode extends d3.SimulationNodeDatum {
   id: string;
@@ -114,6 +111,7 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
   const [showLabels, setShowLabels] = useState(true);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [size, setSize] = useState({ width: 480, height: 320 });
+  const isDark = useIsDarkTheme();
 
   // ----- Resize observer --------------------------------------------------
   useLayoutEffect(() => {
@@ -233,7 +231,7 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
       .data(subgraph.links, d => d.id)
       .enter()
       .append('line')
-      .attr('stroke', '#94a3b8')
+      .attr('stroke', isDark ? '#64748b' : '#94a3b8')
       .attr('stroke-opacity', 0.6)
       .attr('stroke-width', 1);
 
@@ -248,8 +246,8 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
       .enter()
       .append('circle')
       .attr('r', focusedRadius)
-      .attr('fill', d => TYPE_COLOR[d.type] ?? '#94a3b8')
-      .attr('stroke', d => (d.id === focusNodeId ? '#0f172a' : '#ffffff'))
+      .attr('fill', d => nodeAccent(d.type))
+      .attr('stroke', d => (d.id === focusNodeId ? (isDark ? '#f1f5f9' : '#0f172a') : (isDark ? '#1e293b' : '#ffffff')))
       .attr('stroke-width', d => (d.id === focusNodeId ? 2.5 : 1))
       .attr('cursor', 'pointer')
       .on('mouseenter', (_event, d) => setHoveredId(d.id))
@@ -273,9 +271,9 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
           .append('text')
           .attr('font-size', LABEL_FONT_SIZE)
           .attr('font-family', 'system-ui, sans-serif')
-          .attr('fill', '#0f172a')
+          .attr('fill', isDark ? '#f1f5f9' : '#0f172a')
           .attr('paint-order', 'stroke')
-          .attr('stroke', '#ffffff')
+          .attr('stroke', isDark ? '#0f172a' : '#ffffff')
           .attr('stroke-width', 3)
           .attr('text-anchor', 'middle')
           .attr('dy', d => -focusedRadius(d) - 4)
@@ -338,7 +336,7 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
       simulation.stop();
       simulationRef.current = null;
     };
-  }, [subgraph, size, focusNodeId, nodes, onSelect, onActivate, paused, showLabels]);
+  }, [subgraph, size, focusNodeId, nodes, onSelect, onActivate, paused, showLabels, isDark]);
 
   // ----- Update hover highlighting without rebuilding the simulation -----
   useEffect(() => {
@@ -401,8 +399,8 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
         position: 'relative',
         width: '100%',
         height,
-        backgroundColor: '#fafafa',
-        border: '1px solid #e4e4e7',
+        backgroundColor: 'var(--bg)',
+        border: '1px solid var(--border)',
         borderRadius: 6,
         overflow: 'hidden',
         display: 'flex',
@@ -416,17 +414,17 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
             alignItems: 'center',
             gap: 8,
             padding: '6px 10px',
-            borderBottom: '1px solid #e4e4e7',
-            backgroundColor: '#ffffff',
+            borderBottom: '1px solid var(--border)',
+            backgroundColor: 'var(--surface-1)',
             fontSize: 12,
-            color: '#0f172a',
+            color: 'var(--text-primary)',
             flexShrink: 0
           }}
         >
           <Crosshair size={14} />
           <span style={{ fontWeight: 600 }}>Local graph</span>
-          <span style={{ color: '#94a3b8', fontSize: 11 }}>Obsidian-style</span>
-          <span style={{ color: '#94a3b8' }}>·</span>
+          <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>Obsidian-style</span>
+          <span style={{ color: 'var(--text-secondary)' }}>·</span>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             depth
             <input
@@ -475,7 +473,7 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#64748b',
+              color: 'var(--text-secondary)',
               fontSize: 12,
               padding: 16,
               textAlign: 'center'
@@ -557,8 +555,8 @@ function focusForce(focusId: string | null, width: number, height: number) {
 }
 
 const iconBtn: React.CSSProperties = {
-  border: '1px solid #d4d4d8',
-  background: '#ffffff',
+  border: '1px solid var(--border)',
+  background: 'var(--surface-1)',
   borderRadius: 4,
   padding: '2px 4px',
   display: 'flex',

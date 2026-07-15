@@ -32,6 +32,21 @@ export function isDesktop(): boolean {
     return typeof window !== 'undefined' && !!(window as any).electronAPI;
 }
 
+/**
+ * True only when `window.vscode` is the real VS Code webview API. `vscodeBridge.ts`
+ * installs a same-named `window.vscode` shim in plain-browser mode (tagged
+ * `__ONTOCODE_BROWSER_BRIDGE__`) so browser code keeps working without VS Code —
+ * but that means a bare `if (window.vscode)` check can't tell "real VS Code" from
+ * "plain webapp tab", and will wrongly take the VS-Code-only code path in the browser.
+ */
+export function isRealVSCode(): boolean {
+    return typeof window !== 'undefined'
+        && !!(window as any).vscode
+        && !isDesktop()
+        && !(window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION
+        && !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
+}
+
 /** Read the (already signature-verified) license from the Electron main process. */
 export async function getDesktopLicense(): Promise<DesktopLicense | null> {
     try {

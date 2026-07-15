@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef, useCallback } from 'react';
 import {
   Users, Wifi, WifiOff, Circle, ChevronRight, ChevronDown, Activity, GripVertical,
-  CheckCircle, XCircle, Undo2, MessageSquare, ExternalLink, Loader2, X, AlertCircle,
+  Undo2, MessageSquare, ExternalLink, Loader2, X,
 } from 'lucide-react';
 import { useCollaboration } from '../contexts/CollaborationContext';
 import { changeTrackingService, OntologyChange } from '../services/changeTrackingService';
@@ -13,29 +13,6 @@ interface CollaborationPanelProps {
 
 export interface CollaborationPanelRef {
   refreshChanges: () => void;
-}
-
-function statusBadge(status?: string) {
-  const s = (status || 'PENDING').toUpperCase();
-  if (s === 'APPROVED') {
-    return (
-      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">
-        <CheckCircle size={10} /> Approved
-      </span>
-    );
-  }
-  if (s === 'REJECTED') {
-    return (
-      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-700">
-        <XCircle size={10} /> Rejected
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
-      <AlertCircle size={10} /> Pending
-    </span>
-  );
 }
 
 function changeActionIcon(changeType: string) {
@@ -233,17 +210,6 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
     } finally {
       setActionLoading(null);
     }
-  };
-
-  const handleApprove = (change: OntologyChange) =>
-    runAction('approve', () => changeTrackingService.approveChange(projectId!, change.id));
-
-  const handleReject = (change: OntologyChange) =>
-    runAction('reject', () => changeTrackingService.rejectChange(projectId!, change.id));
-
-  const handleRevert = (change: OntologyChange) => {
-    if (!confirm(`Revert this change on "${change.entityLabel || change.entityIRI}"?`)) return;
-    runAction('revert', () => changeTrackingService.revertChange(projectId!, change.id));
   };
 
   const handleRollback = (change: OntologyChange) => {
@@ -479,7 +445,6 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                                   {change.entityLabel}
                                 </span>
                               )}
-                              {statusBadge(change.status)}
                             </div>
                             <div className="text-[10px] text-gray-500 truncate">
                               {change.changeType} · {change.username} · {formatTime(change.timestamp)}
@@ -517,7 +482,6 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                         {selectedChange.entityIRI || 'No IRI'}
                       </div>
                       <div className="mt-1 flex items-center gap-1 flex-wrap">
-                        {statusBadge(selectedChange.status)}
                         <span className="text-[10px] text-gray-500">
                           by {selectedChange.username} · {formatTime(selectedChange.timestamp)}
                         </span>
@@ -552,26 +516,6 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                         <ExternalLink size={10} /> Go to entity
                       </button>
                     )}
-                    {(selectedChange.status || 'PENDING').toUpperCase() === 'PENDING' && (
-                      <>
-                        <button
-                          onClick={() => handleApprove(selectedChange)}
-                          disabled={!!actionLoading}
-                          className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-                        >
-                          {actionLoading === 'approve' ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle size={10} />}
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => handleReject(selectedChange)}
-                          disabled={!!actionLoading}
-                          className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-                        >
-                          {actionLoading === 'reject' ? <Loader2 size={10} className="animate-spin" /> : <XCircle size={10} />}
-                          Reject
-                        </button>
-                      </>
-                    )}
                     <button
                       onClick={() => handleRollback(selectedChange)}
                       disabled={!!actionLoading || !selectedChange.entityIRI}
@@ -579,14 +523,6 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                     >
                       {actionLoading === 'rollback' ? <Loader2 size={10} className="animate-spin" /> : <Undo2 size={10} />}
                       Rollback
-                    </button>
-                    <button
-                      onClick={() => handleRevert(selectedChange)}
-                      disabled={!!actionLoading || selectedChange.reverted}
-                      className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium border border-gray-300 text-gray-600 rounded hover:bg-gray-100 disabled:opacity-50"
-                    >
-                      {actionLoading === 'revert' ? <Loader2 size={10} className="animate-spin" /> : <Undo2 size={10} />}
-                      Mark reverted
                     </button>
                   </div>
 

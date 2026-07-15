@@ -1,7 +1,22 @@
 import apiClient from './apiClient';
+import ontologyMutationService from './ontologyMutationService';
+import { isDesktop } from '../utils/desktop';
 
 export type ClassAxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
 export type PropertyRelationType = 'Domain' | 'Range';
+
+/**
+ * Appends draft=true when the WEBAPP is in private/draft mode so the backend routes the
+ * write to the user's draft graph instead of the shared public graph. Desktop is excluded:
+ * it's single-user with no public/draft split, so it keeps its prior direct-write behavior.
+ */
+function withDraftParams(params: URLSearchParams, userId?: string): URLSearchParams {
+  if (!isDesktop() && ontologyMutationService.isPrivateEditMode()) {
+    params.set('draft', 'true');
+    if (userId) params.set('userId', userId);
+  }
+  return params;
+}
 
 export function isSimpleOntologyIri(value: string): boolean {
   const t = value.trim();
@@ -61,6 +76,7 @@ export const expressionService = {
     const params = new URLSearchParams();
     if (userId) params.set('userId', userId);
     if (username) params.set('username', username);
+    withDraftParams(params, userId);
     const qs = params.toString();
     await apiClient.post(
       `/api/ontology/${encodeURIComponent(projectId)}/expression/add-class-axiom${qs ? `?${qs}` : ''}`,
@@ -80,6 +96,7 @@ export const expressionService = {
     const params = new URLSearchParams();
     if (userId) params.set('userId', userId);
     if (username) params.set('username', username);
+    withDraftParams(params, userId);
     const qs = params.toString();
     await apiClient.post(
       `/api/ontology/${encodeURIComponent(projectId)}/expression/add-property-axiom${qs ? `?${qs}` : ''}`,
@@ -99,6 +116,7 @@ export const expressionService = {
     const params = new URLSearchParams();
     if (userId) params.set('userId', userId);
     if (username) params.set('username', username);
+    withDraftParams(params, userId);
     const qs = params.toString();
     await apiClient.post(
       `/api/ontology/${encodeURIComponent(projectId)}/expression/delete-property-axiom${qs ? `?${qs}` : ''}`,

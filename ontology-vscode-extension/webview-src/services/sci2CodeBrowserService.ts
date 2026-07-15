@@ -116,16 +116,19 @@ class Sci2CodeBrowserService {
    * Returns the numeric userID string, or null on failure.
    */
   async fetchUserIdFromApiKey(apiKey: string): Promise<string | null> {
+    let resp: Response;
     try {
-      const resp = await fetch(`${this.baseUrl}/keys/${encodeURIComponent(apiKey)}`, {
+      resp = await fetch(`${this.baseUrl}/keys/${encodeURIComponent(apiKey)}`, {
         headers: { 'Zotero-API-Version': '3' },
       });
-      if (!resp.ok) return null;
-      const data = await resp.json();
-      return data.userID ? String(data.userID) : null;
-    } catch {
-      return null;
+    } catch (err: any) {
+      throw new Error(`Could not reach Zotero to verify the key (${err?.message || 'network error'}).`);
     }
+    if (!resp.ok) {
+      throw new Error(`Zotero rejected this API key (${resp.status} ${resp.statusText}). Verify it at zotero.org/settings/keys.`);
+    }
+    const data = await resp.json();
+    return data.userID ? String(data.userID) : null;
   }
 
   /**

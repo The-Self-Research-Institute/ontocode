@@ -140,17 +140,36 @@ export class VOWLNotationService {
       stroke = '#7c3aed'; // Purple
       strokeDasharray = '2 2';
     }
-    // EquivalentClass: double line effect - Green
+    // EquivalentClass: thick blue line. (Was green — paired with disjointWith's red, which is
+    // the exact red/green combination color-vision-deficiency guidance warns against, since
+    // ~8% of men can't reliably distinguish them. Blue/orange is a safer opposing pair, and
+    // both edge types still carry a redundant, non-color signal: this one is solid+thick,
+    // disjointWith is dashed.)
     else if (edge.type === 'equivalentClass') {
-      stroke = '#10b981'; // Green
+      stroke = '#2563eb'; // Blue
       strokeWidth = 3;
     }
-    // DisjointWith: wavy/zigzag effect
+    // DisjointWith: dashed orange line (see equivalentClass comment above for why not red/green)
     else if (edge.type === 'disjointWith') {
-      stroke = '#ef4444';
+      stroke = '#f97316'; // Orange
       strokeDasharray = '8 4';
     }
-    
+    // Restriction (someValuesFrom/allValuesFrom/hasValue/cardinality): amber solid line,
+    // distinct from the plain asserted propertyRelation edge it sits alongside
+    else if (edge.type === 'restriction') {
+      stroke = '#d97706';
+      strokeDasharray = null;
+      strokeWidth = 2;
+    }
+    // PropertyChain (owl:propertyChainAxiom composition): dotted pink line — was violet,
+    // identical to the annotation-property color above and distinguishable only by dash
+    // spacing (2 2 vs 1 3), an easy mix-up at a glance. Pink is otherwise unused here.
+    else if (edge.type === 'propertyChain') {
+      stroke = '#ec4899';
+      strokeDasharray = '1 3';
+      strokeWidth = 2;
+    }
+
     return {
       id: edge.id,
       source: edge.from,
@@ -187,6 +206,7 @@ export class VOWLNotationService {
       objectProperty: 'owl:ObjectProperty',
       annotation: 'owl:AnnotationProperty',
       datatype: 'rdfs:Datatype',
+      setOperator: 'owl:Class',
     };
     return typeMap[graphNodeType] || 'owl:Class';
   }
@@ -209,6 +229,9 @@ export class VOWLNotationService {
       spatial: 'rdfs:spatial',
       probabilistic: 'rdfs:probabilistic',
       subPropertyOf: 'rdfs:subPropertyOf',
+      operand: 'owl:operand',
+      restriction: 'owl:Restriction',
+      propertyChain: 'owl:propertyChainAxiom',
     };
     return typeMap[graphEdgeType] || 'rdfs:relation';
   }
@@ -319,19 +342,20 @@ export class VOWLNotationService {
       };
     }
 
-    // Equivalent class - solid thicker line
+    // Equivalent class - solid thicker line (blue, not green — see edgeToVOWLEdge for why)
     if (edgeType === 'owl:equivalentClass') {
       return {
-        stroke: '#10b981',
+        stroke: '#2563eb',
         strokeDasharray: '2,2',
         strokeWidth: baseWidth,
       };
     }
 
-    // Disjoint - dotted line
+    // Disjoint - dotted line (orange, not red — paired with equivalentClass, avoids the
+    // red/green color-vision-deficiency combination)
     if (edgeType === 'owl:disjointWith') {
       return {
-        stroke: '#ef4444',
+        stroke: '#f97316',
         strokeDasharray: '1,2',
         strokeWidth: baseWidth,
       };
@@ -383,14 +407,14 @@ export class VOWLNotationService {
         name: 'Equivalent Class',
         type: 'edge',
         edgeType: 'owl:equivalentClass',
-        stroke: '#10b981',
+        stroke: '#2563eb',
         strokeDasharray: '2,2',
       },
       {
         name: 'Disjoint With',
         type: 'edge',
         edgeType: 'owl:disjointWith',
-        stroke: '#ef4444',
+        stroke: '#f97316',
         strokeDasharray: '1,2',
       },
     ];

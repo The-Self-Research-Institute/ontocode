@@ -9,6 +9,7 @@
     "dev:desktop-e2e": "vite --mode desktop-e2e --port 3002",
     "build": "vite build",
     "build:electron": "vite build --base ./",
+    "build:vscode": "vite build --base ./",
     "preview": "vite preview"
   },
   "dependencies": {

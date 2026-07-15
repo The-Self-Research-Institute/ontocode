@@ -54,6 +54,7 @@ import {
   getRootNodes,
   searchNodesWithPaths
 } from '../HierarchicalLazyLoading';
+import { nodeAccent } from '../utils/nodePalette';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -149,15 +150,10 @@ interface ContextMenuState {
 // Component
 // ---------------------------------------------------------------------------
 
-const TREE_ICON_COLORS: Record<string, string> = {
-  class: '#FFD700',
-  individual: '#90EE90',
-  objectProperty: '#87CEEB',
-  dataProperty: '#DDA0DD',
-  annotation: '#F0E68C',
-  property: '#F39C12',
-  datatype: '#FFA500'
-};
+// Tree-row dot color comes from the canonical NODE_ACCENTS palette (utils/nodePalette) via
+// nodeAccent() — this used to be its own dated set of named-CSS-color-era hex values
+// (gold/lightgreen/skyblue/plum/khaki), unrelated to what the main graph view uses for the
+// same entity types, so the Navigator panel looked visually disconnected from the graph.
 
 const DEFAULT_NODE_TYPES: ReadonlyArray<OntologyNode['type']> = ['class'];
 
@@ -742,8 +738,8 @@ export const ClassHierarchyPanel: React.FC<ClassHierarchyPanelProps> = ({
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        backgroundColor: '#ffffff',
-        borderRight: '1px solid #d4d4d8',
+        backgroundColor: 'var(--surface-1)',
+        borderRight: '1px solid var(--border)',
         fontFamily: 'system-ui, -apple-system, "Segoe UI", Arial, sans-serif'
       }}
     >
@@ -751,8 +747,8 @@ export const ClassHierarchyPanel: React.FC<ClassHierarchyPanelProps> = ({
       <div
         style={{
           padding: '8px 12px',
-          borderBottom: '1px solid #e4e4e7',
-          backgroundColor: '#f8fafc',
+          borderBottom: '1px solid var(--border)',
+          backgroundColor: 'var(--surface-2)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -763,7 +759,7 @@ export const ClassHierarchyPanel: React.FC<ClassHierarchyPanelProps> = ({
           style={{
             fontWeight: 600,
             fontSize: 13,
-            color: '#0f172a',
+            color: 'var(--text-primary)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap'
@@ -786,7 +782,7 @@ export const ClassHierarchyPanel: React.FC<ClassHierarchyPanelProps> = ({
       <div
         style={{
           padding: '6px 8px',
-          borderBottom: '1px solid #e4e4e7',
+          borderBottom: '1px solid var(--border)',
           display: 'flex',
           alignItems: 'center',
           gap: 6,
@@ -806,15 +802,15 @@ export const ClassHierarchyPanel: React.FC<ClassHierarchyPanelProps> = ({
           </select>
         )}
         {showDirectionToggle && (
-          <div style={{ display: 'flex', border: '1px solid #d4d4d8', borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
             <button
               type="button"
               onClick={() => setDirection('sub')}
               title="Sub-class hierarchy (top-down)"
               style={{
                 ...directionButtonStyle,
-                backgroundColor: direction === 'sub' ? '#3b82f6' : '#ffffff',
-                color: direction === 'sub' ? '#ffffff' : '#374151'
+                backgroundColor: direction === 'sub' ? 'var(--accent)' : 'var(--surface-1)',
+                color: direction === 'sub' ? 'var(--on-accent)' : 'var(--text-primary)'
               }}
             >
               <ArrowDownFromLine size={12} />
@@ -826,9 +822,9 @@ export const ClassHierarchyPanel: React.FC<ClassHierarchyPanelProps> = ({
               title="Super-class hierarchy (bottom-up)"
               style={{
                 ...directionButtonStyle,
-                backgroundColor: direction === 'super' ? '#3b82f6' : '#ffffff',
-                color: direction === 'super' ? '#ffffff' : '#374151',
-                borderLeft: '1px solid #d4d4d8'
+                backgroundColor: direction === 'super' ? 'var(--accent)' : 'var(--surface-1)',
+                color: direction === 'super' ? 'var(--on-accent)' : 'var(--text-primary)',
+                borderLeft: '1px solid var(--border)'
               }}
             >
               <ArrowUpFromLine size={12} />
@@ -843,13 +839,13 @@ export const ClassHierarchyPanel: React.FC<ClassHierarchyPanelProps> = ({
               alignItems: 'center',
               flex: '1 1 140px',
               minWidth: 120,
-              border: '1px solid #d4d4d8',
+              border: '1px solid var(--border)',
               borderRadius: 4,
               padding: '2px 6px',
-              backgroundColor: '#ffffff'
+              backgroundColor: 'var(--surface-1)'
             }}
           >
-            <Search size={13} color="#64748b" />
+            <Search size={13} color="var(--text-secondary)" />
             <input
               type="text"
               value={searchTerm}
@@ -906,7 +902,7 @@ export const ClassHierarchyPanel: React.FC<ClassHierarchyPanelProps> = ({
             style={{
               padding: 24,
               fontSize: 12,
-              color: '#64748b',
+              color: 'var(--text-secondary)',
               textAlign: 'center'
             }}
           >
@@ -947,10 +943,10 @@ export const ClassHierarchyPanel: React.FC<ClassHierarchyPanelProps> = ({
       <div
         style={{
           padding: '4px 10px',
-          borderTop: '1px solid #e4e4e7',
+          borderTop: '1px solid var(--border)',
           fontSize: 11,
-          color: '#64748b',
-          backgroundColor: '#f8fafc',
+          color: 'var(--text-secondary)',
+          backgroundColor: 'var(--surface-2)',
           display: 'flex',
           alignItems: 'center',
           gap: 8
@@ -1012,7 +1008,7 @@ const HierarchyRow: React.FC<HierarchyRowProps> = React.memo(
     onContextMenu
   }) => {
     const indent = row.depth * 14;
-    const iconColor = TREE_ICON_COLORS[row.node.type] ?? '#94a3b8';
+    const iconColor = nodeAccent(row.node.type);
 
     return (
       <div
@@ -1034,15 +1030,15 @@ const HierarchyRow: React.FC<HierarchyRowProps> = React.memo(
           paddingLeft: 6 + indent,
           paddingRight: 8,
           cursor: 'default',
-          backgroundColor: isSelected ? '#dbeafe' : 'transparent',
-          borderLeft: isSelected ? '3px solid #2563eb' : '3px solid transparent',
+          backgroundColor: isSelected ? 'var(--surface-3)' : 'transparent',
+          borderLeft: isSelected ? '3px solid var(--accent)' : '3px solid transparent',
           fontSize: 13,
-          color: '#0f172a',
+          color: 'var(--text-primary)',
           userSelect: 'none',
           gap: 4
         }}
         onMouseEnter={(e) => {
-          if (!isSelected) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#f1f5f9';
+          if (!isSelected) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'var(--surface-2)';
         }}
         onMouseLeave={(e) => {
           if (!isSelected) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent';
@@ -1077,7 +1073,7 @@ const HierarchyRow: React.FC<HierarchyRowProps> = React.memo(
         <Circle
           size={10}
           fill={iconColor}
-          stroke="#475569"
+          stroke="var(--text-secondary)"
           strokeWidth={1}
           style={{ flexShrink: 0 }}
         />
@@ -1089,7 +1085,7 @@ const HierarchyRow: React.FC<HierarchyRowProps> = React.memo(
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
             fontStyle: row.immediateInferred ? 'italic' : 'normal',
-            color: row.immediateInferred ? '#b45309' : '#0f172a',
+            color: row.immediateInferred ? '#b45309' : 'var(--text-primary)',
             fontWeight: row.immediateInferred ? 500 : 400
           }}
           title={`${labelFor(row.node)}\n${row.node.id}${
@@ -1170,8 +1166,8 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, actions, onSelect }) =>
         position: 'fixed',
         left: position.left,
         top: position.top,
-        background: '#ffffff',
-        border: '1px solid #cbd5e1',
+        background: 'var(--surface-1)',
+        border: '1px solid var(--border)',
         borderRadius: 6,
         boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
         zIndex: 9999,
@@ -1187,7 +1183,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, actions, onSelect }) =>
               role="separator"
               style={{
                 height: 1,
-                background: '#e2e8f0',
+                background: 'var(--border)',
                 margin: '4px 0'
               }}
             />
@@ -1204,13 +1200,13 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, actions, onSelect }) =>
               background: 'transparent',
               textAlign: 'left',
               cursor: 'pointer',
-              color: action.destructive ? '#b91c1c' : '#0f172a',
+              color: action.destructive ? '#b91c1c' : 'var(--text-primary)',
               fontSize: 13
             }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.backgroundColor = action.destructive
                 ? '#fee2e2'
-                : '#f1f5f9';
+                : 'var(--surface-2)';
             }}
             onMouseLeave={(e) => {
               (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent';
@@ -1237,8 +1233,8 @@ const IconButton: React.FC<IconButtonProps> = ({ title, onClick, children }) => 
     title={title}
     aria-label={title}
     style={{
-      border: '1px solid #d4d4d8',
-      background: '#ffffff',
+      border: '1px solid var(--border)',
+      background: 'var(--surface-1)',
       borderRadius: 4,
       padding: '2px 4px',
       display: 'flex',
@@ -1257,10 +1253,10 @@ const IconButton: React.FC<IconButtonProps> = ({ title, onClick, children }) => 
 
 const selectStyle: React.CSSProperties = {
   padding: '2px 6px',
-  border: '1px solid #d4d4d8',
+  border: '1px solid var(--border)',
   borderRadius: 4,
   fontSize: 12,
-  backgroundColor: '#ffffff'
+  backgroundColor: 'var(--surface-1)'
 };
 
 const directionButtonStyle: React.CSSProperties = {

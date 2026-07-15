@@ -70,6 +70,12 @@ import {
   getExpansionStats,
   findPathToNode
 } from './HierarchicalLazyLoading';
+import { useIsDarkTheme } from './hooks/useIsDarkTheme';
+import { usePrefersReducedMotion } from './hooks/usePrefersReducedMotion';
+import { loadLastView, saveLastView, loadUiPrefs, saveUiPrefs, OntographLayoutType, VowlDisplayOptions, DEFAULT_VOWL_OPTIONS } from './viewMemory';
+import { GraphToolbar, RELATIONSHIP_VISIBILITY_CONTROLS } from './components/GraphToolbar';
+import { WebGLGraphView, buildBenchmarkData } from './renderers/WebGLGraphView';
+import { isWebGLAvailable } from './renderers/graphAdapter';
 
 // D3 types
 interface D3Node extends OntologyNode, d3.SimulationNodeDatum {
@@ -99,6 +105,17 @@ interface AdvancedGraphViewProps {
 }
 
 type AssertionViewMode = 'asserted' | 'inferred' | 'all';
+
+// Node count above which large-graph LOD/culling behaviors activate (all visualization modes)
+const LARGE_GRAPH_THRESHOLD = 800;
+// Entrance animation tiers (visible node counts): full staggered bloom, calmer
+// single fade, or static (instant) above that.
+const BLOOM_MAX_VISIBLE = 300;
+const CALM_MAX_VISIBLE = 1500;
+// Camera feel: one duration/easing for every programmatic camera move
+const CAMERA_MS = 650;
+// rAF-interpolated wheel zoom (flip to false to fall back to native d3 wheel steps)
+const SMOOTH_WHEEL_ZOOM = true;
 
 // Type normalization helpers
 const normalizeNodeType = (type: string): NodeType => {
@@ -139,15 +156,26 @@ const TYPE_COLORS: Record<NodeType, string> = {
   dataProperty: NODE_ACCENTS.dataProperty,
   objectProperty: NODE_ACCENTS.objectProperty,
   annotation: NODE_ACCENTS.annotation,
-  datatype: NODE_ACCENTS.datatype
+  datatype: NODE_ACCENTS.datatype,
+  setOperator: NODE_ACCENTS.class // operator nodes are anonymous classes — class blue
+};
+
+// VOWL set-operator glyphs rendered inside operator nodes
+const SET_OPERATOR_SYMBOLS: Record<string, string> = {
+  union: '∪',
+  intersection: '∩',
+  complement: '¬',
+  oneOf: '{…}'
 };
 
 const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
   subClassOf: '#2563eb', // Blue for Protégé style
   instanceOf: '#f59e0b', // Gold/Orange for Protégé style
   propertyRelation: '#059669', // Green for properties
-  equivalentClass: '#ec4899',
-  disjointWith: '#ef4444',
+  equivalentClass: '#3b82f6', // Blue — was pink here / green in VOWLNotationService; unified
+  disjointWith: '#f97316', // Orange — was red, paired with equivalentClass's old green (a
+  // red/green combination color-vision-deficiency guidance warns against for two
+  // opposite-meaning edge types); matches VOWLNotationService.edgeToVOWLEdge now
   domain: '#06b6d4',
   range: '#8b5cf6',
   inverseOf: '#fbbf24',
@@ -155,7 +183,11 @@ const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
   temporal: '#34d399',
   spatial: '#3b82f6',
   probabilistic: '#fb923c',
-  subPropertyOf: '#2563eb'
+  subPropertyOf: '#2563eb',
+  operand: '#64748b', // set-operator member links (plain gray, no arrowhead)
+  restriction: '#d97706', // someValuesFrom/allValuesFrom/hasValue/cardinality — amber
+  propertyChain: '#ec4899' // owl:propertyChainAxiom composition — pink (was violet, same hue
+  // as annotationProperty edges elsewhere and only distinguishable by dash spacing)
 };
 
 // Per-type accent colors shared by node rendering, selection styling, and tooltips
@@ -167,6 +199,47 @@ const hexToRgba = (hex: string, alpha: number): string => {
   const { r, g, b } = c.rgb();
   return `rgba(${r},${g},${b},${alpha})`;
 };
+
+// Picks black or white label text from a node's ACTUAL rendered fill (perceived
+// brightness, ITU-R BT.601). Callers must pass the same color the shape was
+// painted with — a mismatched guess (e.g. a raw accent instead of its pastel
+// tint) silently produces unreadable white-on-pale-blue text.
+const getReadableTextColor = (hex: string): string => {
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return '#111111';
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  return brightness > 140 ? '#111111' : '#ffffff';
+};
+
+// Evicts the graph-view sessionStorage cache the moment the ontology changes elsewhere
+// (Code View save, entity-editor mutations, etc.) — registered at MODULE scope rather
+// than inside the component's mount effect. Switching to another top-level tab (Code
+// View, Entities, ...) fully unmounts this component (Dashboard.tsx renders exactly one
+// active tab), so a mount-time listener would miss any mutation that happens while this
+// view isn't the active tab — the very common "edit in Code View, switch back to Graph"
+// path. A module-level listener stays registered for the whole page session regardless
+// of mount state, so by the time the component next mounts, the stale cache is already
+// gone and its plain (non-bypassing) initial fetch reads fresh data instead.
+if (typeof window !== 'undefined') {
+  window.addEventListener('ontology:mutated', ((e: CustomEvent) => {
+    try {
+      const mutatedProjectId = e?.detail?.projectId;
+      if (mutatedProjectId) {
+        sessionStorage.removeItem(`ontocode:graphView:${mutatedProjectId}`);
+      } else {
+        // No projectId on the event — clear every graph-view cache entry to be safe.
+        Object.keys(sessionStorage)
+          .filter((k) => k.startsWith('ontocode:graphView:'))
+          .forEach((k) => sessionStorage.removeItem(k));
+      }
+    } catch {
+      /* sessionStorage unavailable/full — non-fatal, next Refresh click still bypasses it */
+    }
+  }) as EventListener);
+}
 
 // Default settings
 const DEFAULT_SETTINGS: GraphSettings = {
@@ -190,53 +263,10 @@ const DEFAULT_SETTINGS: GraphSettings = {
 };
 
 const DEFAULT_FILTERS: GraphFilters = {
-  nodeTypes: new Set(['class', 'individual', 'datatype', 'objectProperty', 'dataProperty', 'annotation']), // All node types enabled by default
-  edgeTypes: new Set(['subClassOf', 'instanceOf', 'propertyRelation', 'equivalentClass', 'domain', 'range', 'disjointWith', 'inverseOf', 'custom', 'subPropertyOf'])
+  nodeTypes: new Set(['class', 'individual', 'datatype', 'objectProperty', 'dataProperty', 'annotation', 'setOperator']), // All node types enabled by default
+  edgeTypes: new Set(['subClassOf', 'instanceOf', 'propertyRelation', 'equivalentClass', 'domain', 'range', 'disjointWith', 'inverseOf', 'custom', 'subPropertyOf', 'operand'])
 };
 
-const RELATIONSHIP_VISIBILITY_CONTROLS: Array<{
-  label: string;
-  shortLabel: string;
-  title: string;
-  edgeTypes: EdgeType[];
-}> = [
-  {
-    label: 'SubClass',
-    shortLabel: 'Sub',
-    title: 'Show or hide class hierarchy edges',
-    edgeTypes: ['subClassOf']
-  },
-  {
-    label: 'Equivalent',
-    shortLabel: 'Eq',
-    title: 'Show or hide equivalent class/property edges',
-    edgeTypes: ['equivalentClass']
-  },
-  {
-    label: 'Disjoint',
-    shortLabel: 'Dis',
-    title: 'Show or hide disjointness edges',
-    edgeTypes: ['disjointWith']
-  },
-  {
-    label: 'Instance',
-    shortLabel: 'Inst',
-    title: 'Show or hide individual type assertions',
-    edgeTypes: ['instanceOf']
-  },
-  {
-    label: 'Properties',
-    shortLabel: 'Prop',
-    title: 'Show or hide object/data/custom property relationship edges',
-    edgeTypes: ['propertyRelation', 'subPropertyOf', 'inverseOf', 'custom']
-  },
-  {
-    label: 'Domain/Range',
-    shortLabel: 'D/R',
-    title: 'Show or hide property domain and range edges',
-    edgeTypes: ['domain', 'range']
-  }
-];
 
 type HierarchyState = {
   visible: Set<string>;
@@ -326,7 +356,8 @@ const buildDegreeMap = (edges: OntologyEdge[]): Map<string, number> => {
   return map;
 };
 
-const GRAPH_DEBUG = false;
+// Gate for noisy per-render diagnostics — enable via localStorage 'ontocode.graphView.debug' = 'true'
+const GRAPH_DEBUG = typeof window !== 'undefined' && window.localStorage?.getItem('ontocode.graphView.debug') === 'true';
 const graphLog = (...args: unknown[]) => {
   if (GRAPH_DEBUG) console.log(...args);
 };
@@ -479,6 +510,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   onEdgeClick,
   readonly = false
 }) => {
+  // Reactive theme + motion preferences (recolor on theme switch, no animation when reduced)
+  const isDarkTheme = useIsDarkTheme();
+  const prefersReducedMotion = usePrefersReducedMotion();
+
   // Refs
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
@@ -489,6 +524,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const inferredGraphRef = useRef<{ nodes: OntologyNode[]; edges: OntologyEdge[] } | null>(null);
   // Persist node positions across expand/collapse re-renders (Protégé-style stability)
   const nodePositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Latest culling pass for the current render — callable from zoom/drag/programmatic camera moves
+  const applyViewportCullingRef = useRef<() => void>(() => {});
+  // Un-hides culled elements and recomputes all edge paths so exports always contain the full graph
+  const uncullForExportRef = useRef<() => void>(() => {});
 
   // State - Hierarchical Lazy Loading
   const [allNodes, setAllNodes] = useState<OntologyNode[]>([]);  // All data from API
@@ -583,13 +622,94 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
-  const [showPropertyPanel, setShowPropertyPanel] = useState(true);
+  // Latest-value refs so edit-mode toggles and handler-prop changes don't tear down
+  // and rebuild the whole D3 scene (the heavy render effect reads these instead).
+  const editModeRef = useRef(editMode);
+  useEffect(() => { editModeRef.current = editMode; }, [editMode]);
+  const onNodeClickRef = useRef(onNodeClick);
+  const onEdgeClickRef = useRef(onEdgeClick);
+  useEffect(() => {
+    onNodeClickRef.current = onNodeClick;
+    onEdgeClickRef.current = onEdgeClick;
+  }, [onNodeClick, onEdgeClick]);
+  // Cursor is the only visual editMode affects — update it in place
+  useEffect(() => {
+    if (!gRef.current) return;
+    d3.select(gRef.current).selectAll<SVGGElement, unknown>('.node')
+      .style('cursor', editModeRef.current ? 'move' : 'pointer');
+  }, [editMode]);
+  // Default chrome: Explorer closed (opens via toolbar or the right-edge rail), legend on.
+  // Both remembered per user across sessions.
+  const [showPropertyPanel, setShowPropertyPanel] = useState(() => loadUiPrefs()?.showPropertyPanel ?? false);
   const [selectedNodeInfo, setSelectedNodeInfo] = useState<OntologyNode | null>(null);
   
+  // Per-user view memory: first-ever open gets the animated force "bloom";
+  // afterwards the tab reopens in whatever mode/layout the user last used.
+  const initialViewMemory = useMemo(() => loadLastView(projectId), [projectId]);
+  const isFirstEverOpen = initialViewMemory === null;
+
   // Visualization Type (combines both view mode and visualization type)
-  const [visualizationType, setVisualizationType] = useState<VisualizationType>('ontograph');
-  const [ontographLayoutType, setOntographLayoutType] = useState<'vertical' | 'horizontal' | 'radial' | 'grid' | 'tree' | 'spring'>('tree');
-  const [showLegend, setShowLegend] = useState(true);
+  const [visualizationType, setVisualizationType] = useState<VisualizationType>(
+    () => initialViewMemory?.visualizationType ?? 'force'
+  );
+  const [ontographLayoutType, setOntographLayoutType] = useState<OntographLayoutType>(
+    () => initialViewMemory?.ontographLayoutType ?? 'tree'
+  );
+  const [showLegend, setShowLegend] = useState(() => loadUiPrefs()?.showLegend ?? true);
+
+  // One subtle pulse on the View-options button for the first few sessions after the
+  // toolbar restructure, so existing users find where everything moved.
+  const [showToolbarHint, setShowToolbarHint] = useState(false);
+  useEffect(() => {
+    const prefs = loadUiPrefs();
+    const sessions = prefs?.toolbarHintSessions ?? 0;
+    if (sessions < 3) {
+      setShowToolbarHint(true);
+      saveUiPrefs({
+        showLegend: prefs?.showLegend ?? true,
+        showPropertyPanel: prefs?.showPropertyPanel ?? false,
+        toolbarHintSessions: sessions + 1,
+        vowlOptions: prefs?.vowlOptions
+      });
+    }
+  }, []);
+
+  // Persist chrome preferences (legend / Explorer visibility) whenever the user changes them
+  const chromePrefsMountedRef = useRef(false);
+  useEffect(() => {
+    if (!chromePrefsMountedRef.current) {
+      chromePrefsMountedRef.current = true;
+      return;
+    }
+    const prefs = loadUiPrefs();
+    saveUiPrefs({
+      showLegend,
+      showPropertyPanel,
+      toolbarHintSessions: prefs?.toolbarHintSessions ?? 0,
+      vowlOptions: prefs?.vowlOptions
+    });
+  }, [showLegend, showPropertyPanel]);
+
+  // Entrance animation ("bloom") — decided once per mount, on the first render with data
+  const entranceRef = useRef<{ phase: 'pending' | 'playing' | 'done'; mode: 'bloom' | 'calm' | 'static' }>({
+    phase: 'pending',
+    mode: 'static'
+  });
+  const [entrancePhase, setEntrancePhase] = useState<'pending' | 'playing' | 'done'>('pending');
+  const userInteractedRef = useRef(false);
+  // Existing users (a stored view exists) persist mode changes immediately; first-time
+  // users only start persisting once the entrance has played or they changed the view.
+  const hasSeenGraphRef = useRef(!isFirstEverOpen);
+
+  useEffect(() => {
+    if (!hasSeenGraphRef.current) {
+      const initialType = initialViewMemory?.visualizationType ?? 'force';
+      const initialLayout = initialViewMemory?.ontographLayoutType ?? 'tree';
+      if (visualizationType === initialType && ontographLayoutType === initialLayout) return;
+      hasSeenGraphRef.current = true;
+    }
+    saveLastView(projectId, { visualizationType, ontographLayoutType });
+  }, [projectId, visualizationType, ontographLayoutType, initialViewMemory]);
   
   // WebVOWL Filters State (integrated into main sidebar)
   const [vowlFilters, setVowlFilters] = useState({
@@ -603,6 +723,26 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   });
   const [showClassHierarchy, setShowClassHierarchy] = useState(false);
   const [hierarchySelectedClass, setHierarchySelectedClass] = useState<OntologyNode | null>(null);
+
+  // Notation & density options (WebVOWL parity: compact notation, label width cap,
+  // degree-of-collapsing, solitary subclasses, color externals) — persisted per user.
+  const [vowlOptions, setVowlOptions] = useState<VowlDisplayOptions>(
+    () => ({ ...DEFAULT_VOWL_OPTIONS, ...(loadUiPrefs()?.vowlOptions ?? {}) })
+  );
+  const vowlOptionsMountedRef = useRef(false);
+  useEffect(() => {
+    if (!vowlOptionsMountedRef.current) {
+      vowlOptionsMountedRef.current = true;
+      return;
+    }
+    const prefs = loadUiPrefs();
+    saveUiPrefs({
+      showLegend: prefs?.showLegend ?? true,
+      showPropertyPanel: prefs?.showPropertyPanel ?? false,
+      toolbarHintSessions: prefs?.toolbarHintSessions ?? 0,
+      vowlOptions
+    });
+  }, [vowlOptions]);
   
   // Hierarchy Dialog State
   const [showHierarchyDialog, setShowHierarchyDialog] = useState(false);
@@ -618,12 +758,27 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     nodeId: string | null;
   }>({ visible: false, x: 0, y: 0, nodeId: null });
 
-  // Viewport state for large graph optimization (100k+ nodes)
-  const [viewportBounds, setViewportBounds] = useState({ x: 0, y: 0, width: 0, height: 0, scale: 1 });
-  const [isLargeGraph, setIsLargeGraph] = useState(false);
+  // Viewport tracking for large graph optimization — a ref, not state: culling/LOD
+  // decisions read it imperatively, and pan/zoom must not re-render React.
+  const viewportBoundsRef = useRef({ x: 0, y: 0, width: 0, height: 0, scale: 1 });
 
   // Settings & Filters
   const [settings, setSettings] = useState<GraphSettings>(DEFAULT_SETTINGS);
+
+  // WebGL renderer spike (feature-flagged): settings.renderer or ?webgl=1, with a
+  // silent SVG fallback when the host has no WebGL (GPU blocklist, remote desktop).
+  const webglSupported = useMemo(() => isWebGLAvailable(), []);
+  const webglActive = webglSupported && (
+    settings.renderer === 'webgl' ||
+    (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('webgl') === '1')
+  );
+  const [webglBannerDismissed, setWebglBannerDismissed] = useState(false);
+  // ?bench=N renders a synthetic graph directly in the WebGL renderer (benchmark harness)
+  const benchData = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    const n = parseInt(new URLSearchParams(window.location.search).get('bench') || '', 10);
+    return Number.isFinite(n) && n > 0 ? buildBenchmarkData(Math.min(n, 100000)) : null;
+  }, []);
   const [filters, setFilters] = useState<GraphFilters>(DEFAULT_FILTERS);
   const [searchQuery, setSearchQuery] = useState('');
   const [sidebarSearchTerm, setSidebarSearchTerm] = useState('');
@@ -1055,12 +1210,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (visualizationType === 'vowl' || visualizationType === 'ontograph') {
       const beforeFilter = filtered.length;
       
-      // In VOWL mode, we hide property nodes (they are edges)
+      // In VOWL mode, we hide property nodes (they are edges).
+      // Set-operator nodes (∪ ∩ ¬ {…}) are VOWL notation — shown unless filtered off.
       if (visualizationType === 'vowl') {
-        filtered = filtered.filter(node => 
-          node.type === 'class' || 
-          node.type === 'individual' || 
-          node.type === 'datatype'
+        filtered = filtered.filter(node =>
+          node.type === 'class' ||
+          node.type === 'individual' ||
+          node.type === 'datatype' ||
+          (node.type === 'setOperator' && vowlOptions.showSetOperators)
         );
       }
       
@@ -1083,28 +1240,60 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return true; // individuals always shown
       });
       
-      console.log(`[Filtering] ${visualizationType} mode: After vowlFilters, showing ${filtered.length} nodes (from ${beforeFilter})`);
+      if (GRAPH_DEBUG) console.log(`[Filtering] ${visualizationType} mode: After vowlFilters, showing ${filtered.length} nodes (from ${beforeFilter})`);
     }
-    
+
     // **Force Mode: Hide property nodes (objectProperty, dataProperty, annotation)**
     // Properties should only appear as edges, not as nodes in force mode
     if (visualizationType === 'force') {
-      filtered = filtered.filter(node => 
-        node.type === 'class' || 
-        node.type === 'individual' || 
+      filtered = filtered.filter(node =>
+        node.type === 'class' ||
+        node.type === 'individual' ||
         node.type === 'datatype'
       );
-      console.log(`[Filtering] Force mode: Filtered to classes, individuals, datatypes - ${filtered.length} nodes`);
+      if (GRAPH_DEBUG) console.log(`[Filtering] Force mode: Filtered to classes, individuals, datatypes - ${filtered.length} nodes`);
     }
 
     // OntoGraph Mode: focus on class hierarchy and individuals for clean Protégé-style layout
     if (visualizationType === 'ontograph') {
       const beforeFilter = filtered.length;
       filtered = filtered.filter(node => node.type === 'class' || node.type === 'individual');
-      console.log(`[Filtering] OntoGraph mode: Focused on classes and individuals ${beforeFilter} -> ${filtered.length}`);
+      if (GRAPH_DEBUG) console.log(`[Filtering] OntoGraph mode: Focused on classes and individuals ${beforeFilter} -> ${filtered.length}`);
     }
 
-    console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
+    // Density options (network views only — the ontograph hierarchy must stay complete):
+    // degree-of-collapsing hides weakly-connected nodes, solitary-subclasses hides
+    // classes whose only relationship is a single subClassOf.
+    if (
+      (visualizationType === 'vowl' || visualizationType === 'force') &&
+      (vowlOptions.degreeCollapsing > 0 || vowlOptions.hideSolitarySubclasses)
+    ) {
+      const inSet = new Set(filtered.map(n => n.id));
+      const degree = new Map<string, number>();
+      const hasNonSubClassEdge = new Set<string>();
+      for (const e of allEdges) {
+        if (!inSet.has(e.from) || !inSet.has(e.to)) continue;
+        degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
+        degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
+        if (e.type !== 'subClassOf') {
+          hasNonSubClassEdge.add(e.from);
+          hasNonSubClassEdge.add(e.to);
+        }
+      }
+      filtered = filtered.filter(node => {
+        const deg = degree.get(node.id) ?? 0;
+        if (vowlOptions.degreeCollapsing > 0 && deg < vowlOptions.degreeCollapsing) return false;
+        if (
+          vowlOptions.hideSolitarySubclasses &&
+          node.type === 'class' &&
+          deg === 1 &&
+          !hasNonSubClassEdge.has(node.id)
+        ) return false;
+        return true;
+      });
+    }
+
+    if (GRAPH_DEBUG) console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
 
     // Search filter: instead of hiding non-matching nodes, keep all visible nodes.
     // Matching nodes are highlighted via the visual update effect (glow/stroke).
@@ -1118,13 +1307,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         node.id.toLowerCase().includes(query) ||
         node.description?.toLowerCase().includes(query)
       );
-      console.log(`[Filtering] After sidebar search "${sidebarSearchTerm}": ${filtered.length} nodes`);
+      if (GRAPH_DEBUG) console.log(`[Filtering] After sidebar search "${sidebarSearchTerm}": ${filtered.length} nodes`);
     }
 
-    console.log(`[Filtering] Final filtered nodes: ${filtered.length}`);
+    if (GRAPH_DEBUG) console.log(`[Filtering] Final filtered nodes: ${filtered.length}`);
 
     return filtered;
-  }, [visibleNodes, filters, searchQuery, sidebarSearchTerm, visualizationType, vowlFilters, assertionView]);
+  }, [visibleNodes, filters, searchQuery, sidebarSearchTerm, visualizationType, vowlFilters, assertionView, vowlOptions, allEdges]);
 
   const filteredEdges = useMemo(() => {
     const nodeIds = new Set(filteredNodes.map(n => n.id));
@@ -1312,8 +1501,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         n.type === 'class' && !isExternalNode(n) && n.label !== 'Thing'
       );
       
-      // Detect dark mode for theme-aware legend colors
-      const isDark = document.documentElement.classList.contains('dark');
+      // Theme-aware legend colors (reactive — recolors on theme switch)
+      const isDark = isDarkTheme;
       
       // Add node type legends with counts - theme aware
       if (hasThing) legend.push({ name: 'Thing', type: 'node', nodeType: 'class', color: isDark ? '#374151' : '#ffffff' });
@@ -1363,7 +1552,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       
       // For force mode, use special colors for classes
       if (visualizationType === 'force') {
-        if (nodeTypes.has('class')) legend.push({ name: `Class (${filteredNodes.filter(n => n.type === 'class').length})`, type: 'node', nodeType: 'class', color: nodeFill('class', document.documentElement.classList.contains('dark')) });
+        if (nodeTypes.has('class')) legend.push({ name: `Class (${filteredNodes.filter(n => n.type === 'class').length})`, type: 'node', nodeType: 'class', color: nodeFill('class', isDarkTheme) });
         if (nodeTypes.has('individual')) legend.push({ name: `Individual (${filteredNodes.filter(n => n.type === 'individual').length})`, type: 'node', nodeType: 'individual', color: '#a78bfa' });
         if (nodeTypes.has('datatype')) legend.push({ name: `Datatype (${filteredNodes.filter(n => n.type === 'datatype').length})`, type: 'node', nodeType: 'datatype', color: '#FFFFFF' });
       } else {
@@ -1382,7 +1571,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       
       return legend;
     }
-  }, [visualizationType, filteredNodes, filteredEdges, isExternalNode, allNodes]);
+  }, [visualizationType, filteredNodes, filteredEdges, isExternalNode, allNodes, isDarkTheme]);
 
   // Performance tracking (disabled for production performance)
   const renderTime = useRef(0);
@@ -1392,7 +1581,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * DATA FETCHING - Optimized GraphDB Direct Approach
    * ========================================================================
    */
-  const fetchGraphData = useCallback(async () => {
+  const fetchGraphData = useCallback(async (opts?: { bypassCache?: boolean }) => {
     // Guard: Don't fetch if projectId is not set
     if (!projectId) {
       console.warn('[AdvancedGraphView D3] ⚠️ No projectId provided, skipping data fetch');
@@ -1413,18 +1602,23 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
       // Try sessionStorage cache first. Session-scoped (cleared on tab close).
       // Short TTL means users editing the ontology pick up changes quickly.
+      // Explicit Refresh and ontology mutations bypass the cache entirely.
       let graphData: any = null;
-      try {
-        const cachedRaw = sessionStorage.getItem(cacheKey);
-        if (cachedRaw) {
-          const cached = JSON.parse(cachedRaw);
-          if (cached && typeof cached.timestamp === 'number' && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.data) {
-            console.log('[AdvancedGraphView D3] ⚡ Using cached graph data (age:', Math.round((Date.now() - cached.timestamp) / 1000), 's)');
-            graphData = cached.data;
+      if (opts?.bypassCache) {
+        try { sessionStorage.removeItem(cacheKey); } catch { /* ignore */ }
+      } else {
+        try {
+          const cachedRaw = sessionStorage.getItem(cacheKey);
+          if (cachedRaw) {
+            const cached = JSON.parse(cachedRaw);
+            if (cached && typeof cached.timestamp === 'number' && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.data) {
+              console.log('[AdvancedGraphView D3] ⚡ Using cached graph data (age:', Math.round((Date.now() - cached.timestamp) / 1000), 's)');
+              graphData = cached.data;
+            }
           }
+        } catch (cacheErr) {
+          console.warn('[AdvancedGraphView D3] Cache read failed, fetching fresh:', cacheErr);
         }
-      } catch (cacheErr) {
-        console.warn('[AdvancedGraphView D3] Cache read failed, fetching fresh:', cacheErr);
       }
 
       const apiBaseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL;
@@ -1525,27 +1719,33 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (!svgRef.current || filteredNodes.length === 0) return;
 
     const startTime = performance.now();
-    console.log('[AdvancedGraphView D3] 🎨 Initializing D3 visualization');
-    console.log('[AdvancedGraphView D3] 📊 Nodes:', filteredNodes.length, 'Edges:', filteredEdges.length);
-    
-    // Log edge types distribution
-    const edgesByType: Record<string, number> = {};
-    filteredEdges.forEach(e => {
-      edgesByType[e.type] = (edgesByType[e.type] || 0) + 1;
-    });
-    console.log('[AdvancedGraphView D3] 🔗 Edges by type:', edgesByType);
-    
-    // Log propertyRelation edges
-    const propEdges = filteredEdges.filter(e => e.type === 'propertyRelation');
-    if (propEdges.length > 0) {
-      console.log('[AdvancedGraphView D3] 🔥 PropertyRelation edges found:', propEdges.length);
-      console.log('[AdvancedGraphView D3] Sample edges:', propEdges.slice(0, 3).map(e => ({
-        from: filteredNodes.find(n => n.id === e.from)?.label,
-        to: filteredNodes.find(n => n.id === e.to)?.label,
-        label: e.label
-      })));
-    } else {
-      console.warn('[AdvancedGraphView D3] ⚠️ NO propertyRelation edges found!');
+    // Derived per render, mode-independent — replaces the former isLargeGraph state,
+    // which was only ever set in the ontograph branch and went stale on mode switch.
+    const isLargeGraph = filteredNodes.length > LARGE_GRAPH_THRESHOLD;
+
+    if (GRAPH_DEBUG) {
+      console.log('[AdvancedGraphView D3] 🎨 Initializing D3 visualization');
+      console.log('[AdvancedGraphView D3] 📊 Nodes:', filteredNodes.length, 'Edges:', filteredEdges.length);
+
+      // Log edge types distribution
+      const edgesByType: Record<string, number> = {};
+      filteredEdges.forEach(e => {
+        edgesByType[e.type] = (edgesByType[e.type] || 0) + 1;
+      });
+      console.log('[AdvancedGraphView D3] 🔗 Edges by type:', edgesByType);
+
+      // Log propertyRelation edges
+      const propEdges = filteredEdges.filter(e => e.type === 'propertyRelation');
+      if (propEdges.length > 0) {
+        console.log('[AdvancedGraphView D3] 🔥 PropertyRelation edges found:', propEdges.length);
+        console.log('[AdvancedGraphView D3] Sample edges:', propEdges.slice(0, 3).map(e => ({
+          from: filteredNodes.find(n => n.id === e.from)?.label,
+          to: filteredNodes.find(n => n.id === e.to)?.label,
+          label: e.label
+        })));
+      } else {
+        console.warn('[AdvancedGraphView D3] ⚠️ NO propertyRelation edges found!');
+      }
     }
 
     const isSpatial3D = visualizationType === 'spatial3d';
@@ -1603,7 +1803,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Remove existing markers to ensure clean state
     defs.selectAll('marker').remove();
     
-    const isDark = document.documentElement.classList.contains('dark');
+    const isDark = isDarkTheme;
 
     // VOWL-specific arrow markers - TRIANGLES with specific colors for property types
     // Object Property (Cyan)
@@ -1636,30 +1836,47 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .append('path').attr('d', 'M0,0 L10,5 L0,10 Z')
       .attr('fill', isDark ? '#a78bfa' : '#7c3aed');
 
+    // WebVOWL arrowhead convention: subClassOf/isA edges get a HOLLOW outlined
+    // triangle; type/property edges get filled triangles. The shape difference (not
+    // just color) is what makes relationship kinds readable at a glance.
+    const canvasBg = isDark ? '#111827' : '#ffffff';
+    const appendArrowMarker = (
+      id: string,
+      color: string,
+      hollow: boolean
+    ) => {
+      const marker = defs
+        .append('marker')
+        .attr('id', id)
+        .attr('viewBox', '-1 -1 12 12')
+        .attr('refX', hollow ? 11 : 10)
+        .attr('refY', 5)
+        .attr('markerWidth', hollow ? 11 : 8)
+        .attr('markerHeight', hollow ? 11 : 8)
+        .attr('orient', 'auto');
+      marker
+        .append('path')
+        .attr('d', 'M0,0 L10,5 L0,10 Z')
+        .attr('fill', hollow ? canvasBg : color)
+        .attr('stroke', color)
+        .attr('stroke-width', hollow ? 1.4 : 0);
+    };
+
     // Generic VOWL markers for other types
     Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
       // Determine VOWL color for this edge type
       let vowlColor = color;
       if (type === 'subClassOf') vowlColor = isDark ? '#9ca3af' : '#374151';
-      else if (type === 'equivalentClass') vowlColor = '#10b981';
-      else if (type === 'disjointWith') vowlColor = '#ef4444';
+      // Blue/orange, not green/red — matches VOWLNotationService.edgeToVOWLEdge (avoids the
+      // red-green color-vision-deficiency pairing for these two opposite-meaning edge types).
+      else if (type === 'equivalentClass') vowlColor = '#2563eb';
+      else if (type === 'disjointWith') vowlColor = '#f97316';
       else if (type === 'domain') vowlColor = '#666666';
       else if (type === 'range') vowlColor = '#666666';
-      
-      defs
-        .append('marker')
-        .attr('id', `arrow-vowl-${type}`)
-        .attr('viewBox', '0 0 10 10')
-        .attr('refX', 10)
-        .attr('refY', 5)
-        .attr('markerWidth', 8)
-        .attr('markerHeight', 8)
-        .attr('orient', 'auto')
-        .append('path')
-        .attr('d', 'M0,0 L10,5 L0,10 Z')
-        .attr('fill', vowlColor);
+
+      appendArrowMarker(`arrow-vowl-${type}`, vowlColor, type === 'subClassOf' || type === 'subPropertyOf');
     });
-    
+
     // Standard arrow markers using TRIANGLES for force and ontograph modes
     Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
       // Determine color for each edge type in force mode
@@ -1669,19 +1886,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       else if (type === 'propertyRelation') forceColor = isDark ? '#cbd5e1' : '#000000';
       else if (type === 'domain') forceColor = '#666666';
       else if (type === 'range') forceColor = '#666666';
-      
-      defs
-        .append('marker')
-        .attr('id', `arrow-${type}`)
-        .attr('viewBox', '0 0 10 10')
-        .attr('refX', 10)
-        .attr('refY', 5)
-        .attr('markerWidth', 8)
-        .attr('markerHeight', 8)
-        .attr('orient', 'auto')
-        .append('path')
-        .attr('d', 'M0,0 L10,5 L0,10 Z')
-        .attr('fill', forceColor);
+
+      appendArrowMarker(`arrow-${type}`, forceColor, type === 'subClassOf' || type === 'subPropertyOf');
     });
 
     // OntoGraph specific arrow markers
@@ -1694,17 +1900,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     };
 
     Object.entries(ontographColors).forEach(([type, color]) => {
-      defs.append('marker')
-        .attr('id', `arrow-ontograph-${type}`)
-        .attr('viewBox', '0 0 10 10')
-        .attr('refX', 10).attr('refY', 5)
-        .attr('markerWidth', 8).attr('markerHeight', 8)
-        .attr('orient', 'auto')
-        .append('path').attr('d', 'M0,0 L10,5 L0,10 Z')
-        .attr('fill', color);
+      appendArrowMarker(`arrow-ontograph-${type}`, color, type === 'subClassOf');
     });
-    
-    console.log('[AdvancedGraphView] ✅ Arrow markers created with specific property colors');
+
+    if (GRAPH_DEBUG) console.log('[AdvancedGraphView] ✅ Arrow markers created (hollow subClassOf, filled properties)');
 
     // ── Premium visual defs: gradients & glow filters ─────────────────────
     defs.selectAll('.premium-def').remove();
@@ -1851,10 +2050,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Apply OntoGraph hierarchical layout if selected
     if (visualizationType === 'ontograph') {
       const nodeCount = filteredNodes.length;
-      const isLarge = nodeCount > 1000;
-      setIsLargeGraph(isLarge);
-      
-      console.log(`[OntoGraph] Applying ${ontographLayoutType} layout for ${nodeCount} nodes`);
+      const isLarge = isLargeGraph;
+
+      if (GRAPH_DEBUG) console.log(`[OntoGraph] Applying ${ontographLayoutType} layout for ${nodeCount} nodes`);
       
       let positionMap: Map<string, { x: number; y: number }>;
       
@@ -2032,13 +2230,33 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Force simulation configuration
     // Use physics for force, vowl, and ontograph spring mode
     const usePhysics = visualizationType !== 'ontograph' || ontographLayoutType === 'spring';
-    
+
+    // Entrance decision — once per mount, on the first data render. The bloom only
+    // plays on a user's first-ever open (no persisted view), with visible physics.
+    if (entranceRef.current.phase === 'pending') {
+      let entranceMode: 'bloom' | 'calm' | 'static' = 'static';
+      if (isFirstEverOpen && usePhysics && !prefersReducedMotion && !isLayoutPaused && !hasSavedPositions) {
+        if (nodeCount <= BLOOM_MAX_VISIBLE) entranceMode = 'bloom';
+        else if (nodeCount <= CALM_MAX_VISIBLE) entranceMode = 'calm';
+      }
+      entranceRef.current = { phase: entranceMode === 'static' ? 'done' : 'playing', mode: entranceMode };
+      setEntrancePhase(entranceRef.current.phase);
+      if (entranceMode === 'static' && isFirstEverOpen) {
+        // First open rendered statically (large graph / reduced motion / tree mode):
+        // the user has seen the graph, start persisting their view from here on.
+        hasSeenGraphRef.current = true;
+        saveLastView(projectId, { visualizationType, ontographLayoutType });
+      }
+    }
+    const entrancePlaying = entranceRef.current.phase === 'playing' && !hasSavedPositions;
+
+
     const simulation = d3.forceSimulation<D3Node>(d3Nodes)
       .force('link', usePhysics ? d3.forceLink<D3Node, D3Edge>(d3Edges)
         .id(d => d.id)
         .distance(linkDistance)
         .strength(linkStrength)
-        .iterations(4) : null)
+        .iterations(nodeCount > 2000 ? 1 : 4) : null)
       .force('charge', usePhysics ? d3.forceManyBody()
         .strength(d => {
           const node = d as D3Node;
@@ -2082,7 +2300,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         .radius(d => {
           const node = d as D3Node;
           const size = node.size || avgNodeSize;
-          const isLargeGraph = nodeCount > 10000;
+          const isVeryLargeGraph = nodeCount > 10000;
           
           // Much larger collision radius in WebVOWL mode for better spacing
           if (visualizationType === 'vowl') {
@@ -2097,7 +2315,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           // Force mode - adaptive collision radius for scalability
           if (visualizationType === 'force') {
             // Reduce collision radius for very large graphs to fit more nodes
-            const scaleFactor = isLargeGraph ? 0.7 : 1.0;
+            const scaleFactor = isVeryLargeGraph ? 0.7 : 1.0;
             if (node.type === 'class') {
               return size * 4.5 * scaleFactor; // Larger for class ellipses
             } else if (node.type === 'individual') {
@@ -2120,7 +2338,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return size * 3.5; // Standard mode
         })
         .strength(1.0)
-        .iterations(visualizationType === 'vowl' ? 15 : 6) : null) // Increased from 10
+        .iterations(
+          visualizationType === 'vowl'
+            ? (nodeCount > 1000 ? 4 : 15)
+            : (nodeCount > 2000 ? 3 : 6)
+        ) : null)
       .force('y', usePhysics ? d3.forceY(d => {
         const node = d as D3Node;
         // Stronger vertical positioning in VOWL mode
@@ -2162,10 +2384,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         return width / 2;
       }).strength(visualizationType === 'force' ? 0.14 : visualizationType === 'vowl' ? 0.05 : (visualizationType === 'spatial3d' ? 0.035 : 0.02)) : null)
-      .alphaDecay(usePhysics ? (visualizationType === 'vowl' ? 0.02 : (visualizationType === 'spatial3d' ? 0.025 : 0.03)) : 1) // Increased for faster settling
+      // Large graphs settle in ~100 ticks instead of ~230 (each tick is O(n log n))
+      .alphaDecay(usePhysics ? (nodeCount > 2000 ? 0.05 : (visualizationType === 'vowl' ? 0.02 : (visualizationType === 'spatial3d' ? 0.025 : 0.03))) : 1)
       .velocityDecay(usePhysics ? (visualizationType === 'vowl' ? 0.6 : (visualizationType === 'spatial3d' ? 0.58 : 0.5)) : 0.8) // Increased for more damping
       .alpha(isLayoutPaused || !usePhysics ? 0 : (hasSavedPositions ? 0.15 : 1.0))
-      .alphaMin(0.001)
+      .alphaMin(nodeCount > 2000 ? 0.005 : 0.001)
       .alphaTarget(0);
 
     if (visualizationType === 'vowl' && usePhysics && vowlLayout) {
@@ -2185,12 +2408,24 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Pre-calculate stable positions before rendering (run simulation silently)
     // Skip heavy pre-ticks when resuming from saved positions (expand/collapse)
     if (usePhysics && !isLayoutPaused) {
-      const preTicks = hasSavedPositions ? 10 : (visualizationType === 'vowl' ? 60 : (visualizationType === 'spatial3d' ? 70 : 50));
+      // Cap silent pre-ticks on large graphs: 50+ synchronous ticks at 10k nodes
+      // freeze the main thread for seconds before first paint.
+      // During the entrance, most of the settle stays VISIBLE: just enough pre-ticks
+      // to break the initial spiral, then a high alpha so the graph blooms on screen.
+      const preTicks = hasSavedPositions
+        ? 10
+        : entrancePlaying
+          ? (entranceRef.current.mode === 'bloom' ? 12 : 30)
+          : nodeCount > 2000
+            ? 15
+            : (visualizationType === 'vowl' ? 60 : (visualizationType === 'spatial3d' ? 70 : 50));
       for (let i = 0; i < preTicks; i++) {
         simulation.tick();
       }
-      simulation.alpha(hasSavedPositions ? 0.05 : 0.3);
-      console.log(`[AdvancedGraphView] Pre-calculated ${preTicks} ticks ${hasSavedPositions ? '(incremental, positions preserved)' : 'for stable initial positions'}`);
+      simulation.alpha(
+        hasSavedPositions ? 0.05 : entrancePlaying ? (entranceRef.current.mode === 'bloom' ? 0.8 : 0.4) : 0.3
+      );
+      if (GRAPH_DEBUG) console.log(`[AdvancedGraphView] Pre-calculated ${preTicks} ticks ${hasSavedPositions ? '(incremental, positions preserved)' : 'for stable initial positions'}`);
     }
 
     // Add bounding box force to keep nodes within viewport (especially important for VOWL)
@@ -2217,8 +2452,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
     }
 
-    // Add hit areas for edges (transparent wider paths for easier clicking)
-    const edgeHitArea = g.append('g')
+    // Add hit areas for edges (transparent wider paths for easier clicking).
+    // Skipped above 2,000 edges: the extra path per edge doubles edge DOM and per-tick
+    // path updates, and the visible paths carry the same click/hover handlers anyway.
+    const edgeHitArea = d3Edges.length <= 2000 ? g.append('g')
       .attr('class', 'edge-hit-areas')
       .selectAll('path')
       .data(d3Edges)
@@ -2231,14 +2468,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .on('click', (event, d) => {
         event.stopPropagation();
         setSelectedEdgeId(d.id);
-        onEdgeClick?.(d.id);
+        onEdgeClickRef.current?.(d.id);
       })
       .on('mouseover', (event, d) => {
         setHoveredEdgeId(d.id);
       })
       .on('mouseout', () => {
         setHoveredEdgeId(null);
-      });
+      }) : null;
 
     // Draw edges (with VOWL styling support and curved paths for multiple edges)
     const link = g.append('g')
@@ -2250,7 +2487,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('fill', 'none')
       .attr('stroke', d => {
         if (isInferredEntity(d)) return '#10b981';
-        const isDark = document.documentElement.classList.contains('dark');
+        const isDark = isDarkTheme;
         
         if (visualizationType === 'vowl') {
           // Determine property type for proper coloring
@@ -2259,6 +2496,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           
           if (d.type === 'subClassOf') {
             return isDark ? '#9ca3af' : '#374151'; // Light gray in dark mode, dark gray in light mode
+          }
+          if (d.type === 'operand') {
+            return isDark ? '#94a3b8' : '#64748b'; // Plain gray member links for set operators
           }
           if (d.type === 'propertyRelation') {
             // Annotation properties - purple
@@ -2342,6 +2582,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('marker-end', d => {
         // In VOWL mode, always show arrows with specific colors for properties
         if (visualizationType === 'vowl') {
+          if (d.type === 'operand') return null; // member links carry no arrowheads (VOWL)
           if (d.type === 'propertyRelation') {
             const sourceNode = allNodes.find(n => n.id === d.from);
             const targetNode = allNodes.find(n => n.id === d.to);
@@ -2375,7 +2616,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .on('click', (event, d) => {
         event.stopPropagation();
         setSelectedEdgeId(d.id);
-        onEdgeClick?.(d.id);
+        onEdgeClickRef.current?.(d.id);
       })
       .on('mouseover', (event, d) => {
         setHoveredEdgeId(d.id);
@@ -2392,54 +2633,59 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .join('rect')
       .attr('class', 'edge-label-bg')
       .attr('fill', d => {
+        // Theme-aware chips: dark surfaces in dark mode so the light label text stays
+        // readable (light-on-light chips were the "invisible subClassOf" bug).
+        const isDark = isDarkTheme;
         if (visualizationType === 'vowl') {
           // Determine property type for proper background coloring
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
           const isFunctional = d.metadata?.functional;
-          
+
           if (d.type === 'subClassOf') {
-            return '#E5E7EB'; // Light gray for subClassOf
+            return isDark ? '#374151' : '#E5E7EB'; // Gray chip
           }
-          
+
           if (d.type === 'propertyRelation') {
-            // Annotation properties - light purple
+            // Annotation properties - purple
             if (sourceNode?.type === 'annotation') {
-              return isFunctional ? '#E9D5FF' : '#F3E8FF'; // Lighter purple
+              return isDark ? (isFunctional ? '#5b21b6' : '#4c1d95') : (isFunctional ? '#E9D5FF' : '#F3E8FF');
             }
-            // Data properties - light pink
+            // Data properties - pink
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-              return isFunctional ? '#FCE7F3' : '#FDF2F8'; // Light pink
+              return isDark ? (isFunctional ? '#9d174d' : '#831843') : (isFunctional ? '#FCE7F3' : '#FDF2F8');
             }
-            // Object properties - light cyan
-            return isFunctional ? '#A7F3D0' : '#CFFAFE'; // Light cyan/green for functional
+            // Object properties - cyan/green
+            return isDark ? (isFunctional ? '#065f46' : '#155e75') : (isFunctional ? '#A7F3D0' : '#CFFAFE');
           }
-          
-          return '#BBDEFB'; // Default light blue
+
+          return isDark ? '#1e3a8a' : '#BBDEFB'; // Default blue
         }
-        
+
         // Add background colors for other modes too
         if (d.type === 'propertyRelation') {
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
           const isFunctional = d.metadata?.functional;
-          
-          // Annotation properties - light purple
+
+          // Annotation properties - purple
           if (sourceNode?.type === 'annotation') {
-            return isFunctional ? '#E9D5FF' : '#F3E8FF';
+            return isDark ? (isFunctional ? '#5b21b6' : '#4c1d95') : (isFunctional ? '#E9D5FF' : '#F3E8FF');
           }
-          // Data properties - light pink
+          // Data properties - pink
           if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-            return isFunctional ? '#FCE7F3' : '#FDF2F8';
+            return isDark ? (isFunctional ? '#9d174d' : '#831843') : (isFunctional ? '#FCE7F3' : '#FDF2F8');
           }
-          // Object properties - light cyan
-          return isFunctional ? '#A7F3D0' : '#CFFAFE';
+          // Object properties - cyan
+          return isDark ? (isFunctional ? '#065f46' : '#155e75') : (isFunctional ? '#A7F3D0' : '#CFFAFE');
         }
-        
-        return '#ffffff';
+
+        return isDark ? '#1f2937' : '#ffffff';
       })
       .attr('opacity', d => {
         if (visualizationType === 'vowl') {
+          // Disjointness is drawn as the VOWL twin-circle symbol, not a text chip
+          if (d.type === 'disjointWith') return 0;
           // Show label background when edge is selected or hovered
           return (selectedEdgeId === d.id || hoveredEdgeId === d.id) ? 1 : 0;
         }
@@ -2481,7 +2727,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('font-weight', visualizationType === 'vowl' ? '500' : '400')
       .attr('font-family', visualizationType === 'vowl' ? 'Arial, sans-serif' : 'inherit')
       .attr('fill', d => {
-        const isDark = document.documentElement.classList.contains('dark');
+        const isDark = isDarkTheme;
         
         if (visualizationType === 'vowl') {
           // Determine property type for proper label coloring
@@ -2540,8 +2786,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         // Show full label in WebVOWL mode with characteristic indicators
         if (visualizationType === 'vowl') {
+          if (d.type === 'disjointWith') return ''; // rendered as the VOWL twin-circle symbol
           const baseLabel = d.label || d.type || '';
-          return `${baseLabel}${buildCharSuffix(d)}`;
+          return vowlOptions.compactNotation ? baseLabel : `${baseLabel}${buildCharSuffix(d)}`;
         }
 
         // Add property type prefix and characteristic indicators for clarity
@@ -2569,6 +2816,49 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return settings.showLabels ? 1 : 0;
       });
 
+    // VOWL disjointness symbol (per the VOWL spec / WebVOWL's OwlDisjointWith):
+    // a small rect containing two separated circles, captioned "(disjoint)" —
+    // always visible on the dashed edge, replacing the text chip.
+    const disjointSymbol = g.append('g')
+      .attr('class', 'disjoint-symbols')
+      .selectAll('g')
+      .data(visualizationType === 'vowl' ? d3Edges.filter(d => d.type === 'disjointWith') : [])
+      .join('g')
+      .attr('class', 'disjoint-symbol')
+      .style('pointer-events', 'none');
+    disjointSymbol.append('rect')
+      .attr('x', -22).attr('y', -11)
+      .attr('width', 44).attr('height', 22)
+      .attr('rx', 2)
+      .attr('fill', isDark ? '#1e3a8a' : '#b9d4f5')
+      .attr('stroke', isDark ? '#60a5fa' : '#1f2937')
+      .attr('stroke-width', 0.8);
+    ([-9, 9] as const).forEach(cx => {
+      disjointSymbol.append('circle')
+        .attr('cx', cx).attr('cy', 0).attr('r', 7)
+        .attr('fill', isDark ? '#60a5fa' : '#6699cc')
+        .attr('stroke', isDark ? '#0b1220' : '#1f2937')
+        .attr('stroke-width', 0.8);
+    });
+    if (!vowlOptions.compactNotation) {
+      disjointSymbol.append('text')
+        .text('(disjoint)')
+        .attr('y', 21)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', 7.5)
+        .attr('fill', isDark ? '#cbd5e1' : '#1f2937');
+    }
+
+    const updateDisjointSymbols = () => {
+      disjointSymbol.attr('transform', (d: any) => {
+        const source = d.source as D3Node;
+        const target = d.target as D3Node;
+        if (source.x == null || source.y == null || target.x == null || target.y == null) return null;
+        return `translate(${(source.x + target.x) / 2},${(source.y + target.y) / 2})`;
+      });
+    };
+    updateDisjointSymbols();
+
     const updateLinkLabelBackgrounds = () => {
       linkLabelBg.each(function(_d, i) {
         const label = linkLabel.nodes()[i];
@@ -2587,14 +2877,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     let visibleD3Nodes = d3Nodes;
     if (isLargeGraph && visualizationType === 'ontograph' && d3Nodes.length > 5000) {
       const buffer = 500; // Buffer zone around viewport
+      const vp = viewportBoundsRef.current;
       visibleD3Nodes = d3Nodes.filter(node => {
-        if (!node.x || !node.y) return true; // Include if no position yet
-        return node.x >= viewportBounds.x - buffer &&
-               node.x <= viewportBounds.x + viewportBounds.width + buffer &&
-               node.y >= viewportBounds.y - buffer &&
-               node.y <= viewportBounds.y + viewportBounds.height + buffer;
+        if (node.x == null || node.y == null) return true; // Include if no position yet (0 is a valid coordinate)
+        return node.x >= vp.x - buffer &&
+               node.x <= vp.x + vp.width + buffer &&
+               node.y >= vp.y - buffer &&
+               node.y <= vp.y + vp.height + buffer;
       });
-      console.log(`[OntoGraph Virtualization] Rendering ${visibleD3Nodes.length} of ${d3Nodes.length} nodes`);
+      if (GRAPH_DEBUG) console.log(`[OntoGraph Virtualization] Rendering ${visibleD3Nodes.length} of ${d3Nodes.length} nodes`);
     }
     
     // Draw nodes
@@ -2606,7 +2897,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('class', 'node')
       .attr('data-testid', 'graph-node')
       .attr('data-graph-node-id', d => d.id)
-      .style('cursor', editMode ? 'move' : 'pointer')
+      .style('cursor', editModeRef.current ? 'move' : 'pointer')
       .call(d3.drag<SVGGElement, D3Node>()
         .on('start', dragStarted)
         .on('drag', dragged)
@@ -2630,13 +2921,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const nodeGroup = d3.select(this);
       const size = d.size || settings.nodeSize;
       const nodeType = d.type;
-      
+      // User-configurable box scale (Notation & density panel) — vowl/force only,
+      // where shape size is otherwise a fixed multiple of `size` regardless of label length.
+      const widthScale = (visualizationType === 'vowl' || visualizationType === 'force') ? vowlOptions.nodeWidthScale : 1;
+      const heightScale = (visualizationType === 'vowl' || visualizationType === 'force') ? vowlOptions.nodeHeightScale : 1;
+
       // Check if this is owl:Thing or external/internal node
       const isThing = d.label === 'Thing' || d.id.includes('owl#Thing');
       const isExternal = isExternalNode(d);
       
       // Detect dark mode for theme-aware colors
-      const isDark = document.documentElement.classList.contains('dark');
+      const isDark = isDarkTheme;
       
       // WebVOWL color scheme matching reference image - theme aware
       let fill = isDark ? '#6b92c4' : '#acd5f2'; // Default light blue (darker in dark mode)
@@ -2644,11 +2939,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (visualizationType === 'vowl' && nodeType === 'class') {
         if (isThing) {
           fill = isDark ? '#374151' : '#ffffff'; // Dark gray in dark mode, white in light mode
-        } else if (isExternal) {
-          fill = isDark ? '#60a5fa' : '#4682b4'; // Lighter blue in dark mode
+        } else if (isExternal && vowlOptions.colorExternals) {
+          // WebVOWL "color externals": foreign-namespace classes get a deeper tint
+          fill = isDark ? '#60a5fa' : '#4682b4';
         } else {
           fill = isDark ? '#6b92c4' : '#acd5f2'; // Adjusted for dark mode
         }
+      } else if (visualizationType === 'vowl' && nodeType === 'setOperator') {
+        // Operator nodes are anonymous classes — class blue, dashed border below
+        fill = isDark ? '#6b92c4' : '#acd5f2';
       } else if (visualizationType === 'vowl') {
         fill = vowlNotationService.getVOWLNodeColor(d.type, isDark);
       } else {
@@ -2658,7 +2957,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (isInferredEntity(d)) {
         fill = isDark ? '#064e3b' : '#d1fae5';
       }
-      
+
+      // Record the color actually used to paint this node so the label-text
+      // callback further down can pick a readable black/white against it
+      // instead of re-deriving (and risking a mismatched) guess.
+      (d as any).__nodeFillColor = fill;
+
       const stroke = visualizationType === 'vowl'
         ? (isInferredEntity(d) ? '#10b981' : (isDark ? '#d1d5db' : '#000000'))
         : (isInferredEntity(d) ? '#10b981' : '#fff');
@@ -2667,11 +2971,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         ? (isInferredEntity(d) ? 3 : 2)
         : (isInferredEntity(d) ? 3 : (hasChildren(d.id, allEdges, allNodes) ? 3 : 2));
       
-      // Thing nodes get dashed borders in WebVOWL
+      // Thing and anonymous set-operator nodes get dashed borders in WebVOWL
       const strokeDasharray = isInferredEntity(d)
         ? '8 4'
         : (visualizationType === 'vowl'
-          ? (isThing ? '5 3' : null)
+          ? (isThing || nodeType === 'setOperator' ? '5 3' : null)
           : null);
 
       // Glossy gradient version of the flat fill (depth without per-frame cost)
@@ -2703,8 +3007,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       } else if (nodeType === 'datatype') {
         // Force mode: White rectangle for datatypes/literals
         if (visualizationType === 'force') {
-          const rectWidth = size * 2.2;
-          const rectHeight = size * 1.1;
+          const rectWidth = size * 2.2 * widthScale;
+          const rectHeight = size * 1.1 * heightScale;
           nodeGroup.append('rect')
             .attr('class', 'node-shape')
             .attr('x', -rectWidth / 2)
@@ -2723,8 +3027,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseout', handleNodeMouseOut);
         } else {
           // VOWL/OntoGraph: Yellow Rounded Rectangle for datatypes - larger for both modes
-          const rectWidth = visualizationType === 'vowl' ? size * 4.2 : (visualizationType === 'ontograph' ? size * 3.5 : size * 3);
-          const rectHeight = visualizationType === 'vowl' ? size * 2.0 : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6);
+          const rectWidth = (visualizationType === 'vowl' ? size * 4.2 * widthScale : (visualizationType === 'ontograph' ? size * 3.5 : size * 3));
+          const rectHeight = (visualizationType === 'vowl' ? size * 2.0 * heightScale : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6));
           nodeGroup.append('rect')
             .attr('class', 'node-shape')
             .attr('x', -rectWidth / 2)
@@ -2745,8 +3049,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       } else if (nodeType === 'individual') {
         // Force mode: Blue rounded rectangle for individuals
         if (visualizationType === 'force') {
-          const rectWidth = size * 3.2;
-          const rectHeight = size * 1.6;
+          const rectWidth = size * 3.2 * widthScale;
+          const rectHeight = size * 1.6 * heightScale;
           nodeGroup.append('rect')
             .attr('class', 'node-shape')
             .attr('x', -rectWidth / 2)
@@ -2766,13 +3070,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         } else {
           // VOWL/OntoGraph: Rectangle for individuals (purple/pink) - dynamic width based on label length
           const label = d.label || '';
-          const baseWidth = visualizationType === 'vowl' ? size * 2.8 : (visualizationType === 'ontograph' ? size * 2.8 : size * 2.4);
+          const baseWidth = (visualizationType === 'vowl' ? size * 2.8 * widthScale : (visualizationType === 'ontograph' ? size * 2.8 : size * 2.4));
           // Calculate width based on label length (approximately 7 pixels per character), capped
           const labelWidth = Math.min(label.length * 7, 180);
           const rectWidth = Math.max(baseWidth, labelWidth + 16); // Add padding
-          const maxWidth = visualizationType === 'vowl' ? size * 5.0 : size * 4.5;
+          const maxWidth = visualizationType === 'vowl' ? size * 5.0 * widthScale : size * 4.5;
           const finalWidth = Math.min(rectWidth, maxWidth);
-          const rectHeight = visualizationType === 'vowl' ? size * 1.8 : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6);
+          const rectHeight = (visualizationType === 'vowl' ? size * 1.8 * heightScale : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6));
           nodeGroup.append('rect')
             .attr('class', 'node-shape')
             .attr('x', -finalWidth / 2)
@@ -2816,7 +3120,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .on('mouseout', handleNodeMouseOut);
       } else if (visualizationType === 'ontograph') {
         // Modern hierarchical graph: clean card-style nodes with accent stripe
-        const simplifiedLOD = isLargeGraph && viewportBounds.scale < 0.5;
+        const simplifiedLOD = isLargeGraph && viewportBoundsRef.current.scale < 0.5;
         const rectWidth = simplifiedLOD ? size * 5 : size * 9;
         const rectHeight = simplifiedLOD ? size * 1.8 : size * 2.6;
         const cornerRadius = 8;
@@ -2932,8 +3236,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         // Force mode classes OR default circle rendering
         if (visualizationType === 'force' && nodeType === 'class') {
           // Classes as light orange/peach ovals (ellipse) - larger size for better label fit
-          const ellipseWidth = size * 3.5;  // Wider for text
-          const ellipseHeight = size * 2.0; // Taller oval
+          const ellipseWidth = size * 3.5 * widthScale;  // Wider for text
+          const ellipseHeight = size * 2.0 * heightScale; // Taller oval
           nodeGroup.append('ellipse')
             .attr('class', 'node-shape')
             .attr('cx', 0)
@@ -2943,9 +3247,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('fill', () => {
               // Flat tint + accent stroke + soft shadow — no glossy gradient.
               const paletteFill = nodeFill(d.type, isDark);
-              return colorByCluster && clusterFor(d.id) !== undefined
+              const finalFill = colorByCluster && clusterFor(d.id) !== undefined
                 ? (getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors) || paletteFill)
                 : paletteFill;
+              // Overrides the generic stash above — this ellipse ignores the
+              // outer `fill` var (that holds the raw accent, not this tint).
+              (d as any).__nodeFillColor = finalFill;
+              return finalFill;
             })
             .attr('stroke', isInferredEntity(d) ? '#10b981' : (
               colorByCluster && clusterFor(d.id) !== undefined
@@ -2960,11 +3268,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
             .on('mouseout', handleNodeMouseOut);
         } else {
-          // Circle for classes, object properties, and other types - larger for OntoGraph
-          const circleRadius = visualizationType === 'vowl' 
-            ? size * 1.8 
+          // Circle for classes, object properties, and other types - larger for OntoGraph.
+          // A circle can't have independent width/height without becoming an ellipse, so
+          // the two user scale sliders are averaged here — vowl class truncation below
+          // uses the same average so the label budget always matches this radius.
+          const circleRadius = visualizationType === 'vowl'
+            ? size * 1.8 * ((widthScale + heightScale) / 2)
             // @ts-ignore - Type narrowing limitation: visualizationType can be 'ontograph' in other code paths
-            : (visualizationType === 'ontograph' ? size * 1.6 : size * 1.2);
+            : (visualizationType === 'ontograph' ? size * 1.6 : size * 1.2 * ((widthScale + heightScale) / 2));
           nodeGroup.append('circle')
             .attr('class', 'node-shape')
             .attr('r', circleRadius)
@@ -2995,7 +3306,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       // Add expander +/- icon for non-ontograph modes (ontograph handles its own)
       if (visualizationType !== 'ontograph' && hasChildren(d.id, allEdges, allNodes)) {
         const isExpanded = expandedNodeIds.has(d.id);
-        const isDark = document.documentElement.classList.contains('dark');
+        const isDark = isDarkTheme;
         
         // Position the expander at the bottom-right of the node shape
         let expanderX = 0;
@@ -3077,12 +3388,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     // Node labels - INSIDE for WebVOWL and OntoGraph, outside for force mode
     // Hide labels when zoomed out on large graphs (LOD)
-    const showLabels = !isLargeGraph || viewportBounds.scale >= 0.5;
+    const showLabels = !isLargeGraph || viewportBoundsRef.current.scale >= 0.5;
     
     // Surface-colored halo keeps labels readable over crossing edges at density
     // without label boxes. VOWL mode is exempt: its notation rendering (text
     // inside semantically-shaped nodes) stays exactly as Protégé users expect.
-    const labelHalo = document.documentElement.classList.contains('dark') ? '#1b1e2b' : '#ffffff';
+    const labelHalo = isDarkTheme ? '#1b1e2b' : '#ffffff';
     node.append('text')
       .attr('paint-order', 'stroke')
       .attr('stroke', visualizationType === 'vowl' ? 'none' : labelHalo)
@@ -3092,7 +3403,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (visualizationType === 'vowl') return 0;
         if (visualizationType === 'ontograph') {
           const size = d.size || settings.nodeSize;
-          const simplifiedLOD = isLargeGraph && viewportBounds.scale < 0.5;
+          const simplifiedLOD = isLargeGraph && viewportBoundsRef.current.scale < 0.5;
           const rectWidth = simplifiedLOD ? size * 5 : size * 9;
           return -rectWidth / 2 + 16; // Aligned after accent stripe
         }
@@ -3115,9 +3426,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return 'start';
       })
       .attr('font-size', d => {
-        if (visualizationType === 'vowl') return 11;
+        if (visualizationType === 'vowl') return d.type === 'setOperator' ? 18 : vowlOptions.labelFontSize;
         if (visualizationType === 'ontograph') return 12;
-        if (visualizationType === 'force') return 11; // Smaller font for better fit in ovals
+        if (visualizationType === 'force') return vowlOptions.labelFontSize;
         if (visualizationType === 'spatial3d') return 10; // Compact to fit inside circle
         return 13;
       })
@@ -3133,44 +3444,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return 'inherit';
       })
       .attr('fill', d => {
-        if (visualizationType === 'vowl') {
-          const isDark = document.documentElement.classList.contains('dark');
-          const isExternal = isExternalNode(d);
-          if (d.type === 'class') {
-            const nodeFill = isExternal
-              ? (isDark ? '#60a5fa' : '#4682b4')
-              : (isDark ? '#6b92c4' : '#acd5f2');
-            const hex = nodeFill.replace('#', '');
-            const r = parseInt(hex.substring(0, 2), 16);
-            const g = parseInt(hex.substring(2, 4), 16);
-            const b = parseInt(hex.substring(4, 6), 16);
-            const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-            return brightness > 140 ? '#111111' : '#ffffff';
-          }
-          // Individuals / datatypes / properties: pick black or white from the
-          // node's actual fill luminance instead of hardcoded black (which was
-          // unreadable on purple individual boxes in dark theme).
-          const nodeFill = (d as any).color || TYPE_COLORS[(d as any).type as NodeType] || (isDark ? '#6b92c4' : '#acd5f2');
-          const hex2 = nodeFill.replace('#', '');
-          const r2 = parseInt(hex2.substring(0, 2), 16);
-          const g2 = parseInt(hex2.substring(2, 4), 16);
-          const b2 = parseInt(hex2.substring(4, 6), 16);
-          const brightness2 = (r2 * 299 + g2 * 587 + b2 * 114) / 1000;
-          return brightness2 > 140 ? '#111111' : '#ffffff';
+        if (visualizationType === 'vowl' || visualizationType === 'force') {
+          // Read the color the shape was ACTUALLY painted with (stashed in
+          // node.each above) instead of re-deriving a guess from TYPE_COLORS —
+          // that guess used the raw saturated accent, not the pastel tint most
+          // node types render with, which picked white text on light node fills.
+          const painted = (d as any).__nodeFillColor || (isDarkTheme ? '#6b92c4' : '#acd5f2');
+          return getReadableTextColor(painted);
         }
         if (visualizationType === 'ontograph') {
-          const isDark = document.documentElement.classList.contains('dark');
+          const isDark = isDarkTheme;
           return isDark ? '#e2e8f0' : '#1e293b'; // Slate tones for modern look
-        }
-        if (visualizationType === 'force') {
-          // Pick white/black based on node fill luminance
-          const nodeFill = (d as any).color || TYPE_COLORS[(d as any).type as NodeType] || '#667eea';
-          const hex = nodeFill.replace('#', '');
-          const r = parseInt(hex.substring(0, 2), 16);
-          const g = parseInt(hex.substring(2, 4), 16);
-          const b = parseInt(hex.substring(4, 6), 16);
-          const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-          return brightness > 140 ? '#111111' : '#ffffff';
         }
         if (visualizationType === 'spatial3d') {
           return '#ffffff'; // White text — always readable against node fills
@@ -3190,29 +3474,43 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .style('paint-order', 'stroke')
       .text(d => {
         if (visualizationType === 'vowl') {
-          // Truncate labels in WebVOWL mode to fit within their shapes.
-          // Char budget derives from the actual shape width (≈7px/char at 11px
-          // font) so text can never spill outside the box.
+          // Set-operator nodes render their VOWL glyph, not a text label
+          if (d.type === 'setOperator') {
+            return SET_OPERATOR_SYMBOLS[(d as any).metadata?.setOperator] || '∪';
+          }
+          // Truncate labels in WebVOWL mode to fit within their shapes. Char budget
+          // derives from the actual (scaled) shape width and chosen font size, so
+          // text can never spill outside the box regardless of the Notation &
+          // density panel's width/height/font-size sliders.
           const label = d.label || '';
           const size = d.size || settings.nodeSize;
+          const charWidthPx = vowlOptions.labelFontSize * (7 / 11); // 7px/char was calibrated at 11px font
+          // Recomputed here (not read from node.each's closure — this is a sibling D3
+          // callback on the same selection, not a nested function, so those locals
+          // aren't in scope).
+          const widthScale = vowlOptions.nodeWidthScale;
+          const heightScale = vowlOptions.nodeHeightScale;
           let maxChars = 18;
 
           if (d.type === 'datatype') {
-            // Rect width = size * 4.2, minus padding
-            maxChars = Math.max(4, Math.floor((size * 4.2 - 12) / 7));
+            // Rect width = size * 4.2 * widthScale, minus padding
+            maxChars = Math.max(4, Math.floor((size * 4.2 * widthScale - 12) / charWidthPx));
           } else if (d.type === 'individual') {
-            // Rect width capped at size * 5.0, minus padding
+            // Mirrors the rect sizing above (base/label-driven width, capped at size * 5.0 * widthScale)
             const label2 = d.label || '';
-            const baseWidth = size * 2.8;
+            const baseWidth = size * 2.8 * widthScale;
             const labelWidth = Math.min(label2.length * 7, 180);
             const rectWidth = Math.max(baseWidth, labelWidth + 16);
-            const finalWidth = Math.min(rectWidth, size * 5.0);
-            maxChars = Math.max(4, Math.floor((finalWidth - 10) / 7));
+            const finalWidth = Math.min(rectWidth, size * 5.0 * widthScale);
+            maxChars = Math.max(4, Math.floor((finalWidth - 10) / charWidthPx));
           } else if (d.type === 'class') {
-            // Circle radius = size * 1.8 → diameter-based budget
-            maxChars = Math.max(6, Math.floor((size * 3.6 - 8) / 7));
+            // Circle radius = size * 1.8 * avg(scale) → diameter-based budget
+            const diameter = size * 3.6 * ((widthScale + heightScale) / 2);
+            maxChars = Math.max(6, Math.floor((diameter - 8) / charWidthPx));
           }
 
+          // User-set cap layers on top of the shape-fitted budget
+          maxChars = Math.min(maxChars, vowlOptions.maxLabelChars);
           return label.length > maxChars ? label.substring(0, Math.max(1, maxChars - 2)) + '..' : label;
         }
         if (visualizationType === 'ontograph' && !showLabels) {
@@ -3226,8 +3524,27 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return label.length > maxChars ? label.substring(0, maxChars - 2) + '..' : label;
         }
         if (visualizationType === 'force') {
+          // Shape-aware budget mirroring the vowl branch above — force-mode box sizes
+          // are fixed (not label-length-driven), so without this a long label simply
+          // spilled outside its oval/rect. Char budget derives from the actual (scaled)
+          // shape width and chosen font size.
           const label = d.label || '';
-          return label.length > 20 ? label.substring(0, 17) + '...' : label;
+          const size = d.size || settings.nodeSize;
+          const charWidthPx = vowlOptions.labelFontSize * (7 / 11);
+          // Recomputed here — sibling D3 callback, not nested inside node.each.
+          const widthScale = vowlOptions.nodeWidthScale;
+          let maxChars = 18;
+
+          if (d.type === 'datatype') {
+            maxChars = Math.max(4, Math.floor((size * 2.2 * widthScale - 10) / charWidthPx));
+          } else if (d.type === 'individual') {
+            maxChars = Math.max(4, Math.floor((size * 3.2 * widthScale - 10) / charWidthPx));
+          } else if (d.type === 'class') {
+            maxChars = Math.max(6, Math.floor((size * 7.0 * widthScale - 10) / charWidthPx));
+          }
+
+          maxChars = Math.min(maxChars, vowlOptions.maxLabelChars);
+          return label.length > maxChars ? label.substring(0, Math.max(1, maxChars - 3)) + '...' : label;
         }
         if (visualizationType === 'spatial3d') {
           // Short truncation — text is centered inside the circle, so space is limited
@@ -3258,9 +3575,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .attr('text-anchor', 'middle')
       .attr('font-size', 9)
-      .attr('fill', '#666')
+      .attr('fill', isDarkTheme ? '#cbd5e1' : '#666')
       .attr('font-weight', '600')
-      .text(d => d.type.substring(0, 1).toUpperCase())
+      .text(d => {
+        // Set-operator caption: "(union)" / "(intersection)" / ... unless compact notation
+        if (d.type === 'setOperator') {
+          if (vowlOptions.compactNotation) return '';
+          const kind = (d as any).metadata?.setOperator;
+          return kind ? `(${kind})` : '';
+        }
+        return d.type.substring(0, 1).toUpperCase();
+      })
       .style('pointer-events', 'none')
       .style('opacity', 0.7);
 
@@ -3268,20 +3593,223 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     let rafId: number | null = null;
     let ticking = false;
     let tickCount = 0;
-    const updateInterval = nodeCount > 100 ? 3 : 2; // Skip more frames for large graphs
-    
+    // Skip more frames as graphs grow — node motion stays smooth, ancillary work staggers
+    const updateInterval = nodeCount > 5000 ? 5 : nodeCount > 2000 ? 4 : nodeCount > 100 ? 3 : 2;
+
+    // Update edge paths with curvature for multiple edges between same nodes.
+    // Computed ONCE per edge per pass and cached on the datum — the hit-area layer
+    // reuses the cached string instead of recomputing the boundary trig.
+    const computeEdgePath = (d: D3Edge): string => {
+      const source = d.source as D3Node;
+      const target = d.target as D3Node;
+
+      if (source.x == null || source.y == null || target.x == null || target.y == null) {
+        return '';
+      }
+
+      const sourcePoint = getRenderPoint(source);
+      const targetPoint = getRenderPoint(target);
+      const curve = edgeCurvature.get(d.id) || 0;
+
+      // Calculate edge endpoints
+      const dx = targetPoint.x - sourcePoint.x;
+      const dy = targetPoint.y - sourcePoint.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist === 0) {
+        return `M${sourcePoint.x},${sourcePoint.y}L${targetPoint.x},${targetPoint.y}`;
+      }
+
+      // Shorten edge to stop at node boundary - dynamic based on visualization type and node shape
+      let r = (target.size || settings.nodeSize);
+
+      if (visualizationType === 'vowl') {
+        if (target.type === 'datatype' || target.type === 'dataProperty') {
+          // Rectangle boundary for VOWL datatypes (approx 2.8x by 1.8x)
+          const w = r * 2.8;
+          const h = r * 1.8;
+          const absCos = Math.abs(dx / dist);
+          const absSin = Math.abs(dy / dist);
+          r = Math.min((w / 2) / absCos, (h / 2) / absSin) + 2;
+        } else {
+          // Circle boundary for VOWL classes (1.8x radius)
+          r = r * 1.8 + 4;
+        }
+      } else if (visualizationType === 'ontograph') {
+        // Rounded rectangle boundary for OntoGraph (approx 7.5x by 2.0x)
+        const w = r * 7.5;
+        const h = r * 2.0;
+        const absCos = Math.abs(dx / dist);
+        const absSin = Math.abs(dy / dist);
+        r = Math.min((w / 2) / absCos, (h / 2) / absSin) + 2;
+      } else if (visualizationType === 'force') {
+        if (target.type === 'class') {
+          // Ellipse boundary approximation (3.5x by 2.0x)
+          const w = r * 3.5 * 2;
+          const h = r * 2.0 * 2;
+          const absCos = Math.abs(dx / dist);
+          const absSin = Math.abs(dy / dist);
+          r = Math.min((w / 2) / absCos, (h / 2) / absSin) + 2;
+        } else {
+          r = r * 1.2 + 4;
+        }
+      } else {
+        r = r + 5;
+      }
+
+      const targetX = targetPoint.x - (dx / dist) * r;
+      const targetY = targetPoint.y - (dy / dist) * r;
+
+      if (curve === 0) {
+        // Straight line
+        return `M${sourcePoint.x},${sourcePoint.y}L${targetX},${targetY}`;
+      } else {
+        // Curved path - quadratic bezier curve
+        // Calculate control point perpendicular to the line
+        const midX = (sourcePoint.x + targetX) / 2;
+        const midY = (sourcePoint.y + targetY) / 2;
+
+        // Perpendicular offset
+        const perpX = -dy / dist;
+        const perpY = dx / dist;
+
+        const controlX = midX + perpX * curve;
+        const controlY = midY + perpY * curve;
+
+        return `M${sourcePoint.x},${sourcePoint.y}Q${controlX},${controlY},${targetX},${targetY}`;
+      }
+    };
+
+    const updateEdgePaths = (includeHitAreas: boolean) => {
+      link.attr('d', (d: any) => {
+        if (d.__culled) return d.__path || '';
+        d.__path = computeEdgePath(d);
+        return d.__path;
+      });
+      if (includeHitAreas) {
+        edgeHitArea?.attr('d', (d: any) => d.__path ?? computeEdgePath(d));
+      }
+    };
+
+    const updateLinkLabelPositions = () => {
+      linkLabel.each(function(d: any) {
+        if (d.__culled) return;
+        const sourcePoint = getRenderPoint(d.source as D3Node);
+        const targetPoint = getRenderPoint(d.target as D3Node);
+        const sourceX = sourcePoint.x;
+        const sourceY = sourcePoint.y;
+        const targetX = targetPoint.x;
+        const targetY = targetPoint.y;
+        const dx = targetX - sourceX;
+        const dy = targetY - sourceY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        const curve = edgeCurvature.get(d.id) || 0;
+
+        // Position label at the MIDDLE of the edge
+        let labelX: number;
+        let labelY: number;
+
+        if (curve === 0) {
+          // Straight line
+          const t = 0.5;
+          labelX = sourceX + dx * t;
+          labelY = sourceY + dy * t;
+
+          // Small perpendicular offset for readability
+          if (dist > 0) {
+            const perpX = -dy / dist;
+            const perpY = dx / dist;
+            const perpOffset = visualizationType === 'vowl' ? 0 : 10; // Centered for VOWL
+            labelX += perpX * perpOffset;
+            labelY += perpY * perpOffset;
+          }
+        } else {
+          // Curved path - position label on the curve at t=0.5
+          const midX = (sourceX + targetX) / 2;
+          const midY = (sourceY + targetY) / 2;
+
+          // Perpendicular offset for curve control point
+          const perpX = -dy / dist;
+          const perpY = dx / dist;
+
+          const controlX = midX + perpX * curve;
+          const controlY = midY + perpY * curve;
+
+          // Quadratic bezier point at t=0.5
+          const t = 0.5;
+          labelX = (1-t)*(1-t)*sourceX + 2*(1-t)*t*controlX + t*t*targetX;
+          labelY = (1-t)*(1-t)*sourceY + 2*(1-t)*t*controlY + t*t*targetY;
+
+          // Additional small offset for label readability
+          const labelOffset = 10;
+          labelX += perpX * labelOffset;
+          labelY += perpY * labelOffset;
+        }
+
+        d3.select(this)
+          .attr('x', labelX)
+          .attr('y', labelY);
+      });
+    };
+
+    // Live viewport culling — all visualization modes, activates above the large-graph
+    // threshold. Runs at gesture/sim ends only (never per tick): offscreen node groups
+    // get display:none; edges/labels whose endpoints are both culled are hidden and
+    // skipped by the tick handler. Positions keep persisting from sim data, not DOM.
+    const cullingEnabled = nodeCount > LARGE_GRAPH_THRESHOLD;
+    const applyViewportCulling = () => {
+      if (!cullingEnabled) return;
+      const vp = viewportBoundsRef.current;
+      if (!vp.width || !vp.height) return;
+      const buffer = 400;
+      const minX = vp.x - buffer;
+      const maxX = vp.x + vp.width + buffer;
+      const minY = vp.y - buffer;
+      const maxY = vp.y + vp.height + buffer;
+      node.style('display', (d: any) => {
+        const visible = d.x == null || d.y == null ||
+          (d.x >= minX && d.x <= maxX && d.y >= minY && d.y <= maxY);
+        d.__nodeCulled = !visible;
+        return visible ? null : 'none';
+      });
+      const edgeCulled = (d: any) => {
+        d.__culled = Boolean((d.source as any).__nodeCulled && (d.target as any).__nodeCulled);
+        return d.__culled ? 'none' : null;
+      };
+      link.style('display', edgeCulled);
+      edgeHitArea?.style('display', (d: any) => (d.__culled ? 'none' : null));
+      linkLabel.style('display', (d: any) => (d.__culled ? 'none' : null));
+      linkLabelBg.style('display', (d: any) => (d.__culled ? 'none' : null));
+    };
+    applyViewportCullingRef.current = applyViewportCulling;
+    uncullForExportRef.current = () => {
+      node.style('display', null);
+      link.style('display', null);
+      edgeHitArea?.style('display', null);
+      linkLabel.style('display', null);
+      linkLabelBg.style('display', null);
+      d3Edges.forEach((d: any) => {
+        d.__nodeCulled = false;
+        d.__culled = false;
+      });
+      d3Nodes.forEach((d: any) => { d.__nodeCulled = false; });
+      updateEdgePaths(true);
+      updateLinkLabelPositions();
+    };
+
     // Force initial render to show nodes immediately
     if (visualizationType === 'ontograph' && ontographLayoutType !== 'spring') {
       simulation.alpha(0.01).restart(); // Minimal alpha since positions are fixed
     } else if (visualizationType === 'ontograph') {
       simulation.alpha(1).restart();
     }
-    
+
     simulation.on('tick', () => {
       tickCount++;
       // Skip frames for better performance
       if (tickCount % updateInterval !== 0) return;
-      
+
       if (!ticking) {
         ticking = true;
         rafId = requestAnimationFrame(() => {
@@ -3289,161 +3817,33 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             d3Nodes.forEach(project3DNode);
           }
 
-          // Update edge paths with curvature for multiple edges between same nodes
-          const updatePath = (d: D3Edge) => {
-            const source = d.source as D3Node;
-            const target = d.target as D3Node;
-            
-            if (!source.x || !source.y || !target.x || !target.y) {
-              return '';
-            }
-            
-            const sourcePoint = getRenderPoint(source);
-            const targetPoint = getRenderPoint(target);
-            const curve = edgeCurvature.get(d.id) || 0;
-            
-            // Calculate edge endpoints
-            const dx = targetPoint.x - sourcePoint.x;
-            const dy = targetPoint.y - sourcePoint.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            
-            if (dist === 0) {
-              return `M${sourcePoint.x},${sourcePoint.y}L${targetPoint.x},${targetPoint.y}`;
-            }
-            
-            // Shorten edge to stop at node boundary - dynamic based on visualization type and node shape
-            let r = (target.size || settings.nodeSize);
-            
-            if (visualizationType === 'vowl') {
-              if (target.type === 'datatype' || target.type === 'dataProperty') {
-                // Rectangle boundary for VOWL datatypes (approx 2.8x by 1.8x)
-                const w = r * 2.8;
-                const h = r * 1.8;
-                const absCos = Math.abs(dx / dist);
-                const absSin = Math.abs(dy / dist);
-                r = Math.min((w / 2) / absCos, (h / 2) / absSin) + 2;
-              } else {
-                // Circle boundary for VOWL classes (1.8x radius)
-                r = r * 1.8 + 4;
-              }
-            } else if (visualizationType === 'ontograph') {
-              // Rounded rectangle boundary for OntoGraph (approx 7.5x by 2.0x)
-              const w = r * 7.5;
-              const h = r * 2.0;
-              const absCos = Math.abs(dx / dist);
-              const absSin = Math.abs(dy / dist);
-              r = Math.min((w / 2) / absCos, (h / 2) / absSin) + 2;
-            } else if (visualizationType === 'force') {
-              if (target.type === 'class') {
-                // Ellipse boundary approximation (3.5x by 2.0x)
-                const w = r * 3.5 * 2;
-                const h = r * 2.0 * 2;
-                const absCos = Math.abs(dx / dist);
-                const absSin = Math.abs(dy / dist);
-                r = Math.min((w / 2) / absCos, (h / 2) / absSin) + 2;
-              } else {
-                r = r * 1.2 + 4;
-              }
-            } else {
-              r = r + 5;
-            }
-            
-            const targetX = targetPoint.x - (dx / dist) * r;
-            const targetY = targetPoint.y - (dy / dist) * r;
-            
-            if (curve === 0) {
-              // Straight line
-              return `M${sourcePoint.x},${sourcePoint.y}L${targetX},${targetY}`;
-            } else {
-              // Curved path - quadratic bezier curve
-              // Calculate control point perpendicular to the line
-              const midX = (sourcePoint.x + targetX) / 2;
-              const midY = (sourcePoint.y + targetY) / 2;
-              
-              // Perpendicular offset
-              const perpX = -dy / dist;
-              const perpY = dx / dist;
-              
-              const controlX = midX + perpX * curve;
-              const controlY = midY + perpY * curve;
-              
-              return `M${sourcePoint.x},${sourcePoint.y}Q${controlX},${controlY},${targetX},${targetY}`;
-            }
-          };
+          // Hit-area paths are pointer targets, not visuals — they sync on sim/gesture end
+          updateEdgePaths(false);
 
-          link.attr('d', updatePath);
-          edgeHitArea.attr('d', updatePath);
-
-          linkLabel.each(function(d, i) {
-            const sourcePoint = getRenderPoint(d.source as D3Node);
-            const targetPoint = getRenderPoint(d.target as D3Node);
-            const sourceX = sourcePoint.x;
-            const sourceY = sourcePoint.y;
-            const targetX = targetPoint.x;
-            const targetY = targetPoint.y;
-            const dx = targetX - sourceX;
-            const dy = targetY - sourceY;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            
-            const curve = edgeCurvature.get(d.id) || 0;
-            
-            // Position label at the MIDDLE of the edge
-            let labelX: number;
-            let labelY: number;
-            
-            if (curve === 0) {
-              // Straight line
-              const t = 0.5;
-              labelX = sourceX + dx * t;
-              labelY = sourceY + dy * t;
-              
-              // Small perpendicular offset for readability
-              if (dist > 0) {
-                const perpX = -dy / dist;
-                const perpY = dx / dist;
-                const perpOffset = visualizationType === 'vowl' ? 0 : 10; // Centered for VOWL
-                labelX += perpX * perpOffset;
-                labelY += perpY * perpOffset;
-              }
-            } else {
-              // Curved path - position label on the curve at t=0.5
-              const midX = (sourceX + targetX) / 2;
-              const midY = (sourceY + targetY) / 2;
-              
-              // Perpendicular offset for curve control point
-              const perpX = -dy / dist;
-              const perpY = dx / dist;
-              
-              const controlX = midX + perpX * curve;
-              const controlY = midY + perpY * curve;
-              
-              // Quadratic bezier point at t=0.5
-              const t = 0.5;
-              labelX = (1-t)*(1-t)*sourceX + 2*(1-t)*t*controlX + t*t*targetX;
-              labelY = (1-t)*(1-t)*sourceY + 2*(1-t)*t*controlY + t*t*targetY;
-              
-              // Additional small offset for label readability
-              const labelOffset = 10;
-              labelX += perpX * labelOffset;
-              labelY += perpY * labelOffset;
-            }
-            
-            d3.select(this)
-              .attr('x', labelX)
-              .attr('y', labelY);
-          });
+          // Edge labels: VOWL labels are hover-only (positioned on 'end'); other modes
+          // skip the bezier math entirely when labels are switched off.
+          if (visualizationType !== 'vowl' && settings.showLabels !== false) {
+            updateLinkLabelPositions();
+          }
+          // Disjointness symbols are always visible and few — track the edge midpoint live
+          if (visualizationType === 'vowl') {
+            updateDisjointSymbols();
+          }
           // Label backgrounds sized once after layout — getBBox in tick forces layout thrash
 
           node.attr('transform', d => {
             const point = getRenderPoint(d);
             return `translate(${point.x},${point.y}) scale(${visualizationType === 'spatial3d' ? Math.max(0.72, Math.min(1.28, point.scale)) : 1})`;
-          })
-          .style('opacity', d => {
-            if (visualizationType !== 'spatial3d') return 1;
-            const point = getRenderPoint(d);
-            return Math.max(0.58, Math.min(1, point.scale * 0.92));
           });
-          
+          if (isSpatial3D) {
+            // Depth-based opacity only applies in 3D — writing opacity per tick in other
+            // modes would stomp the entrance fade transition.
+            node.style('opacity', d => {
+              const point = getRenderPoint(d);
+              return Math.max(0.58, Math.min(1, point.scale * 0.92));
+            });
+          }
+
           // Persist node positions so expand/collapse doesn't scramble the graph
           d3Nodes.forEach(n => {
             if (n.x != null && n.y != null) {
@@ -3456,12 +3856,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
     });
 
-    simulation.on('end', () => {
+    simulation.on('end.render', () => {
+      updateEdgePaths(true);
+      updateLinkLabelPositions();
+      updateDisjointSymbols();
       updateLinkLabelBackgrounds();
+      applyViewportCulling();
     });
 
     // Drag functions
     function dragStarted(event: any, d: D3Node) {
+      userInteractedRef.current = true; // dragging a node cancels pending entrance refits
       if (!event.active) simulation.alphaTarget(0.3).restart();
       d.fx = d.x;
       d.fy = d.y;
@@ -3474,10 +3879,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     function dragEnded(event: any, d: D3Node) {
       if (!event.active) simulation.alphaTarget(0);
-      if (!editMode) {
+      if (!editModeRef.current) {
         d.fx = null;
         d.fy = null;
       }
+      // Hit-areas skipped path updates during the drag; sync them now, then re-cull
+      updateEdgePaths(true);
+      applyViewportCulling();
     }
 
     // Node interaction handlers
@@ -3497,7 +3905,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         // Single click — just select the node; hierarchy navigator opens only via right-click > Edit
         setSelectedNodes(new Set([d.id]));
         setSelectedNodeInfo(d as OntologyNode);
-        onNodeClick?.(d.id);
+        onNodeClickRef.current?.(d.id);
       }
     }
 
@@ -3525,7 +3933,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         // Remove any existing tooltips first
         d3.selectAll('.graph-tooltip').remove();
 
-        const isDarkTip = document.documentElement.classList.contains('dark');
+        const isDarkTip = isDarkTheme;
         const accent = ACCENT_COLORS[d.type] || '#3b82f6';
         const tooltip = d3.select('body').append('div')
           .attr('class', 'graph-tooltip')
@@ -3568,23 +3976,30 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Zoom behavior
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 10])
+      // ~25% finer than d3's default wheel step — noticeably less jumpy on mice
+      .wheelDelta((event: WheelEvent) =>
+        -event.deltaY * (event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002) * (event.ctrlKey ? 10 : 1) * 0.75
+      )
       .on('zoom', (event) => {
+        // A real user gesture (wheel/drag, not a programmatic fit) cancels entrance refits
+        if (event.sourceEvent) userInteractedRef.current = true;
         g.attr('transform', event.transform);
         currentTransformRef.current = event.transform;
         // Avoid React re-render on every pan frame — update zoom label on gesture end only
       })
       .on('end', (event) => {
         setZoomLevel(event.transform.k);
-        if (isLargeGraph) {
-          const transform = event.transform;
-          setViewportBounds({
-            x: -transform.x / transform.k,
-            y: -transform.y / transform.k,
-            width: width / transform.k,
-            height: height / transform.k,
-            scale: transform.k
-          });
-        }
+        // Always track the viewport (cheap ref write) so culling/LOD reads are never stale
+        const transform = event.transform;
+        viewportBoundsRef.current = {
+          x: -transform.x / transform.k,
+          y: -transform.y / transform.k,
+          width: width / transform.k,
+          height: height / transform.k,
+          scale: transform.k
+        };
+        // Re-evaluate which nodes/edges are on screen after every camera move
+        applyViewportCullingRef.current();
       });
 
     zoomRef.current = zoom;
@@ -3592,34 +4007,146 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Disable default double-click zoom so dblclick on nodes triggers expand/collapse
     svg.on('dblclick.zoom', null);
 
-    // Auto-fit graph to viewport after DOM renders using getBBox for accuracy
-    setTimeout(() => {
-      if (!svgRef.current || !gRef.current || !zoomRef.current) return;
-      const svgEl = d3.select(svgRef.current);
+    // Buttery wheel zoom: accumulate a target scale per wheel event, then rAF-lerp
+    // toward it anchored at the pointer. Applied via zoom.transform so d3's internal
+    // gesture state stays consistent. Falls back to native d3 steps when disabled
+    // or when the OS asks for reduced motion.
+    let smoothWheelRaf: number | null = null;
+    if (SMOOTH_WHEEL_ZOOM && !prefersReducedMotion) {
+      svg.on('wheel.zoom', null); // take over from d3's discrete wheel handler
+      let kTarget: number | null = null;
+      let px = 0;
+      let py = 0;
+      const stepSmooth = () => {
+        if (kTarget == null || !zoomRef.current || !svgRef.current) { smoothWheelRaf = null; return; }
+        const cur = currentTransformRef.current;
+        const dk = kTarget - cur.k;
+        if (Math.abs(dk) < 0.001) { kTarget = null; smoothWheelRaf = null; return; }
+        const k = cur.k + dk * 0.28;
+        // Keep the graph point under the pointer fixed while the scale eases in
+        const gx = (px - cur.x) / cur.k;
+        const gy = (py - cur.y) / cur.k;
+        const t = d3.zoomIdentity.translate(px - gx * k, py - gy * k).scale(k);
+        d3.select(svgRef.current).call(zoomRef.current.transform as any, t);
+        smoothWheelRaf = requestAnimationFrame(stepSmooth);
+      };
+      svg.on('wheel.smooth', (event: WheelEvent) => {
+        event.preventDefault();
+        userInteractedRef.current = true;
+        svg.interrupt('entranceFit'); // the user owns the camera now
+        const factor = Math.pow(
+          2,
+          -event.deltaY * (event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002) * (event.ctrlKey ? 8 : 1) * 0.75
+        );
+        const base = kTarget ?? currentTransformRef.current.k;
+        kTarget = Math.max(0.1, Math.min(10, base * factor));
+        const pt = d3.pointer(event, svgRef.current);
+        px = pt[0];
+        py = pt[1];
+        if (smoothWheelRaf == null) smoothWheelRaf = requestAnimationFrame(stepSmooth);
+      });
+    }
+
+    // Entrance fades: nodes pop in with a slight stagger, edges connect up just after.
+    // Only on a fresh first-open layout — never on incremental re-renders.
+    if (entrancePlaying) {
+      if (entranceRef.current.mode === 'bloom') {
+        node
+          .style('opacity', 0)
+          .transition('entrance')
+          .delay((_d, i) => Math.min(i * 8, 400))
+          .duration(350)
+          .ease(d3.easeCubicOut)
+          .style('opacity', 1);
+        g.select<SVGGElement>('g.links')
+          .style('opacity', 0)
+          .transition('entrance')
+          .delay(250)
+          .duration(500)
+          .style('opacity', 1);
+      } else {
+        // Calm entrance: one quiet layer fade, no stagger
+        g.style('opacity', 0)
+          .transition('entrance')
+          .duration(250)
+          .style('opacity', 1);
+      }
+    }
+
+    const computeFitTransform = () => {
+      if (!svgRef.current || !gRef.current) return null;
       const bounds = (gRef.current as any).getBBox();
       const w = svgRef.current.clientWidth || width;
       const h = svgRef.current.clientHeight || height;
-      if (bounds.width < 1 || bounds.height < 1) return;
+      if (bounds.width < 1 || bounds.height < 1) return null;
       const scale = Math.min(0.9 / Math.max(bounds.width / w, bounds.height / h), 2);
       const tx = w / 2 - scale * (bounds.x + bounds.width / 2);
       const ty = h / 2 - scale * (bounds.y + bounds.height / 2);
-      svgEl.call(
-        zoomRef.current.transform as any,
-        d3.zoomIdentity.translate(tx, ty).scale(scale)
-      );
+      return d3.zoomIdentity.translate(tx, ty).scale(scale);
+    };
+
+    // Auto-fit graph to viewport after DOM renders using getBBox for accuracy
+    setTimeout(() => {
+      if (!svgRef.current || !zoomRef.current) return;
+      const svgEl = d3.select(svgRef.current);
+      const target = computeFitTransform();
+      if (!target) return;
+      if (entrancePlaying && !prefersReducedMotion) {
+        // Instant rough fit slightly zoomed out (the settle needs room), then the hero fit
+        const rough = target.scale(0.85);
+        svgEl.call(zoomRef.current.transform as any, rough);
+        svgEl.transition('entranceFit')
+          .duration(650)
+          .ease(d3.easeCubicOut)
+          .call(zoomRef.current.transform as any, target);
+      } else {
+        svgEl.call(zoomRef.current.transform as any, target);
+      }
     }, 50);
+
+    // Entrance completion: when the visible settle ends (or a hard timeout as a
+    // fallback), do one final gentle fit — unless the user has taken the camera.
+    let entranceTimeout: ReturnType<typeof setTimeout> | null = null;
+    if (entranceRef.current.phase === 'playing') {
+      const finishEntrance = () => {
+        if (entranceRef.current.phase !== 'playing') return;
+        entranceRef.current.phase = 'done';
+        setEntrancePhase('done');
+        hasSeenGraphRef.current = true;
+        saveLastView(projectId, { visualizationType, ontographLayoutType });
+        if (!userInteractedRef.current && svgRef.current && zoomRef.current) {
+          const target = computeFitTransform();
+          if (target) {
+            d3.select(svgRef.current)
+              .transition('entranceFit')
+              .duration(600)
+              .ease(d3.easeCubicOut)
+              .call(zoomRef.current.transform as any, target);
+          }
+        }
+      };
+      simulation.on('end.entranceFit', finishEntrance);
+      entranceTimeout = setTimeout(finishEntrance, 6000);
+    }
 
     // Log performance metrics
     const endTime = performance.now();
     const renderTimeMs = endTime - startTime;
     renderTime.current = renderTimeMs;
-    console.log(`[AdvancedGraphView D3] ⚡ Render completed in ${renderTimeMs.toFixed(2)}ms`);
-    console.log(`[AdvancedGraphView D3] 📊 Performance: ${(filteredNodes.length / renderTimeMs * 1000).toFixed(0)} nodes/sec`);
+    if (GRAPH_DEBUG) {
+      console.log(`[AdvancedGraphView D3] ⚡ Render completed in ${renderTimeMs.toFixed(2)}ms`);
+      console.log(`[AdvancedGraphView D3] 📊 Performance: ${(filteredNodes.length / renderTimeMs * 1000).toFixed(0)} nodes/sec`);
+    }
     // Cleanup
     return () => {
       simulation.stop();
+      if (entranceTimeout) clearTimeout(entranceTimeout);
+      if (smoothWheelRaf != null) cancelAnimationFrame(smoothWheelRaf);
     };
-  }, [filteredNodes, filteredEdges, settings, editMode, onNodeClick, onEdgeClick, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence]);
+  // Deliberately granular deps: edit-mode toggles, click-handler identity, and label/
+  // tooltip toggles update in place (refs + visual-update effect) instead of tearing
+  // down and rebuilding the whole scene.
+  }, [filteredNodes, filteredEdges, settings.nodeSize, settings.showArrows, settings.tooltips, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence, isDarkTheme, prefersReducedMotion, projectId, vowlOptions]);
 
   // Auto-fit the viewport when switching to ontograph or changing its layout type
   // This ensures nodes are always in view after a layout recalculation
@@ -3638,7 +4165,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         width / 2 - scale * (bounds.x + bounds.width / 2),
         height / 2 - scale * (bounds.y + bounds.height / 2)
       ];
-      d3.select(svgRef.current).transition().duration(600).call(
+      d3.select(svgRef.current).transition().duration(prefersReducedMotion ? 0 : 600).ease(d3.easeCubicOut).call(
         zoomRef.current.transform as any,
         d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
       );
@@ -3648,7 +4175,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Try at 350ms, retry at 800ms if SVG hasn't rendered yet (getBBox returns 0)
     const t1 = setTimeout(() => { if (!doFit()) { setTimeout(doFit, 450); } }, 350);
     return () => clearTimeout(t1);
-  }, [visualizationType, ontographLayoutType, filteredNodes.length]);
+  }, [visualizationType, ontographLayoutType, filteredNodes.length, prefersReducedMotion]);
 
   // Visual update effect to prevent graph movement on selection/hover
   useEffect(() => {
@@ -4211,10 +4738,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * CONTROL FUNCTIONS
    * ========================================================================
    */
+  // Every programmatic camera move shares one duration and easing (instant under reduced motion)
+  const cameraTransition = (svg: d3.Selection<SVGSVGElement, unknown, null, undefined>, ms: number = CAMERA_MS) =>
+    svg.transition().duration(prefersReducedMotion ? 0 : ms).ease(d3.easeCubicOut);
+
   const handleZoomIn = () => {
     if (svgRef.current && zoomRef.current) {
       const svg = d3.select(svgRef.current);
-      svg.transition().duration(300).call(
+      cameraTransition(svg, 300).call(
         zoomRef.current.scaleBy as any, 1.3
       );
     }
@@ -4223,7 +4754,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const handleZoomOut = () => {
     if (svgRef.current && zoomRef.current) {
       const svg = d3.select(svgRef.current);
-      svg.transition().duration(300).call(
+      cameraTransition(svg, 300).call(
         zoomRef.current.scaleBy as any, 0.7
       );
     }
@@ -4242,7 +4773,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         height / 2 - scale * (bounds.y + bounds.height / 2)
       ];
 
-      svg.transition().duration(500).call(
+      cameraTransition(svg).call(
         zoomRef.current.transform as any,
         d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
       );
@@ -4253,8 +4784,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (!svgRef.current || !zoomRef.current) return;
     const svg = d3.select(svgRef.current);
     const zoomTransform = d3.zoomIdentity.translate(transform.x, transform.y).scale(transform.k);
-    svg.transition().duration(350).call(zoomRef.current.transform as any, zoomTransform);
-  }, []);
+    svg.transition().duration(prefersReducedMotion ? 0 : CAMERA_MS).ease(d3.easeCubicOut)
+      .call(zoomRef.current.transform as any, zoomTransform);
+  }, [prefersReducedMotion]);
 
   const handleSaveCurrentView = useCallback(() => {
     const defaultName = `${visualizationType}${visualizationType === 'ontograph' ? ` / ${ontographLayoutType}` : ''}`;
@@ -4351,6 +4883,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   }, [persistSavedViews, savedViews]);
 
   const handleExport = (format: ExportFormat) => {
+    // Exports serialize the live DOM — make sure viewport culling never truncates them
+    uncullForExportRef.current();
     if (format === 'svg' && svgRef.current) {
       const svgData = new XMLSerializer().serializeToString(svgRef.current);
       const blob = new Blob([svgData], { type: 'image/svg+xml' });
@@ -4449,6 +4983,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         console.error('PNG export failed:', error);
       }
     }
+    // Serialization is synchronous in both branches (PNG captures svgData up front),
+    // so it's safe to restore viewport culling immediately.
+    applyViewportCullingRef.current();
   };
 
   const togglePhysics = () => {
@@ -4482,6 +5019,31 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     console.log('[AdvancedGraphView] 🚀 Initial mount or projectId changed, fetching graph data for:', projectId);
     fetchGraphData();
   }, [projectId]); // Remove fetchGraphData from dependencies to avoid stale closure issues
+
+  // Refetch (bypassing the sessionStorage cache) when classes are created/deleted
+  // elsewhere in the app — the entity editor dispatches these window events.
+  useEffect(() => {
+    if (!projectId) return;
+    let refetchQueued = false;
+    const handleMutation = () => {
+      if (refetchQueued) return;
+      refetchQueued = true;
+      // Small delay so rapid successive mutations coalesce into one refetch.
+      setTimeout(() => {
+        refetchQueued = false;
+        console.log('[AdvancedGraphView] 🔄 Ontology mutated elsewhere — refetching graph data');
+        fetchGraphData({ bypassCache: true });
+      }, 500);
+    };
+    window.addEventListener('graph-view:class-created', handleMutation as EventListener);
+    window.addEventListener('graph-view:class-deleted', handleMutation as EventListener);
+    window.addEventListener('ontology:mutated', handleMutation as EventListener);
+    return () => {
+      window.removeEventListener('graph-view:class-created', handleMutation as EventListener);
+      window.removeEventListener('graph-view:class-deleted', handleMutation as EventListener);
+      window.removeEventListener('ontology:mutated', handleMutation as EventListener);
+    };
+  }, [projectId, fetchGraphData]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -4643,7 +5205,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         key={node.id} 
         style={{ 
           marginLeft: level > 0 ? '16px' : '0',
-          borderLeft: level > 0 ? '2px solid #e5e7eb' : 'none',
+          borderLeft: level > 0 ? '2px solid var(--border, #e5e7eb)' : 'none',
           paddingLeft: level > 0 ? '8px' : '0',
           marginTop: '2px'
         }}
@@ -4741,7 +5303,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               style={{
                 fontSize: '13px',
                 fontWeight: selectedNodes.has(node.id) ? '600' : '400',
-                color: '#1f2937',
+                // Theme variable, not a hardcoded dark hex — rows sit on var(--surface-1),
+                // which is dark in dark mode (hardcoded #1f2937 made labels invisible there)
+                color: 'var(--text-primary, #1f2937)',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap'
@@ -4952,6 +5516,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       data-testid="graph-view"
       data-graph-loading={loading ? 'true' : 'false'}
       data-graph-mode={visualizationType}
+      data-graph-entrance={entrancePhase}
     >
       {/* Plugin Update Service */}
       <PluginUpdateService
@@ -5049,494 +5614,201 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       <div style={styles.mainRow}>
         {/* First Column: Toolbar + Graph Area */}
         <div style={styles.firstColumn}>
-          {/* Toolbar */}
-          <div style={styles.toolbar}>
-        {/* Primary actions */}
-        <button onClick={() => fetchGraphData()} disabled={loading} style={styles.btnPrimary} title="Refresh graph">
-          <RefreshCw size={16} className={loading ? 'spinning' : ''} />
-          Refresh
-        </button>
-
-        {/* MVP view presets — Protégé-style Network vs Hierarchy */}
-        <div style={{ display: 'flex', gap: '2px', alignItems: 'center', backgroundColor: 'var(--surface-2)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)' }}>
-          <button
-            data-testid="graph-preset-network"
-            onClick={() => {
+          {/* Toolbar — minimal primary bar; everything else lives in the View-options popover */}
+          <GraphToolbar
+            styles={styles}
+            loading={loading}
+            hasNodes={allNodes.length > 0}
+            visualizationType={visualizationType}
+            ontographLayoutType={ontographLayoutType}
+            assertionView={assertionView}
+            inferredGraphStatus={inferredGraphStatus}
+            edgeTypeFilters={filters.edgeTypes}
+            savedViews={savedViews}
+            selectedSavedViewId={selectedSavedViewId}
+            canEdit={canEdit}
+            editMode={editMode}
+            focusedNodeId={focusedNodeId}
+            selectedNodeInfo={selectedNodeInfo}
+            showSearch={showSearch}
+            showFilters={showFilters}
+            showSettings={showSettings}
+            showPropertyPanel={showPropertyPanel}
+            showLocalGraph={showLocalGraph}
+            showAnalytics={showAnalytics}
+            localGraphFollowSelection={localGraphFollowSelection}
+            showGrid={showGrid}
+            physicsEnabled={settings.physics}
+            showLegend={showLegend}
+            showHierarchyDialog={showHierarchyDialog}
+            statsLabel={`${getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)} · ${zoomLevel.toFixed(1)}x`}
+            statsData={{ visible: visibleNodeIds.size, total: allNodes.length, expanded: expandedNodeIds.size }}
+            lazyLoadingActive={allNodes.length > 1000}
+            webglRenderer={webglActive}
+            webglSupported={webglSupported}
+            vowlDisplayOptions={vowlOptions}
+            onChangeVowlOptions={(patch) => setVowlOptions(prev => ({ ...prev, ...patch }))}
+            onToggleWebGL={() => setSettings(prev => ({ ...prev, renderer: prev.renderer === 'webgl' ? 'svg' : 'webgl' }))}
+            showOverflowHint={showToolbarHint}
+            onRefresh={() => fetchGraphData({ bypassCache: true })}
+            onPresetNetwork={() => {
               setVisualizationType('force');
               setOntographLayoutType('spring');
               const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
             }}
-            style={visualizationType === 'force' ? styles.btnActive : styles.btn}
-            title="Network view — force-directed graph with subClassOf and property edges"
-          >
-            Network
-          </button>
-          <button
-            data-testid="graph-preset-tree"
-            onClick={() => {
+            onPresetTree={() => {
               setVisualizationType('ontograph');
               setOntographLayoutType('tree');
               const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
             }}
-            style={visualizationType === 'ontograph' ? styles.btnActive : styles.btn}
-            title="Tree view — class hierarchy layout (Protégé OntoGraf style)"
-          >
-            Tree
-          </button>
-        </div>
-
-        <div style={styles.divider} />
-
-        {/* Visualization Type Selector */}
-        <select
-          value={visualizationType}
-          onChange={(e) => {
-            const next = e.target.value as VisualizationType;
-            setVisualizationType(next);
-            if (next === 'ontograph' && ontographLayoutType === 'spring') {
-              setOntographLayoutType('tree');
-            }
-          }}
-          style={{
-            padding: '6px 12px',
-            border: '1px solid var(--border)',
-            borderRadius: '6px',
-            fontSize: '13px',
-            backgroundColor: 'var(--surface-1)',
-            color: 'var(--text-primary)',
-            cursor: 'pointer',
-            minWidth: '180px',
-            fontWeight: '500'
-          }}
-          title="Select visualization type"
-        >
-          <option value="force">Network (Force-Directed)</option>
-          <option value="ontograph">Hierarchy (Tree Layout)</option>
-          <option value="vowl">WebVOWL Notation</option>
-          <option value="spatial3d">3D Spatial Graph</option>
-        </select>
-
-        <select
-          value={assertionView}
-          onChange={(e) => setAssertionView(e.target.value as AssertionViewMode)}
-          style={{
-            padding: '6px 12px',
-            border: '1px solid var(--border)',
-            borderRadius: '6px',
-            fontSize: '13px',
-            backgroundColor: 'var(--surface-1)',
-            color: 'var(--text-primary)',
-            cursor: 'pointer',
-            minWidth: '150px',
-            fontWeight: '500'
-          }}
-          title="Choose asserted, inferred, or combined graph data"
-        >
-          <option value="asserted">Asserted</option>
-          <option value="inferred">Inferred</option>
-          <option value="all">Asserted + Inferred</option>
-        </select>
-        {assertionView !== 'asserted' && (
-          <span
-            style={{
-              padding: '4px 8px',
-              borderRadius: 999,
-              fontSize: 11,
-              fontWeight: 600,
-              color: inferredGraphStatus === 'ready' ? '#047857' : '#92400e',
-              backgroundColor: inferredGraphStatus === 'ready' ? '#d1fae5' : '#fef3c7',
-              border: `1px solid ${inferredGraphStatus === 'ready' ? '#a7f3d0' : '#fde68a'}`
+            onSetVisualizationType={(next) => {
+              setVisualizationType(next);
+              if (next === 'ontograph' && ontographLayoutType === 'spring') {
+                setOntographLayoutType('tree');
+              }
             }}
-            title="Inferred graph data is generated from the current reasoner class hierarchy"
-          >
-            {inferredGraphStatus === 'loading'
-              ? 'Reasoning...'
-              : inferredGraphStatus === 'ready'
-                ? 'Inferred styling on'
-                : 'Run reasoner for inferred data'}
-          </span>
-        )}
-
-        <div style={styles.relationshipControlsGroup} title="Protégé-style relationship visibility">
-          <span style={styles.relationshipControlsLabel}>Relations</span>
-          {RELATIONSHIP_VISIBILITY_CONTROLS.map(control => {
-            const isEnabled = control.edgeTypes.every(type => filters.edgeTypes.has(type));
-            const isPartial = !isEnabled && control.edgeTypes.some(type => filters.edgeTypes.has(type));
-            return (
-              <button
-                key={control.label}
-                onClick={() => toggleRelationshipVisibility(control.edgeTypes)}
-                style={isEnabled || isPartial ? styles.relationshipPillActive : styles.relationshipPill}
-                title={control.title}
-              >
-                {control.shortLabel}
-              </button>
-            );
-          })}
-          <button onClick={showAllRelationshipTypes} style={styles.relationshipMiniAction} title="Show all relationship types">
-            All
-          </button>
-          <button onClick={hideAllRelationshipTypes} style={styles.relationshipMiniAction} title="Hide all relationship types">
-            None
-          </button>
-        </div>
-
-        {/* Protégé-style saved graph views */}
-        <div style={styles.savedViewsGroup}>
-          <button
-            onClick={handleSaveCurrentView}
-            style={styles.toolbarIconBtn}
-            title="Save current graph view"
-          >
-            <Save size={14} />
-          </button>
-          <select
-            value={selectedSavedViewId}
-            onChange={(e) => handleLoadSavedView(e.target.value)}
-            style={styles.savedViewsSelect}
-            title="Load saved graph view"
-          >
-            <option value="">Saved Views</option>
-            {savedViews.map(view => (
-              <option key={view.id} value={view.id}>
-                {view.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => handleDeleteSavedView(selectedSavedViewId)}
-            disabled={!selectedSavedViewId}
-            style={!selectedSavedViewId ? styles.toolbarIconBtnDisabled : styles.toolbarIconBtn}
-            title="Delete selected saved view"
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
-
-        {/* Hierarchical Graph Toolbar */}
-        {visualizationType === 'ontograph' && (
-          <>
-            <div style={styles.divider} />
-            <div style={{ display: 'flex', gap: '2px', alignItems: 'center', backgroundColor: 'var(--surface-2)', padding: '2px', borderRadius: '4px', border: '1px solid var(--border)' }}>
-              <button 
-                onClick={handleFit} 
-                style={styles.toolbarIconBtn} 
-                title="Home - Reset View"
-              >
-                <Home size={14} />
-              </button>
-              <div style={styles.miniDivider} />
-              <button 
-                onClick={() => setOntographLayoutType('grid')} 
-                style={ontographLayoutType === 'grid' ? styles.toolbarIconBtnActive : styles.toolbarIconBtn} 
-                title="Grid Layout"
-              >
-                <LayoutGrid size={14} />
-              </button>
-              <button 
-                onClick={() => setOntographLayoutType('radial')} 
-                style={ontographLayoutType === 'radial' ? styles.toolbarIconBtnActive : styles.toolbarIconBtn} 
-                title="Radial Layout"
-              >
-                <Orbit size={14} />
-              </button>
-              <button 
-                onClick={() => setOntographLayoutType('spring')} 
-                style={ontographLayoutType === 'spring' ? styles.toolbarIconBtnActive : styles.toolbarIconBtn} 
-                title="Spring (Force) Layout"
-              >
-                <Zap size={14} />
-              </button>
-              <button 
-                onClick={() => setOntographLayoutType('tree')} 
-                style={ontographLayoutType === 'tree' ? styles.toolbarIconBtnActive : styles.toolbarIconBtn} 
-                title="Tree Layout (Vertical)"
-              >
-                <div style={{ transform: 'rotate(90deg)', display: 'flex' }}><GitBranch size={14} /></div>
-              </button>
-              <button 
-                onClick={() => setOntographLayoutType('horizontal')} 
-                style={ontographLayoutType === 'horizontal' ? styles.toolbarIconBtnActive : styles.toolbarIconBtn} 
-                title="Tree Layout (Horizontal)"
-              >
-                <GitBranch size={14} />
-              </button>
-              <div style={styles.miniDivider} />
-              <button onClick={handleZoomIn} style={styles.toolbarIconBtn} title="Zoom In">
-                <ZoomIn size={14} />
-              </button>
-              <button onClick={() => {
-                if (svgRef.current) {
-                  const svg = d3.select(svgRef.current);
-                  svg.transition().duration(750).call(zoomRef.current!.transform, d3.zoomIdentity);
+            onSetOntographLayout={setOntographLayoutType}
+            onSetAssertionView={setAssertionView}
+            onToggleRelationship={toggleRelationshipVisibility}
+            onShowAllRelations={showAllRelationshipTypes}
+            onHideAllRelations={hideAllRelationshipTypes}
+            onSaveView={handleSaveCurrentView}
+            onLoadView={handleLoadSavedView}
+            onDeleteView={handleDeleteSavedView}
+            onZoomIn={handleZoomIn}
+            onZoomOut={handleZoomOut}
+            onFit={handleFit}
+            onResetZoom={() => {
+              if (svgRef.current && zoomRef.current) {
+                cameraTransition(d3.select(svgRef.current)).call(zoomRef.current.transform as any, d3.zoomIdentity);
+              }
+            }}
+            onExpandAll={() => {
+              const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
+              updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+            }}
+            onCollapseAll={() => {
+              const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
+              updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+            }}
+            onToggleEdit={() => setEditMode(!editMode)}
+            onToggleSearch={() => setShowSearch(!showSearch)}
+            onToggleFilters={() => setShowFilters(!showFilters)}
+            onToggleSettings={() => {
+              setShowSettings(!showSettings);
+              setShowPropertyPanel(true); // Always show sidebar when settings clicked
+            }}
+            onToggleExplorer={() => setShowPropertyPanel(!showPropertyPanel)}
+            onToggleLocal={() => setShowLocalGraph(v => !v)}
+            onToggleInsights={() => setShowAnalytics(v => !v)}
+            onToggleGrid={() => setShowGrid(!showGrid)}
+            onTogglePhysics={togglePhysics}
+            onToggleLegend={() => setShowLegend(!showLegend)}
+            onToggleNavigator={() => {
+              if (showHierarchyDialog) {
+                setShowHierarchyDialog(false);
+              } else {
+                const target = selectedNodeInfo?.type === 'class' ? selectedNodeInfo : allNodes.find(n => n.type === 'class');
+                if (target) {
+                  setHierarchyRootNode(target);
+                  setIsDialogMinimized(false);
+                  setHierarchyDialogPosition({ x: 20, y: 120 });
+                  setShowHierarchyDialog(true);
                 }
-              }} style={styles.toolbarIconBtn} title="Reset Zoom">
-                <Maximize size={14} />
-              </button>
-              <button onClick={handleZoomOut} style={styles.toolbarIconBtn} title="Zoom Out">
-                <ZoomOut size={14} />
-              </button>
-              <div style={styles.miniDivider} />
-              <button 
-                onClick={() => setShowSearch(true)} 
-                style={styles.toolbarIconBtn} 
-                title="Search in Graph"
+              }
+            }}
+            onSetFollowSelection={setLocalGraphFollowSelection}
+            onEnterFocus={() => { if (selectedNodeInfo) enterFocusMode(selectedNodeInfo.id); }}
+            onExitFocus={exitFocusMode}
+            onExport={handleExport}
+          />
+
+          {/* Suggest the WebGL renderer once graphs outgrow what SVG can keep smooth */}
+          {!webglActive && webglSupported && filteredNodes.length > 5000 && !webglBannerDismissed && (
+            <div
+              data-testid="graph-webgl-banner"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '6px 12px',
+                fontSize: 12.5,
+                backgroundColor: 'var(--surface-2)',
+                borderBottom: '1px solid var(--border)',
+                color: 'var(--text-primary)'
+              }}
+            >
+              <Zap size={14} />
+              <span>
+                Large graph ({filteredNodes.length.toLocaleString()} nodes) — the WebGL renderer keeps pan and zoom smooth at this size.
+              </span>
+              <button
+                onClick={() => setSettings(prev => ({ ...prev, renderer: 'webgl' }))}
+                style={{ ...styles.btn, padding: '2px 10px', fontSize: 12 }}
               >
-                <Search size={14} />
+                Enable WebGL
               </button>
-              <div style={styles.miniDivider} />
-              <button 
-                onClick={() => {
-                  // Expand all nodes in the hierarchy
-                  const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
-                  updateHierarchyState(() => ({
-                    visible: newVisibleIds,
-                    expanded: newExpandedIds
-                  }));
-                }} 
-                style={styles.toolbarIconBtn} 
-                title="Show All Nodes"
+              <button
+                onClick={() => setWebglBannerDismissed(true)}
+                style={{ ...styles.btn, padding: '2px 10px', fontSize: 12, opacity: 0.7 }}
               >
-                <Box size={14} />
-              </button>
-              <button 
-                onClick={() => {
-                  // Collapse all nodes to roots
-                  const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
-                  updateHierarchyState(() => ({
-                    visible: newVisibleIds,
-                    expanded: newExpandedIds
-                  }));
-                }} 
-                style={styles.toolbarIconBtn} 
-                title="Collapse All"
-              >
-                <MinusSquare size={14} />
-              </button>
-              <div style={styles.miniDivider} />
-              <button 
-                onClick={() => {
-                  // Export to image logic
-                  handleExport('svg')
-                }} 
-                style={styles.toolbarIconBtn} 
-                title="Export as SVG"
-              >
-                <Camera size={14} />
+                Dismiss
               </button>
             </div>
-          </>
-        )}
-
-        <div style={styles.divider} />
-
-        {/* View controls */}
-        <button onClick={handleZoomIn} style={styles.btn} title="Zoom In">
-          <ZoomIn size={16} />
-        </button>
-        <button onClick={handleZoomOut} style={styles.btn} title="Zoom Out">
-          <ZoomOut size={16} />
-        </button>
-        <button onClick={handleFit} style={styles.btn} title="Fit to Screen">
-          <Maximize2 size={16} />
-        </button>
-
-        <div style={styles.divider} />
-
-        {/* Hierarchical navigation */}
-        <button
-          onClick={() => {
-            // Use the expandAllNodes function for consistent behavior
-            console.log('[Expand All] Using expandAllNodes function');
-            const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
-            
-            updateHierarchyState(() => ({
-              visible: newVisibleIds,
-              expanded: newExpandedIds
-            }));
-            
-            console.log('[Expand All] ✅ Expanded all', allNodes.length, 'nodes');
-          }}
-          style={styles.btn}
-          title="Expand All - Show full hierarchy of all entity types"
-          disabled={loading || allNodes.length === 0}
-        >
-          Expand All
-        </button>
-        <button
-          onClick={() => {
-            // Use the collapseAllNodes function for consistent behavior
-            console.log('[Collapse All] Using collapseAllNodes function');
-            const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
-            
-            updateHierarchyState(() => ({
-              visible: newVisibleIds,
-              expanded: newExpandedIds
-            }));
-            
-            console.log('[Collapse All] ✅ Done');
-          }}
-          style={styles.btn}
-          title="Collapse All - Show root classes with their immediate children"
-          disabled={loading || allNodes.length === 0}
-        >
-          Collapse All
-        </button>
-
-        <div style={styles.divider} />
-
-        {/* Edit mode */}
-        {!readonly && (
-          <>
-            <button
-              onClick={() => setEditMode(!editMode)}
-              style={editMode ? styles.btnActive : styles.btn}
-              title="Edit Mode"
-            >
-              <Edit3 size={16} />
-              {editMode ? 'Editing' : 'Edit'}
-            </button>
-            <div style={styles.divider} />
-          </>
-        )}
-
-        {/* Focus mode — enter via button when a node is selected, or Shift+double-click on any node */}
-        {focusedNodeId ? (
-          <button
-            onClick={exitFocusMode}
-            style={{ ...styles.btnActive, backgroundColor: '#7c3aed', borderColor: '#6d28d9', color: '#fff' }}
-            title="Exit focus mode — show full graph"
-          >
-            <Maximize2 size={16} />
-            Exit Focus
-          </button>
-        ) : (
-          <button
-            onClick={() => selectedNodeInfo && enterFocusMode(selectedNodeInfo.id)}
-            disabled={!selectedNodeInfo}
-            style={selectedNodeInfo ? styles.btn : { ...styles.btn, opacity: 0.4, cursor: 'not-allowed' }}
-            title={selectedNodeInfo ? `Focus on "${selectedNodeInfo.label}" and its neighborhood` : 'Select a node first, then click to focus'}
-          >
-            <Maximize size={16} />
-            Focus
-          </button>
-        )}
-
-        <div style={styles.divider} />
-
-        {/* Class Hierarchy Navigator toggle */}
-        <button
-          data-testid="graph-navigator-toggle"
-          onClick={() => {
-            if (showHierarchyDialog) {
-              setShowHierarchyDialog(false);
-            } else {
-              const target = selectedNodeInfo?.type === 'class' ? selectedNodeInfo : allNodes.find(n => n.type === 'class');
-              if (target) {
-                setHierarchyRootNode(target);
-                setIsDialogMinimized(false);
-                setHierarchyDialogPosition({ x: 20, y: 120 });
-                setShowHierarchyDialog(true);
-              }
-            }
-          }}
-          style={showHierarchyDialog ? styles.btnActive : styles.btn}
-          title={showHierarchyDialog ? 'Hide class tree navigator panel' : 'Show class tree navigator panel'}
-        >
-          <GitBranch size={16} />
-          Navigator
-        </button>
-
-        <div style={styles.divider} />
-
-        {/* Feature toggles */}
-        <button onClick={() => setShowSearch(!showSearch)} style={showSearch ? styles.btnActive : styles.btn} title="Search">
-          <Search size={16} />
-        </button>
-        <button onClick={() => setShowFilters(!showFilters)} style={showFilters ? styles.btnActive : styles.btn} title="Filters">
-          <Filter size={16} />
-        </button>
-        <button onClick={() => {
-          setShowSettings(!showSettings);
-          setShowPropertyPanel(true); // Always show sidebar when settings clicked
-        }} style={showSettings ? styles.btnActive : styles.btn} title="Settings">
-          <Settings size={16} />
-        </button>
-        <button onClick={() => setShowPropertyPanel(!showPropertyPanel)} style={showPropertyPanel ? styles.btnActive : styles.btn} title="Graph Explorer Sidebar">
-          <FileText size={16} />
-          <span style={{ marginLeft: 6 }}>Explorer</span>
-        </button>
-        <button
-          data-testid="graph-local-toggle"
-          onClick={() => setShowLocalGraph(v => !v)}
-          style={showLocalGraph ? styles.btnActive : styles.btn}
-          title="Obsidian-style local graph — N-hop neighborhood of selected node"
-        >
-          <Crosshair size={16} />
-          Local
-        </button>
-        <button
-          data-testid="graph-insights-toggle"
-          onClick={() => setShowAnalytics(v => !v)}
-          style={showAnalytics ? styles.btnActive : styles.btn}
-          title="InfraNodus-style insights — clusters, top concepts, structural gaps"
-        >
-          <TrendingUp size={16} />
-          Insights
-        </button>
-        <label
-          style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', padding: '0 4px' }}
-          title="Local graph follows your selection"
-        >
-          <input
-            type="checkbox"
-            checked={localGraphFollowSelection}
-            onChange={(e) => setLocalGraphFollowSelection(e.target.checked)}
-            data-testid="graph-local-follow"
-          />
-          Follow
-        </label>
-        <button onClick={() => setShowGrid(!showGrid)} style={showGrid ? styles.btnActive : styles.btn} title="Grid">
-          <Grid size={16} />
-        </button>
-        <button onClick={togglePhysics} style={settings.physics ? styles.btnActive : styles.btn} title="Physics">
-          <Zap size={16} />
-        </button>
-        <button onClick={() => setShowLegend(!showLegend)} style={showLegend ? styles.btnActive : styles.btn} title="Toggle Legend">
-          <FileText size={16} />
-        </button>
-
-        <div style={{ flex: 1 }} />
-
-        {/* Stats */}
-        <div
-          style={styles.stats}
-          data-testid="graph-stats"
-          data-visible-nodes={visibleNodeIds.size}
-          data-total-nodes={allNodes.length}
-          data-expanded-nodes={expandedNodeIds.size}
-        >
-          {getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)} · {zoomLevel.toFixed(1)}x
-          {allNodes.length > 1000 && <span style={{color: '#10b981', marginLeft: '8px'}}>⚡ Lazy Loading</span>}
-        </div>
-
-        {/* Export */}
-        <button onClick={() => handleExport('svg')} style={styles.btn} title="Export SVG">
-          <Download size={16} />
-          SVG
-        </button>
-        <button onClick={() => handleExport('png')} style={styles.btn} title="Export PNG">
-          <Download size={16} />
-          PNG
-        </button>
-      </div>
+          )}
 
           {/* Graph workspace: main canvas OR Obsidian local graph (toggled, never both) */}
           <div style={styles.graphWorkspace}>
-          <div style={{ ...styles.graphContentArea, flex: 1, display: showLocalGraph ? 'none' : undefined }}>
+          <div style={{ ...styles.graphContentArea, flex: 1, position: 'relative', display: showLocalGraph ? 'none' : undefined }}>
+            {/* Slim rail to reopen the Explorer sidebar when it's collapsed */}
+            {!showPropertyPanel && (
+              <button
+                data-testid="graph-explorer-rail"
+                onClick={() => setShowPropertyPanel(true)}
+                title="Open Explorer sidebar"
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  zIndex: 30,
+                  padding: '12px 3px',
+                  borderRadius: '6px 0 0 6px',
+                  border: '1px solid var(--border)',
+                  borderRight: 'none',
+                  backgroundColor: 'var(--surface-2)',
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+              >
+                <ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} />
+              </button>
+            )}
+            {/* WebGL renderer (feature-flagged spike) — high-performance path for large graphs */}
+            {webglActive && (
+              <WebGLGraphView
+                nodes={benchData?.nodes ?? filteredNodes}
+                edges={benchData?.edges ?? filteredEdges}
+                dark={isDarkTheme}
+                nodeSize={settings.nodeSize}
+                selectedNodeIds={selectedNodes}
+                onNodeClick={(id) => {
+                  const found = allNodes.find(n => n.id === id);
+                  setSelectedNodes(new Set([id]));
+                  if (found) setSelectedNodeInfo(found);
+                  onNodeClickRef.current?.(id);
+                }}
+                onNodeRightClick={(id, pos) => {
+                  if (canEdit) setContextMenu({ visible: true, x: pos.x, y: pos.y, nodeId: id });
+                }}
+              />
+            )}
             {/* SVG Canvas for Force, WebVOWL, OntoGraph, and projected 3D Spatial mode */}
+            {!webglActive && (
             <svg
               ref={svgRef}
               data-testid="graph-svg"
@@ -5573,12 +5845,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   [data-testid="graph-svg"] .node > text {
                     transition: opacity 220ms ease;
                     paint-order: stroke;
-                    stroke: rgba(255,255,255,0.75);
-                    stroke-width: 2px;
+                    stroke: ${isDarkTheme ? 'rgba(10,15,28,0.85)' : 'rgba(255,255,255,0.75)'};
+                    stroke-width: 2.5px;
                     stroke-linejoin: round;
-                  }
-                  .dark [data-testid="graph-svg"] .node > text {
-                    stroke: rgba(15,23,42,0.7);
                   }
                   [data-testid="graph-svg"] .edge-path {
                     transition: stroke-opacity 200ms ease, stroke-width 160ms ease;
@@ -5604,6 +5873,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 {showGrid && <rect width="100%" height="100%" fill="url(#grid)" />}
                 <g ref={gRef} />
             </svg>
+            )}
 
             {visualizationType === 'spatial3d' && (
               <div style={styles.spatial3dHint}>
@@ -5755,6 +6025,31 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         {/* Graph View Sidebar - Second Column */}
         {showPropertyPanel && (
+          <div style={{ position: 'relative', display: 'flex', minWidth: 0 }}>
+          {/* Collapse chevron on the panel's left edge — mirrors the reopen rail on the canvas */}
+          <button
+            data-testid="graph-explorer-collapse"
+            onClick={() => setShowPropertyPanel(false)}
+            title="Collapse Explorer sidebar"
+            style={{
+              position: 'absolute',
+              left: -17,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              zIndex: 30,
+              padding: '12px 3px',
+              borderRadius: '6px 0 0 6px',
+              border: '1px solid var(--border)',
+              borderRight: 'none',
+              backgroundColor: 'var(--surface-2)',
+              color: 'var(--text-primary)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center'
+            }}
+          >
+            <ChevronRight size={14} />
+          </button>
           <GraphViewSidebar
             nodes={allNodes}
             edges={allEdges}
@@ -5854,6 +6149,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             onClearFocus={exitFocusMode}
             ontologyMetadata={ontologyMetadata}
           />
+          </div>
         )}
       </div>
 
@@ -5867,8 +6163,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               width: isDialogMinimized ? 'auto' : '300px',
               minWidth: isDialogMinimized ? '220px' : 'auto',
               maxHeight: isDialogMinimized ? 'auto' : '340px',
-              backgroundColor: '#fff',
-              border: '1px solid #d1d5db',
+              backgroundColor: 'var(--surface-1, #fff)',
+              border: '1px solid var(--border, #d1d5db)',
               borderRadius: '8px',
               boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
               zIndex: 1000,
@@ -5983,14 +6279,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 <div
                   style={{
                     padding: '8px 12px',
-                    backgroundColor: '#f9fafb',
-                    borderBottom: '1px solid #e5e7eb'
+                    backgroundColor: 'var(--surface-2, #f9fafb)',
+                    borderBottom: '1px solid var(--border, #e5e7eb)'
                   }}
                 >
-              <div style={{ fontSize: '13px', fontWeight: '600', color: '#1f2937', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary, #1f2937)', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {hierarchyRootNode.label}
               </div>
-              <div style={{ fontSize: '10px', color: '#9ca3af', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: '10px', color: 'var(--text-secondary, #9ca3af)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {hierarchyRootNode.id}
               </div>
             </div>
@@ -6001,10 +6297,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 flex: 1,
                 overflow: 'auto',
                 padding: '8px 10px',
-                backgroundColor: '#fafafa'
+                backgroundColor: 'var(--surface-2, #fafafa)'
               }}
             >
-              <div style={{ backgroundColor: '#ffffff', borderRadius: '6px', padding: '4px' }}>
+              <div style={{ backgroundColor: 'var(--surface-1, #ffffff)', borderRadius: '6px', padding: '4px' }}>
                 {renderHierarchyTree(hierarchyRootNode)}
               </div>
             </div>
@@ -6030,10 +6326,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             <div
               style={{
                 padding: '5px 10px',
-                backgroundColor: '#f9fafb',
-                borderTop: '1px solid #e5e7eb',
+                backgroundColor: 'var(--surface-2, #f9fafb)',
+                borderTop: '1px solid var(--border, #e5e7eb)',
                 fontSize: '10px',
-                color: '#9ca3af',
+                color: 'var(--text-secondary, #9ca3af)',
                 display: 'flex',
                 gap: '10px',
                 flexWrap: 'wrap'

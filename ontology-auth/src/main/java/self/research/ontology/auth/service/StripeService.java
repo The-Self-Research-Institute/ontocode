@@ -189,124 +189,157 @@ public class StripeService {
     public String createSubscriptionAfterSetup(User user, String setupIntentId,
             String planName, String interval, String workspaceId) throws StripeException {
 
-        validateAllowedPlanChange(user, planName, interval);
-
-        // Model B/C: one subscription per user account.
-        // If an active/trialing subscription exists, treat this as an UPDATE (plan/interval change),
-        // using the newly confirmed payment method from the SetupIntent.
-        boolean hasExistingSub = user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank();
-        String existingStatus = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus() : "";
-        boolean existingIsActiveLike =
-                "active".equalsIgnoreCase(existingStatus) || "trialing".equalsIgnoreCase(existingStatus);
-
-        // Retrieve and validate setup intent
-        SetupIntent setupIntent = SetupIntent.retrieve(setupIntentId);
-        if (!"succeeded".equals(setupIntent.getStatus())) {
-            throw new IllegalStateException("Card setup not completed. Status: " + setupIntent.getStatus());
+        // Guard against a retried/duplicated /subscribe request racing past the
+        // "does the user already have a subscription" check below and creating
+        // two Stripe subscriptions for the same account.
+        if (!tryClaimSubscriptionCreationLock(user.getId())) {
+            throw new IllegalStateException(
+                    "Your previous subscription request is still being processed. " +
+                    "Please wait a moment, refresh, and check your billing page before retrying.");
         }
-        assertSetupIntentBelongsToUser(user, setupIntent);
-        String paymentMethodId = setupIntent.getPaymentMethod();
+        try {
+            // Re-fetch the freshest state now that we hold the lock — the `user` passed in
+            // may have been loaded before a just-finished concurrent request created a subscription.
+            user = userRepository.findById(user.getId())
+                    .orElseThrow(() -> new IllegalStateException("Authenticated user not found in database"));
 
-        // Set as customer default for future invoices
-        Customer customer = Customer.retrieve(user.getStripeCustomerId());
-        customer.update(CustomerUpdateParams.builder()
-                .setInvoiceSettings(CustomerUpdateParams.InvoiceSettings.builder()
+            validateAllowedPlanChange(user, planName, interval);
+
+            // Model B/C: one subscription per user account.
+            // If an active/trialing subscription exists, treat this as an UPDATE (plan/interval change),
+            // using the newly confirmed payment method from the SetupIntent.
+            boolean hasExistingSub = user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank();
+            String existingStatus = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus() : "";
+            boolean existingIsActiveLike =
+                    "active".equalsIgnoreCase(existingStatus) || "trialing".equalsIgnoreCase(existingStatus);
+
+            // Retrieve and validate setup intent
+            SetupIntent setupIntent = SetupIntent.retrieve(setupIntentId);
+            if (!"succeeded".equals(setupIntent.getStatus())) {
+                throw new IllegalStateException("Card setup not completed. Status: " + setupIntent.getStatus());
+            }
+            assertSetupIntentBelongsToUser(user, setupIntent);
+            String paymentMethodId = setupIntent.getPaymentMethod();
+
+            // Set as customer default for future invoices
+            Customer customer = Customer.retrieve(user.getStripeCustomerId());
+            customer.update(CustomerUpdateParams.builder()
+                    .setInvoiceSettings(CustomerUpdateParams.InvoiceSettings.builder()
+                            .setDefaultPaymentMethod(paymentMethodId)
+                            .build())
+                    .build());
+
+            String priceId = resolvePriceId(planName, interval);
+
+            com.stripe.model.Subscription subscription;
+            if (hasExistingSub && existingIsActiveLike) {
+                // Update existing subscription's price (monthly ↔ yearly, PRO ↔ ENTERPRISE) and default payment method.
+                subscription = Subscription.retrieve(user.getStripeSubscriptionId());
+                if (subscription.getItems() == null || subscription.getItems().getData() == null || subscription.getItems().getData().isEmpty()) {
+                    throw new IllegalStateException("Existing subscription has no items to update.");
+                }
+
+                String itemId = subscription.getItems().getData().get(0).getId();
+                String idempotencyKey = "sub-update-immediate-v2-" + user.getId() + "-" + subscription.getId() + "-" + priceId + "-" + setupIntentId;
+
+                // Switching monthly → annual: reset the billing cycle to start now so
+                // currentPeriodEnd reflects the new annual period instead of staying
+                // pinned to the old monthly cycle's end date.
+                boolean switchingToAnnualFromMonthly = "yearly".equalsIgnoreCase(interval)
+                        && "monthly".equalsIgnoreCase(user.getBillingInterval());
+
+                SubscriptionUpdateParams.Builder paramsBuilder = SubscriptionUpdateParams.builder()
                         .setDefaultPaymentMethod(paymentMethodId)
-                        .build())
-                .build());
+                        .addItem(
+                                SubscriptionUpdateParams.Item.builder()
+                                        .setId(itemId)
+                                        .setPrice(priceId)
+                                        .build()
+                        )
+                        // Charge plan upgrades immediately instead of deferring prorations to the next renewal invoice.
+                        .setCancelAtPeriodEnd(false)
+                        .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.ALWAYS_INVOICE)
+                        .setPaymentBehavior(SubscriptionUpdateParams.PaymentBehavior.ERROR_IF_INCOMPLETE)
+                        .putMetadata("planName", planName.toUpperCase())
+                        .putMetadata("billingInterval", interval.toLowerCase())
+                        .putMetadata("workspaceId", workspaceId != null ? workspaceId : "");
 
-        String priceId = resolvePriceId(planName, interval);
+                if (switchingToAnnualFromMonthly) {
+                    paramsBuilder.setBillingCycleAnchor(SubscriptionUpdateParams.BillingCycleAnchor.NOW);
+                }
 
-        com.stripe.model.Subscription subscription;
-        if (hasExistingSub && existingIsActiveLike) {
-            // Update existing subscription's price (monthly ↔ yearly, PRO ↔ ENTERPRISE) and default payment method.
-            subscription = Subscription.retrieve(user.getStripeSubscriptionId());
-            if (subscription.getItems() == null || subscription.getItems().getData() == null || subscription.getItems().getData().isEmpty()) {
-                throw new IllegalStateException("Existing subscription has no items to update.");
-            }
+                if ("trialing".equalsIgnoreCase(subscription.getStatus())) {
+                    paramsBuilder.setTrialEnd(Instant.now().getEpochSecond());
+                }
 
-            String itemId = subscription.getItems().getData().get(0).getId();
-            String idempotencyKey = "sub-update-immediate-v2-" + user.getId() + "-" + subscription.getId() + "-" + priceId + "-" + setupIntentId;
-
-            SubscriptionUpdateParams.Builder paramsBuilder = SubscriptionUpdateParams.builder()
-                    .setDefaultPaymentMethod(paymentMethodId)
-                    .addItem(
-                            SubscriptionUpdateParams.Item.builder()
-                                    .setId(itemId)
-                                    .setPrice(priceId)
-                                    .build()
-                    )
-                    // Charge plan upgrades immediately instead of deferring prorations to the next renewal invoice.
-                    .setCancelAtPeriodEnd(false)
-                    .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.ALWAYS_INVOICE)
-                    .setPaymentBehavior(SubscriptionUpdateParams.PaymentBehavior.ERROR_IF_INCOMPLETE)
-                    .putMetadata("planName", planName.toUpperCase())
-                    .putMetadata("billingInterval", interval.toLowerCase())
-                    .putMetadata("workspaceId", workspaceId != null ? workspaceId : "");
-
-            if ("trialing".equalsIgnoreCase(subscription.getStatus())) {
-                paramsBuilder.setTrialEnd(Instant.now().getEpochSecond());
-            }
-
-            subscription = subscription.update(
-                    paramsBuilder.build(),
-                    com.stripe.net.RequestOptions.builder().setIdempotencyKey(idempotencyKey).build()
-            );
-            log.info("Updated subscription {} for user {} to {}/{}",
-                    subscription.getId(), user.getUsername(), planName.toUpperCase(), interval);
-        } else {
-            // Bug #39 / #40: Stripe does not track trial eligibility per
-            // customer, so a user who cancels and re-subscribes would
-            // otherwise be granted a brand-new trial each time. We enforce
-            // "trial only on first ever subscription" via `hasUsedFreeTrial`.
-            SubscriptionCreateParams.Builder createParams = SubscriptionCreateParams.builder()
-                    .setCustomer(customer.getId())
-                    .addItem(SubscriptionCreateParams.Item.builder().setPrice(priceId).build())
-                    .setDefaultPaymentMethod(paymentMethodId)
-                    .putMetadata("userId", user.getId())
-                    .putMetadata("planName", planName.toUpperCase())
-                    .putMetadata("billingInterval", interval.toLowerCase())
-                    .putMetadata("workspaceId", workspaceId != null ? workspaceId : "");
-
-            // A prior stripeSubscriptionId means the user has already subscribed once —
-            // guard against data inconsistency where hasUsedFreeTrial wasn't persisted.
-            boolean hadPriorSubscription = user.getStripeSubscriptionId() != null
-                    && !user.getStripeSubscriptionId().isBlank();
-            boolean firstEverSubscription = !user.isHasUsedFreeTrial()
-                    && user.getFirstSubscriptionAt() == null
-                    && !hadPriorSubscription;
-            boolean trialEligible = firstEverSubscription
-                    && trialPeriodDays != null && trialPeriodDays > 0L
-                    && !"ENTERPRISE".equalsIgnoreCase(planName);
-            if (trialEligible) {
-                createParams.setTrialPeriodDays(trialPeriodDays);
-                log.info("Granting {}-day trial to user {} (first ever subscription)",
-                        trialPeriodDays, user.getUsername());
+                subscription = subscription.update(
+                        paramsBuilder.build(),
+                        com.stripe.net.RequestOptions.builder().setIdempotencyKey(idempotencyKey).build()
+                );
+                log.info("Updated subscription {} for user {} to {}/{}",
+                        subscription.getId(), user.getUsername(), planName.toUpperCase(), interval);
             } else {
-                log.info("Skipping trial for user {} (hasUsedFreeTrial={}, firstSubscriptionAt={}, hadPriorSub={}, plan={}). " +
-                        "Card will be charged immediately.",
-                        user.getUsername(), user.isHasUsedFreeTrial(), user.getFirstSubscriptionAt(), hadPriorSubscription, planName);
+                // Bug #39 / #40: Stripe does not track trial eligibility per
+                // customer, so a user who cancels and re-subscribes would
+                // otherwise be granted a brand-new trial each time. We enforce
+                // "trial only on first ever subscription" via `hasUsedFreeTrial`.
+                SubscriptionCreateParams.Builder createParams = SubscriptionCreateParams.builder()
+                        .setCustomer(customer.getId())
+                        .addItem(SubscriptionCreateParams.Item.builder().setPrice(priceId).build())
+                        .setDefaultPaymentMethod(paymentMethodId)
+                        .putMetadata("userId", user.getId())
+                        .putMetadata("planName", planName.toUpperCase())
+                        .putMetadata("billingInterval", interval.toLowerCase())
+                        .putMetadata("workspaceId", workspaceId != null ? workspaceId : "");
+
+                // A prior stripeSubscriptionId means the user has already subscribed once —
+                // guard against data inconsistency where hasUsedFreeTrial wasn't persisted.
+                boolean hadPriorSubscription = user.getStripeSubscriptionId() != null
+                        && !user.getStripeSubscriptionId().isBlank();
+                boolean firstEverSubscription = !user.isHasUsedFreeTrial()
+                        && user.getFirstSubscriptionAt() == null
+                        && !hadPriorSubscription;
+                boolean trialEligible = firstEverSubscription
+                        && trialPeriodDays != null && trialPeriodDays > 0L
+                        && !"ENTERPRISE".equalsIgnoreCase(planName);
+                if (trialEligible) {
+                    createParams.setTrialPeriodDays(trialPeriodDays);
+                    log.info("Granting {}-day trial to user {} (first ever subscription)",
+                            trialPeriodDays, user.getUsername());
+                } else {
+                    log.info("Skipping trial for user {} (hasUsedFreeTrial={}, firstSubscriptionAt={}, hadPriorSub={}, plan={}). " +
+                            "Card will be charged immediately.",
+                            user.getUsername(), user.isHasUsedFreeTrial(), user.getFirstSubscriptionAt(), hadPriorSubscription, planName);
+                }
+
+                // Idempotency key scoped to this setupIntentId: an exact retry of the same
+                // confirmed card setup (e.g. client retry after a slow/hung request) returns
+                // the original subscription instead of creating a second one.
+                String createIdempotencyKey = "sub-create-" + user.getId() + "-" + setupIntentId;
+                subscription = com.stripe.model.Subscription.create(
+                        createParams.build(),
+                        com.stripe.net.RequestOptions.builder().setIdempotencyKey(createIdempotencyKey).build());
+
+                // Mark trial as consumed in the same transaction as the
+                // subscription create — see userRepository.save below.
+                user.setHasUsedFreeTrial(true);
+                if (user.getFirstSubscriptionAt() == null) {
+                    user.setFirstSubscriptionAt(LocalDateTime.now());
+                }
             }
 
-            subscription = com.stripe.model.Subscription.create(createParams.build());
+            applySubscriptionSnapshotToUser(user, subscription, planName, interval);
+            userRepository.save(user);
 
-            // Mark trial as consumed in the same transaction as the
-            // subscription create — see userRepository.save below.
-            user.setHasUsedFreeTrial(true);
-            if (user.getFirstSubscriptionAt() == null) {
-                user.setFirstSubscriptionAt(LocalDateTime.now());
-            }
+            // Sync to ALL user-owned workspaces (Account-level billing)
+            workspaceService.syncWorkspacesToOwnerPlan(user);
+
+            log.info("Subscription {} ({}) created for user {} / workspace {}",
+                    subscription.getId(), subscription.getStatus(), user.getUsername(), workspaceId);
+            return subscription.getId();
+        } finally {
+            releaseSubscriptionCreationLock(user.getId());
         }
-
-        applySubscriptionSnapshotToUser(user, subscription, planName, interval);
-        userRepository.save(user);
-
-        // Sync to ALL user-owned workspaces (Account-level billing)
-        workspaceService.syncWorkspacesToOwnerPlan(user);
-
-        log.info("Subscription {} ({}) created for user {} / workspace {}",
-                subscription.getId(), subscription.getStatus(), user.getUsername(), workspaceId);
-        return subscription.getId();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -597,6 +630,9 @@ public class StripeService {
                         .setPrice(newPriceId)
                         .build())
                 .setSubscriptionProrationBehavior(InvoiceUpcomingParams.SubscriptionProrationBehavior.ALWAYS_INVOICE)
+                // Mirror the billing-cycle-anchor reset applied in changeSubscriptionInterval()
+                // so the previewed amount matches what will actually be charged.
+                .setSubscriptionBillingCycleAnchor(InvoiceUpcomingParams.SubscriptionBillingCycleAnchor.NOW)
                 .build();
 
         Invoice upcoming = Invoice.upcoming(params);
@@ -685,6 +721,8 @@ public class StripeService {
         }
 
         // Monthly → Annual: charge the difference immediately via ALWAYS_INVOICE.
+        // Reset the billing cycle to start now so currentPeriodEnd reflects the new
+        // annual period instead of staying pinned to the old monthly cycle's end date.
         SubscriptionUpdateParams params = SubscriptionUpdateParams.builder()
                 .addItem(
                         SubscriptionUpdateParams.Item.builder()
@@ -695,6 +733,7 @@ public class StripeService {
                 .putMetadata("billingInterval", normalizedNew)
                 .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.ALWAYS_INVOICE)
                 .setPaymentBehavior(SubscriptionUpdateParams.PaymentBehavior.ERROR_IF_INCOMPLETE)
+                .setBillingCycleAnchor(SubscriptionUpdateParams.BillingCycleAnchor.NOW)
                 .build();
 
         Subscription updated = subscription.update(params,
@@ -1882,6 +1921,43 @@ public class StripeService {
         if (user.getStripeSubscriptionId() == null) {
             throw new IllegalStateException("No active subscription found.");
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Subscription-creation lock — prevents a retried/duplicated /subscribe
+    // request from racing past the "existing subscription?" check and
+    // creating two Stripe subscriptions for the same account.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private static final long SUBSCRIPTION_CREATION_LOCK_TTL_SECONDS = 120;
+
+    /**
+     * Atomically claims the lock via a single findAndModify — only one caller can
+     * win when two requests arrive concurrently. A lock older than the TTL is
+     * treated as abandoned (e.g. the instance holding it crashed) and can be
+     * reclaimed, so a failed request never permanently locks the user out.
+     */
+    private boolean tryClaimSubscriptionCreationLock(String userId) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime staleBefore = now.minusSeconds(SUBSCRIPTION_CREATION_LOCK_TTL_SECONDS);
+        Query query = new Query(new Criteria().andOperator(
+                Criteria.where("_id").is(userId),
+                new Criteria().orOperator(
+                        Criteria.where("subscriptionCreationLockedAt").exists(false),
+                        Criteria.where("subscriptionCreationLockedAt").is(null),
+                        Criteria.where("subscriptionCreationLockedAt").lt(staleBefore)
+                )
+        ));
+        Update update = new Update().set("subscriptionCreationLockedAt", now);
+        User claimed = mongoTemplate.findAndModify(query, update, User.class);
+        return claimed != null;
+    }
+
+    private void releaseSubscriptionCreationLock(String userId) {
+        mongoTemplate.updateFirst(
+                new Query(Criteria.where("_id").is(userId)),
+                new Update().unset("subscriptionCreationLockedAt"),
+                User.class);
     }
 
     /**

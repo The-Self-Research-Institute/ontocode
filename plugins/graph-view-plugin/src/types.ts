@@ -1,11 +1,14 @@
 // Advanced Graph Ontology Types
 
-export type NodeType = 'class' | 'individual' | 'property' | 'dataProperty' | 'objectProperty' | 'annotation' | 'datatype';
+export type NodeType = 'class' | 'individual' | 'property' | 'dataProperty' | 'objectProperty' | 'annotation' | 'datatype' | 'setOperator';
 
-export type EdgeType = 
-  | 'subClassOf' 
-  | 'instanceOf' 
-  | 'propertyRelation' 
+/** For setOperator nodes: which OWL construct the node represents. */
+export type SetOperatorKind = 'union' | 'intersection' | 'complement' | 'oneOf';
+
+export type EdgeType =
+  | 'subClassOf'
+  | 'instanceOf'
+  | 'propertyRelation'
   | 'equivalentClass'
   | 'disjointWith'
   | 'domain'
@@ -15,7 +18,10 @@ export type EdgeType =
   | 'temporal'
   | 'spatial'
   | 'probabilistic'
-  | 'subPropertyOf';
+  | 'subPropertyOf'
+  | 'operand'
+  | 'restriction'
+  | 'propertyChain';
 
 export type LayoutAlgorithm = 
   | 'force' 
@@ -205,6 +211,10 @@ export interface GraphSettings {
   multiSelect: boolean;
   contextMenu: boolean;
   tooltips: boolean;
+
+  // Rendering backend: 'svg' is the full-featured D3 renderer; 'webgl' is the
+  // high-performance Sigma.js renderer for large graphs (feature-flagged spike).
+  renderer?: 'svg' | 'webgl';
 }
 
 // Filter options

@@ -1373,6 +1373,8 @@ export function useDashboardInit(state: DashboardState) {
       await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
         subClass: axiomDefinition,
         superClass: axiomSuperClass || "",
+        draft: ontologyMutationService.resolveUseDraft(),
+        userId: user?.id,
       });
 
       // Immediately update the UI with the new axiom
@@ -1438,6 +1440,8 @@ export function useDashboardInit(state: DashboardState) {
         oldValue: oldAxiom.value || oldAxiom.subClass || oldAxiom.definition || "",
         subClass,
         superClass: superClass || "",
+        draft: ontologyMutationService.resolveUseDraft(),
+        userId: user?.id,
       });
 
       // Immediately update UI
@@ -1479,7 +1483,10 @@ export function useDashboardInit(state: DashboardState) {
         return;
       }
 
-      await apiClient.delete(`/api/ontology/metadata/${projectId}/gci?value=${encodeURIComponent(value)}`);
+      await apiClient.delete(
+        `/api/ontology/metadata/${projectId}/gci?value=${encodeURIComponent(value)}` +
+          `&draft=${ontologyMutationService.resolveUseDraft()}&userId=${encodeURIComponent(user?.id || "")}`,
+      );
 
       // Immediately update UI
       const updatedAxioms = generalClassAxioms.filter((_, idx) => idx !== index);
