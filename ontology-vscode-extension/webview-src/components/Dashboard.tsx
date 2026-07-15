@@ -10685,6 +10685,29 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       isMutatingRef.current = true;
       try {
+        // For a single (non-cascade) delete, check up front whether the target has children —
+        // if so, "delete only" orphans them (they lose their sole parent and must reappear as
+        // top-level classes, Protégé-parity). The local tree surgery below removes the deleted
+        // node's whole subtree wholesale, so it can't know the orphans' new position — a real
+        // hierarchy refresh is needed instead of leaving them hidden until the user manually
+        // refreshes. Cascade deletes (iris.length > 1) don't need this: every descendant is
+        // already explicitly deleted, so there's nothing left to orphan.
+        let deletedNodeHadChildren = false;
+        if (iris.length === 1) {
+          const findNode = (nodes: TreeNode[]): TreeNode | undefined => {
+            for (const node of nodes) {
+              if (node.id === iris[0]) return node;
+              if (node.children) {
+                const found = findNode(node.children);
+                if (found) return found;
+              }
+            }
+            return undefined;
+          };
+          const target = findNode(classHierarchy);
+          deletedNodeHadChildren = !!(target && (target.hasChildren || (target.children && target.children.length > 0)));
+        }
+
         if (iris.length === 1) {
           await ontologyMutationService.deleteClass(
             projectId, iris[0], user?.email || "anonymous", user?.username || "Anonymous",
@@ -10701,6 +10724,10 @@ const Dashboard: React.FC<DashboardProps> = ({
             .filter((node) => !idSet.has(node.id))
             .map((node) => (node.children ? { ...node, children: removeNodesRecursively(node.children) } : node));
         setClassHierarchy((prev) => removeNodesRecursively(prev));
+        if (deletedNodeHadChildren) {
+          lastClassHierarchyRefreshAt.current = 0;
+          refreshClassHierarchy();
+        }
         // Remove individuals whose only type(s) were among the deleted classes
         setIndividuals((prev) => prev.filter((ind) => !(ind as any).types?.some((t: string) => idSet.has(t))));
         // Evict deleted classes from annotation cache
@@ -10726,7 +10753,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         isMutatingRef.current = false;
       }
     },
-    [projectId, user, showNotification],
+    [projectId, user, showNotification, classHierarchy, refreshClassHierarchy],
   );
 
   const handleDeleteItem = useCallback(
