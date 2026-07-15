@@ -1,6 +1,12 @@
 /**
  * Upload Performance Configuration
  * Adjust these settings to optimize upload performance based on your needs
+ *
+ * NOTE: this file is a reference/planning config — the actual chunk size and threshold
+ * used at runtime are the constants defined directly in extension.ts's uploadOntologyInChunks
+ * and vscodeBridge.ts/uploadWithProgress.ts's uploadBlobInChunks (both 40MB threshold / 20MB
+ * chunks). Backend support for chunked uploads now exists (POST /api/ontology/upload-chunk),
+ * so enableChunkedUpload below reflects that — update both places together if you retune sizes.
  */
 
 export interface UploadPerformanceConfig {
@@ -17,7 +23,6 @@ export interface UploadPerformanceConfig {
     uploadTimeout: number;
 
     // Whether to enable chunked uploads for large files
-    // Note: Backend must support chunked uploads for this to work
     enableChunkedUpload: boolean;
 
     // Chunk size for chunked uploads (in bytes)
@@ -33,9 +38,9 @@ export const DEFAULT_UPLOAD_CONFIG: UploadPerformanceConfig = {
     compressionThreshold: 1 * 1024 * 1024, // 1MB
     maxRetries: 3,
     uploadTimeout: 120 * 60 * 1000, // 2 hours for uploads up to 1GB
-    enableChunkedUpload: false, // Disabled by default (requires backend support)
-    chunkSize: 5 * 1024 * 1024, // 5MB chunks
-    chunkedUploadThreshold: 50 * 1024 * 1024 // 50MB
+    enableChunkedUpload: true, // Backend now supports chunked uploads (POST /api/ontology/upload-chunk)
+    chunkSize: 20 * 1024 * 1024, // 20MB chunks
+    chunkedUploadThreshold: 40 * 1024 * 1024 // 40MB — well under Cloudflare's 100MB proxy cap
 };
 
 // Configuration for slow/unreliable networks
@@ -61,7 +66,7 @@ export const LARGE_FILE_GRAPHDB_CONFIG: UploadPerformanceConfig = {
     compressionThreshold: 512 * 1024, // Compress everything > 512KB
     maxRetries: 5,
     uploadTimeout: 120 * 60 * 1000, // 2 hours for uploads up to 1GB
-    enableChunkedUpload: false, // Enable when backend supports it
+    enableChunkedUpload: true, // Backend now supports chunked uploads (POST /api/ontology/upload-chunk)
     chunkSize: 10 * 1024 * 1024, // 10MB chunks for processing
     chunkedUploadThreshold: 100 * 1024 * 1024 // 100MB
 };

@@ -29,7 +29,7 @@ import { openOntologyFile, fileContentToBase64 } from './fileAccess';
 import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
 import { getGatewayUrl } from '../config/deploymentConfig';
 import { exportOntologyAsBlob } from '../services/exportService';
-import { uploadFormDataWithProgress } from './uploadWithProgress';
+import { uploadFormDataWithProgress, uploadBlobInChunks } from './uploadWithProgress';
 
 let browserZoteroLibrarySessionCounter = 0;
 
@@ -801,25 +801,48 @@ function handleBrowserMessage(message: any) {
                         blob = new Blob([fileText], { type: 'application/rdf+xml' });
                         console.log(`[BrowserBridge] [PERF] Small file decode + namespace injection: ${Date.now() - decodeStart}ms`);
                     }
-                    const formData = new FormData();
-                    formData.append('file', blob, message.fileName);
-
-                    const query = new URLSearchParams();
-                    if (resolvedOwnerEmail) query.set('ownerEmail', resolvedOwnerEmail);
-                    if (resolvedWorkspaceId) query.set('workspaceId', resolvedWorkspaceId);
-                    if (message.importMode) query.set('importMode', message.importMode);
-                    if (message.partition) query.set('partition', message.partition);
-                    if (message.skipDuplicateCheck) query.set('action', 'replace');
-
+                    // CHUNK_UPLOAD_THRESHOLD is kept well under Cloudflare's 100MB proxy cap (and any
+                    // similar CDN/reverse-proxy limit) so large ontologies never hit that wall — this
+                    // path currently doesn't compress before upload (unlike the VS Code extension host
+                    // path), so chunking is this surface's only defense against large-file size caps.
+                    const CHUNK_UPLOAD_THRESHOLD = 40 * 1024 * 1024; // 40MB
                     const httpPostStart = Date.now();
-                    const uploadUrl = `${baseUrl}/api/ontology/upload/${encodeURIComponent(uploadProjectId)}?${query.toString()}`;
-                    const uploadResult = await uploadFormDataWithProgress(uploadUrl, formData, {
-                        headers: token ? { Authorization: `Bearer ${token}` } : {},
-                        timeoutMs: 7_200_000,
-                        projectId: uploadProjectId,
-                    });
-                    const resp = { ok: uploadResult.ok, status: uploadResult.status };
-                    const responseText = uploadResult.text;
+                    let resp: { ok: boolean; status: number };
+                    let responseText: string;
+
+                    if (blob.size > CHUNK_UPLOAD_THRESHOLD) {
+                        console.log(`[BrowserBridge] File is ${(blob.size / (1024 * 1024)).toFixed(1)}MB, using chunked upload`);
+                        const bytes = new Uint8Array(await blob.arrayBuffer());
+                        const chunkedResult = await uploadBlobInChunks(uploadProjectId, bytes, message.fileName, baseUrl, {
+                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                            ownerEmail: resolvedOwnerEmail,
+                            workspaceId: resolvedWorkspaceId,
+                            importMode: message.importMode,
+                            partition: message.partition,
+                            action: message.skipDuplicateCheck ? 'replace' : undefined,
+                        });
+                        resp = { ok: chunkedResult.ok, status: chunkedResult.status };
+                        responseText = chunkedResult.text;
+                    } else {
+                        const formData = new FormData();
+                        formData.append('file', blob, message.fileName);
+
+                        const query = new URLSearchParams();
+                        if (resolvedOwnerEmail) query.set('ownerEmail', resolvedOwnerEmail);
+                        if (resolvedWorkspaceId) query.set('workspaceId', resolvedWorkspaceId);
+                        if (message.importMode) query.set('importMode', message.importMode);
+                        if (message.partition) query.set('partition', message.partition);
+                        if (message.skipDuplicateCheck) query.set('action', 'replace');
+
+                        const uploadUrl = `${baseUrl}/api/ontology/upload/${encodeURIComponent(uploadProjectId)}?${query.toString()}`;
+                        const uploadResult = await uploadFormDataWithProgress(uploadUrl, formData, {
+                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                            timeoutMs: 7_200_000,
+                            projectId: uploadProjectId,
+                        });
+                        resp = { ok: uploadResult.ok, status: uploadResult.status };
+                        responseText = uploadResult.text;
+                    }
                     console.log(`[BrowserBridge] [PERF] HTTP POST upload: ${Date.now() - httpPostStart}ms`);
 
                     let responseData: any = {};

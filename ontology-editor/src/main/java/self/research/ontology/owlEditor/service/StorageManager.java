@@ -68,6 +68,20 @@ public class StorageManager {
         return projectDir(projectId).resolve(filename);
     }
 
+    /** Scratch directory for in-progress chunked uploads, keyed by client-generated upload session id. */
+    public Path chunkUploadDir(String uploadId) throws IOException {
+        Path dir = projectsRoot.getParent().resolve("chunk-uploads").resolve(uploadId);
+        Files.createDirectories(dir);
+        return dir;
+    }
+
+    /** Root of all in-progress chunked uploads — used by the cleanup sweep to find abandoned sessions. */
+    public Path chunkUploadsRoot() throws IOException {
+        Path dir = projectsRoot.getParent().resolve("chunk-uploads");
+        Files.createDirectories(dir);
+        return dir;
+    }
+
     public Path exportOntology(String projectId, String format) throws IOException {
         // Always export fresh from GraphDB to get latest changes
         log.info("Exporting ontology from GraphDB for project: {}", projectId);
