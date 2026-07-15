@@ -31,7 +31,7 @@ Create a project, choose who can access it, and invite workspace members by emai
 ![Create a project and invite workspace members](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/collaboration.gif)
 
 ### 2. Ontology editing across formats (Code View)
-Read and edit the same ontology as Turtle, RDF/XML, N-Triples, OWL/XML, Manchester, or Functional syntax — switch formats and keep editing, it's not a one-way export.
+Read and edit the same ontology as Turtle, RDF/XML, N-Triples, OWL/XML, Manchester, Functional, or JSON-LD syntax — switch formats and keep editing, it's not a one-way export.
 
 ![Code View editing an ontology across Turtle, RDF/XML, N-Triples, OWL/XML, Manchester, Functional, and JSON-LD](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/code-view-multi-format.gif)
 
