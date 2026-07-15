@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <property name="LOG_DIR" value="${LOG_DIR:-logs}" />
+    <property name="APP_NAME" value="owl-editor" />
+
+    <!-- MDC context pattern — populated by MdcLoggingFilter.
+         The `ctx` field already encodes the cascade
+            email + file > email + project > email + workspace > email
+         so the pattern shows the most specific identifier available
+         in a single bracketed segment. Individual MDC fields are still
+         present for tools that need to filter by an exact id
+         (e.g. `zgrep 'projectId=proj-abc'`). -->
+    <property name="MDC_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] [%X{ctx:-no-ctx}] - %msg%n" />
+
+    <!-- ==================== CONSOLE APPENDER ==================== -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${MDC_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ==================== APPLICATION LOG ==================== -->
+    <!-- All application logs (INFO+) -->
+    <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/${APP_NAME}-app.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/archive/${APP_NAME}-app-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${MDC_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ==================== PERFORMANCE LOG ==================== -->
+    <!-- Dedicated file for performance/timing metrics — includes userId and projectId for filtering -->
+    <appender name="PERF_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/${APP_NAME}-performance.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/archive/${APP_NAME}-performance-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>60</maxHistory>
+            <totalSizeCap>2GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <!-- Performance log: same cascading ctx so timing rows can be
+                 filtered alongside app rows by user / project / file. -->
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{ctx:-no-ctx}] %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ==================== ERROR LOG ==================== -->
+    <!-- Only WARN and ERROR level messages -->
+    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/${APP_NAME}-error.log</file>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>WARN</level>
+        </filter>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/archive/${APP_NAME}-error-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>90</maxHistory>
+            <totalSizeCap>2GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${MDC_PATTERN}%xException</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ==================== SPARQL QUERY LOG ==================== -->
+    <!-- Dedicated log for all SPARQL queries and their execution times -->
+    <appender name="SPARQL_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/${APP_NAME}-sparql.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/archive/${APP_NAME}-sparql-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ==================== IMPORT LOG ==================== -->
+    <!-- Dedicated log for file import/upload operations -->
+    <appender name="IMPORT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/${APP_NAME}-import.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/archive/${APP_NAME}-import-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ==================== NAMED LOGGERS ==================== -->
+
+    <!-- Performance Logger — writes to both PERF_FILE and CONSOLE -->
+    <logger name="PERFORMANCE" level="INFO" additivity="false">
+        <appender-ref ref="PERF_FILE" />
+        <appender-ref ref="CONSOLE" />
+    </logger>
+
+    <!-- SPARQL Logger — writes to SPARQL_FILE and CONSOLE -->
+    <logger name="SPARQL" level="DEBUG" additivity="false">
+        <appender-ref ref="SPARQL_FILE" />
+        <appender-ref ref="CONSOLE" />
+    </logger>
+
+    <!-- Import Logger — writes to IMPORT_FILE and CONSOLE -->
+    <logger name="IMPORT" level="DEBUG" additivity="false">
+        <appender-ref ref="IMPORT_FILE" />
+        <appender-ref ref="CONSOLE" />
+    </logger>
+
+    <!-- Application code -->
+    <logger name="self.research.ontology.owlEditor" level="DEBUG" additivity="false">
+        <appender-ref ref="APP_FILE" />
+        <appender-ref ref="ERROR_FILE" />
+        <appender-ref ref="CONSOLE" />
+    </logger>
+
+    <!-- Spring Framework -->
+    <logger name="org.springframework" level="INFO" additivity="false">
+        <appender-ref ref="APP_FILE" />
+        <appender-ref ref="ERROR_FILE" />
+        <appender-ref ref="CONSOLE" />
+    </logger>
+
+    <!-- MongoDB -->
+    <logger name="org.springframework.data.mongodb" level="WARN" additivity="false">
+        <appender-ref ref="APP_FILE" />
+        <appender-ref ref="ERROR_FILE" />
+    </logger>
+
+    <!-- HTTP Client -->
+    <logger name="org.springframework.web.reactive.function.client" level="INFO" additivity="false">
+        <appender-ref ref="APP_FILE" />
+    </logger>
+
+    <!-- Cache operations -->
+    <logger name="org.springframework.cache" level="DEBUG" additivity="false">
+        <appender-ref ref="APP_FILE" />
+        <appender-ref ref="CONSOLE" />
+    </logger>
+
+    <!-- ==================== ROOT LOGGER ==================== -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="APP_FILE" />
+        <appender-ref ref="ERROR_FILE" />
+    </root>
+
+</configuration>

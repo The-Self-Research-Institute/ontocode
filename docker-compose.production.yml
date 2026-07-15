@@ -1,0 +1,423 @@
+# OntoCode Production Docker Compose — t3.xlarge baseline (16 GB RAM)
+# Total container limits ≈ 13.5 GB | leaves ~2.5 GB for OS + Docker overhead
+#
+# Capacity target (100 registered users, typical 10–20 concurrent editors):
+#   • Heap is SHARED — not 100 × 750 MB. Users are HTTP requests, not OWLAPI models.
+#   • Fuseki + Mongo snapshots serve hierarchy; annotations are 1 light SPARQL each.
+#   • Heavy class-details SPARQL runs only when a user opens the Description tab.
+#   • ONTOCODE_FASTOPEN_AUTO_WARM=false + memcache off → editor ~1.5 GB steady state.
+#   • Fuseki gets the RAM budget (all users query one shared TDB2).
+#   Not viable on one node: 100 simultaneous heavy editors on 250 MB ontologies.
+#
+# For other instance sizes, layer on a sizing override:
+#   t3.large  (8 GB):  docker compose -f docker-compose.production.yml -f docker-compose.t3-large.yml up -d
+#   t3.xlarge (16 GB): docker compose -f docker-compose.production.yml up -d
+#   t3.2xlarge(32 GB): docker compose -f docker-compose.production.yml -f docker-compose.t3-2xlarge.yml up -d
+#   r6i.xlarge (32 GB): docker compose -f docker-compose.production.yml -f docker-compose.r6i-xlarge.yml up -d
+#   r5.2xlarge / r6i.2xlarge (64 GB): docker compose -f docker-compose.production.yml -f docker-compose.r5-2xlarge.yml up -d
+#
+# Set DOCKER_REGISTRY, VERSION, and a locked-down .env (secrets, public BASE_URL, Stripe keys).
+
+services:
+  # MongoDB Database
+  mongo:
+    image: mongo:6
+    container_name: ontocode-mongo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.3", "--auth"]
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh "mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@localhost:27017/admin" --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # Fuseki (Apache Jena Fuseki + TDB2 triple store) — production sizing
+  fuseki:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-fuseki:${FUSEKI_VERSION:-6.1.0}
+    container_name: ontocode-fuseki
+    restart: unless-stopped
+    user: root
+    ports:
+      - "3030:3030"
+    environment:
+      ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?FUSEKI_ADMIN_PASSWORD is required in production}
+      JVM_ARGS: "-Xmx5g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
+    volumes:
+      - ./fuseki-config.ttl:/config.ttl:ro
+      - fuseki-data:/fuseki/databases
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 6g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u admin:${FUSEKI_ADMIN_PASSWORD:-admin} http://localhost:3030/$/ping || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Authentication Service
+  auth:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-auth:${VERSION:-latest}
+    container_name: ontocode-auth
+    restart: unless-stopped
+    user: root
+    ports:
+      - "8086:8086"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      BASE_URL: ${BASE_URL:-http://localhost:3000}
+      BILLING_REMINDER_ENABLED: ${BILLING_REMINDER_ENABLED:-true}
+      BILLING_REMINDER_DAYS_BEFORE_LIST: ${BILLING_REMINDER_DAYS_BEFORE_LIST:-15,7,1}
+      BILLING_REMINDER_CRON: ${BILLING_REMINDER_CRON:-0 0 9 * * *}
+      BILLING_EXPIRY_CHECK_ENABLED: ${BILLING_EXPIRY_CHECK_ENABLED:-true}
+      BILLING_EXPIRY_CHECK_INTERVAL_MS: ${BILLING_EXPIRY_CHECK_INTERVAL_MS:-21600000}
+      BILLING_AUTORENEWAL_ENABLED: ${BILLING_AUTORENEWAL_ENABLED:-true}
+      BILLING_AUTORENEWAL_CRON: ${BILLING_AUTORENEWAL_CRON:-0 0 2 * * ?}
+      INVITATION_CLEANUP_CRON: ${INVITATION_CLEANUP_CRON:-0 0 2 * * *}
+      STORAGE_LIMIT_FREE_GB: ${STORAGE_LIMIT_FREE_GB:-10}
+      STORAGE_LIMIT_PRO_GB: ${STORAGE_LIMIT_PRO_GB:-100}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO_MONTHLY: ${STRIPE_PRICE_PRO_MONTHLY:-}
+      STRIPE_PRICE_PRO_YEARLY: ${STRIPE_PRICE_PRO_YEARLY:-}
+      STRIPE_PRICE_ENTERPRISE_MONTHLY: ${STRIPE_PRICE_ENTERPRISE_MONTHLY:-}
+      STRIPE_PRICE_ENTERPRISE_YEARLY: ${STRIPE_PRICE_ENTERPRISE_YEARLY:-}
+      STRIPE_TRIAL_PERIOD_DAYS: ${STRIPE_TRIAL_PERIOD_DAYS:-14}
+      PLAN_PRO_MONTHLY_PRICE: ${PLAN_PRO_MONTHLY_PRICE:-29}
+      PLAN_PRO_ANNUAL_DISCOUNT_PERCENT: ${PLAN_PRO_ANNUAL_DISCOUNT_PERCENT:-17}
+      PLAN_ENTERPRISE_MONTHLY_PRICE: ${PLAN_ENTERPRISE_MONTHLY_PRICE:-99}
+      PLAN_ENTERPRISE_ANNUAL_DISCOUNT_PERCENT: ${PLAN_ENTERPRISE_ANNUAL_DISCOUNT_PERCENT:-20}
+      PLAN_FREE_MAX_MEMBERS: ${PLAN_FREE_MAX_MEMBERS:-3}
+      PLAN_PRO_MAX_MEMBERS: ${PLAN_PRO_MAX_MEMBERS:-10}
+      PLAN_ENTERPRISE_MAX_MEMBERS: ${PLAN_ENTERPRISE_MAX_MEMBERS:-2147483647}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx768m -XX:+UseG1GC
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - /var/log/ontocode/auth:/app/logs
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 640m
+
+  # API Gateway
+  gateway:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-gateway:${VERSION:-latest}
+    container_name: ontocode-gateway
+    restart: unless-stopped
+    user: root
+    ports:
+      - "80:80"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      AUTH_SERVICE_URL: http://auth:8086
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      GATEWAY_HTTP_RESPONSE_TIMEOUT: ${GATEWAY_HTTP_RESPONSE_TIMEOUT:-7200s}
+      # Gateway streams file uploads via Netty — does not buffer bodies in heap.
+      # codec buffer reduced to 64MB (application.properties). 768m heap is sufficient.
+      JAVA_OPTS: -Xms128m -Xmx768m -XX:+UseG1GC
+    depends_on:
+      auth:
+        condition: service_started
+    volumes:
+      - /var/log/ontocode/gateway:/app/logs
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 1500m
+
+  # Ontology Editor Service
+  owl-editor:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-editor:${VERSION:-latest}
+    container_name: ontocode-editor
+    restart: unless-stopped
+    user: root
+    ports:
+      - "8083:8083"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
+      FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
+      FUSEKI_GSP_ENDPOINT: http://fuseki:3030/ontocode/data
+      FUSEKI_ADMIN_USER: ${FUSEKI_ADMIN_USER:-admin}
+      FUSEKI_ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
+      SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ONTOCODE_EDITOR_REQUIRE_JWT: "true"
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      ONTOLOGY_HTTP_TIMEOUT_MS: ${ONTOLOGY_HTTP_TIMEOUT_MS:-7200000}
+      ONTOLOGY_HTTP_TIMEOUT_SECONDS: ${ONTOLOGY_HTTP_TIMEOUT_SECONDS:-7200s}
+      JAVA_OPTS: >-
+        -Xms512m -Xmx2g
+        -Xss4m
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m
+        -DentityExpansionLimit=100000000
+        -Djdk.xml.entityExpansionLimit=100000000
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      JIRA_ENABLED: ${JIRA_ENABLED:-true}
+      JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
+      JIRA_USER_EMAIL: ${JIRA_USER_EMAIL:-uma@coretopia.com}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+      JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
+      JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
+      JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+      # Multi-tenant: do NOT mirror whole graphs in editor RAM (was ~400 MB × 3 projects).
+      # Hierarchy → Mongo snapshots; repeat reads → Caffeine; cold reads → Fuseki.
+      ONTOCODE_MEMCACHE_ENABLED: ${ONTOCODE_MEMCACHE_ENABLED:-false}
+      ONTOCODE_MEMCACHE_MAX_PROJECTS: ${ONTOCODE_MEMCACHE_MAX_PROJECTS:-1}
+      ONTOCODE_MEMCACHE_NO_CACHE_THRESHOLD: ${ONTOCODE_MEMCACHE_NO_CACHE_THRESHOLD:-3000000}
+      # TDB2 is single-writer: 2 concurrent imports on t3.xlarge.
+      ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-2}
+      # DL Query: ceiling 2 on production; runtime policy may drop to 1 under heap pressure.
+      ONTOCODE_DLQUERY_MAX_CONCURRENT: ${ONTOCODE_DLQUERY_MAX_CONCURRENT:-2}
+      ONTOCODE_DLQUERY_SLOT_BUDGET: ${ONTOCODE_DLQUERY_SLOT_BUDGET:-2}
+      ONTOCODE_REASONER_WORKER_ENABLED: ${ONTOCODE_REASONER_WORKER_ENABLED:-true}
+      ONTOCODE_REASONER_WORKER_URL: http://reasoner-worker:8088
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
+      # Raise limit to support large biomedical ontologies (MONDO ~3.1M, GO ~3.5M) with ELK.
+      ONTOCODE_REASONER_MAX_TRIPLES: ${ONTOCODE_REASONER_MAX_TRIPLES:-5000000}
+      # Web default: Fuseki + Mongo snapshots. OWLAPI loads only when user POST /warm (optional fast editor).
+      ONTOCODE_FASTOPEN_AUTO_WARM: ${ONTOCODE_FASTOPEN_AUTO_WARM:-false}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      fuseki:
+        condition: service_healthy
+    volumes:
+      - /var/log/ontocode/editor:/app/logs
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 2560m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health/liveness"]
+      interval: 20s
+      timeout: 10s
+      retries: 8
+      start_period: 120s
+
+  # SWRL Rules Service
+  swrl-service:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-swrl:${VERSION:-latest}
+    container_name: ontocode-swrl
+    restart: unless-stopped
+    user: root
+    ports:
+      - "8084:8084"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
+      FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
+      ONTOLOGY_EDITOR_URL: http://owl-editor:8083
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      JAVA_OPTS: >-
+        -Xms256m -Xmx768m
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m
+    volumes:
+      - /var/log/ontocode/swrl:/app/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+      fuseki:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 1024m
+
+  # Reasoner Worker — unified DL Query + Reasoner queue (isolated heap)
+  reasoner-worker:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-reasoner-worker:${VERSION:-latest}
+    container_name: ontocode-reasoner-worker
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      ONTOLOGY_EDITOR_URL: http://owl-editor:8083
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
+      ONTOCODE_REASONING_MAX_CONCURRENT: ${ONTOCODE_REASONING_MAX_CONCURRENT:-2}
+      ONTOCODE_REASONING_SLOT_BUDGET: ${ONTOCODE_REASONING_SLOT_BUDGET:-2}
+      ONTOCODE_REASONING_IDLE_EVICTION_MINUTES: ${ONTOCODE_REASONING_IDLE_EVICTION_MINUTES:-15}
+      ONTOCODE_REASONER_MAX_TRIPLES: ${ONTOCODE_REASONER_MAX_TRIPLES:-5000000}
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_OPTS: >-
+        -Xms2g -Xmx8g
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+    volumes:
+      - /var/log/ontocode/reasoner-worker:/app/logs
+    depends_on:
+      owl-editor:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 9g
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8088/actuator/health/liveness"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # Plugin Service
+  plugin-service:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin:${VERSION:-latest}
+    container_name: ontocode-plugin
+    restart: unless-stopped
+    ports:
+      - "8087:8087"
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ONTOLOGY_EDITOR_URL: http://owl-editor:8083
+      ONTOCODE_REASONER_WORKER_URL: http://reasoner-worker:8088
+      ONTOCODE_REASONER_WORKER_ENABLED: ${ONTOCODE_REASONER_WORKER_ENABLED:-true}
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
+    depends_on:
+      mongo:
+        condition: service_healthy
+      owl-editor:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 320m
+
+  # Plugin Initialization Service
+  plugin-init:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin-init:${VERSION:-latest}
+    container_name: ontocode-plugin-init
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      plugin-service:
+        condition: service_started
+    networks:
+      - ontology-net
+
+  # VS Code Web Extension (Self-Contained) - DISABLED
+  # vscode-web:
+  #   image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-vscode-web:${VERSION:-latest}
+  #   container_name: ontocode-vscode-web
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     # Mount local workspace for file editing
+  #     - ${WORKSPACE_PATH:-./data/projects}:/workspace/projects
+  #   environment:
+  #     VSCODE_WEB_HOST: 0.0.0.0
+  #     VSCODE_WEB_PORT: 3000
+  #     # OntoCode API endpoints
+  #     ONTOCODE_API_URL: http://gateway:80
+  #     AUTH_SERVICE_URL: http://auth:8086
+  #   depends_on:
+  #     - gateway
+  #     - auth
+  #   networks:
+  #     - ontology-net
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 40s
+
+  # Web Application (React Frontend)
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-web:${VERSION:-latest}
+    container_name: ontocode-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      ONTOCODE_API_URL: http://gateway:80
+    depends_on:
+      - gateway
+      - auth
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://0.0.0.0:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+volumes:
+  mongo-data:
+  fuseki-data:
+
+networks:
+  ontology-net:
+    driver: bridge

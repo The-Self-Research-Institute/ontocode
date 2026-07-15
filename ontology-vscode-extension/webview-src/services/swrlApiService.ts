@@ -1,4 +1,5 @@
-// services/SwrlApiService.ts
+// services/swrlApiService.ts
+import apiClient from './apiClient';
 
 export interface ValidationResult {
   valid: boolean;
@@ -54,137 +55,64 @@ class SwrlApiService {
     this.baseUrl = baseUrl;
   }
 
-  /**
-   * Validate a SWRL rule before creating it
-   */
+  private path(suffix: string) {
+    return `${this.baseUrl}${suffix}`;
+  }
+
+  // ===== CRUD & Actions (UNWRAPPED responses) =====
+
   async validateRule(projectId: string, ruleText: string): Promise<ValidationResult> {
-    const response = await fetch(`${this.baseUrl}/${projectId}/validate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ ruleText }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Validation failed: ${response.statusText}`);
-    }
-
-    return response.json();
+    return apiClient.post<ValidationResult>(
+      this.path(`/${encodeURIComponent(projectId)}/validate`),
+      { ruleText }
+    );
   }
 
-  /**
-   * Create a new SWRL rule
-   */
-  async createRule(projectId: string, request: CreateRuleRequest): Promise<SwrlRule> {
-    const response = await fetch(`${this.baseUrl}/${projectId}/rules`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Failed to create rule: ${error}`);
-    }
-
-    return response.json();
+  async createRule(projectId: string, req: CreateRuleRequest): Promise<SwrlRule> {
+    return apiClient.post<SwrlRule>(
+      this.path(`/${encodeURIComponent(projectId)}/rules`),
+      req
+    );
   }
 
-  /**
-   * Get all rules for a project
-   */
   async getRules(projectId: string): Promise<SwrlRule[]> {
-    const response = await fetch(`${this.baseUrl}/${projectId}/rules`);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch rules: ${response.statusText}`);
-    }
-
-    return response.json();
+    return apiClient.get<SwrlRule[]>(
+      this.path(`/${encodeURIComponent(projectId)}/rules`)
+    );
   }
 
-  /**
-   * Get a specific rule by ID
-   */
   async getRule(projectId: string, ruleId: string): Promise<SwrlRule> {
-    const response = await fetch(`${this.baseUrl}/${projectId}/rules/${ruleId}`);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch rule: ${response.statusText}`);
-    }
-
-    return response.json();
+    return apiClient.get<SwrlRule>(
+      this.path(`/${encodeURIComponent(projectId)}/rules/${encodeURIComponent(ruleId)}`)
+    );
   }
 
-  /**
-   * Update an existing rule
-   */
-  async updateRule(
-    projectId: string,
-    ruleId: string,
-    request: UpdateRuleRequest
-  ): Promise<SwrlRule> {
-    const response = await fetch(`${this.baseUrl}/${projectId}/rules/${ruleId}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Failed to update rule: ${error}`);
-    }
-
-    return response.json();
+  async updateRule(projectId: string, ruleId: string, req: UpdateRuleRequest): Promise<SwrlRule> {
+    // If your extension proxy doesn’t have apiPut, your apiClient.put should tunnel via POST + X-HTTP-Method-Override.
+    return apiClient.put<SwrlRule>(
+      this.path(`/${encodeURIComponent(projectId)}/rules/${encodeURIComponent(ruleId)}`),
+      req
+    );
   }
 
-  /**
-   * Delete a rule
-   */
   async deleteRule(projectId: string, ruleId: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/${projectId}/rules/${ruleId}`, {
-      method: 'DELETE',
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to delete rule: ${response.statusText}`);
-    }
+    await apiClient.delete<void>(
+      this.path(`/${encodeURIComponent(projectId)}/rules/${encodeURIComponent(ruleId)}`)
+    );
   }
 
-  /**
-   * Execute all enabled rules for a project
-   */
   async executeRules(projectId: string): Promise<ExecutionResponse> {
-    const response = await fetch(`${this.baseUrl}/${projectId}/execute`, {
-      method: 'POST',
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to execute rules: ${response.statusText}`);
-    }
-
-    return response.json();
+    return apiClient.post<ExecutionResponse>(
+      this.path(`/${encodeURIComponent(projectId)}/execute`)
+    );
   }
 
-  /**
-   * Clear the SWRL engine cache for a project
-   */
   async clearCache(projectId: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/${projectId}/cache/clear`, {
-      method: 'POST',
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to clear cache: ${response.statusText}`);
-    }
+    await apiClient.post<void>(
+      this.path(`/${encodeURIComponent(projectId)}/cache/clear`)
+    );
   }
 }
 
-// Export singleton instance
 export const swrlApiService = new SwrlApiService();
 export default swrlApiService;

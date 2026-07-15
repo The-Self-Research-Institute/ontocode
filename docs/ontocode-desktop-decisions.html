@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>OntoCode Desktop – Architecture & Product Decisions</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #f0f0f0;
+    font-family: Arial, sans-serif;
+    font-size: 11pt;
+    color: #202124;
+    line-height: 1.6;
+  }
+
+  /* ── toolbar strip ── */
+  .toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #fff;
+    border-bottom: 1px solid #e0e0e0;
+    padding: 8px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  }
+  .toolbar .doc-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #202124;
+    flex: 1;
+  }
+  .toolbar .meta {
+    font-size: 11px;
+    color: #5f6368;
+  }
+  .toolbar .badge {
+    background: #1a73e8;
+    color: #fff;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 12px;
+  }
+
+  /* ── page wrapper ── */
+  .page-wrap {
+    padding: 32px 0 64px;
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    align-items: flex-start;
+  }
+
+  /* ── table of contents sidebar ── */
+  .toc {
+    width: 220px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 64px;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 10pt;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+  .toc h4 {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    color: #5f6368;
+    margin-bottom: 10px;
+  }
+  .toc a {
+    display: block;
+    padding: 4px 0;
+    color: #1a73e8;
+    text-decoration: none;
+    font-size: 10pt;
+    border-left: 2px solid transparent;
+    padding-left: 8px;
+  }
+  .toc a:hover { border-left-color: #1a73e8; background: #f8f9fa; }
+  .toc a.sub { padding-left: 20px; font-size: 9.5pt; color: #5f6368; }
+
+  /* ── page ── */
+  .page {
+    width: 816px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2), 0 4px 8px rgba(0,0,0,.1);
+    padding: 72px 96px;
+    min-height: 1123px;
+  }
+
+  /* ── typography ── */
+  h1 {
+    font-size: 26pt;
+    font-weight: 300;
+    color: #1a73e8;
+    margin-bottom: 6px;
+    border-bottom: 3px solid #1a73e8;
+    padding-bottom: 12px;
+    line-height: 1.3;
+  }
+  .subtitle {
+    font-size: 11pt;
+    color: #5f6368;
+    margin-bottom: 32px;
+    font-style: italic;
+  }
+  h2 {
+    font-size: 16pt;
+    font-weight: 600;
+    color: #202124;
+    margin: 36px 0 12px;
+    border-bottom: 1px solid #e0e0e0;
+    padding-bottom: 6px;
+  }
+  h3 {
+    font-size: 13pt;
+    font-weight: 600;
+    color: #1a73e8;
+    margin: 24px 0 8px;
+  }
+  h4 {
+    font-size: 11pt;
+    font-weight: 600;
+    color: #202124;
+    margin: 16px 0 6px;
+  }
+  p { margin-bottom: 12px; }
+  ul, ol { margin: 8px 0 12px 24px; }
+  li { margin-bottom: 4px; }
+  strong { font-weight: 600; }
+  em { color: #5f6368; }
+
+  /* ── callout boxes ── */
+  .callout {
+    border-left: 4px solid #1a73e8;
+    background: #e8f0fe;
+    padding: 12px 16px;
+    border-radius: 0 6px 6px 0;
+    margin: 16px 0;
+    font-size: 10.5pt;
+  }
+  .callout.green { border-color: #34a853; background: #e6f4ea; }
+  .callout.yellow { border-color: #fbbc04; background: #fef7e0; }
+  .callout.red { border-color: #ea4335; background: #fce8e6; }
+  .callout-title { font-weight: 700; margin-bottom: 4px; }
+
+  /* ── tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 20px;
+    font-size: 10pt;
+  }
+  th {
+    background: #1a73e8;
+    color: #fff;
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 600;
+  }
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #e0e0e0;
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: #f8f9fa; }
+  tr:hover td { background: #e8f0fe; }
+  .pros { color: #137333; }
+  .cons { color: #c5221f; }
+
+  /* ── recommendation badge ── */
+  .rec {
+    display: inline-block;
+    background: #34a853;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    vertical-align: middle;
+  }
+
+  /* ── phase cards ── */
+  .phase-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .phase-card {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 16px;
+    position: relative;
+  }
+  .phase-card .phase-num {
+    position: absolute;
+    top: -10px;
+    left: 16px;
+    background: #1a73e8;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 10px;
+    text-transform: uppercase;
+  }
+  .phase-card h4 { margin-top: 6px; color: #1a73e8; }
+  .phase-card .effort {
+    font-size: 9.5pt;
+    color: #5f6368;
+    margin: 4px 0 8px;
+  }
+  .phase-card .effort .ai-time {
+    display: inline-block;
+    background: #e6f4ea;
+    color: #137333;
+    font-weight: 700;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 9pt;
+  }
+  .phase-card .effort .doc-time {
+    text-decoration: line-through;
+    color: #9aa0a6;
+  }
+
+  /* ── AI timeline highlight section ── */
+  .ai-section {
+    background: linear-gradient(135deg, #e8f0fe 0%, #fce8e6 100%);
+    border: 1px solid #c5cae9;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin: 24px 0;
+  }
+  .ai-section h3 { color: #3c4043; margin-top: 0; }
+
+  /* ── timeline bar ── */
+  .timeline {
+    margin: 20px 0;
+  }
+  .tl-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    gap: 12px;
+    font-size: 10pt;
+  }
+  .tl-label {
+    width: 130px;
+    flex-shrink: 0;
+    font-weight: 600;
+    font-size: 9.5pt;
+  }
+  .tl-bar-wrap {
+    flex: 1;
+    background: #e0e0e0;
+    border-radius: 20px;
+    height: 22px;
+    position: relative;
+    overflow: hidden;
+  }
+  .tl-bar {
+    height: 100%;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    padding-left: 10px;
+    font-size: 9pt;
+    font-weight: 700;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .tl-bar.doc-bar { background: #bdbdbd; }
+  .tl-bar.ai-bar { background: linear-gradient(90deg, #1a73e8, #34a853); }
+  .tl-unit { width: 55px; text-align: right; font-size: 9.5pt; color: #5f6368; }
+
+  /* ── divider ── */
+  .divider {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 32px 0;
+  }
+
+  /* ── footer ── */
+  .doc-footer {
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid #e0e0e0;
+    font-size: 9pt;
+    color: #9aa0a6;
+    text-align: center;
+  }
+
+  /* ── page break ── */
+  .page-break { height: 40px; }
+
+  /* print */
+  @media print {
+    body { background: #fff; }
+    .toolbar, .toc { display: none; }
+    .page { box-shadow: none; margin: 0; padding: 48px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- toolbar -->
+<div class="toolbar">
+  <div class="doc-title">OntoCode Desktop — Architecture &amp; Product Decisions</div>
+  <div class="meta">Prepared for client discussion · May 2026</div>
+  <div class="badge">v1.0 DRAFT</div>
+</div>
+
+<div class="page-wrap">
+
+  <!-- table of contents -->
+  <nav class="toc">
+    <h4>Contents</h4>
+    <a href="#s1">1. Executive Summary</a>
+    <a href="#s2">2. Background &amp; Positioning</a>
+    <a href="#s3">3. Architecture Decisions</a>
+    <a class="sub" href="#q1">Q1 · Framework</a>
+    <a class="sub" href="#q2">Q2 · Data Store</a>
+    <a class="sub" href="#q3">Q3 · Reasoner</a>
+    <a class="sub" href="#q4">Q4 · Workspace</a>
+    <a class="sub" href="#q5">Q5 · UI</a>
+    <a class="sub" href="#q6">Q6 · Plugins</a>
+    <a class="sub" href="#q7">Q7 · Licensing</a>
+    <a class="sub" href="#q8">Q8 · Enforcement</a>
+    <a class="sub" href="#q9">Q9 · Platforms</a>
+    <a class="sub" href="#q10">Q10 · Updates</a>
+    <a class="sub" href="#q11">Q11 · Cloud Boundary</a>
+    <a class="sub" href="#q12">Q12 · First Launch</a>
+    <a class="sub" href="#q13">Q13 · File Format</a>
+    <a class="sub" href="#q14">Q14 · Sync</a>
+    <a class="sub" href="#q15">Q15 · Resourcing</a>
+    <a class="sub" href="#q16a">Q16a · Installation</a>
+    <a class="sub" href="#q16">Q16 · Versioning</a>
+    <a href="#s4">4. Recommended Defaults</a>
+    <a href="#s5">5. Implementation Plan</a>
+    <a href="#s6">6. AI Timeline Estimate</a>
+    <a href="#s7">7. Risks</a>
+    <a href="#s8">8. Next Steps</a>
+  </nav>
+
+  <!-- page -->
+  <div class="page">
+
+    <h1>OntoCode Desktop</h1>
+    <div class="subtitle">Architecture and Product Decisions for Client Review &nbsp;·&nbsp; Prepared May 2026</div>
+
+    <!-- ── Section 1 ── -->
+    <h2 id="s1">1. Executive Summary</h2>
+    <p>OntoCode is adding a desktop product positioned as a <strong>Protégé-equivalent</strong>: file-based, fully offline by default, plugin-extensible, and free at the entry tier. The existing <strong>OntoCode Cloud</strong> (web application plus backend services) remains the paid collaborative product, equivalent to WebProtégé.</p>
+    <p>The desktop product is intentionally <strong>decoupled</strong> from the cloud product. Users can move work between them by exporting and importing OWL files, but there is no live sync between products in v1. This positioning keeps the desktop simple, gives OntoCode a wider top-of-funnel for academic and individual users, and protects the existing cloud revenue model.</p>
+    <div class="callout green">
+      <div class="callout-title">Strategic advantage</div>
+      The cloud backend (OWLAPI, HermiT, Fuseki, SPARQL/SWRL/Fuzzy plugins) is already built. Desktop v1 is primarily a <em>packaging and distribution</em> problem, not a <em>feature development</em> problem. This significantly compresses the engineering timeline.
+    </div>
+
+    <!-- ── Section 2 ── -->
+    <h2 id="s2">2. Background &amp; Positioning</h2>
+    <p>Protégé is the dominant desktop OWL editor: free, open source, Java-based, plugin-driven, file-based, and developed at Stanford. WebProtégé is its collaborative sibling — a web application for shared editing. The two products coexist with light interop (export/import of OWL files); they do not live-sync.</p>
+    <p>OntoCode mirrors this dual-product model:</p>
+    <ul>
+      <li><strong>Free desktop tier</strong> widens the user funnel. Academic and individual users who would otherwise install Protégé get a more modern alternative.</li>
+      <li><strong>Paid cloud tier</strong> remains the primary revenue driver. Collaboration is the differentiator.</li>
+      <li><strong>Plugin ecosystem</strong> becomes a long-term moat. OntoCode's faster, easier-to-build-for plugin platform is a real competitive lever over Protégé's OSGi system.</li>
+      <li><strong>No conflict</strong> with the existing cloud business — desktop operates in a different mode (single user, offline) and converts users to cloud when they need collaboration.</li>
+    </ul>
+
+    <!-- ── Section 3 ── -->
+    <h2 id="s3">3. Architecture &amp; Product Decisions (Q1–Q16)</h2>
+
+    <!-- Q1 -->
+    <h3 id="q1">Q1. Which desktop framework should we build on?</h3>
+    <p>The framework decision shapes the entire technical stack. The core trade-off is code reuse from the existing React <code>webview-src/</code> vs bundle size, performance, and native feel.</p>
+    <table>
+      <tr><th>Option</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>Electron + JVM sidecar</strong> <span class="rec">Recommended</span></td>
+        <td class="pros">Reuses entire React codebase and existing Java OWL code unchanged. Team already knows JS + Java. Mature auto-update (electron-updater). Largest ecosystem.</td>
+        <td class="cons">Bundle ~250 MB (Chromium + JRE). Higher memory. Two runtimes to debug.</td>
+      </tr>
+      <tr>
+        <td>Tauri (Rust + system webview)</td>
+        <td class="pros">Tiny bundle (~10–15 MB). Low memory. Modern security model.</td>
+        <td class="cons">Rust learning curve. System webviews differ across platforms. Cannot reuse Java OWL code.</td>
+      </tr>
+      <tr>
+        <td>Native (Qt / MAUI / Avalonia)</td>
+        <td class="pros">Best raw performance. Genuine OS feel.</td>
+        <td class="cons">Full UI rewrite. 5–10× the engineering effort. Different skill set.</td>
+      </tr>
+      <tr>
+        <td>JVM + JavaFX</td>
+        <td class="pros">Reuses Spring Boot/OWLAPI directly.</td>
+        <td class="cons">JavaFX UI is dated. Hard to match modern React polish.</td>
+      </tr>
+    </table>
+    <div class="callout">
+      <div class="callout-title">Why Electron + JVM sidecar wins for OntoCode</div>
+      The JVM sidecar pattern (same as VS Code bundling language servers) lets the <em>existing</em> OWL Editor service run as a local process instead of in Docker. The React UI remains unchanged. No code is thrown away — this is a repackaging, not a rewrite.
+    </div>
+
+    <!-- Q2 -->
+    <h3 id="q2">Q2. Where does OWL/RDF data live on disk?</h3>
+    <table>
+      <tr><th>Option</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>File-based (.owl/.ttl as source of truth) + embedded cache</strong> <span class="rec">Recommended</span></td>
+        <td class="pros">Sync-friendly with every external tool (Git, Dropbox, Syncthing). Portable, human-readable. Matches Protégé mental model exactly. Cache rebuilds automatically.</td>
+        <td class="cons">Cache invalidation logic. Two layers to keep consistent.</td>
+      </tr>
+      <tr>
+        <td>Embedded triple store only</td>
+        <td class="pros">Fast queries. Efficient storage.</td>
+        <td class="cons">Binary store — Git/Dropbox cannot merge it. User loses Protégé compatibility.</td>
+      </tr>
+      <tr>
+        <td>SQLite-only</td>
+        <td class="pros">Single-file. Mature engine.</td>
+        <td class="cons">RDF does not map cleanly to relational. SPARQL-to-SQL is hard.</td>
+      </tr>
+    </table>
+
+    <!-- Q3 -->
+    <h3 id="q3">Q3. Which reasoner(s) should ship with the desktop?</h3>
+    <table>
+      <tr><th>Option</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>HermiT free; ELK + Pellet behind Pro license</strong> <span class="rec">Recommended</span></td>
+        <td class="pros">Clean free-vs-paid line. Free tier matches Protégé capability. Pro offers measurable performance and capability uplift (ELK: fast OWL EL; Pellet: better SWRL).</td>
+        <td class="cons">Pellet licensing needs negotiation with Stardog. ELK only covers OWL EL profile.</td>
+      </tr>
+      <tr>
+        <td>HermiT only</td>
+        <td class="pros">Already integrated. No additional work.</td>
+        <td class="cons">No paid differentiation. Slower than Pellet on some workloads.</td>
+      </tr>
+      <tr>
+        <td>No reasoner, plugins only</td>
+        <td class="pros">Smallest bundle.</td>
+        <td class="cons">Useless out of the box. Reasoning is a core feature.</td>
+      </tr>
+    </table>
+
+    <!-- Q4 -->
+    <h3 id="q4">Q4. What is the on-disk workspace concept?</h3>
+    <table>
+      <tr><th>Option</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>Workspace folder with ontology + sidecar files</strong> <span class="rec">Recommended</span></td>
+        <td class="pros">Each workspace = a folder: <code>ontology.owl</code>, <code>queries/</code>, <code>rules/</code>, <code>history/</code>. Portable as a zip. Maps cleanly to the existing cloud Workspace model.</td>
+        <td class="cons">Slight learning curve. Users must share the folder, not just the .owl.</td>
+      </tr>
+      <tr>
+        <td>No workspaces, Protégé-style</td>
+        <td class="pros">Minimal concept overhead. Matches Protégé exactly.</td>
+        <td class="cons">No place for saved queries, SWRL rules, or change history alongside the ontology.</td>
+      </tr>
+    </table>
+
+    <!-- Q5 -->
+    <h3 id="q5">Q5. What is the UI approach?</h3>
+    <table>
+      <tr><th>Option</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>Reuse webview-src/ React UI as-is in v1</strong> <span class="rec">Recommended</span></td>
+        <td class="pros">Zero UI work. Day-one feature parity with web app. Same developer team.</td>
+        <td class="cons">Inherits web app awkwardness on desktop. Long-term divergence pressure.</td>
+      </tr>
+      <tr>
+        <td>Fork and adapt for desktop</td>
+        <td class="pros">Native menus, file dialogs, multi-window, keyboard shortcuts.</td>
+        <td class="cons">Two versions to maintain. Risk of divergence.</td>
+      </tr>
+      <tr>
+        <td>New native UI</td>
+        <td class="pros">Optimal desktop UX. Multi-window, real menu bars.</td>
+        <td class="cons">Massive engineering effort. Disconnects from web app.</td>
+      </tr>
+    </table>
+
+    <!-- Q6 -->
+    <h3 id="q6">Q6. How does the plugin system work on desktop?</h3>
+    <table>
+      <tr><th>Option</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>Port existing Plugin Service (Node.js) as sidecar</strong> <span class="rec">Recommended</span></td>
+        <td class="pros">Same plugin ecosystem on web and desktop. Plugins built once run on both. Existing SPARQL/SWRL/Fuzzy plugins port unchanged. Sandboxing already in place.</td>
+        <td class="cons">Larger bundle (~30 MB extra). Plugin sandbox security needs review for desktop threat model.</td>
+      </tr>
+      <tr>
+        <td>JS plugins inside Electron renderer</td>
+        <td class="pros">No sidecar needed. Simpler architecture.</td>
+        <td class="cons">Plugins can crash the UI. Full DOM access by default.</td>
+      </tr>
+      <tr>
+        <td>WASM plugins</td>
+        <td class="pros">Sandboxed, language-agnostic, fast.</td>
+        <td class="cons">Ecosystem does not exist yet. No third-party plugins on day one.</td>
+      </tr>
+    </table>
+
+    <!-- Q7 -->
+    <h3 id="q7">Q7. What is the licensing and pricing model?</h3>
+    <table>
+      <tr><th>Option</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>Freemium with paid Pro features</strong> <span class="rec">Recommended</span></td>
+        <td class="pros">Direct revenue from desktop. Predictable model (Sublime Text, JetBrains, Obsidian). Clear free-vs-paid line.</td>
+        <td class="cons">Adds licensing complexity. License-file infrastructure required.</td>
+      </tr>
+      <tr>
+        <td>Completely free, open source</td>
+        <td class="pros">Maximum reach. Community contributions. Strong academic adoption.</td>
+        <td class="cons">No direct revenue from desktop.</td>
+      </tr>
+      <tr>
+        <td>Paid only</td>
+        <td class="pros">Highest revenue per user.</td>
+        <td class="cons">Lowest adoption. Most users default to Protégé rather than pay.</td>
+      </tr>
+    </table>
+
+    <!-- Q8 -->
+    <h3 id="q8">Q8. How is the license enforced?</h3>
+    <table>
+      <tr><th>Option</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>Signed Ed25519 license file, offline verification</strong> <span class="rec">Recommended</span></td>
+        <td class="pros">Works fully offline. No phone-home. User-friendly: drag the file in once. Public key embedded in app does verification. 1-year subscription, 30-day grace period on expiry.</td>
+        <td class="cons">License files can be shared. Need to handle expiry and renewals.</td>
+      </tr>
+      <tr>
+        <td>Online activation, account-tied</td>
+        <td class="pros">Hard to share. Real account on file.</td>
+        <td class="cons">Requires internet for activation. Phone-home behaviour many users dislike.</td>
+      </tr>
+      <tr>
+        <td>No DRM, contract terms only</td>
+        <td class="pros">Zero infrastructure.</td>
+        <td class="cons">Easy to pirate. Only works with enterprise customers.</td>
+      </tr>
+    </table>
+
+    <!-- Q9 -->
+    <h3 id="q9">Q9. Which platforms at launch?</h3>
+    <div class="callout green">
+      <div class="callout-title">Recommendation: Windows + macOS + Linux at launch</div>
+      Linux is critical for the academic OWL user base — the most influential early adopters and reviewers. Excluding Linux at launch risks a hostile reception from Protégé power users.
+    </div>
+    <p>Each platform adds installers, code-signing certificates, CI pipeline configuration, and ongoing testing load. AppImage for Linux in v1; packages (.deb, .rpm) and Snap/Flatpak for later releases.</p>
+
+    <!-- Q10 -->
+    <h3 id="q10">Q10. How does the desktop update itself?</h3>
+    <table>
+      <tr><th>Option</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>Built-in auto-update + manual download fallback</strong> <span class="rec">Recommended</span></td>
+        <td class="pros">Users always on latest version. Security patches reach them quickly. Enterprise can pin versions via manual download.</td>
+        <td class="cons">Need to host an update server and signed update manifests.</td>
+      </tr>
+      <tr>
+        <td>Manual update only</td>
+        <td class="pros">No server needed.</td>
+        <td class="cons">Users lag versions. Hard to push security fixes quickly.</td>
+      </tr>
+    </table>
+
+    <!-- Q11 -->
+    <h3 id="q11">Q11. What is the cloud boundary?</h3>
+    <table>
+      <tr><th>Option</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>Zero integration in v1 (separate products)</strong> <span class="rec">Recommended</span></td>
+        <td class="pros">Cleanest model. Each product has its own identity. Matches Protégé vs WebProtégé exactly. No coupling.</td>
+        <td class="cons">Users moving between products lose in-progress work (drafts, queries, history) unless they re-export.</td>
+      </tr>
+      <tr>
+        <td>Server-mediated async sync (v1.x)</td>
+        <td class="pros">Reuses existing cloud backend. Works async — devices need not be online simultaneously. Natural paid feature.</td>
+        <td class="cons">Requires cloud account (counter to "fully offline" baseline). Infrastructure cost grows with sync volume.</td>
+      </tr>
+      <tr>
+        <td>Full live sync</td>
+        <td class="pros">Best UX. Cloud and desktop are interchangeable.</td>
+        <td class="cons">Significant engineering. Couples the two products tightly.</td>
+      </tr>
+    </table>
+
+    <!-- Q12 -->
+    <h3 id="q12">Q12. What is the first-launch user experience?</h3>
+    <div class="callout green">
+      <div class="callout-title">Recommendation: Optional local display name — no account required</div>
+      One small prompt asking "What should we call you?" gives change-tracking a name to display. No password, no email, no account. If the user skips it, edits are attributed to "Anonymous." Matches Protégé's zero-friction model while adding minimal personalisation.
+    </div>
+
+    <!-- Q13 -->
+    <h3 id="q13">Q13. What file format strategy do we adopt?</h3>
+    <div class="callout">
+      <div class="callout-title">Recommendation: Native OWL formats + workspace folder with sidecar files</div>
+      The <code>.owl</code> / <code>.ttl</code> file is the ontology — fully compatible with Protégé and every other OWL tool. Sidecar files in the workspace folder carry OntoCode-specific metadata (saved queries, SWRL rules, change history) that other tools ignore. Sharing the workspace means sharing the folder; sharing just the ontology means sharing the <code>.owl</code> file.
+    </div>
+
+    <!-- Q14 -->
+    <h3 id="q14">Q14. Does the desktop offer sync, and if so which?</h3>
+    <table>
+      <tr><th>Option</th><th>Multi-device?</th><th>Multi-user?</th><th>Pros</th><th>Cons</th></tr>
+      <tr>
+        <td><strong>No sync in v1 (user handles via Git/Dropbox)</strong> <span class="rec">v1</span></td>
+        <td>Manual</td>
+        <td>Manual</td>
+        <td class="pros">Zero work. File-based workspace makes it naturally work.</td>
+        <td class="cons">Casual users won't set this up.</td>
+      </tr>
+      <tr>
+        <td><strong>Server-mediated sync via OntoCode Cloud</strong> <span class="rec">v1.x</span></td>
+        <td>✓ Async</td>
+        <td>✓ Async</td>
+        <td class="pros">Reuses existing OntologyChange / DraftChange schema. Only 2 new endpoints + 2 new collections. Works async. Natural paid cloud feature.</td>
+        <td class="cons">Requires cloud account. Our infra cost grows.</td>
+      </tr>
+      <tr>
+        <td>Syncthing (P2P, free)</td>
+        <td>✓ P2P</td>
+        <td>Limited</td>
+        <td class="pros">Zero infra cost. No account needed.</td>
+        <td class="cons">File-level conflicts. Both devices need to be online at some point.</td>
+      </tr>
+    </table>
+
+    <h4>Q14 deep-dive: how identity works</h4>
+    <div class="callout blue" style="background:#e8f0fe;border-left:4px solid #1a73e8;">
+      <div class="callout-title">Identity = Cloud account (email/JWT), not the license file</div>
+      <p>The <strong>Pro license file</strong> (Ed25519 signed) proves only that the user has paid for Pro features — it is verified <em>offline</em> against the embedded public key. It contains the user's email and a <code>userId</code>, but it does not drive sync.</p>
+      <p><strong>Sync identity = OntoCode Cloud account.</strong> The user signs in with email + password. The JWT issued by the Auth Service is what ties Desktop A and Desktop B to the same account. The <code>userId</code> in the license file is matched against the JWT claim to confirm the Pro entitlement is for this account.</p>
+      <p><strong>Sharing with another user</strong> works like Google Drive: the workspace owner explicitly shares the workspace with another user's email address. That user sees it in their "Shared with me" list on their own desktop.</p>
+    </div>
+
+    <h4>Q14 deep-dive: sync is user-driven, not automatic</h4>
+    <div class="callout yellow">
+      <div class="callout-title">Nothing syncs without an explicit user action</div>
+      Sync never starts silently. Two deliberate clicks gate entry: <strong>Desktop A</strong> must click "Enable Sync" on the workspace. <strong>Desktop B</strong> must click "Download Workspace". This makes the trust boundary clear and avoids surprises.
+    </div>
+
+    <h4>Q14 deep-dive: Step 1 — Initial Bootstrap (Desktop B gets the workspace for the first time)</h4>
+    <ol>
+      <li>User signs into OntoCode Cloud on <strong>Desktop A</strong> (email + password → JWT).</li>
+      <li>User clicks <strong>"Enable Sync"</strong> on the workspace in Desktop A's UI.</li>
+      <li>Desktop A uploads the full <code>.owl</code> file + all sidecar files (queries/, rules/, history/) to cloud storage (<strong>MongoDB GridFS</strong>). Writes <code>WorkspaceSync</code> metadata (projectId, ownerUserId, GridFS fileId, snapshotTimestamp T0).</li>
+      <li>Cloud stores the snapshot. Sets <code>DeviceSyncState</code> for Desktop A with cursor = T0.</li>
+      <li>User signs into OntoCode Cloud on <strong>Desktop B</strong> (same account, or invited email). Sees the workspace listed under "Available Workspaces".</li>
+      <li>User clicks <strong>"Download Workspace"</strong> on Desktop B.</li>
+      <li>Desktop B downloads the full <code>.owl</code> + sidecars from GridFS. Creates local workspace folder. Records <code>DeviceSyncState</code> cursor = T0.</li>
+    </ol>
+    <p>Desktop B is now at the same state as Desktop A was at T0. Incremental sync (below) keeps them in step going forward.</p>
+
+    <h4>Q14 deep-dive: Step 2 — Incremental Sync (ongoing)</h4>
+    <ol>
+      <li>User makes edits on Desktop A. Each edit is written to a local <code>DraftChange</code> row with <code>syncedToServer = false</code>.</li>
+      <li>A background worker (or user taps <strong>"Sync Now"</strong>) POSTs to <code>POST /api/ontology/changes/sync</code> with the pending <code>DraftChange</code> list.</li>
+      <li>Server validates the JWT, applies the changes, writes canonical <code>OntologyChange</code> rows, updates <code>DeviceSyncState</code> for Desktop A.</li>
+      <li>Desktop B comes online (hours or days later). On launch (or "Sync Now") it calls <code>GET /api/ontology/changes?projectId=X&amp;since=T0</code>.</li>
+      <li>Desktop B replays the returned events into its local Oxigraph/TDB2 cache. Updates its <code>DeviceSyncState</code> cursor to the latest timestamp.</li>
+    </ol>
+    <p><strong>Backend additions required:</strong> 2 new endpoints, 3 new MongoDB collections (<code>WorkspaceSync</code>, <code>DeviceSyncState</code>, <code>MergeConflict</code>), 2 new fields (<code>DraftChange.syncedToServer</code>, <code>Workspace.syncMode</code>). Estimated effort: 4–6 weeks original / 2–3 weeks AI-assisted.</p>
+
+    <!-- Q15 -->
+    <h3 id="q15">Q15. How do we resource the desktop development?</h3>
+    <div class="callout yellow">
+      <div class="callout-title">Recommendation: Same team for first 3–6 months</div>
+      Knowledge stays in one team. Code reuse is natural because the same developers write both products. After MVP ships, evaluate whether to spin up a dedicated desktop team. With AI-assisted development (see Section 6), a single developer can match the throughput of a 2–3 person team on coding tasks.
+    </div>
+
+    <!-- Q16a - Installation -->
+    <h3 id="q16a">Q16a. How does installation work? (Single-click, no Docker, no Java required)</h3>
+    <div class="callout green">
+      <div class="callout-title">Single-click installer — user double-clicks one file, app opens. Nothing else to install.</div>
+      <p>Electron already bundles Chromium + Node.js. The JVM sidecar (Spring Boot JAR) is bundled with a <strong>minimal JRE created via <code>jlink</code></strong> (~50 MB), so the user does not need Java installed. The Plugin Service runs inside Electron's existing Node.js runtime — no separate Node install. Docker is not used at all in the desktop product.</p>
+    </div>
+
+    <h4>Installer bundle contents (~200 MB total)</h4>
+    <table>
+      <tr><th>Component</th><th>How bundled</th><th>Size</th></tr>
+      <tr>
+        <td>Electron shell (Chromium + Node.js)</td>
+        <td><code>electron-builder</code> packages automatically</td>
+        <td>~120 MB</td>
+      </tr>
+      <tr>
+        <td>React UI (webview-src/ static bundle)</td>
+        <td>Webpack output copied into <code>resources/</code></td>
+        <td>~5 MB</td>
+      </tr>
+      <tr>
+        <td>owl-editor.jar (Spring Boot, stripped config)</td>
+        <td>Copied into <code>resources/sidecar/</code></td>
+        <td>~40 MB</td>
+      </tr>
+      <tr>
+        <td><strong>Bundled JRE (jlink minimal)</strong></td>
+        <td><code>jlink</code> with only required modules; no Java install needed</td>
+        <td>~50 MB</td>
+      </tr>
+      <tr>
+        <td>Plugin Service (Node.js code)</td>
+        <td>Runs in Electron's own Node.js runtime — zero extra footprint</td>
+        <td>~1 MB</td>
+      </tr>
+      <tr>
+        <td>Ed25519 public key (embedded)</td>
+        <td>Hard-coded in binary — offline Pro verification</td>
+        <td>&lt;1 KB</td>
+      </tr>
+    </table>
+
+    <h4>Platform installers</h4>
+    <table>
+      <tr><th>Platform</th><th>Format</th><th>User experience</th></tr>
+      <tr><td>Windows</td><td><code>.exe</code> (NSIS installer via electron-builder)</td><td>Double-click → Next → Finish → app in Start Menu</td></tr>
+      <tr><td>macOS</td><td><code>.dmg</code> (drag to Applications)</td><td>Open DMG → drag OntoCode to Applications → done</td></tr>
+      <tr><td>Linux</td><td><code>.AppImage</code> (v1), .deb/.rpm (later)</td><td>chmod +x + double-click — no install required at all</td></tr>
+    </table>
+
+    <h4>How the JVM sidecar starts</h4>
+    <p>Electron's main process spawns the JVM sidecar as a child process using Node's <code>child_process.spawn()</code>:</p>
+    <pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:12px;">const jrePath = path.join(process.resourcesPath, 'jre', 'bin', 'java')
+const jarPath = path.join(process.resourcesPath, 'sidecar', 'owl-editor.jar')
+const sidecar = spawn(jrePath, ['-jar', jarPath, '--server.port=18080'])
+// React UI talks to http://localhost:18080 via window.API_BASE_URL</pre>
+    <p>When the user closes the app, Electron kills the child process. No ports are exposed externally. No services run when the app is closed.</p>
+
+    <!-- Q16 -->
+    <h3 id="q16">Q16. How do we version and release?</h3>
+    <div class="callout green">
+      <div class="callout-title">Recommendation: Independent versioning — Desktop 1.x, Cloud 2.x</div>
+      Each product ships when ready. Different release cadences are natural (desktop has no server migration concern; cloud requires coordinated deploys). Date-based sub-versioning for hotfixes is acceptable within a major version.
+    </div>
+
+    <hr class="divider"/>
+
+    <!-- ── Section 4 ── -->
+    <h2 id="s4">4. Recommended Defaults Summary</h2>
+    <table>
+      <tr><th>#</th><th>Question</th><th>Recommendation</th></tr>
+      <tr><td>Q1</td><td>Desktop framework</td><td>Electron with bundled JVM sidecar</td></tr>
+      <tr><td>Q2</td><td>On-disk data store</td><td>File-based (.owl) + embedded Oxigraph cache</td></tr>
+      <tr><td>Q3</td><td>Reasoner</td><td>HermiT free; ELK + Pellet behind Pro</td></tr>
+      <tr><td>Q4</td><td>Workspace concept</td><td>Workspace folder with ontology + sidecar files</td></tr>
+      <tr><td>Q5</td><td>UI approach</td><td>Reuse webview-src/ React UI; fork later if needed</td></tr>
+      <tr><td>Q6</td><td>Plugin architecture</td><td>Port existing Plugin Service as Node.js sidecar</td></tr>
+      <tr><td>Q7</td><td>Licensing</td><td>Freemium with signed license file for Pro features</td></tr>
+      <tr><td>Q8</td><td>License enforcement</td><td>Ed25519 signed .lic file, 1-year, 30-day grace period</td></tr>
+      <tr><td>Q9</td><td>Platforms</td><td>Windows + macOS + Linux at launch</td></tr>
+      <tr><td>Q10</td><td>Update mechanism</td><td>Built-in auto-update + manual download fallback</td></tr>
+      <tr><td>Q11</td><td>Cloud boundary</td><td>Zero integration v1; async server sync in v1.x</td></tr>
+      <tr><td>Q12</td><td>First launch</td><td>Optional local display name; no account required</td></tr>
+      <tr><td>Q13</td><td>File format</td><td>Native OWL + workspace folder with sidecars</td></tr>
+      <tr><td>Q14</td><td>Sync</td><td>None v1; server-mediated + Syncthing options in v1.x</td></tr>
+      <tr><td>Q15</td><td>Resourcing</td><td>Same team for first 3–6 months</td></tr>
+      <tr><td>Q16</td><td>Versioning</td><td>Independent per product</td></tr>
+    </table>
+
+    <hr class="divider"/>
+
+    <!-- ── Section 5 ── -->
+    <h2 id="s5">5. Phased Implementation Plan</h2>
+    <p>Each phase is a shippable milestone. Effort estimates below assume a team of 3–4 engineers with the recommended stack. See Section 6 for AI-adjusted estimates.</p>
+
+    <div class="phase-grid">
+      <div class="phase-card">
+        <div class="phase-num">Phase 0</div>
+        <h4>Standalone Desktop MVP</h4>
+        <div class="effort">Original: <span class="doc-time">5–8 weeks</span></div>
+        <ul>
+          <li>Electron shell wrapping existing React UI</li>
+          <li>Bundled JVM sidecar with OWLAPI + HermiT</li>
+          <li>File-based workspace folder</li>
+          <li>Native menus, file open/save dialogs</li>
+          <li>Auto-update infrastructure</li>
+          <li>Code-signing + installers (Win/Mac/Linux)</li>
+          <li>First-launch UX: optional display name</li>
+        </ul>
+      </div>
+      <div class="phase-card">
+        <div class="phase-num">Phase 1</div>
+        <h4>Plugin System + Saved Queries/Rules</h4>
+        <div class="effort">Original: <span class="doc-time">3–4 weeks</span></div>
+        <ul>
+          <li>Port Plugin Service as Node.js sidecar</li>
+          <li>Saved SPARQL queries as sidecar JSON</li>
+          <li>SWRL rules as sidecar JSON</li>
+          <li>Plugin marketplace browser UI</li>
+          <li>Sandboxing and permissions model</li>
+        </ul>
+      </div>
+      <div class="phase-card">
+        <div class="phase-num">Phase 2</div>
+        <h4>Licensing &amp; Pro Features</h4>
+        <div class="effort">Original: <span class="doc-time">2–3 weeks</span></div>
+        <ul>
+          <li>Ed25519 license file generation server</li>
+          <li>Stripe webhook → license email</li>
+          <li>Desktop license activation UI</li>
+          <li>Pro feature gating (ELK, Pellet, export formats)</li>
+          <li>30-day grace period logic</li>
+        </ul>
+      </div>
+      <div class="phase-card">
+        <div class="phase-num">Phase 3a</div>
+        <h4>Server-Mediated Desktop Sync</h4>
+        <div class="effort">Original: <span class="doc-time">4–6 weeks</span></div>
+        <ul>
+          <li>2 new endpoints on OWL Editor service</li>
+          <li>DeviceSyncState + MergeConflict collections</li>
+          <li>Background sync worker on desktop</li>
+          <li>Merge-conflict resolution UI</li>
+          <li>Sign-in + per-workspace sync toggle</li>
+        </ul>
+      </div>
+      <div class="phase-card">
+        <div class="phase-num">Phase 3b</div>
+        <h4>Syncthing P2P Sync (optional)</h4>
+        <div class="effort">Original: <span class="doc-time">3–5 weeks</span></div>
+        <ul>
+          <li>Bundle Syncthing as optional component</li>
+          <li>Per-workspace multi-device sync toggle</li>
+          <li>Device pairing UI</li>
+          <li>Syncthing conflict (.sync-conflict-*) merge view</li>
+        </ul>
+      </div>
+      <div class="phase-card">
+        <div class="phase-num">Phase 4</div>
+        <h4>USB Bundle Export/Import</h4>
+        <div class="effort">Original: <span class="doc-time">1–2 weeks</span></div>
+        <ul>
+          <li>.ontocode-bundle format (zipped workspace)</li>
+          <li>Menu items: Export Workspace / Import Workspace</li>
+          <li>Bundle integrity checking (signed metadata)</li>
+        </ul>
+      </div>
+    </div>
+
+    <hr class="divider"/>
+
+    <!-- ── Section 6 (AI estimates) ── -->
+    <h2 id="s6">6. Implementation Timeline with AI-Assisted Development</h2>
+
+    <div class="ai-section">
+      <h3>How AI compresses — and doesn't compress — this project</h3>
+      <p>AI coding assistants (Claude Code, Copilot) accelerate <strong>pattern-based code generation</strong> significantly, but they do not compress <em>infrastructure bureaucracy</em> or <em>novel architectural problems</em>. The distinction is critical for estimating this project.</p>
+
+      <h4>What AI accelerates (40–60% faster):</h4>
+      <ul>
+        <li>Java entity/repository/controller boilerplate — a new MongoDB entity takes minutes, not hours (demonstrated in this session)</li>
+        <li>React UI components and TypeScript wiring</li>
+        <li>Config files, build scripts, package.json</li>
+        <li>Connecting known patterns (the cloud backend patterns already exist)</li>
+        <li>Debugging — AI can trace execution paths across large codebases quickly</li>
+      </ul>
+
+      <h4>What AI does NOT compress:</h4>
+      <ul>
+        <li><strong>Apple Developer Program + notarization</strong> — account setup, App Store Review, waiting periods</li>
+        <li><strong>Windows code-signing</strong> — EV certificate acquisition takes 1–5 business days minimum</li>
+        <li><strong>Electron + JVM IPC design</strong> — first-time complex cross-process communication; needs careful architecture</li>
+        <li><strong>Auto-update server</strong> — hosting, CDN, manifest signing</li>
+        <li><strong>Pellet licensing negotiation</strong> with Stardog</li>
+        <li><strong>Performance testing</strong> with large ontologies (GO: 44K classes, SNOMED CT: 350K)</li>
+      </ul>
+    </div>
+
+    <h3>Existing head start — what is already built</h3>
+    <div class="callout green">
+      <div class="callout-title">OntoCode already has the hardest parts</div>
+      OWLAPI + HermiT reasoning, the full React UI, the Plugin Service, and all three plugins (SPARQL, SWRL, Fuzzy Ontology) already exist and work in production. Desktop v1 is primarily packaging and distribution, not feature development. This is a significant advantage over a greenfield build.
+    </div>
+
+    <h3>Revised estimates: 1 developer + AI</h3>
+    <div class="timeline">
+      <div class="tl-row">
+        <div class="tl-label">Phase 0 MVP</div>
+        <div class="tl-bar-wrap">
+          <div class="tl-bar doc-bar" style="width:80%">5–8 wks (original)</div>
+        </div>
+        <div class="tl-unit"></div>
+      </div>
+      <div class="tl-row">
+        <div class="tl-label"></div>
+        <div class="tl-bar-wrap">
+          <div class="tl-bar ai-bar" style="width:35%">2–3 weeks with AI</div>
+        </div>
+        <div class="tl-unit" style="color:#137333;font-weight:700">−60%</div>
+      </div>
+      <div class="tl-row">
+        <div class="tl-label">Phase 1 Plugins</div>
+        <div class="tl-bar-wrap">
+          <div class="tl-bar doc-bar" style="width:40%">3–4 wks</div>
+        </div>
+        <div class="tl-unit"></div>
+      </div>
+      <div class="tl-row">
+        <div class="tl-label"></div>
+        <div class="tl-bar-wrap">
+          <div class="tl-bar ai-bar" style="width:18%">1–2 wks</div>
+        </div>
+        <div class="tl-unit" style="color:#137333;font-weight:700">−55%</div>
+      </div>
+      <div class="tl-row">
+        <div class="tl-label">Phase 2 Licensing</div>
+        <div class="tl-bar-wrap">
+          <div class="tl-bar doc-bar" style="width:30%">2–3 wks</div>
+        </div>
+        <div class="tl-unit"></div>
+      </div>
+      <div class="tl-row">
+        <div class="tl-label"></div>
+        <div class="tl-bar-wrap">
+          <div class="tl-bar ai-bar" style="width:15%">1–2 wks</div>
+        </div>
+        <div class="tl-unit" style="color:#137333;font-weight:700">−45%</div>
+      </div>
+      <div class="tl-row">
+        <div class="tl-label">Phase 3a Sync</div>
+        <div class="tl-bar-wrap">
+          <div class="tl-bar doc-bar" style="width:60%">4–6 wks</div>
+        </div>
+        <div class="tl-unit"></div>
+      </div>
+      <div class="tl-row">
+        <div class="tl-label"></div>
+        <div class="tl-bar-wrap">
+          <div class="tl-bar ai-bar" style="width:28%">2–3 wks</div>
+        </div>
+        <div class="tl-unit" style="color:#137333;font-weight:700">−50%</div>
+      </div>
+    </div>
+
+    <table>
+      <tr><th>Phase</th><th>Document estimate (3–4 devs)</th><th>With AI (1 dev)</th><th>Key bottleneck</th></tr>
+      <tr><td>Phase 0 MVP</td><td>5–8 weeks</td><td><strong>2–3 weeks</strong></td><td>Code-signing setup, Electron + JVM IPC</td></tr>
+      <tr><td>Phase 1 Plugins</td><td>3–4 weeks</td><td><strong>1–2 weeks</strong></td><td>Plugin sidecar wiring</td></tr>
+      <tr><td>Phase 2 Licensing</td><td>2–3 weeks</td><td><strong>1–2 weeks</strong></td><td>Stripe webhook + Ed25519 infra</td></tr>
+      <tr><td>Phase 3a Sync</td><td>4–6 weeks</td><td><strong>2–3 weeks</strong></td><td>Conflict UI design</td></tr>
+      <tr><td>Phase 3b Syncthing</td><td>3–5 weeks</td><td><strong>2–3 weeks</strong></td><td>Bundling + conflict merge UI</td></tr>
+      <tr><td>Phase 4 USB bundle</td><td>1–2 weeks</td><td><strong>~1 week</strong></td><td>—</td></tr>
+      <tr style="background:#e6f4ea;font-weight:700"><td>Total (Phase 0–2)</td><td>10–15 weeks</td><td><strong>4–7 weeks</strong></td><td>Shippable paid product</td></tr>
+      <tr style="background:#e6f4ea;font-weight:700"><td>Total (all phases)</td><td>18–28 weeks</td><td><strong>9–14 weeks</strong></td><td>Full feature set</td></tr>
+    </table>
+
+    <div class="callout yellow">
+      <div class="callout-title">Recommended: Start with a 1-week spike before committing</div>
+      Build a bare-bones Electron app that opens an <code>.owl</code> file via the JVM sidecar and displays the class hierarchy. If this works in a week, the rest follows predictably. If it hits a wall (IPC more complex than expected), you know before committing to the full build. No architectural commitment required for the spike.
+    </div>
+
+    <hr class="divider"/>
+
+    <!-- ── Section 7 ── -->
+    <h2 id="s7">7. Risks and Open Questions</h2>
+    <table>
+      <tr><th>Risk</th><th>Severity</th><th>Mitigation</th></tr>
+      <tr>
+        <td><strong>Bundle size</strong><br><em>Electron + JVM ≈ 250 MB</em></td>
+        <td>Medium</td>
+        <td>Acceptable by modern standards (similar to JetBrains IDEs). If size is a marketing concern, move to Tauri + Rust OWL bindings — but that is a 10–12 week additional rewrite.</td>
+      </tr>
+      <tr>
+        <td><strong>Pellet licensing</strong><br><em>Dual-licensed by Stardog</em></td>
+        <td>Medium</td>
+        <td>Ship ELK alone in v1 Pro (Apache 2.0, no negotiation needed). Add Pellet only if customer demand justifies the licensing conversation.</td>
+      </tr>
+      <tr>
+        <td><strong>Performance on very large ontologies</strong><br><em>GO: 44K classes; SNOMED CT: 350K</em></td>
+        <td>High</td>
+        <td>Hybrid cache (Q2) helps for reopening. First-load shows a progress bar. Reasoner size guard already implemented in cloud product.</td>
+      </tr>
+      <tr>
+        <td><strong>Plugin sandbox security</strong><br><em>Desktop plugins have file-system access</em></td>
+        <td>High</td>
+        <td>Design permission manifest (read/write paths, network access). Show to user on plugin install. Block by default; user grants explicitly.</td>
+      </tr>
+      <tr>
+        <td><strong>Linux auto-update complexity</strong></td>
+        <td>Low</td>
+        <td>AppImage with built-in updater for v1. .deb/.rpm packages and Flatpak for later releases.</td>
+      </tr>
+      <tr>
+        <td><strong>Telemetry vs. fully offline</strong></td>
+        <td>Low</td>
+        <td>Opt-in anonymous crash reports only. Strictly no usage telemetry. Fully offline remains the default.</td>
+      </tr>
+      <tr>
+        <td><strong>Open source vs. closed source</strong></td>
+        <td>Strategic</td>
+        <td>Discuss separately. Open-sourcing has significant strategic implications (community, trust, competitive transparency) beyond licensing economics.</td>
+      </tr>
+    </table>
+
+    <hr class="divider"/>
+
+    <!-- ── Section 8 ── -->
+    <h2 id="s8">8. Next Steps</h2>
+    <ol>
+      <li><strong>Client review</strong> — walk through each of the sixteen decisions; lock in answers. Estimated: 1–2 hour meeting.</li>
+      <li><strong>Validate effort estimates</strong> with engineering. Phase 0 AI estimate (2–3 weeks) assumes specific team composition.</li>
+      <li><strong>1-week architecture spike</strong> — bare-bones Electron app loading an <code>.owl</code> file via JVM sidecar. Validates IPC before full commitment.</li>
+      <li><strong>Architectural deep-dive</strong> — produce sequence diagrams for: JVM sidecar IPC, plugin sandbox model, license verification flow.</li>
+      <li><strong>Update architecture.drawio</strong> — add a new page showing the desktop product alongside the existing cloud architecture. (See companion <code>ontocode-desktop.drawio</code>)</li>
+      <li><strong>Pellet licensing</strong> — if Q3 Pro tier includes Pellet, initiate conversation with Stardog early; this is the longest-lead item in Phase 2.</li>
+      <li><strong>Code-signing certificates</strong> — Apple Developer Program and Windows EV certificate acquisition should start in parallel with Phase 0 coding; both have bureaucratic lead times.</li>
+      <li><strong>Weekly progress reviews</strong> during Phase 0.</li>
+    </ol>
+
+    <div class="doc-footer">
+      OntoCode Desktop — Architecture &amp; Product Decisions &nbsp;·&nbsp; May 2026 &nbsp;·&nbsp; Confidential — prepared for client review
+    </div>
+
+  </div><!-- /page -->
+</div><!-- /page-wrap -->
+
+</body>
+</html>

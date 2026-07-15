@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "OntoCode"
+  given-names: "Team"
+title: "OntoCode Ontology Platform"
+version: 1.0.0
+date-released: 2025-12-23
+url: "https://github.com/ontocode/ontocode"
+references:
+  - type: software
+    title: "OWL API"
+    authors:
+      - family-names: "Horridge"
+        given-names: "Matthew"
+      - family-names: "Bechhofer"
+        given-names: "Sean"
+    year: 2011
+    url: "http://owlcs.github.io/owlapi/"
+  - type: software
+    title: "GraphDB"
+    authors:
+      - name: "Ontotext"
+    url: "https://www.ontotext.com/products/graphdb/"

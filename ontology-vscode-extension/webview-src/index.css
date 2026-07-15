@@ -1,0 +1,1147 @@
+/* Semantic Theme Tokens - Professional Design System */
+:root {
+  /* Surfaces (elevation levels) */
+  --bg: #ffffff;
+  --surface-1: #ffffff;
+  --surface-2: #f6f7f9;
+  --surface-3: #eef1f5;
+  --overlay: rgba(0, 0, 0, 0.4);
+
+  /* Content (text + icons) */
+  --text-primary: #111111;
+  --text-secondary: #444444;
+  --text-tertiary: #666666;
+  --text-disabled: #9aa0a6;
+  --icon-primary: #111111;
+  --icon-secondary: #444444;
+  --icon-disabled: #9aa0a6;
+
+  /* Lines / boundaries */
+  --border: #e4e7ec;
+  --divider: #eef1f5;
+
+  /* Brand + semantics */
+  --accent: #3b82f6;
+  --on-accent: #ffffff;
+  --accent-tint: rgba(59, 130, 246, 0.08);
+  --accent-hover: rgba(59, 130, 246, 0.08);
+  --accent-pressed: rgba(59, 130, 246, 0.16);
+
+  --success: #10b981;
+  --on-success: #ffffff;
+  --success-tint: rgba(16, 185, 129, 0.12);
+  --warning: #f59e0b;
+  --on-warning: #111111;
+  --warning-tint: rgba(245, 158, 11, 0.14);
+  --error: #ef4444;
+  --on-error: #ffffff;
+  --error-tint: rgba(239, 68, 68, 0.12);
+  --info: #3b82f6;
+  --on-info: #ffffff;
+  --info-tint: rgba(59, 130, 246, 0.1);
+
+  /* Interaction states - Following IBM Design & Industry Best Practices */
+  --hover-overlay: rgba(0, 0, 0, 0.04);
+  --pressed-overlay: rgba(0, 0, 0, 0.08);
+  --focus-ring: var(--accent);
+  --selected-bg: var(--accent-tint);
+
+  /* Transition durations */
+  --transition-fast: 150ms;
+  --transition-base: 250ms;
+  --transition-slow: 350ms;
+
+  /* Legacy support (map old variables to new semantic ones) */
+  --color-primary: var(--accent);
+  --color-secondary: #6366f1;
+  --color-accent: #8b5cf6;
+  --color-background: var(--bg);
+  --color-surface: var(--surface-1);
+  --color-text: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-border: var(--border);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-info: var(--info);
+}
+
+@keyframes ontocodeFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ontocodeLoadingShimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.ontocode-fade-in {
+  animation: ontocodeFadeIn var(--transition-base) ease-out;
+}
+
+.ontocode-loading-shimmer {
+  animation: ontocodeLoadingShimmer 1.5s ease-in-out infinite;
+}
+
+/* Dark mode semantic tokens */
+.dark {
+  /* Surfaces (get lighter with elevation) */
+  --bg: #0b0f14;
+  --surface-1: #111826;
+  --surface-2: #162133;
+  --surface-3: #1b2a40;
+  --overlay: rgba(0, 0, 0, 0.6);
+
+  /* Content */
+  --text-primary: #f2f4f7;
+  --text-secondary: #c7cdd6;
+  --text-tertiary: #9aa4b2;
+  --text-disabled: #667085;
+  --icon-primary: #f2f4f7;
+  --icon-secondary: #c7cdd6;
+  --icon-disabled: #667085;
+
+  /* Lines / boundaries (subtle in dark mode) */
+  --border: rgba(255, 255, 255, 0.14);
+  --divider: rgba(255, 255, 255, 0.08);
+
+  /* Brand + semantics (brighter in dark mode for visibility) */
+  --accent: #60a5fa;
+  --on-accent: #0b0f14;
+  --accent-tint: rgba(96, 165, 250, 0.12);
+  --accent-hover: rgba(96, 165, 250, 0.12);
+  --accent-pressed: rgba(96, 165, 250, 0.2);
+
+  --success: #34d399;
+  --on-success: #0b0f14;
+  --success-tint: rgba(52, 211, 153, 0.16);
+  --warning: #fbbf24;
+  --on-warning: #0b0f14;
+  --warning-tint: rgba(251, 191, 36, 0.18);
+  --error: #f87171;
+  --on-error: #0b0f14;
+  --error-tint: rgba(248, 113, 113, 0.16);
+  --info: #60a5fa;
+  --on-info: #0b0f14;
+  --info-tint: rgba(96, 165, 250, 0.14);
+
+  /* Interaction states - Following IBM Design & Industry Best Practices */
+  --hover-overlay: rgba(255, 255, 255, 0.08);
+  --pressed-overlay: rgba(255, 255, 255, 0.12);
+  --focus-ring: var(--accent);
+  --selected-bg: var(--accent-tint);
+
+  /* Legacy support */
+  --color-primary: var(--accent);
+  --color-secondary: #818cf8;
+  --color-accent: #c4b5fd;
+  --color-background: var(--bg);
+  --color-surface: var(--surface-1);
+  --color-text: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-border: var(--border);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-info: var(--info);
+}
+
+/* Custom scrollbar styling for webkit browsers */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #374151;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #6b7280;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* For Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #888 #f1f1f1;
+}
+
+.dark * {
+  scrollbar-color: #6b7280 #374151;
+}
+
+/* Workspace selection scrollbar — matches purple glassmorphism UI */
+.workspace-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 85, 247, 0.4) transparent;
+}
+
+.workspace-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.workspace-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.workspace-scroll::-webkit-scrollbar-thumb {
+  background: rgba(168, 85, 247, 0.3);
+  border-radius: 3px;
+}
+
+.workspace-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 85, 247, 0.5);
+}
+
+/* Dark mode body background */
+.dark body {
+  background-color: var(--bg);
+  color: var(--text-primary);
+}
+
+/* Apply theme background to body globally */
+body {
+  background-color: var(--bg);
+  color: var(--text-primary);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+/* Selective dark mode text overrides - be specific, not aggressive */
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-gray-700,
+.dark .text-black {
+  color: var(--text-primary);
+}
+
+.dark .text-gray-600,
+.dark .text-gray-500 {
+  color: var(--text-secondary);
+}
+
+.dark .text-gray-400 {
+  color: var(--text-tertiary);
+}
+
+.dark .text-gray-300 {
+  color: var(--text-tertiary);
+}
+
+/* Override background colors in dark mode */
+.dark .bg-white {
+  background-color: var(--surface-1);
+}
+
+.dark .bg-gray-50 {
+  background-color: var(--surface-2);
+}
+
+.dark .bg-gray-100 {
+  background-color: var(--surface-2);
+}
+
+.dark .bg-gray-200 {
+  background-color: var(--surface-3);
+}
+
+/* Override border colors in dark mode */
+.dark .border-gray-200,
+.dark .border-gray-300 {
+  border-color: var(--border);
+}
+
+/* Fix light mode - prevent dark mode colors (theme class is on <html>) */
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-800,
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-900 {
+  background-color: var(--surface-1) !important;
+}
+
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-700,
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-600 {
+  background-color: var(--surface-2) !important;
+}
+
+/* Force white backgrounds in light mode where dark backgrounds appear */
+:root:not(.dark)
+  :where(div, section, header, footer, main, aside, nav, article)[style*="background-color: rgb(55, 65, 81)"],
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background-color:#374151"],
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background: #374151"],
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="backgroundColor: '#374151'"] {
+  background-color: var(--surface-1) !important;
+  color: var(--text-primary) !important;
+}
+
+/* In light mode, only coerce accidental `text-white` on non-interactive text nodes. */
+:root:not(.dark) :where(div, span, p, li, td, th, label, small, code, pre, h1, h2, h3, h4, h5, h6).text-white {
+  color: var(--text-primary) !important;
+}
+
+/* Preserve text-white inside intentionally dark containers (.dark-surface).
+   Higher specificity (extra class) beats the rule above even with !important. */
+:root:not(.dark) .dark-surface :where(div, span, p, li, td, th, label, small, code, pre, h1, h2, h3, h4, h5, h6).text-white {
+  color: #ffffff !important;
+}
+
+/* Fix hover states - ensure text remains visible */
+:root:not(.dark) .hover\:bg-slate-100:hover,
+:root:not(.dark) .hover\:bg-gray-100:hover,
+:root:not(.dark) .hover\:bg-gray-200:hover {
+  color: var(--text-primary) !important;
+}
+
+/* Ensure all text in light mode uses proper colors */
+:root:not(.dark) .text-gray-600,
+:root:not(.dark) .text-gray-700,
+:root:not(.dark) .text-gray-800,
+:root:not(.dark) .text-gray-900 {
+  color: var(--text-primary) !important;
+}
+
+/* Semantic utility classes for consistent theming */
+.bg-surface {
+  background-color: var(--bg);
+}
+
+.bg-surface-1 {
+  background-color: var(--surface-1);
+}
+
+.bg-surface-2 {
+  background-color: var(--surface-2);
+}
+
+.bg-surface-3 {
+  background-color: var(--surface-3);
+}
+
+.bg-accent {
+  background-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-tertiary {
+  color: var(--text-tertiary);
+}
+
+.text-disabled {
+  color: var(--text-disabled);
+}
+
+.border-default {
+  border-color: var(--border);
+}
+
+.divider {
+  background-color: var(--divider);
+}
+
+/* Component patterns */
+.card {
+  background-color: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.panel {
+  background-color: var(--surface-1);
+  border: 1px solid var(--border);
+}
+
+.input-field {
+  background-color: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.input-field::placeholder {
+  color: var(--text-tertiary);
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-tint);
+}
+
+/* Button variants */
+.btn-primary {
+  background-color: var(--accent);
+  color: #ffffff;
+  border: none;
+}
+
+.btn-primary:hover {
+  background-color: #ffffff;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.btn-tonal {
+  background-color: var(--accent-tint);
+  color: var(--accent);
+  border: none;
+}
+
+.btn-tonal:hover {
+  background-color: #f3f4f6;
+  color: var(--accent);
+}
+
+.btn-outline {
+  background-color: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.btn-outline:hover {
+  background-color: #f3f4f6;
+  color: var(--accent);
+}
+
+/* Interaction states */
+.hover-overlay:hover {
+  background-color: var(--hover-overlay);
+}
+
+.selected {
+  background-color: var(--selected-bg);
+}
+
+/* Hover utilities for buttons and interactive elements */
+.hover-bg-overlay:hover {
+  background-color: var(--hover-overlay) !important;
+  transition: background-color var(--transition-fast) ease;
+}
+
+.hover-bg-surface-2:hover {
+  background-color: var(--surface-2);
+  transition: background-color var(--transition-fast) ease;
+}
+
+.hover-bg-surface-3:hover {
+  background-color: var(--surface-3);
+  transition: background-color var(--transition-fast) ease;
+}
+
+/* Button hover effects - Following Material Design & IBM Carbon principles */
+.btn-hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  transition: all var(--transition-fast) ease;
+}
+
+/* Scale effect for interactive elements */
+.hover-scale:hover {
+  transform: scale(1.02);
+  transition: transform var(--transition-fast) ease;
+}
+
+/* Brightness adjustment for colored buttons (IBM Carbon approach) */
+.hover-brightness:hover {
+  filter: brightness(1.1);
+  transition: filter var(--transition-fast) ease;
+}
+
+.dark .hover-brightness:hover {
+  filter: brightness(1.15);
+}
+
+/* Theme-aware utility classes (legacy support) */
+.bg-theme-surface {
+  background-color: var(--surface-1);
+}
+
+.bg-theme-background {
+  background-color: var(--bg);
+}
+
+.bg-theme-primary {
+  background-color: var(--accent);
+}
+
+.bg-theme-hover {
+  background-color: var(--bg);
+  opacity: 0.7;
+}
+
+.text-theme-primary {
+  color: var(--text-primary);
+}
+
+.text-theme-secondary {
+  color: var(--text-secondary);
+}
+
+.border-theme {
+  border-color: var(--border);
+}
+
+.hover-theme-surface:hover {
+  background-color: var(--surface-1);
+  filter: brightness(0.95);
+}
+
+/* Replace common Tailwind patterns with theme variables */
+.theme-panel {
+  background-color: var(--surface-1);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.theme-card {
+  background-color: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.theme-input {
+  background-color: #ffffff;
+  border: 1px solid var(--border);
+  color: #000000;
+}
+
+.theme-input::placeholder {
+  color: var(--text-tertiary);
+  opacity: 0.8;
+}
+
+.theme-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-tint);
+}
+
+.theme-button {
+  background-color: var(--surface-1);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  transition: all 0.2s;
+}
+
+.theme-button:hover {
+  background-color: var(--hover-overlay);
+}
+
+.theme-button-primary {
+  background-color: var(--accent);
+  color: var(--on-accent);
+  border: none;
+}
+
+.theme-button-primary:hover {
+  filter: brightness(1.1);
+}
+
+.theme-hover:hover {
+  background-color: var(--hover-overlay);
+}
+
+.theme-text-muted {
+  color: var(--text-secondary);
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Custom scrollbar utility classes */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db #f3f4f6;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f3f4f6;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Ensure body and html take full height */
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Dark mode background */
+.dark body {
+  background-color: var(--color-background);
+  color: var(--color-text);
+}
+
+/* Additional text utility classes */
+.text-accent {
+  color: var(--accent);
+}
+
+.text-success {
+  color: var(--success);
+}
+
+.text-warning {
+  color: var(--warning);
+}
+
+.text-info {
+  color: var(--info);
+}
+
+.text-error {
+  color: var(--error);
+}
+
+.hover-text-accent:hover {
+  color: var(--accent);
+}
+
+.hover-text-error:hover {
+  color: var(--error);
+}
+
+/* Ensure typed input text is always visible (avoid inheriting text-white on light backgrounds) */
+:where(
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  input[type="url"],
+  textarea,
+  select
+) {
+  color: var(--text-primary);
+  caret-color: var(--text-primary);
+}
+
+:where(
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  input[type="url"],
+  textarea
+)::placeholder {
+  color: var(--text-tertiary);
+  opacity: 0.9;
+}
+
+/* Theme-safe form controls (works across core UI + plugins) */
+:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(
+    [type="file"]
+  ) {
+  background-color: var(--surface-2) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border) !important;
+}
+
+:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(
+    [type="file"]
+  ):focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(
+    [type="file"]
+  )::placeholder {
+  color: var(--text-tertiary) !important;
+  opacity: 0.9;
+}
+
+:where(textarea) {
+  background-color: var(--surface-2) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Code editor textarea must keep its own dark theme colors.
+   caret-color was #000000 — invisible against this near-black background,
+   which is why the text cursor appeared to vanish while typing. */
+textarea.code-editor-textarea {
+  background-color: #1e1e1e !important;
+  color: #ffffff !important;
+  caret-color: #e879f9 !important;
+  border-color: transparent !important;
+}
+
+/* Top menu bar (File/Edit/View/Reasoner/...) hover styles */
+.ontocode-top-menu .ontocode-top-menu-button {
+  color: var(--text-primary);
+  cursor: pointer !important;
+}
+
+:root:not(.dark) .ontocode-top-menu .ontocode-top-menu-button:hover,
+:root:not(.dark) .ontocode-top-menu .ontocode-top-menu-button.is-open {
+  background-color: #f3f4f6 !important; /* light grey */
+  color: #7c3aed !important; /* purple-600 */
+}
+
+:root.dark .ontocode-top-menu .ontocode-top-menu-button:hover,
+:root.dark .ontocode-top-menu .ontocode-top-menu-button.is-open {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text-primary) !important;
+}
+
+.ontocode-top-menu .ontocode-top-menu-item {
+  color: var(--text-primary);
+  cursor: pointer !important;
+}
+
+.ontocode-top-menu .ontocode-top-menu-item:disabled,
+.ontocode-top-menu .ontocode-top-menu-button:disabled {
+  cursor: not-allowed;
+}
+
+:root:not(.dark) .ontocode-top-menu .ontocode-top-menu-item:hover {
+  background-color: #f3f4f6 !important;
+  color: #7c3aed !important;
+}
+
+:root.dark .ontocode-top-menu .ontocode-top-menu-item:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Icon buttons (e.g., Theme Settings) */
+.ontocode-icon-hover-accent {
+  color: var(--text-secondary);
+  cursor: pointer !important;
+}
+
+.ontocode-icon-hover-accent:disabled {
+  cursor: not-allowed;
+}
+
+:root:not(.dark) .ontocode-icon-hover-accent:hover {
+  background-color: #f3f4f6 !important; /* light grey */
+  color: #7c3aed !important; /* purple-600 */
+}
+
+:root.dark .ontocode-icon-hover-accent {
+  color: var(--text-secondary);
+}
+
+:root.dark .ontocode-icon-hover-accent:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Ensure buttons/links that explicitly use `text-white` remain white in light mode. */
+:root:not(.dark) :where(button, a).text-white {
+  color: #ffffff !important;
+}
+
+/* Resizable panel handles */
+.resize-handle {
+  background-color: var(--divider);
+}
+
+.resize-handle:hover {
+  background-color: var(--accent);
+}
+
+.resize-handle-grip {
+  background-color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
+.resize-handle:hover .resize-handle-grip {
+  background-color: var(--on-accent);
+  opacity: 1;
+}
+
+/* Common non-gray Tailwind colors used in the UI (make them theme-safe in dark mode) */
+.dark .bg-stone-50,
+.dark .bg-stone-100,
+.dark .bg-stone-200,
+.dark .bg-purple-50,
+.dark .bg-purple-100,
+.dark .bg-blue-50,
+.dark .bg-blue-100,
+.dark .bg-emerald-50,
+.dark .bg-emerald-100,
+.dark .bg-orange-50,
+.dark .bg-orange-100,
+.dark .bg-amber-50,
+.dark .bg-amber-100 {
+  background-color: var(--surface-2) !important;
+}
+
+.dark .bg-stone-300,
+.dark .bg-purple-200,
+.dark .bg-blue-200,
+.dark .bg-emerald-200,
+.dark .bg-orange-200,
+.dark .bg-amber-200 {
+  background-color: var(--surface-3) !important;
+}
+
+.dark .text-stone-900,
+.dark .text-stone-800,
+.dark .text-stone-700 {
+  color: var(--text-primary) !important;
+}
+
+.dark .text-purple-900,
+.dark .text-purple-800,
+.dark .text-purple-700,
+.dark .text-purple-600 {
+  color: var(--accent) !important;
+}
+
+.dark .text-blue-900,
+.dark .text-blue-800,
+.dark .text-blue-700,
+.dark .text-blue-600 {
+  color: var(--info) !important;
+}
+
+.dark .text-stone-600,
+.dark .text-stone-500 {
+  color: var(--text-secondary) !important;
+}
+
+.dark .text-stone-400,
+.dark .text-stone-300 {
+  color: var(--text-tertiary) !important;
+}
+
+.dark .hover\:bg-stone-50:hover,
+.dark .hover\:bg-stone-100:hover,
+.dark .hover\:bg-stone-200:hover,
+.dark .hover\:bg-purple-50:hover,
+.dark .hover\:bg-purple-100:hover,
+.dark .hover\:bg-blue-50:hover,
+.dark .hover\:bg-blue-100:hover {
+  background-color: var(--surface-3) !important;
+  color: var(--text-primary) !important;
+}
+
+.dark .hover\:text-purple-600:hover,
+.dark .hover\:text-purple-700:hover,
+.dark .hover\:text-purple-800:hover,
+.dark .group:hover .group-hover\:text-purple-500,
+.dark .group:hover .group-hover\:text-purple-700 {
+  color: var(--accent) !important;
+}
+
+/* Fix Tailwind hover bg/text variants in dark mode */
+.dark .hover\:bg-slate-100:hover,
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover,
+.dark .hover\:bg-gray-200:hover,
+.dark .hover\:bg-gray-300:hover {
+  background-color: var(--surface-3) !important;
+  color: var(--text-primary) !important;
+}
+
+.dark .hover\:text-gray-600:hover,
+.dark .hover\:text-gray-700:hover,
+.dark .hover\:text-gray-800:hover,
+.dark .hover\:text-gray-900:hover {
+  color: var(--text-primary) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVE — additive overrides only (desktop is untouched)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Tablet (≤ 1024px) ─────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  /* Reduce horizontal padding on containers */
+  .max-w-7xl { padding-left: 1rem; padding-right: 1rem; }
+
+  /* Plan details modal — stack cards vertically */
+  .md\:grid-cols-3 { grid-template-columns: 1fr 1fr !important; }
+
+  /* Project settings modal — reduce width */
+  .max-w-4xl { max-width: 95vw !important; }
+}
+
+/* ── Mobile (≤ 768px) ──────────────────────────────────────────────── */
+@media (max-width: 768px) {
+
+  /* --- Global layout tweaks --- */
+  .max-w-7xl { max-width: 100% !important; padding-left: 0.75rem; padding-right: 0.75rem; }
+
+  /* Top menu: scroll horizontally instead of clipping */
+  .ontocode-top-menu {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* --- ProjectDashboard header --- */
+  /* Stack header vertically: title row + actions row */
+  header .flex.justify-between.items-center {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  /* Title area — full width */
+  header .flex.items-center.gap-3:first-child {
+    width: 100%;
+  }
+
+  /* Shrink header title */
+  header h1.text-2xl { font-size: 1.25rem; }
+
+  /* Actions row — wrap buttons */
+  header .flex.items-center.gap-3:last-child {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  /* Make small action buttons more compact on mobile */
+  header .flex.items-center.gap-3:last-child > button,
+  header .flex.items-center.gap-3:last-child > a {
+    font-size: 0.7rem;
+    padding: 0.375rem 0.5rem;
+  }
+
+  /* Hide button text on very small screens, keep icons */
+  header .hidden.sm\:inline { display: none !important; }
+
+  /* --- Search bar + view controls --- */
+  .flex.justify-between.items-center.mb-6 {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+  .flex.justify-between.items-center.mb-6 .flex-1.max-w-lg {
+    max-width: 100%;
+  }
+  .flex.justify-between.items-center.mb-6 .flex.gap-2.ml-4 {
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+
+  /* --- Project grid — single column on mobile --- */
+  .grid.grid-cols-1.md\:grid-cols-2.lg\:grid-cols-3 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* --- Project card stats — wrap if needed --- */
+  .flex.items-center.gap-4.text-xs {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  /* --- Team members section --- */
+  .flex.items-center.justify-between.mb-6 {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  /* Team member row — stack on mobile */
+  .flex.items-center.justify-between.p-3 {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  /* Role badges + remove button — full width row */
+  .flex.items-center.justify-between.p-3 > .flex.items-center.gap-2:last-child {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  /* --- Section cards — reduce padding on mobile --- */
+  .bg-white.rounded-lg.shadow-sm.border.border-gray-200.p-6 {
+    padding: 1rem;
+  }
+
+  /* --- Plan details modal — single column on mobile --- */
+  .md\:grid-cols-3 { grid-template-columns: 1fr !important; }
+  .md\:grid-cols-4 { grid-template-columns: 1fr 1fr !important; }
+
+  /* Plan modal — full width */
+  .max-w-5xl { max-width: 95vw !important; }
+  .max-w-4xl { max-width: 95vw !important; }
+  .max-w-3xl { max-width: 95vw !important; }
+  .max-w-2xl { max-width: 95vw !important; }
+  .max-w-md  { max-width: 95vw !important; }
+  .max-w-sm  { max-width: 95vw !important; }
+
+  /* Modal content — reduce padding */
+  .p-8 { padding: 1rem; }
+  .p-6 { padding: 1rem; }
+  .p-5 { padding: 0.875rem; }
+
+  /* --- Workspace selection --- */
+  /* Stack workspace cards vertically */
+  .grid.grid-cols-1.md\:grid-cols-2 { grid-template-columns: 1fr !important; }
+  .grid.md\:grid-cols-2 { grid-template-columns: 1fr !important; }
+
+  /* --- Login / Signup forms --- */
+  .max-w-md.mx-4 { margin-left: 0.5rem; margin-right: 0.5rem; }
+
+  /* --- Toast notifications — full width on mobile --- */
+  .fixed.top-4.right-4 {
+    left: 0.75rem;
+    right: 0.75rem;
+    max-width: none;
+  }
+
+  /* --- Main editor Dashboard --- */
+  /* Sidebar: collapse when narrow and override arbitrary widths like w-[26rem] */
+  aside.w-80, aside.w-72, aside.w-64, aside[class*="w-[26rem]"], aside[class*="min-w-[24rem]"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    max-height: 40vh !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--border) !important;
+  }
+
+  /* Editor container: stack vertically below the sidebar */
+  main.flex.flex-1.overflow-hidden {
+    flex-direction: column !important;
+    overflow-y: auto !important;
+  }
+
+  /* --- File upload banner --- */
+  .bg-gradient-to-r.from-purple-600.to-blue-600 .max-w-7xl.mx-auto.flex {
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+
+  /* --- Invite member modal --- */
+  .fixed.inset-0 .bg-white.rounded-xl,
+  .fixed.inset-0 .bg-white.rounded-2xl,
+  .fixed.inset-0 .rounded-2xl.shadow-2xl,
+  .fixed.inset-0 .rounded-xl.shadow-2xl {
+    max-width: 95vw !important;
+    margin: 0.5rem;
+  }
+
+  /* --- Confirmation modals — reduce padding --- */
+  .fixed.inset-0 .p-6 { padding: 1rem; }
+  .fixed.inset-0 .p-8 { padding: 1rem; }
+
+  /* --- User guide modal content --- */
+  .max-h-\[70vh\] { max-height: 60vh; }
+  .max-h-\[80vh\] { max-height: 70vh; }
+  .max-h-\[90vh\] { max-height: 85vh; }
+
+  /* --- Plugin Marketplace grid --- */
+  .grid.grid-cols-2 { grid-template-columns: 1fr !important; }
+
+  /* --- DL Query / SPARQL panels --- */
+  .flex.flex-1.overflow-hidden {
+    flex-direction: column;
+  }
+}
+
+/* ── Small mobile (≤ 480px) ────────────────────────────────────────── */
+@media (max-width: 480px) {
+
+  /* Even tighter padding */
+  .max-w-7xl { padding-left: 0.5rem; padding-right: 0.5rem; }
+
+  /* Header — very compact */
+  header h1.text-2xl { font-size: 1.1rem; }
+  header .text-sm { font-size: 0.7rem; }
+
+  /* Header action buttons — icon-only mode */
+  header .flex.items-center.gap-3:last-child > button {
+    padding: 0.375rem;
+    font-size: 0;
+    gap: 0;
+  }
+  header .flex.items-center.gap-3:last-child > button > svg {
+    width: 16px;
+    height: 16px;
+  }
+  /* Keep logout text visible */
+  header .flex.items-center.gap-3:last-child > button.text-red-600 {
+    font-size: 0.7rem;
+    gap: 0.25rem;
+  }
+
+  /* Section headings — smaller */
+  .text-xl.font-semibold { font-size: 1rem; }
+
+  /* Project cards — tighter */
+  .border.border-gray-200.rounded-lg.p-4 { padding: 0.75rem; }
+
+  /* Team member avatar — slightly smaller */
+  .w-10.h-10 { width: 2rem; height: 2rem; font-size: 0.75rem; }
+
+  /* Plan details stats grid — 2 columns */
+  .grid.grid-cols-2.md\:grid-cols-4 { grid-template-columns: 1fr 1fr !important; }
+
+  /* Modal buttons — stack vertically */
+  .flex.gap-3 {
+    flex-direction: column;
+  }
+  .flex.gap-3 > button { width: 100%; }
+
+  /* Workspace selection card titles */
+  .text-2xl.font-bold { font-size: 1.25rem; }
+
+  /* Login/Signup form */
+  .w-full.max-w-md { max-width: 100%; }
+}

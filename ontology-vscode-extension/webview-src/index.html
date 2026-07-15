@@ -5,28 +5,129 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OntoCode - Ontology Editor</title>
+    <link rel="icon" type="image/png" href="/assets/ontocode-logo.png" />
+    <!-- CRITICAL: Block service workers BEFORE any other scripts load -->
+    <script>
+      // Prevent service worker registration in VSCode webview context
+      // This MUST run before ANY other script
+      (function() {
+        'use strict';
+        
+        // Suppress all service worker related errors and warnings
+        const originalError = console.error;
+        const originalWarn = console.warn;
+        const originalLog = console.log;
+        
+        console.error = function(...args) {
+          const msg = String(args[0] || '');
+          if (msg.includes('service worker') || msg.includes('ServiceWorker') || 
+              msg.includes('Could not register') || msg.includes('InvalidStateError') ||
+              msg.includes('Webview fatal error') || msg.includes('Failed to register')) {
+            return; // Completely suppress
+          }
+          originalError.apply(console, args);
+        };
+        
+        console.warn = function(...args) {
+          const msg = String(args[0] || '');
+          if (msg.includes('service worker') || msg.includes('ServiceWorker')) {
+            return; // Completely suppress
+          }
+          originalWarn.apply(console, args);
+        };
+        
+        console.log = function(...args) {
+          const msg = String(args[0] || '');
+          if (msg.includes('Webview fatal error') && msg.includes('service worker')) {
+            return; // Completely suppress
+          }
+          originalLog.apply(console, args);
+        };
+        
+        // Completely remove and block service worker API
+        if ('serviceWorker' in navigator) {
+          try {
+             // Only block register/getRegistration, but preserve enough shape for innocent checks
+             // Don't delete navigator.serviceWorker as some frameworks check for its existence
+            
+            // Override with a safe mock
+            const safeServiceWorker = {
+                register: () => Promise.resolve({
+                  installing: null,
+                  waiting: null,
+                  active: null,
+                  addEventListener: () => {},
+                  removeEventListener: () => {},
+                  unregister: () => Promise.resolve(true),
+                  update: () => Promise.resolve()
+                }),
+                getRegistration: () => Promise.resolve(undefined),
+                getRegistrations: () => Promise.resolve([]),
+                ready: new Promise(() => {}), // Never resolves
+                addEventListener: () => {},
+                removeEventListener: () => {},
+                controller: null
+            };
+
+            // Try to override property
+            try {
+                 Object.defineProperty(navigator, 'serviceWorker', {
+                  value: safeServiceWorker,
+                  configurable: true,
+                  writable: true // Allow overwrites if really needed
+                });
+            } catch(e) { console.error("Could not override serviceWorker property", e); }
+
+
+          } catch (e) {
+            // Fallback: just override methods if possible
+            try {
+              if (navigator.serviceWorker) {
+                  navigator.serviceWorker.register = () => Promise.resolve({});
+                  navigator.serviceWorker.getRegistration = () => Promise.resolve(undefined);
+                  navigator.serviceWorker.getRegistrations = () => Promise.resolve([]);
+              }
+            } catch (err) {
+              // Last resort: do nothing
+            }
+          }
+        }
+        
+        // Catch all unhandled promise rejections
+        window.addEventListener('unhandledrejection', function(event) {
+          if (event.reason) {
+            const msg = String(event.reason.message || event.reason || '');
+            if (msg.includes('service worker') || msg.includes('ServiceWorker') ||
+                msg.includes('Could not register') || msg.includes('InvalidStateError')) {
+              event.preventDefault();
+              event.stopPropagation();
+              return false;
+            }
+          }
+        }, true);
+        
+        // Also catch synchronous errors
+        window.addEventListener('error', function(event) {
+          if (event.message) {
+            const msg = String(event.message);
+            if (msg.includes('service worker') || msg.includes('ServiceWorker') ||
+                msg.includes('Could not register') || msg.includes('InvalidStateError')) {
+              event.preventDefault();
+              event.stopPropagation();
+              return false;
+            }
+          }
+        }, true);
+      })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/vis-network/styles/vis-network.min.css" type="text/css" />
-  <script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.546.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "vis-network": "https://unpkg.com/vis-network/standalone/umd/vis-network.min.js",
-    "path": "https://aistudiocdn.com/path@^0.12.7",
-    "axios": "https://aistudiocdn.com/axios@^1.12.2",
-    "fs": "https://aistudiocdn.com/fs@^0.0.1-security",
-    "form-data": "https://aistudiocdn.com/form-data@^4.0.4",
-    "vscode": "https://aistudiocdn.com/vscode@^1.1.37"
-  }
-}
-</script>
+    <!-- Load vis-network globally for ReasoningVisualizer component -->
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 <link rel="stylesheet" href="/index.css">
 </head>
-  <body class="bg-gray-100">
-    <div id="root"></div>
+  <body class="bg-gray-100 h-screen overflow-hidden">
+    <div id="root" class="h-full flex flex-col overflow-hidden"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>

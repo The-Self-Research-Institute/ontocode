@@ -1,0 +1,215 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns="http://www.example.org/university#"
+     xml:base="http://www.example.org/university"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:swrl="http://www.w3.org/2003/11/swrl#"
+     xmlns:swrlb="http://www.w3.org/2003/11/swrlb#">
+    
+    <owl:Ontology rdf:about="http://www.example.org/university">
+        <rdfs:label>University Test Ontology</rdfs:label>
+        <rdfs:comment>Test ontology for SWRL Editor Plugin testing. Domain: University with students, professors, courses, and departments.</rdfs:comment>
+        <owl:versionInfo>1.0.0</owl:versionInfo>
+    </owl:Ontology>
+
+    <!-- ======================== -->
+    <!-- CLASSES                  -->
+    <!-- ======================== -->
+
+    <owl:Class rdf:about="http://www.example.org/university#Person">
+        <rdfs:label>Person</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/university#Student">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/university#Person"/>
+        <rdfs:label>Student</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/university#UndergraduateStudent">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/university#Student"/>
+        <rdfs:label>Undergraduate Student</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/university#GraduateStudent">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/university#Student"/>
+        <rdfs:label>Graduate Student</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/university#HonorsStudent">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/university#Student"/>
+        <rdfs:label>Honors Student</rdfs:label>
+        <rdfs:comment>Students with GPA above 3.75</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/university#Professor">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/university#Person"/>
+        <rdfs:label>Professor</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/university#Course">
+        <rdfs:label>Course</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/university#AdvancedCourse">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/university#Course"/>
+        <rdfs:label>Advanced Course</rdfs:label>
+        <rdfs:comment>Courses with level 500 or above</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/university#Department">
+        <rdfs:label>Department</rdfs:label>
+    </owl:Class>
+
+    <!-- ======================== -->
+    <!-- OBJECT PROPERTIES        -->
+    <!-- ======================== -->
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/university#enrolledIn">
+        <rdfs:domain rdf:resource="http://www.example.org/university#Student"/>
+        <rdfs:range rdf:resource="http://www.example.org/university#Course"/>
+        <rdfs:label>enrolled in</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/university#teaches">
+        <rdfs:domain rdf:resource="http://www.example.org/university#Professor"/>
+        <rdfs:range rdf:resource="http://www.example.org/university#Course"/>
+        <rdfs:label>teaches</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/university#advisedBy">
+        <rdfs:domain rdf:resource="http://www.example.org/university#Student"/>
+        <rdfs:range rdf:resource="http://www.example.org/university#Professor"/>
+        <rdfs:label>advised by</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/university#worksIn">
+        <rdfs:domain rdf:resource="http://www.example.org/university#Person"/>
+        <rdfs:range rdf:resource="http://www.example.org/university#Department"/>
+        <rdfs:label>works in</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/university#hasMentor">
+        <rdfs:domain rdf:resource="http://www.example.org/university#Student"/>
+        <rdfs:range rdf:resource="http://www.example.org/university#Professor"/>
+        <rdfs:label>has mentor</rdfs:label>
+    </owl:ObjectProperty>
+
+    <!-- ======================== -->
+    <!-- DATA PROPERTIES          -->
+    <!-- ======================== -->
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/university#age">
+        <rdfs:domain rdf:resource="http://www.example.org/university#Person"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+        <rdfs:label>age</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/university#gpa">
+        <rdfs:domain rdf:resource="http://www.example.org/university#Student"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#float"/>
+        <rdfs:label>GPA</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/university#credits">
+        <rdfs:domain rdf:resource="http://www.example.org/university#Course"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+        <rdfs:label>credits</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/university#name">
+        <rdfs:domain rdf:resource="http://www.example.org/university#Person"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+        <rdfs:label>name</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/university#courseLevel">
+        <rdfs:domain rdf:resource="http://www.example.org/university#Course"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+        <rdfs:label>course level</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <!-- ======================== -->
+    <!-- INDIVIDUALS              -->
+    <!-- ======================== -->
+
+    <!-- Students -->
+    <owl:NamedIndividual rdf:about="http://www.example.org/university#JohnDoe">
+        <rdf:type rdf:resource="http://www.example.org/university#UndergraduateStudent"/>
+        <name rdf:datatype="http://www.w3.org/2001/XMLSchema#string">JohnDoe</name>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">20</age>
+        <gpa rdf:datatype="http://www.w3.org/2001/XMLSchema#float">3.8</gpa>
+        <enrolledIn rdf:resource="http://www.example.org/university#CS101"/>
+        <enrolledIn rdf:resource="http://www.example.org/university#CS501"/>
+        <advisedBy rdf:resource="http://www.example.org/university#DrJohnson"/>
+        <rdfs:label>John Doe</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/university#JaneSmith">
+        <rdf:type rdf:resource="http://www.example.org/university#GraduateStudent"/>
+        <name rdf:datatype="http://www.w3.org/2001/XMLSchema#string">JaneSmith</name>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">24</age>
+        <gpa rdf:datatype="http://www.w3.org/2001/XMLSchema#float">3.9</gpa>
+        <enrolledIn rdf:resource="http://www.example.org/university#CS501"/>
+        <advisedBy rdf:resource="http://www.example.org/university#DrJohnson"/>
+        <rdfs:label>Jane Smith</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/university#MikeWilson">
+        <rdf:type rdf:resource="http://www.example.org/university#UndergraduateStudent"/>
+        <name rdf:datatype="http://www.w3.org/2001/XMLSchema#string">MikeWilson</name>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">19</age>
+        <gpa rdf:datatype="http://www.w3.org/2001/XMLSchema#float">3.2</gpa>
+        <enrolledIn rdf:resource="http://www.example.org/university#CS101"/>
+        <rdfs:label>Mike Wilson</rdfs:label>
+    </owl:NamedIndividual>
+
+    <!-- Professors -->
+    <owl:NamedIndividual rdf:about="http://www.example.org/university#DrJohnson">
+        <rdf:type rdf:resource="http://www.example.org/university#Professor"/>
+        <name rdf:datatype="http://www.w3.org/2001/XMLSchema#string">DrJohnson</name>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">45</age>
+        <teaches rdf:resource="http://www.example.org/university#CS501"/>
+        <worksIn rdf:resource="http://www.example.org/university#ComputerScience"/>
+        <rdfs:label>Dr. Johnson</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/university#DrLee">
+        <rdf:type rdf:resource="http://www.example.org/university#Professor"/>
+        <name rdf:datatype="http://www.w3.org/2001/XMLSchema#string">DrLee</name>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">38</age>
+        <teaches rdf:resource="http://www.example.org/university#CS101"/>
+        <worksIn rdf:resource="http://www.example.org/university#ComputerScience"/>
+        <rdfs:label>Dr. Lee</rdfs:label>
+    </owl:NamedIndividual>
+
+    <!-- Courses -->
+    <owl:NamedIndividual rdf:about="http://www.example.org/university#CS101">
+        <rdf:type rdf:resource="http://www.example.org/university#Course"/>
+        <rdfs:label>CS 101 - Intro to CS</rdfs:label>
+        <credits rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">3</credits>
+        <courseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">100</courseLevel>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/university#CS501">
+        <rdf:type rdf:resource="http://www.example.org/university#Course"/>
+        <rdfs:label>CS 501 - Advanced Algorithms</rdfs:label>
+        <credits rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">4</credits>
+        <courseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">500</courseLevel>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/university#CS301">
+        <rdf:type rdf:resource="http://www.example.org/university#Course"/>
+        <rdfs:label>CS 301 - Data Structures</rdfs:label>
+        <credits rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">3</credits>
+        <courseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">300</courseLevel>
+    </owl:NamedIndividual>
+
+    <!-- Departments -->
+    <owl:NamedIndividual rdf:about="http://www.example.org/university#ComputerScience">
+        <rdf:type rdf:resource="http://www.example.org/university#Department"/>
+        <rdfs:label>Computer Science Department</rdfs:label>
+    </owl:NamedIndividual>
+
+</rdf:RDF>

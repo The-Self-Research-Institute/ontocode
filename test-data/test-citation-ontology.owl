@@ -1,0 +1,197 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns="http://www.example.org/cardiology#"
+     xml:base="http://www.example.org/cardiology"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:dcterms="http://purl.org/dc/terms/">
+    
+    <owl:Ontology rdf:about="http://www.example.org/cardiology">
+        <rdfs:label>Cardiovascular Citation Test Ontology</rdfs:label>
+        <rdfs:comment>Test ontology for Citation Plugin testing. Domain: Cardiovascular with classes and individuals annotated with citation references.</rdfs:comment>
+        <owl:versionInfo>1.0.0</owl:versionInfo>
+        <dc:creator>OntoCode Test Data</dc:creator>
+    </owl:Ontology>
+
+    <!-- ============================= -->
+    <!-- ANNOTATION PROPERTIES         -->
+    <!-- ============================= -->
+
+    <owl:AnnotationProperty rdf:about="http://purl.org/dc/elements/1.1/creator"/>
+    <owl:AnnotationProperty rdf:about="http://purl.org/dc/elements/1.1/description"/>
+    <owl:AnnotationProperty rdf:about="http://purl.org/dc/terms/bibliographicCitation"/>
+    <owl:AnnotationProperty rdf:about="http://purl.org/dc/terms/references"/>
+
+    <owl:AnnotationProperty rdf:about="http://www.example.org/cardiology#referenceSource">
+        <rdfs:label>reference source</rdfs:label>
+        <rdfs:comment>Links an ontology element to a citation key (BibTeX key)</rdfs:comment>
+    </owl:AnnotationProperty>
+
+    <owl:AnnotationProperty rdf:about="http://www.example.org/cardiology#citationDOI">
+        <rdfs:label>citation DOI</rdfs:label>
+    </owl:AnnotationProperty>
+
+    <!-- ======================== -->
+    <!-- CLASSES                  -->
+    <!-- ======================== -->
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#CardiovascularMeasurement">
+        <rdfs:label>Cardiovascular Measurement</rdfs:label>
+        <rdfs:comment>Abstract base class for all cardiovascular measurements</rdfs:comment>
+        <referenceSource>whelton2018guidelines</referenceSource>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#BloodPressure">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/cardiology#CardiovascularMeasurement"/>
+        <rdfs:label>Blood Pressure</rdfs:label>
+        <rdfs:comment>Blood pressure measurement in mmHg</rdfs:comment>
+        <referenceSource>whelton2018guidelines</referenceSource>
+        <citationDOI>10.1016/j.jacc.2017.11.006</citationDOI>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#SystolicBP">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/cardiology#BloodPressure"/>
+        <rdfs:label>Systolic Blood Pressure</rdfs:label>
+        <referenceSource>williams2018esc</referenceSource>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#DiastolicBP">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/cardiology#BloodPressure"/>
+        <rdfs:label>Diastolic Blood Pressure</rdfs:label>
+        <referenceSource>williams2018esc</referenceSource>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#HeartRate">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/cardiology#CardiovascularMeasurement"/>
+        <rdfs:label>Heart Rate</rdfs:label>
+        <rdfs:comment>Heart rate in beats per minute (bpm)</rdfs:comment>
+        <referenceSource>fox2007resting</referenceSource>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#ECG">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/cardiology#CardiovascularMeasurement"/>
+        <rdfs:label>Electrocardiogram</rdfs:label>
+        <rdfs:comment>ECG/EKG recording</rdfs:comment>
+        <referenceSource>kligfield2007ecg</referenceSource>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#CardiovascularCondition">
+        <rdfs:label>Cardiovascular Condition</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#Hypertension">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/cardiology#CardiovascularCondition"/>
+        <rdfs:label>Hypertension</rdfs:label>
+        <referenceSource>whelton2018guidelines</referenceSource>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#Arrhythmia">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/cardiology#CardiovascularCondition"/>
+        <rdfs:label>Arrhythmia</rdfs:label>
+        <referenceSource>january2014aha</referenceSource>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#AtrialFibrillation">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/cardiology#Arrhythmia"/>
+        <rdfs:label>Atrial Fibrillation</rdfs:label>
+        <referenceSource>january2014aha</referenceSource>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/cardiology#Patient">
+        <rdfs:label>Patient</rdfs:label>
+    </owl:Class>
+
+    <!-- ======================== -->
+    <!-- OBJECT PROPERTIES        -->
+    <!-- ======================== -->
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/cardiology#hasCondition">
+        <rdfs:domain rdf:resource="http://www.example.org/cardiology#Patient"/>
+        <rdfs:range rdf:resource="http://www.example.org/cardiology#CardiovascularCondition"/>
+        <rdfs:label>has condition</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/cardiology#hasMeasurement">
+        <rdfs:domain rdf:resource="http://www.example.org/cardiology#Patient"/>
+        <rdfs:range rdf:resource="http://www.example.org/cardiology#CardiovascularMeasurement"/>
+        <rdfs:label>has measurement</rdfs:label>
+    </owl:ObjectProperty>
+
+    <!-- ======================== -->
+    <!-- DATA PROPERTIES          -->
+    <!-- ======================== -->
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/cardiology#value">
+        <rdfs:domain rdf:resource="http://www.example.org/cardiology#CardiovascularMeasurement"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>measurement value</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/cardiology#unit">
+        <rdfs:domain rdf:resource="http://www.example.org/cardiology#CardiovascularMeasurement"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+        <rdfs:label>unit of measurement</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/cardiology#patientName">
+        <rdfs:domain rdf:resource="http://www.example.org/cardiology#Patient"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+        <rdfs:label>patient name</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <!-- ======================== -->
+    <!-- INDIVIDUALS              -->
+    <!-- ======================== -->
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/cardiology#PatientA">
+        <rdf:type rdf:resource="http://www.example.org/cardiology#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">John Doe</patientName>
+        <hasCondition rdf:resource="http://www.example.org/cardiology#HypertensionCase1"/>
+        <hasMeasurement rdf:resource="http://www.example.org/cardiology#BP_Reading_1"/>
+        <hasMeasurement rdf:resource="http://www.example.org/cardiology#HR_Reading_1"/>
+        <rdfs:label>Patient A</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/cardiology#PatientB">
+        <rdf:type rdf:resource="http://www.example.org/cardiology#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Jane Smith</patientName>
+        <hasCondition rdf:resource="http://www.example.org/cardiology#AFibCase1"/>
+        <hasMeasurement rdf:resource="http://www.example.org/cardiology#ECG_Reading_1"/>
+        <rdfs:label>Patient B</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/cardiology#HypertensionCase1">
+        <rdf:type rdf:resource="http://www.example.org/cardiology#Hypertension"/>
+        <rdfs:label>Hypertension Case 1</rdfs:label>
+        <referenceSource>whelton2018guidelines</referenceSource>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/cardiology#AFibCase1">
+        <rdf:type rdf:resource="http://www.example.org/cardiology#AtrialFibrillation"/>
+        <rdfs:label>A-Fib Case 1</rdfs:label>
+        <referenceSource>january2014aha</referenceSource>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/cardiology#BP_Reading_1">
+        <rdf:type rdf:resource="http://www.example.org/cardiology#SystolicBP"/>
+        <value rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">150.0</value>
+        <unit rdf:datatype="http://www.w3.org/2001/XMLSchema#string">mmHg</unit>
+        <rdfs:label>BP Reading 1</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/cardiology#HR_Reading_1">
+        <rdf:type rdf:resource="http://www.example.org/cardiology#HeartRate"/>
+        <value rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">82.0</value>
+        <unit rdf:datatype="http://www.w3.org/2001/XMLSchema#string">bpm</unit>
+        <rdfs:label>Heart Rate Reading 1</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/cardiology#ECG_Reading_1">
+        <rdf:type rdf:resource="http://www.example.org/cardiology#ECG"/>
+        <rdfs:label>ECG Reading 1</rdfs:label>
+        <referenceSource>kligfield2007ecg</referenceSource>
+    </owl:NamedIndividual>
+
+</rdf:RDF>

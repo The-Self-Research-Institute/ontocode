@@ -1,0 +1,17 @@
+{
+  "name": "ontocode-scripts",
+  "version": "1.0.0",
+  "description": "Database cleanup and plugin management scripts for OntoCode",
+  "scripts": {
+    "clear-all": "node clear-databases.js",
+    "clear-mongo": "node clear-mongodb.js",
+    "plugins": "node manage-plugins.js",
+    "plugins:build": "node manage-plugins.js build",
+    "plugins:install": "node manage-plugins.js install",
+    "plugins:list": "node manage-plugins.js list",
+    "plugins:clean": "node manage-plugins.js clean"
+  },
+  "dependencies": {
+    "mongodb": "^6.21.0"
+  }
+}

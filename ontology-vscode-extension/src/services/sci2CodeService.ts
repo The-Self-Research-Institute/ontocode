@@ -27,7 +27,7 @@ interface Sci2CodeAPI {
 
 class Sci2CodeService {
   private api: Sci2CodeAPI | null = null;
-  private extensionId = 'SelfResearchInstitute.sci2code'; // IMPORTANT: Update with actual extension ID
+  private extensionId = 'self.ontocode-extension'; // Use OntoCode's own extension ID
   private initializationAttempted = false;
 
   async initialize(): Promise<boolean> {
@@ -154,6 +154,38 @@ class Sci2CodeService {
     }
   }
 
+  convertToBibTeX(item: CitationItem): string {
+    const key = item.key.replace(/[^a-zA-Z0-9]/g, '');
+    const year = item.date ? (item.date.match(/\d{4}/)?.[0] || '2025') : '2025';
+    const authors = item.creators?.map(c => `${c.lastName}, ${c.firstName}`).join(' and ') || 'Unknown';
+    
+    let bib = `@${item.itemType === 'journalArticle' ? 'article' : 'misc'}{${key}${year},\n`;
+    bib += `  title = {${item.title}},\n`;
+    bib += `  author = {${authors}},\n`;
+    if (year) bib += `  year = {${year}},\n`;
+    if (item.publicationTitle) bib += `  journal = {${item.publicationTitle}},\n`;
+    if (item.doi) bib += `  doi = {${item.doi}},\n`;
+    if (item.url) bib += `  url = {${item.url}},\n`;
+    bib += `}\n`;
+    return bib;
+  }
+
+  convertToCFFReference(item: CitationItem): any {
+    const year = item.date ? parseInt(item.date.match(/\d{4}/)?.[0] || '2025') : 2025;
+    
+    return {
+      type: item.itemType === 'journalArticle' ? 'article' : 'generic',
+      title: item.title,
+      authors: item.creators?.map(c => ({
+        'family-names': c.lastName,
+        'given-names': c.firstName
+      })) || [],
+      year: year,
+      doi: item.doi,
+      url: item.url
+    };
+  }
+
   async formatCitationForOntology(key: string, format: 'turtle' | 'rdfxml' = 'turtle'): Promise<string | null> {
     if (!this.api) {
       await this.initialize();
@@ -170,6 +202,72 @@ class Sci2CodeService {
       vscode.window.showErrorMessage(`Failed to format citation: ${error}`);
       return null;
     }
+  }
+
+  formatManualCitation(item: CitationItem, format: 'turtle' | 'rdfxml' = 'turtle'): string {
+    const key = item.key.replace(/[^a-zA-Z0-9]/g, '');
+    const authors = item.creators?.map(c => `${c.firstName} ${c.lastName}`).join(', ') || 'Unknown';
+    const year = item.date ? (item.date.match(/\d{4}/)?.[0] || '') : '';
+    
+    if (format === 'turtle') {
+      let ttl = `@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n`;
+      ttl += `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n`;
+      ttl += `@prefix owl: <http://www.w3.org/2002/07/owl#> .\n`;
+      ttl += `@prefix dc: <http://purl.org/dc/elements/1.1/> .\n`;
+      ttl += `@prefix foaf: <http://xmlns.com/foaf/0.1/> .\n`;
+      ttl += `@prefix prov: <http://www.w3.org/ns/prov#> .\n`;
+      ttl += `@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n`;
+      ttl += `###  Manual Citation: ${item.title}\n`;
+      ttl += `<urn:citation:${key}> rdf:type owl:NamedIndividual ,\n`;
+      ttl += `         prov:Entity ;\n`;
+      ttl += `    dc:title "${this.escapeTurtle(item.title)}" ;\n`;
+      ttl += `    dc:creator "${this.escapeTurtle(authors)}" ;\n`;
+      if (year) ttl += `    dc:date "${year}"^^xsd:gYear ;\n`;
+      if (item.doi) ttl += `    dc:identifier "doi:${this.escapeTurtle(item.doi)}" ;\n`;
+      if (item.url) ttl += `    foaf:homepage <${item.url}> ;\n`;
+      ttl += `    rdfs:comment "Manually added citation" .\n`;
+      return ttl;
+    } else {
+      // Generate complete RDF/XML document with proper namespace declarations
+      let xml = `<?xml version="1.0"?>\n`;
+      xml += `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n`;
+      xml += `         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n`;
+      xml += `         xmlns:owl="http://www.w3.org/2002/07/owl#"\n`;
+      xml += `         xmlns:dc="http://purl.org/dc/elements/1.1/"\n`;
+      xml += `         xmlns:foaf="http://xmlns.com/foaf/0.1/"\n`;
+      xml += `         xmlns:prov="http://www.w3.org/ns/prov#"\n`;
+      xml += `         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">\n\n`;
+      xml += `    <!-- Manual Citation: ${this.escapeXml(item.title)} -->\n`;
+      xml += `    <owl:NamedIndividual rdf:about="urn:citation:${key}">\n`;
+      xml += `        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
+      xml += `        <dc:title>${this.escapeXml(item.title)}</dc:title>\n`;
+      xml += `        <dc:creator>${this.escapeXml(authors)}</dc:creator>\n`;
+      if (year) xml += `        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
+      if (item.doi) xml += `        <dc:identifier>doi:${this.escapeXml(item.doi)}</dc:identifier>\n`;
+      if (item.url) xml += `        <foaf:homepage rdf:resource="${this.escapeXml(item.url)}"/>\n`;
+      xml += `        <rdfs:comment>Manually added citation</rdfs:comment>\n`;
+      xml += `    </owl:NamedIndividual>\n`;
+      xml += `</rdf:RDF>`;
+      return xml;
+    }
+  }
+
+  private escapeTurtle(str: string): string {
+    return str
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\t/g, '\\t');
+  }
+
+  private escapeXml(str: string): string {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
   }
 
   isAvailable(): boolean {

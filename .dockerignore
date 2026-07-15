@@ -1,0 +1,107 @@
+# Ignore files that don't need to be in Docker images
+
+# Git
+.git/
+.gitignore
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+.eclipse/
+.settings/
+
+# Build artifacts
+**/target/
+**/build/
+**/dist/
+**/out/
+**/bin/
+
+# Logs
+**/logs/
+**/*.log
+
+# Node modules
+**/node_modules/
+**/yarn.lock
+
+# Exclude package-lock.json from most places, but KEEP it for extension and webview
+**/package-lock.json
+!ontology-vscode-extension/package-lock.json
+!ontology-vscode-extension/webview-src/package-lock.json
+
+# VS Code Extension artifacts (exclude build artifacts but keep source)
+ontology-vscode-extension/node_modules/
+ontology-vscode-extension/dist/
+ontology-vscode-extension/out/
+ontology-vscode-extension/.vscode-test/
+ontology-vscode-extension/.vscode-test-web/
+ontology-vscode-extension/**/*.vsix
+
+# Webview artifacts (exclude node_modules and dist but keep source)
+ontology-vscode-extension/webview-src/node_modules/
+ontology-vscode-extension/webview-src/dist/
+
+# Documentation and markdown files (keep only in source, not in containers)
+*.md
+!README.md
+
+# Scripts (not needed in containers except for plugin-init)
+scripts/*
+!scripts/package.json
+!scripts/manage-plugins.js
+k8s/
+
+# Test files
+**/src/test/
+**/*Test.java
+**/*Tests.java
+
+# Configuration that will be provided via environment variables
+**/.env
+**/.env.*
+# Exception: the webapp's build-time env MUST be in the Docker context so
+# `vite build` in Dockerfile.webapp bakes in VITE_CLOUD_* (dev API host, publishable
+# Stripe key — no secrets). Without this, the build falls back to the prod default
+# (ontocodeapi) regardless of the file's contents.
+!ontology-vscode-extension/webview-src/.env.production
+**/application-local.properties
+**/application-dev.properties
+
+# Backup files
+**/backups/
+**/data/
+
+# Docker files (don't copy into images)
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.swp
+*.bak
+*~
+
+# Maven wrapper (keep only what's needed)
+**/.mvn/
+
+# Plugin build artifacts (keep source code, exclude build outputs)
+# The plugin-init Dockerfile needs plugin source code to build them
+plugins/**/node_modules/
+plugins/**/dist/
+plugins/**/build/
+plugins/**/*.log
+
+# YJS server (separate service, not in Java containers)
+yjs-websocket-server/
+
+# Note: Service directories ARE included in build context
+# The Dockerfiles handle copying only what's needed

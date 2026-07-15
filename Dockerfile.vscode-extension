@@ -1,0 +1,109 @@
+# Multi-stage build for OntoCode VS Code Extension with Web Server
+# Stage 1: Build the extension
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY ontology-vscode-extension/package*.json ./
+
+# Install dependencies with network retry configuration
+RUN npm config set fetch-retries 10 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 300000 && \
+    npm config set fetch-timeout 300000 && \
+    npm config set maxsockets 15 && \
+  sh -c 'for attempt in 1 2 3; do npm ci && exit 0; echo "npm ci failed, retrying ($$attempt/3)..."; done; exit 1'
+
+# Copy source code
+COPY ontology-vscode-extension ./
+
+# Install webview dependencies (required for bundle:all)
+RUN cd webview-src && \
+    npm config set fetch-retries 10 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 300000 && \
+    npm config set fetch-timeout 300000 && \
+    npm config set maxsockets 15 && \
+  sh -c 'for attempt in 1 2 3; do npm ci && exit 0; echo "webview npm ci failed, retrying ($$attempt/3)..."; done; exit 1'
+
+# Build the extension and webview
+RUN npm run bundle:all
+
+# Clean up build-only dependencies to reduce final image size
+# Keep only production dependencies needed at runtime
+RUN rm -rf webview-src/node_modules \
+    && npm prune --production \
+    && rm -rf src/ webview-src/components/ webview-src/contexts/ \
+              webview-src/services/ webview-src/utils/ \
+              webview-src/*.tsx webview-src/*.ts webview-src/*.css \
+              webview-src/vite.config.ts webview-src/tsconfig.json \
+              backend-examples/ test-collaboration.html out.txt \
+              webpack.*.cjs check-bundle-size.js tsconfig*.json \
+              *.md .eslintrc* .prettierrc*
+
+# Stage 2: Runtime with VS Code Web Server
+FROM node:22-alpine
+
+WORKDIR /extension
+
+# Install VS Code test-web globally with network retry configuration
+RUN npm config set fetch-retries 10 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 300000 && \
+    npm config set maxsockets 15 && \
+    npm install -g @vscode/test-web && \
+    npm cache clean --force
+
+# Copy only the built extension (pruned) from builder stage
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/dist/ ./dist/
+COPY --from=builder /app/node_modules/ ./node_modules/
+COPY --from=builder /app/webview-src/dist/ ./webview-src/dist/
+
+# Pre-download VS Code Web assets at build time so the container doesn't need internet access
+# Then patch the Extension Host CSP to allow HTTP connections to external API servers
+RUN mkdir -p /workspace/projects && \
+    vscode-test-web --browserType=none --host=0.0.0.0 --port=3001 \
+      --extensionDevelopmentPath=/extension /workspace/projects & \
+    SERVER_PID=$!; \
+    echo "Waiting for VS Code Web server to be fully ready..."; \
+    for i in $(seq 1 300); do \
+      if wget -q --spider http://127.0.0.1:3001/ 2>/dev/null; then \
+        echo "Server ready after ${i}s"; \
+        break; \
+      fi; \
+      sleep 1; \
+    done; \
+    kill $SERVER_PID 2>/dev/null || true; wait $SERVER_PID 2>/dev/null || true; \
+    echo "Patching CSP in all Extension Host iframe files..."; \
+    find / -name "webWorkerExtensionHostIframe.html" 2>/dev/null | while read f; do \
+      sed -i "s|connect-src 'self' https: wss: http://localhost:\* http://127.0.0.1:\* ws://localhost:\* ws://127.0.0.1:\*|connect-src 'self' http: https: wss: ws: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*|g" "$f"; \
+      echo "Patched: $f"; \
+    done; \
+    echo "CSP patch complete."
+
+# Copy and prepare the entrypoint script (fallback CSP patch for any re-downloads)
+COPY --from=builder /app/docker-entrypoint.sh /entrypoint.sh
+RUN dos2unix /entrypoint.sh 2>/dev/null || sed -i 's/\r$//' /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Create directory for workspace data (will be mounted via volume)
+# Ensure proper permissions for the workspace folder
+RUN mkdir -p /workspace/projects && \
+    chmod -R 755 /workspace
+
+# Expose port for VS Code web server
+EXPOSE 3000
+
+# Health check - verify extension files are present
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD wget --quiet --tries=1 --spider http://localhost:3000/ || exit 1
+
+# Environment variables
+ENV VSCODE_WEB_HOST=0.0.0.0
+ENV VSCODE_WEB_PORT=3000
+
+# Default command: Use entrypoint that patches Extension Host CSP before starting
+ENTRYPOINT ["/entrypoint.sh"]

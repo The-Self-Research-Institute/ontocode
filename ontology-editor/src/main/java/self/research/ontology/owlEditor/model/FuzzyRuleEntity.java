@@ -1,0 +1,44 @@
+package self.research.ontology.owlEditor.model;
+
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+
+import java.util.Date;
+
+@Document("fuzzy_rules")
+public class FuzzyRuleEntity {
+
+    @Id
+    private String id;
+    private String projectId;
+    private String name;
+    private String condition;
+    private String action;
+    private boolean enabled = true;
+    private Date createdAt = new Date();
+    private Date updatedAt = new Date();
+
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+
+    public String getProjectId() { return projectId; }
+    public void setProjectId(String projectId) { this.projectId = projectId; }
+
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+
+    public String getCondition() { return condition; }
+    public void setCondition(String condition) { this.condition = condition; }
+
+    public String getAction() { return action; }
+    public void setAction(String action) { this.action = action; }
+
+    public boolean isEnabled() { return enabled; }
+    public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    public Date getCreatedAt() { return createdAt; }
+    public void setCreatedAt(Date createdAt) { this.createdAt = createdAt; }
+
+    public Date getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(Date updatedAt) { this.updatedAt = updatedAt; }
+}

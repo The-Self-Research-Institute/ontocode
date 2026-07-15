@@ -1,0 +1,256 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns="http://www.example.org/healthcare#"
+     xml:base="http://www.example.org/healthcare"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+    
+    <owl:Ontology rdf:about="http://www.example.org/healthcare">
+        <rdfs:label>Healthcare Fuzzy Test Ontology</rdfs:label>
+        <rdfs:comment>Test ontology for Fuzzy Ontology Plugin testing. Domain: Healthcare with patients, diagnoses, and health metrics suitable for fuzzy membership assignment.</rdfs:comment>
+        <owl:versionInfo>1.0.0</owl:versionInfo>
+    </owl:Ontology>
+
+    <!-- ======================== -->
+    <!-- CLASSES                  -->
+    <!-- ======================== -->
+
+    <owl:Class rdf:about="http://www.example.org/healthcare#Patient">
+        <rdfs:label>Patient</rdfs:label>
+    </owl:Class>
+
+    <!-- Fuzzy target classes — membership degrees will be assigned by the Fuzzy Plugin -->
+    <owl:Class rdf:about="http://www.example.org/healthcare#Diabetic">
+        <rdfs:label>Diabetic</rdfs:label>
+        <rdfs:comment>Fuzzy class: membership degree based on glucose level</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/healthcare#Hypertensive">
+        <rdfs:label>Hypertensive</rdfs:label>
+        <rdfs:comment>Fuzzy class: membership degree based on blood pressure</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/healthcare#HighRisk">
+        <rdfs:label>High Risk</rdfs:label>
+        <rdfs:comment>Fuzzy class: derived from combination of Diabetic and Hypertensive membership</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/healthcare#Obese">
+        <rdfs:label>Obese</rdfs:label>
+        <rdfs:comment>Fuzzy class: membership degree based on BMI</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/healthcare#Chronic">
+        <rdfs:label>Chronic</rdfs:label>
+        <rdfs:comment>Superclass for chronic conditions — for fuzzy subsumption testing</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/healthcare#Diagnosis">
+        <rdfs:label>Diagnosis</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/healthcare#DiabetesMellitus">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/healthcare#Diagnosis"/>
+        <rdfs:label>Diabetes Mellitus</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/healthcare#Hypertension">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/healthcare#Diagnosis"/>
+        <rdfs:label>Hypertension</rdfs:label>
+    </owl:Class>
+
+    <!-- ======================== -->
+    <!-- OBJECT PROPERTIES        -->
+    <!-- ======================== -->
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/healthcare#hasDiagnosis">
+        <rdfs:domain rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <rdfs:range rdf:resource="http://www.example.org/healthcare#Diagnosis"/>
+        <rdfs:label>has diagnosis</rdfs:label>
+    </owl:ObjectProperty>
+
+    <!-- ======================== -->
+    <!-- DATA PROPERTIES          -->
+    <!-- ======================== -->
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/healthcare#bloodPressureSystolic">
+        <rdfs:domain rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+        <rdfs:label>systolic blood pressure (mmHg)</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/healthcare#bloodPressureDiastolic">
+        <rdfs:domain rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+        <rdfs:label>diastolic blood pressure (mmHg)</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/healthcare#glucoseLevel">
+        <rdfs:domain rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>fasting glucose level (mg/dL)</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/healthcare#bmi">
+        <rdfs:domain rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>BMI</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/healthcare#age">
+        <rdfs:domain rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+        <rdfs:label>age</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/healthcare#patientName">
+        <rdfs:domain rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+        <rdfs:label>patient name</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <!-- ================================= -->
+    <!-- ANNOTATION PROPERTY (for fuzzy)   -->
+    <!-- ================================= -->
+
+    <owl:AnnotationProperty rdf:about="http://www.example.org/healthcare#fuzzyMembership">
+        <rdfs:label>fuzzy membership degree</rdfs:label>
+        <rdfs:comment>Stores fuzzy membership degree (0.0 to 1.0) for a fuzzy class</rdfs:comment>
+    </owl:AnnotationProperty>
+
+    <!-- ======================== -->
+    <!-- PATIENTS (10 individuals with varying health metrics) -->
+    <!-- ======================== -->
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#Patient001">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Alice Chen</patientName>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">55</age>
+        <bloodPressureSystolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">155</bloodPressureSystolic>
+        <bloodPressureDiastolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">95</bloodPressureDiastolic>
+        <glucoseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">180.0</glucoseLevel>
+        <bmi rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">32.5</bmi>
+        <hasDiagnosis rdf:resource="http://www.example.org/healthcare#DiabetesMellitusDx"/>
+        <hasDiagnosis rdf:resource="http://www.example.org/healthcare#HypertensionDx"/>
+        <rdfs:label>Patient 001 - Alice</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#Patient002">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Bob Martinez</patientName>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">42</age>
+        <bloodPressureSystolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">130</bloodPressureSystolic>
+        <bloodPressureDiastolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">82</bloodPressureDiastolic>
+        <glucoseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">145.0</glucoseLevel>
+        <bmi rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">28.1</bmi>
+        <rdfs:label>Patient 002 - Bob</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#Patient003">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Carol Johnson</patientName>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">68</age>
+        <bloodPressureSystolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">170</bloodPressureSystolic>
+        <bloodPressureDiastolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">100</bloodPressureDiastolic>
+        <glucoseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">210.0</glucoseLevel>
+        <bmi rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">35.0</bmi>
+        <hasDiagnosis rdf:resource="http://www.example.org/healthcare#DiabetesMellitusDx"/>
+        <hasDiagnosis rdf:resource="http://www.example.org/healthcare#HypertensionDx"/>
+        <rdfs:label>Patient 003 - Carol</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#Patient004">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">David Kim</patientName>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">35</age>
+        <bloodPressureSystolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">118</bloodPressureSystolic>
+        <bloodPressureDiastolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">75</bloodPressureDiastolic>
+        <glucoseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">95.0</glucoseLevel>
+        <bmi rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">23.4</bmi>
+        <rdfs:label>Patient 004 - David (Healthy)</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#Patient005">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Eve Wilson</patientName>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">50</age>
+        <bloodPressureSystolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">142</bloodPressureSystolic>
+        <bloodPressureDiastolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">88</bloodPressureDiastolic>
+        <glucoseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">128.0</glucoseLevel>
+        <bmi rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">27.3</bmi>
+        <rdfs:label>Patient 005 - Eve (Borderline)</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#Patient006">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Frank Lee</patientName>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">72</age>
+        <bloodPressureSystolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">160</bloodPressureSystolic>
+        <bloodPressureDiastolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">98</bloodPressureDiastolic>
+        <glucoseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">195.0</glucoseLevel>
+        <bmi rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">31.0</bmi>
+        <hasDiagnosis rdf:resource="http://www.example.org/healthcare#DiabetesMellitusDx"/>
+        <rdfs:label>Patient 006 - Frank</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#Patient007">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Grace Tanaka</patientName>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">28</age>
+        <bloodPressureSystolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">112</bloodPressureSystolic>
+        <bloodPressureDiastolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">70</bloodPressureDiastolic>
+        <glucoseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">88.0</glucoseLevel>
+        <bmi rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">21.5</bmi>
+        <rdfs:label>Patient 007 - Grace (Healthy)</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#Patient008">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Henry Brown</patientName>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">60</age>
+        <bloodPressureSystolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">148</bloodPressureSystolic>
+        <bloodPressureDiastolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">92</bloodPressureDiastolic>
+        <glucoseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">165.0</glucoseLevel>
+        <bmi rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">29.8</bmi>
+        <hasDiagnosis rdf:resource="http://www.example.org/healthcare#HypertensionDx"/>
+        <rdfs:label>Patient 008 - Henry</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#Patient009">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Ivy Patel</patientName>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">45</age>
+        <bloodPressureSystolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">135</bloodPressureSystolic>
+        <bloodPressureDiastolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">85</bloodPressureDiastolic>
+        <glucoseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">140.0</glucoseLevel>
+        <bmi rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">26.0</bmi>
+        <rdfs:label>Patient 009 - Ivy (Pre-diabetic)</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#Patient010">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Patient"/>
+        <patientName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Jack Smith</patientName>
+        <age rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">38</age>
+        <bloodPressureSystolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">122</bloodPressureSystolic>
+        <bloodPressureDiastolic rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">78</bloodPressureDiastolic>
+        <glucoseLevel rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">105.0</glucoseLevel>
+        <bmi rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">24.8</bmi>
+        <rdfs:label>Patient 010 - Jack (Normal)</rdfs:label>
+    </owl:NamedIndividual>
+
+    <!-- ======================== -->
+    <!-- DIAGNOSIS INDIVIDUALS    -->
+    <!-- ======================== -->
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#DiabetesMellitusDx">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#DiabetesMellitus"/>
+        <rdfs:label>Diabetes Mellitus Diagnosis</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/healthcare#HypertensionDx">
+        <rdf:type rdf:resource="http://www.example.org/healthcare#Hypertension"/>
+        <rdfs:label>Hypertension Diagnosis</rdfs:label>
+    </owl:NamedIndividual>
+
+</rdf:RDF>

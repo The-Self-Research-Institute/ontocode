@@ -1,0 +1,39 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ontocode-ingress
+  namespace: ontocode
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "7200"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "7200"
+spec:
+  tls:
+  - hosts:
+    - api.ontocode.app
+    - plugins.ontocode.app
+    secretName: ontocode-tls
+  rules:
+  - host: api.ontocode.app
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ontology-editor-service
+            port:
+              number: 8086
+  - host: plugins.ontocode.app
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: plugin-service
+            port:
+              number: 8087

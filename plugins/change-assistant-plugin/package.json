@@ -1,0 +1,52 @@
+{
+  "name": "change-assistant-plugin",
+  "displayName": "Ontology Change Assistant",
+  "description": "Assists in tracking and managing collaborative ontology edits with change history, conflict detection, and version control integration",
+  "version": "1.0.0",
+  "publisher": "ontocode",
+  "engines": {
+    "ontocode": "^1.0.0"
+  },
+  "categories": [
+    "Ontology",
+    "Collaboration",
+    "Version Control"
+  ],
+  "keywords": [
+    "change-tracking",
+    "collaboration",
+    "ontology",
+    "version-control",
+    "history",
+    "owl",
+    "diff"
+  ],
+  "author": {
+    "name": "OntoCode Team"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ontocode/change-assistant-plugin"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "webpack --mode production",
+    "watch": "webpack --mode development --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "ts-loader": "^9.4.0",
+    "typescript": "^5.3.0",
+    "webpack": "^5.88.0",
+    "webpack-cli": "^5.1.0"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.263.0"
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,114 @@
+.toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 400px;
+}
+
+.toast {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--vscode-editor-background);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    border-left: 4px solid;
+    animation: slideInRight 0.3s ease;
+    min-width: 300px;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.toast-success {
+    border-left-color: #4caf50;
+}
+
+.toast-error {
+    border-left-color: #f44336;
+}
+
+.toast-warning {
+    border-left-color: #ff9800;
+}
+
+.toast-info {
+    border-left-color: #2196f3;
+}
+
+.toast-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 11px;
+    color: white;
+    flex-shrink: 0;
+}
+
+.toast-icon {
+    flex-shrink: 0;
+    color: var(--vscode-foreground);
+}
+
+.toast-success .toast-icon {
+    color: #4caf50;
+}
+
+.toast-error .toast-icon {
+    color: #f44336;
+}
+
+.toast-warning .toast-icon {
+    color: #ff9800;
+}
+
+.toast-info .toast-icon {
+    color: #2196f3;
+}
+
+.toast-message {
+    flex: 1;
+    font-size: 13px;
+    color: var(--vscode-foreground);
+    line-height: 1.4;
+}
+
+.toast-close {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.toast-close:hover {
+    background: var(--vscode-list-hoverBackground);
+    color: var(--vscode-foreground);
+}
+
+.toast-close:active {
+    background: var(--vscode-list-activeSelectionBackground);
+}

@@ -1,0 +1,775 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF
+	xmlns="http://selfresearch.institute/sda/medical/cardiovascular#"
+	xmlns:agg="http://jena.apache.org/ARQ/function/aggregate#"
+	xmlns:testaddprefix="http://www.w3.org/2005/xpath-functions/test1"
+	xmlns:sail="http://www.openrdf.org/config/sail#"
+	xmlns:owl="http://www.w3.org/2002/07/owl#"
+	xmlns:geof="http://www.opengis.net/def/function/geosparql/"
+	xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+	xmlns:fn="http://www.w3.org/2005/xpath-functions"
+	xmlns:skos="http://www.w3.org/2004/02/skos/core#"
+	xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+	xmlns:ns1="http://purl.obolibrary.org/obo/"
+	xmlns:spif="http://spinrdf.org/spif#"
+	xmlns:path="http://www.ontotext.com/path#"
+	xmlns:array="http://www.w3.org/2005/xpath-functions/array"
+	xmlns:apf="http://jena.apache.org/ARQ/property#"
+	xmlns:xml="http://www.w3.org/XML/1998/namespace"
+	xmlns:dcterms="http://purl.org/dc/terms/"
+	xmlns:peo="https://w3id.org/peo/ontology/outdoor#"
+	xmlns:rep="http://www.openrdf.org/config/repository#"
+	xmlns:map="http://www.w3.org/2005/xpath-functions/map"
+	xmlns:sr="http://www.openrdf.org/config/repository/sail#"
+	xmlns:rdf4j="http://rdf4j.org/schema/rdf4j#"
+	xmlns:wgs="http://www.w3.org/2003/01/geo/wgs84_pos#"
+	xmlns:test="http://www.w3.org/2005/xpath-functions/test"
+	xmlns:untitled-ontology-55="http://www.semanticweb.org/radhaa/ontologies/2025/9/untitled-ontology-55#"
+	xmlns:gn="http://www.geonames.org/ontology#"
+	xmlns:afn="http://jena.apache.org/ARQ/function#"
+	xmlns:list="http://jena.apache.org/ARQ/list#"
+	xmlns:sda="http://selfresearch.institute/sda/core#"
+	xmlns:ex="http://example.org/ontology#"
+	xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+	xmlns:ofn="http://www.ontotext.com/sparql/functions/"
+	xmlns:geoext="http://rdf.useekm.com/ext#"
+	xmlns:graphdb="http://www.ontotext.com/config/graphdb#"
+	xmlns:sesame="http://www.openrdf.org/schema/sesame#"
+	xmlns:math="http://www.w3.org/2005/xpath-functions/math"
+	xmlns:omgeo="http://www.ontotext.com/owlim/geo#"
+	xmlns:dc="http://purl.org/dc/elements/1.1/">
+
+<rdf:Description rdf:about="http://purl.org/dc/elements/1.1/title">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#AnnotationProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://purl.org/dc/elements/1.1/description">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#AnnotationProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#reviewStatus">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#AnnotationProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Student">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasParent">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Person">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Animal">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasRelative">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#knows">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#livesIn">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Country">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasAge">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasEmail">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasID">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasName">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Dog">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Vehicle">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#alice">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/ontology#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#usa">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/ontology#Country"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#bob">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/ontology#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#john">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/ontology#Employee"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#targetTag">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#AnnotationProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasCousin">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#manages">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Manager">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Employee">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#worksAt">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Company">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasSalary">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#GuideDog">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Horse">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#MiniPony">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Pony">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#acmeCorp">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/ontology#Company"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#carol">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/ontology#Manager"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#rex">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/ontology#Dog"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node17">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontologycheck">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Ontology"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontology#friendly_dog">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node18">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node19">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node20">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontologycheck#guide_dog">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasCousin">
+	<rdfs:subPropertyOf rdf:resource="http://example.org/ontology#hasRelative"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Student">
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#Person"/>
+	<rdfs:subClassOf rdf:nodeID="node17"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Person">
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#Animal"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Animal">
+	<rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Dog">
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#Animal"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Vehicle">
+	<rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Manager">
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#Employee"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Employee">
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#GuideDog">
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#Dog"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Horse">
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#Animal"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#MiniPony">
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#Pony"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Pony">
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#Horse"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontology#friendly_dog">
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#Dog"/>
+	<rdfs:subClassOf rdf:resource="http://example.org/ontology#GuideDog"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontologycheck#guide_dog">
+	<rdfs:subClassOf rdf:resource="http://example.org/target-ontology#friendly_dog"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasParent">
+	<rdfs:domain rdf:resource="http://example.org/ontology#Animal"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasRelative">
+	<rdfs:domain rdf:resource="http://example.org/ontology#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#knows">
+	<rdfs:domain rdf:resource="http://example.org/ontology#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasAge">
+	<rdfs:domain rdf:resource="http://example.org/ontology#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasEmail">
+	<rdfs:domain rdf:resource="http://example.org/ontology#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasName">
+	<rdfs:domain rdf:resource="http://example.org/ontology#Animal"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#manages">
+	<rdfs:domain rdf:resource="http://example.org/ontology#Manager"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#worksAt">
+	<rdfs:domain rdf:resource="http://example.org/ontology#Employee"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasSalary">
+	<rdfs:domain rdf:resource="http://example.org/ontology#Employee"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasParent">
+	<rdfs:range rdf:resource="http://example.org/ontology#Animal"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasRelative">
+	<rdfs:range rdf:resource="http://example.org/ontology#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#knows">
+	<rdfs:range rdf:resource="http://example.org/ontology#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#livesIn">
+	<rdfs:range rdf:resource="http://example.org/ontology#Country"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasAge">
+	<rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasEmail">
+	<rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasID">
+	<rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasName">
+	<rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#manages">
+	<rdfs:range rdf:resource="http://example.org/ontology#Employee"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#worksAt">
+	<rdfs:range rdf:resource="http://example.org/ontology#Company"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasSalary">
+	<rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontology#friendly_dog">
+	<owl:equivalentClass rdf:resource="http://example.org/target-ontology#friendly_dog"/>
+	<owl:equivalentClass rdf:nodeID="node18"/>
+	<owl:equivalentClass rdf:nodeID="node19"/>
+	<owl:equivalentClass rdf:nodeID="node20"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#reviewStatus">
+	<rdfs:comment>Indicates the review status of an entity - TARGET version (simple status flag)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Student">
+	<rdfs:comment>TARGET: A person who studies</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasParent">
+	<rdfs:comment>TARGET: Relates any animal to its parent</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Person">
+	<rdfs:comment>TARGET: Person is a subclass of Animal, no equivalence</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Animal">
+	<rdfs:comment>TARGET: Animal is a direct subclass of Thing</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasRelative">
+	<rdfs:comment>TARGET: Relates a person to a relative (different hierarchy)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#knows">
+	<rdfs:comment>TARGET: A directional social relationship (not symmetric)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#livesIn">
+	<rdfs:comment>Relates an entity to the country it lives in</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Country">
+	<rdfs:comment>A sovereign nation</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasAge">
+	<rdfs:comment>TARGET: Age as a string</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasEmail">
+	<rdfs:comment>TARGET: Email address (not functional - multiple allowed)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasID">
+	<rdfs:comment>Unique identifier</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasName">
+	<rdfs:comment>TARGET: Name of any animal</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Dog">
+	<rdfs:comment>TARGET: Domestic dog</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Vehicle">
+	<rdfs:comment>TARGET: A vehicle for transportation</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#alice">
+	<rdfs:comment>TARGET: Alice is 28 years old</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#bob">
+	<rdfs:comment>TARGET: Bob knows John</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#john">
+	<rdfs:comment>TARGET: John is an employee</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#targetTag">
+	<rdfs:comment>An annotation only present in the target ontology</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasCousin">
+	<rdfs:comment>TARGET only: Cousin relationship</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#manages">
+	<rdfs:comment>Relates a manager to employees they manage (target only)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Manager">
+	<rdfs:comment>An employee who manages others (target only)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Employee">
+	<rdfs:comment>A person employed by an organization (target only)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#worksAt">
+	<rdfs:comment>Relates an employee to their company (target only)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Company">
+	<rdfs:comment>A business organization (target only)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasSalary">
+	<rdfs:comment>Annual salary in USD (target only)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#GuideDog">
+	<rdfs:comment>TARGET only: A service dog (child of shared Dog class)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Horse">
+	<rdfs:comment>TARGET only: Domestic horse (not in source)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#MiniPony">
+	<rdfs:comment>TARGET only: A miniature pony (not in source, deep hierarchy)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Pony">
+	<rdfs:comment>TARGET only: A small horse (not in source)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#carol">
+	<rdfs:comment>TARGET only: Carol is a manager</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#rex">
+	<rdfs:comment>TARGET only: Rex the dog (should be removed by Replace Duplicates)</rdfs:comment>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#reviewStatus">
+	<rdfs:label>Review Status</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Student">
+	<rdfs:label>Student</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasParent">
+	<rdfs:label>has Parent</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Person">
+	<rdfs:label>Person</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Animal">
+	<rdfs:label>Animal</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasRelative">
+	<rdfs:label>has Relative</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#knows">
+	<rdfs:label>knows</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#livesIn">
+	<rdfs:label>lives In</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Country">
+	<rdfs:label>Country</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasAge">
+	<rdfs:label>has Age</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasEmail">
+	<rdfs:label>has Email</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasID">
+	<rdfs:label>has ID</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasName">
+	<rdfs:label>has Name</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Dog">
+	<rdfs:label>Dog</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Vehicle">
+	<rdfs:label>Vehicle</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#alice">
+	<rdfs:label>Alice Johnson</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#usa">
+	<rdfs:label>United States</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#bob">
+	<rdfs:label>Bob Williams</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#john">
+	<rdfs:label>John Smith</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#targetTag">
+	<rdfs:label>Target Tag</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasCousin">
+	<rdfs:label>has Cousin</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#manages">
+	<rdfs:label>manages</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Manager">
+	<rdfs:label>Manager</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Employee">
+	<rdfs:label>Employee</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#worksAt">
+	<rdfs:label>works At</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Company">
+	<rdfs:label>Company</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#hasSalary">
+	<rdfs:label>has Salary</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#GuideDog">
+	<rdfs:label>Guide Dog</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Horse">
+	<rdfs:label>Horse</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#MiniPony">
+	<rdfs:label>Mini Pony</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Pony">
+	<rdfs:label>Pony</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#acmeCorp">
+	<rdfs:label>Acme Corp</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#carol">
+	<rdfs:label>Carol Davis</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#rex">
+	<rdfs:label>Rex</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontologycheck">
+	<rdfs:label>test description annotation check</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontology#friendly_dog">
+	<rdfs:label>friendly dog</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontologycheck#guide_dog">
+	<rdfs:label>guide dog</rdfs:label>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontology">
+	<owl:versionInfo>1.0.0</owl:versionInfo>
+	<dc:title>Target Ontology for Merge Testing</dc:title>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontologycheck">
+	<owl:versionIRI rdf:resource="http://example.org/target-ontologytestcheck"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontology">
+	<dc:description>Baseline target ontology containing entities that conflict with the source ontology.</dc:description>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node17">
+	<owl:onProperty rdf:resource="http://example.org/ontology#hasAge"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node18">
+	<owl:onProperty rdf:resource="http://example.org/ontology#hasRelative"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node19">
+	<owl:onProperty rdf:resource="http://example.org/ontology#manages"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node20">
+	<owl:onProperty rdf:resource="http://example.org/ontology#hasName"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node17">
+	<owl:someValuesFrom rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node18">
+	<owl:someValuesFrom rdf:resource="http://example.org/target-ontology#friendly_dog"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node19">
+	<owl:someValuesFrom rdf:resource="http://example.org/ontology#GuideDog"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="node20">
+	<owl:someValuesFrom rdf:resource="http://www.w3.org/2001/XMLSchema#date"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Dog">
+	<owl:disjointWith rdf:resource="http://example.org/ontology#Horse"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontologycheck">
+	<owl:backwardCompatibleWith rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">test annotation check</owl:backwardCompatibleWith>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#Animal">
+	<ex:reviewStatus>Draft</ex:reviewStatus>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#bob">
+	<ex:knows rdf:resource="http://example.org/ontology#john"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#alice">
+	<ex:hasAge>28</ex:hasAge>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#john">
+	<ex:hasAge>35</ex:hasAge>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#alice">
+	<ex:hasEmail>alice@oldmail.com</ex:hasEmail>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#john">
+	<ex:hasEmail>john.smith@company.com</ex:hasEmail>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#alice">
+	<ex:hasName>Alice Johnson</ex:hasName>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#usa">
+	<ex:hasName>United States of America</ex:hasName>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#bob">
+	<ex:hasName>Bob Williams</ex:hasName>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#john">
+	<ex:hasName>John Smith</ex:hasName>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#acmeCorp">
+	<ex:hasName>Acme Corporation</ex:hasName>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#carol">
+	<ex:hasName>Carol Davis</ex:hasName>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#rex">
+	<ex:hasName>Rex</ex:hasName>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#carol">
+	<ex:manages rdf:resource="http://example.org/ontology#john"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#john">
+	<ex:worksAt rdf:resource="http://example.org/ontology#acmeCorp"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/ontology#carol">
+	<ex:worksAt rdf:resource="http://example.org/ontology#acmeCorp"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/target-ontologycheck">
+	<gci xmlns="http://ontocode.org/resource/">test ontology SubClassOf test annotations ontology</gci>
+</rdf:Description>
+
+<rdf:Description>
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <owl:intersectionOf rdf:parseType="Collection">
+        <rdf:Description rdf:about="http://example.org/ontology#Employee"/>
+        <owl:Restriction>
+            <owl:onProperty rdf:resource="http://example.org/ontology#manages"/>
+            <owl:someValuesFrom rdf:resource="http://example.org/ontology#Employee"/>
+        </owl:Restriction>
+    </owl:intersectionOf>
+    <rdfs:subClassOf rdf:resource="http://example.org/ontology#Manager"/>
+</rdf:Description>
+
+</rdf:RDF>

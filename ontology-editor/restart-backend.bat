@@ -1,0 +1,6 @@
+@echo off
+cd /d E:\oct22\ontocode\ontology-editor
+echo Cleaning and compiling...
+call mvn clean compile -q
+echo Starting backend...
+call mvn spring-boot:run -q

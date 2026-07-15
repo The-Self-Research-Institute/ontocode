@@ -1,48 +1,115 @@
-//@ts-check
+const path = require("path");
+const webpack = require("webpack");
+const CopyPlugin = require("copy-webpack-plugin");
+const { BundleAnalyzerPlugin } = require("webpack-bundle-analyzer");
+const TerserPlugin = require("terser-webpack-plugin");
 
-'use strict';
-
-const path = require('path');
-
-//@ts-check
-/** @typedef {import('webpack').Configuration} WebpackConfig **/
-
-/** @type WebpackConfig */
-const extensionConfig = {
-  target: 'node', // VS Code extensions run in a Node.js-context 📖 -> https://webpack.js.org/configuration/node/
-	mode: 'none', // this leaves the source code as close as possible to the original (when packaging we set this to 'production')
-
-  entry: './src/extension.ts', // the entry point of this extension, 📖 -> https://webpack.js.org/configuration/entry-context/
-  output: {
-    // the bundle is stored in the 'dist' folder (check package.json), 📖 -> https://webpack.js.org/configuration/output/
-    path: path.resolve(__dirname, 'dist'),
-    filename: 'extension.js',
-    libraryTarget: 'commonjs2'
+module.exports = {
+  mode: "production",
+  target: "webworker",
+  cache: {
+    type: "filesystem",
+    buildDependencies: {
+      config: [__filename],
+    },
   },
+  entry: {
+    extension: "./src/extension.web.ts",
+  },
+  output: {
+    filename: "[name].js",
+    path: path.resolve(__dirname, "dist", "web"),
+    libraryTarget: "commonjs",
+    devtoolModuleFilenameTemplate: "../[resource]",
+    globalObject: "self",
+  },
+  devtool: "source-map",
   externals: {
-    vscode: 'commonjs vscode' // the vscode-module is created on-the-fly and must be excluded. Add other modules that cannot be webpack'ed, 📖 -> https://webpack.js.org/configuration/externals/
-    // modules added here also need to be added in the .vscodeignore file
+    vscode: "commonjs vscode",
   },
   resolve: {
-    // support reading TypeScript and JavaScript files, 📖 -> https://github.com/TypeStrong/ts-loader
-    extensions: ['.ts', '.js']
+    extensions: [".ts", ".js"],
+    alias: {
+      _stream_readable: "readable-stream/lib/_stream_readable",
+      _stream_writable: "readable-stream/lib/_stream_writable",
+      _stream_duplex: "readable-stream/lib/_stream_duplex",
+      _stream_transform: "readable-stream/lib/_stream_transform",
+      _stream_passthrough: "readable-stream/lib/_stream_passthrough",
+      axios: "axios/dist/browser/axios.cjs",
+    },
+    fallback: {
+      path: require.resolve("path-browserify"),
+      fs: false,
+      os: false,
+      crypto: require.resolve("crypto-browserify"),
+      stream: require.resolve("stream-browserify"),
+      buffer: require.resolve("buffer/"),
+      util: require.resolve("util/"),
+      assert: require.resolve("assert/"),
+      url: require.resolve("url/"),
+      http: require.resolve("stream-http"),
+      https: require.resolve("https-browserify"),
+      http2: false,
+      net: false,
+      tls: false,
+      dns: false,
+      child_process: false,
+      dgram: false,
+      process: require.resolve("process/browser"),
+      tty: false,
+      zlib: require.resolve("./src/zlib-shim.js"),
+      vm: false,
+      ws: false,
+    },
+  },
+  optimization: {
+    minimize: true,
+    minimizer: [
+      new TerserPlugin({
+        terserOptions: {
+          compress: {
+            drop_console: false,
+            passes: 2,
+          },
+          mangle: true,
+        },
+      }),
+    ],
+    usedExports: true,
+    sideEffects: false,
   },
   module: {
     rules: [
       {
         test: /\.ts$/,
         exclude: /node_modules/,
-        use: [
-          {
-            loader: 'ts-loader'
-          }
-        ]
-      }
-    ]
+        use: [{ loader: "ts-loader" }],
+      },
+    ],
   },
-  devtool: 'nosources-source-map',
-  infrastructureLogging: {
-    level: "log", // enables logging required for problem matchers
-  },
+  plugins: [
+    new webpack.ProvidePlugin({
+      process: "process/browser",
+      Buffer: ["buffer", "Buffer"],
+    }),
+    new webpack.DefinePlugin({
+      "process.env.NODE_DEBUG": JSON.stringify(false),
+    }),
+    new CopyPlugin({
+      patterns: [
+        {
+          from: "webview-src/dist",
+          to: "webview-src/dist",
+          noErrorOnMissing: true,
+        },
+      ],
+    }),
+    new BundleAnalyzerPlugin({
+      analyzerMode: process.env.ANALYZE ? "server" : "disabled",
+      reportFilename: "bundle-report-web.html",
+      openAnalyzer: true,
+      generateStatsFile: true,
+      statsFilename: "bundle-stats-web.json",
+    }),
+  ],
 };
-module.exports = [ extensionConfig ];
