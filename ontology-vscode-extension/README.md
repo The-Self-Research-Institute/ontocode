@@ -17,7 +17,8 @@ This extension is part of the larger [Ontology Platform](../README.md) but can b
 - **Built-in reasoner** — run HermiT (or other supported reasoners) for consistency checking, satisfiability, and inferred class hierarchies.
 - **Graph visualization** — explore your ontology as an interactive D3 graph (tree, network, and WebVOWL notation) with AI-generated topic/cluster insights.
 - **Real-time collaboration** — create workspaces, invite members with role-based access, and see collaborator presence live.
-- **Sci2Code citation integration** — powered by [Sci2Code](https://github.com/The-Self-Research-Institute/Sci2Code-extension-for-vscode), which connects your Zotero library and lets you insert library items as inline citations directly in `.owl`/`.ttl`/`.rdf`/`.n3` files or code comments.
+- **Zotero citation insertion** — search your Zotero library and insert items as inline citations directly in `.owl`/`.ttl`/`.rdf`/`.n3` files from Code View — works the same in VS Code, the web app, and the desktop app.
+- **Sci2Code editor integration** — the `Ctrl+Shift+C` / **Insert Citation** editor command is powered by [Sci2Code](https://github.com/The-Self-Research-Institute/Sci2Code-extension-for-vscode), inserting a citation at your cursor in any open file (VS Code only).
 - **Plugin Marketplace** — install community and first-party plugins (SWRL Rule Editor, Fuzzy Ontology, additional graph visualizations, and more).
 - **Desktop app** — an Electron-based desktop build for working outside VS Code.
 
@@ -50,17 +51,22 @@ Run the HermiT reasoner to check consistency, satisfiability, and view the infer
 
 ![Running the HermiT reasoner](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/reasoner.gif)
 
-### 6. Sci2Code citation integration
-Search your Zotero library through [Sci2Code](https://github.com/The-Self-Research-Institute/Sci2Code-extension-for-vscode) and insert a citation directly into the ontology, in whichever format the Code View tab is currently showing.
+### 6. Zotero citation insertion
+Search your Zotero library and insert a citation directly into the ontology, in whichever format the Code View tab is currently showing. Works identically in VS Code, the web app, and the desktop app.
 
-![Searching and inserting a Zotero citation via Sci2Code](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/sci2code-integration.gif)
+![Searching and inserting a Zotero citation from Code View](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/sci2code-integration.gif)
 
-### 7. Plugin Marketplace
+### 7. Sci2Code editor integration
+A separate, VS Code-only path: run **Insert Citation** (`Ctrl+Shift+C` / `Cmd+Shift+C`) from any open file and it's powered by [Sci2Code](https://github.com/The-Self-Research-Institute/Sci2Code-extension-for-vscode), OntoCode's companion extension. Pick a reference from your Zotero library via the command palette and it's inserted at your cursor, formatted to match the file — OntoCode also detects and offers to fix any RDF namespace declarations the citation needs.
+
+![Inserting a Zotero citation via Sci2Code's Ctrl+Shift+C command, then fixing missing RDF namespaces](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/sci2code-editor.gif)
+
+### 8. Plugin Marketplace
 Browse, install, and manage plugins — SWRL rule editing, fuzzy ontology support, alternate graph visualizations, and more.
 
 ![Plugin Marketplace with installable plugins](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/plugin-marketplace.gif)
 
-### 8. Graph visualization + AI insights
+### 9. Graph visualization + AI insights
 Explore the ontology as an interactive graph (tree, network, or WebVOWL notation), with AI-generated topic clusters and trend summaries.
 
 ![Ontology graph visualization](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/screenshots/graph-visualization.png)
