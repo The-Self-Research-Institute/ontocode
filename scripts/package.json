@@ -12,6 +12,7 @@
     "plugins:clean": "node manage-plugins.js clean"
   },
   "dependencies": {
-    "mongodb": "^6.21.0"
+    "mongodb": "^6.21.0",
+    "stripe": "^16.12.0"
   }
 }
