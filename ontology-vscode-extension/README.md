@@ -11,13 +11,13 @@ This extension is part of the larger [Ontology Platform](../README.md) but can b
 
 ## 🚀 Features
 
-- **Ontology editing** — open and edit `.owl`, `.rdf`, `.ttl`, `.jsonld`, and other RDF serializations directly in VS Code.
+- **Ontology editing across formats** — the Code View editor reads *and writes* the same ontology as Turtle, RDF/XML, N-Triples, OWL/XML, Manchester, Functional, or JSON-LD. Switch formats and keep editing — it's not a one-way export.
 - **SPARQL / DL Query Workbench** — run SPARQL queries against your active ontology and browse results as a table or JSON.
 - **Change Assistant** — every edit is tracked as a reviewable change (drafts, saved, conflicts, timeline, rollback) with per-author attribution.
 - **Built-in reasoner** — run HermiT (or other supported reasoners) for consistency checking, satisfiability, and inferred class hierarchies.
 - **Graph visualization** — explore your ontology as an interactive D3 graph (tree, network, and WebVOWL notation) with AI-generated topic/cluster insights.
 - **Real-time collaboration** — create workspaces, invite members with role-based access, and see collaborator presence live.
-- **Zotero citation insertion** — link Zotero library items as inline citations in `.owl`/`.ttl`/`.rdf`/`.n3` files or code comments.
+- **Sci2Code citation integration** — powered by [Sci2Code](https://github.com/The-Self-Research-Institute/Sci2Code-extension-for-vscode), which connects your Zotero library and lets you insert library items as inline citations directly in `.owl`/`.ttl`/`.rdf`/`.n3` files or code comments.
 - **Plugin Marketplace** — install community and first-party plugins (SWRL Rule Editor, Fuzzy Ontology, additional graph visualizations, and more).
 - **Desktop app** — an Electron-based desktop build for working outside VS Code.
 
@@ -30,27 +30,37 @@ Create a project, choose who can access it, and invite workspace members by emai
 
 ![Create a project and invite workspace members](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/collaboration.gif)
 
-### 2. SPARQL Query Workbench
+### 2. Ontology editing across formats (Code View)
+Read and edit the same ontology as Turtle, RDF/XML, N-Triples, OWL/XML, Manchester, or Functional syntax — switch formats and keep editing, it's not a one-way export.
+
+![Code View editing an ontology across Turtle, RDF/XML, N-Triples, OWL/XML, Manchester, Functional, and JSON-LD](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/code-view-multi-format.gif)
+
+### 3. SPARQL Query Workbench
 Write and run SPARQL queries against the active ontology, with results as a sortable table or raw JSON.
 
 ![SPARQL Query Editor with results](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/query-workbench.gif)
 
-### 3. Change Assistant
+### 4. Change Assistant
 Every mutation is tracked as a reviewable, attributable change — with drafts, conflicts, a timeline, and one-click rollback.
 
 ![Change Assistant reviewing a saved change](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/change-assistant.gif)
 
-### 4. Built-in OWL reasoner
+### 5. Built-in OWL reasoner
 Run the HermiT reasoner to check consistency, satisfiability, and view the inferred class hierarchy.
 
 ![Running the HermiT reasoner](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/reasoner.gif)
 
-### 5. Plugin Marketplace
+### 6. Sci2Code citation integration
+Search your Zotero library through [Sci2Code](https://github.com/The-Self-Research-Institute/Sci2Code-extension-for-vscode) and insert a citation directly into the ontology, in whichever format the Code View tab is currently showing.
+
+![Searching and inserting a Zotero citation via Sci2Code](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/sci2code-integration.gif)
+
+### 7. Plugin Marketplace
 Browse, install, and manage plugins — SWRL rule editing, fuzzy ontology support, alternate graph visualizations, and more.
 
 ![Plugin Marketplace with installable plugins](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/plugin-marketplace.gif)
 
-### 6. Graph visualization + AI insights
+### 8. Graph visualization + AI insights
 Explore the ontology as an interactive graph (tree, network, or WebVOWL notation), with AI-generated topic clusters and trend summaries.
 
 ![Ontology graph visualization](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/screenshots/graph-visualization.png)
