@@ -3,15 +3,20 @@ target/
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup
-
+*.pak
+*.dll
 # IDE
 .idea/
 *.iml
 .vscode/
 .DS_Store
-
+bin/
 # Logs
 *.log
+*.gz
+data/
+
+.vscode-test-web
 
 # Node
 node_modules/
@@ -20,3 +25,86 @@ dist/
 # Environment
 .env
 *.env.local
+
+# Documents & media (not source code)
+*.xlsx
+*.docx
+*.mp4
+
+# Test / sample OWL files dropped at repo root
+/*.owl
+
+# Generated HTML reports at repo root
+/*.html
+
+# Scratch analysis directories
+_analysis/
+
+# Root-level temporary text files and logs
+deploy-log.txt
+ontocode-logs.txt
+check-logs.ps1
+
+# Temporary JARs
+tmp-*.jar
+
+# Electron — build outputs
+electron-app/dist-electron*/
+electron-app/dist/
+electron-app/Java/
+
+# Electron — secrets / signing keys
+electron-app/keys/
+electron-app/.sync-api-key
+
+# Duplicate / copy scripts at repo root
+build-and-pushcopy.bat
+build-and-push copy 2.bat
+
+# Stripe local setup & listener scripts (contain hardcoded keys / local config)
+setup-stripe-dev.*
+start-stripe-listener.*
+setup-stripe-prices.sh
+setup-stripe-webhook-listener.ps1
+create-stripe-products.ps1
+stripe-quick-reference.ps1
+test-billing-endpoints.ps1
+test-smtp.ps1
+scripts/payment-setup/
+scripts/payment-test/
+scripts/stripe-price-config.*
+
+# Playwright e2e tests and results
+ontology-vscode-extension/e2e/
+
+# Electron — bundled Java runtime
+electron-app/Java
+
+# Electron — local build docs
+electron-app/BUILD_COMMANDS.md
+
+# Temporary implementation / planning markdown files at repo root
+ANNUAL_MONTHLY_BILLING_IMPLEMENTATION.md
+FINAL_SUMMARY_COMPLETE.md
+IMPLEMENTATION_COMPLETE_SUMMARY.md
+QUICK_REFERENCE_VALIDITY_PERIOD.md
+STATUS_COMPLETE.md
+STRIPE_PRICE_SETUP.md
+STRIPE_SETUP.md
+STRIPE_WEBHOOK_GUIDE.md
+SUBSCRIPTION_TERMS_AND_CONDITIONS.md
+VALIDITY_PERIOD_AND_RENEWAL_GUIDE.md
+
+# Personal commit stats / temp text files at root
+pranesh_*.txt
+open-source-libraries.csv
+
+# Planning HTML docs in docs/
+docs/*.html
+docs/diagrams/
+
+# Load-test scripts and outputs
+scripts/load-test/
+
+# Electron — compiled plugin bundles (build artifacts)
+electron-app/resources/backend/plugin-bundles/

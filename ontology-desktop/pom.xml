@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        ontology-desktop — single fat JAR for the Electron desktop app.
+
+        Combines ontology-auth + ontology-editor + ontology-plugin-service into one
+        Spring Boot application so Electron only spawns one Java process (plus Fuseki
+        and MongoDB).  SWRL stays separate because it requires owlapi 4.x which
+        conflicts with the editor's owlapi 5.x at the classloader level.
+
+        Web/cloud deployment is unaffected: each module still builds and deploys as
+        its own standalone service via the existing Dockerfiles.
+    -->
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.4.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>self.research.ontology</groupId>
+    <artifactId>ontology-desktop</artifactId>
+    <version>1.0.0</version>
+    <name>Ontology Desktop</name>
+    <description>Single-JAR desktop launcher combining auth, editor, and plugin services</description>
+
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <!-- ── Bundled services ────────────────────────────────────────────── -->
+        <!-- These are plain JARs (not fat JARs) because classifier=exec in
+             each module's spring-boot-maven-plugin keeps the primary artifact
+             as a normal JAR usable as a dependency. -->
+
+        <dependency>
+            <groupId>self.research.ontology</groupId>
+            <artifactId>auth</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>self.research.ontology</groupId>
+            <artifactId>owlEditor</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>self.research.ontology</groupId>
+            <artifactId>ontology-plugin-service</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+
+        <!-- ── Spring Boot starters (pulled transitively but listed explicitly
+             for clarity; Spring Boot's dependency management controls versions) ── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>self.research.ontology.desktop.DesktopApplication</mainClass>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

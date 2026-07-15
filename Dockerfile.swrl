@@ -1,0 +1,68 @@
+# Multi-stage build for SWRL Rules Engine Service
+# NOTE: SWRL service MUST use Java 17 due to SWRLAPI/Drools/MVEL incompatibility with Java 21
+# See ontology-swrl/JAVA_COMPATIBILITY.md for details
+FROM maven:3.9-eclipse-temurin-17 AS build
+
+WORKDIR /build
+
+# Copy parent pom first for better caching
+COPY pom.xml .
+
+# Maven reactor needs every listed module's pom.xml to exist, even for a -pl build.
+# Copy only pom.xml stubs for modules we're NOT building (no source needed).
+COPY ontology-auth/pom.xml ./ontology-auth/pom.xml
+COPY ontology-gateway/pom.xml ./ontology-gateway/pom.xml
+COPY ontology-editor/pom.xml ./ontology-editor/pom.xml
+COPY ontology-plugin-service/pom.xml ./ontology-plugin-service/pom.xml
+COPY ontology-reasoner-worker/pom.xml ./ontology-reasoner-worker/pom.xml
+
+# Full source only for what we actually compile
+COPY shared/ ./shared/
+COPY ontology-swrl/ ./ontology-swrl/
+
+# Build shared modules first (these are dependencies for all services)
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -Dhttp.keepAlive=false \
+        -Dmaven.wagon.http.retryHandler.count=10 \
+        -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
+        clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp
+
+# Build SWRL module - package goal includes spring-boot:repackage automatically
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -Dhttp.keepAlive=false \
+        -Dmaven.wagon.http.retryHandler.count=10 \
+        -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
+        clean package -pl ontology-swrl -DskipTests -B -ntp
+
+# Runtime stage - MUST use Java 17 JDK (NOT JRE) so Drools can compile
+# generated Java rule classes at runtime via the JavaDialect compiler.
+# Using a JRE causes: "Unable to wire compiled classes ... Unable to wire up JavaDialect".
+FROM eclipse-temurin:17-jdk
+
+WORKDIR /app
+
+# Add non-root user for security
+RUN if ! getent group 1000 >/dev/null; then groupadd -g 1000 appuser; else echo "Group 1000 already exists"; fi && \
+    if ! getent passwd 1000 >/dev/null; then useradd -u 1000 -g 1000 -m -s /bin/bash appuser; else echo "User 1000 already exists"; fi
+
+# Install wget for health checks
+RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
+
+# Create logs directory
+RUN mkdir -p /app/logs && \
+    chown -R 1000:1000 /app
+
+# Copy the built JAR (spring-boot:repackage creates executable JAR)
+COPY --from=build /build/ontology-swrl/target/*.jar app.jar
+
+USER 1000
+
+# Expose swrl port
+EXPOSE 8084
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8084/actuator/health || exit 1
+
+# Run the application
+ENTRYPOINT ["sh", "-c", "java ${JAVA_OPTS:--Xms256m -Xmx1024m} -jar app.jar"]

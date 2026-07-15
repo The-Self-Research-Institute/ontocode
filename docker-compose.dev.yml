@@ -1,0 +1,352 @@
+# OntoCode Local Development Docker Compose
+# Builds all services from local source code
+# Usage: docker compose -f docker-compose.dev.yml up --build
+#
+# To run just infrastructure (Fuseki + Mongo) and run editor from IDE:
+#   docker compose -f docker-compose.dev.yml up mongo fuseki
+#   Then: mvn spring-boot:run -pl ontology-editor   (connects to localhost:3030)
+
+services:
+  # MongoDB Database
+  mongo:
+    image: mongo:6
+    container_name: ontocode-mongo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MONGO_HOST_PORT:-27017}:27017"
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.3", "--auth"]
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh "mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@localhost:27017/admin" --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # Fuseki (Apache Jena Fuseki + TDB2 triple store)
+  # Admin UI: http://localhost:3030  (admin / admin)
+  # SPARQL:   http://localhost:3030/ontocode/query
+  fuseki:
+    build:
+      context: ./fuseki-docker
+      dockerfile: Dockerfile
+    image: ontocode-fuseki:6.1.0
+    container_name: ontocode-fuseki
+    restart: unless-stopped
+    user: root
+    ports:
+      - "3030:3030"
+    environment:
+      ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
+      # Large OWL files (mondo/go-plus) need headroom for CONSTRUCT + concurrent imports
+      JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xms1g -Xmx6g -XX:+UseG1GC -XX:MaxGCPauseMillis=200}"
+    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
+    volumes:
+      - ./fuseki-config.ttl:/config.ttl:ro
+      - fuseki-data:/fuseki/databases
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3030/$/ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Authentication Service - BUILD LOCALLY
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    image: ontocode-auth:local
+    container_name: ontocode-auth
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      BASE_URL: ${BASE_URL:-http://localhost:3000}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-sk_test_dev123456789}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-pk_test_dev123456789}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_test_dev123456}
+      STRIPE_PRICE_PRO_MONTHLY: ${STRIPE_PRICE_PRO_MONTHLY:-price_1MrsDXF4VGBp4}
+      STRIPE_PRICE_PRO_YEARLY: ${STRIPE_PRICE_PRO_YEARLY:-price_1MrsDXF4VGBp5}
+      STRIPE_PRICE_ENTERPRISE_MONTHLY: ${STRIPE_PRICE_ENTERPRISE_MONTHLY:-price_1MrsDXF4VGBp6}
+      STRIPE_PRICE_ENTERPRISE_YEARLY: ${STRIPE_PRICE_ENTERPRISE_YEARLY:-price_1MrsDXF4VGBp7}
+      STRIPE_TRIAL_PERIOD_DAYS: ${STRIPE_TRIAL_PERIOD_DAYS:-14}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@ontocode.com}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m -XX:+UseG1GC
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 640m
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # API Gateway - BUILD LOCALLY
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    image: ontocode-gateway:local
+    container_name: ontocode-gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      AUTH_SERVICE_URL: http://auth:8086
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      GATEWAY_HTTP_RESPONSE_TIMEOUT: ${GATEWAY_HTTP_RESPONSE_TIMEOUT:-7200s}
+      JAVA_OPTS: -Xms128m -Xmx384m -XX:+UseG1GC
+    depends_on:
+      auth:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Ontology Editor Service - BUILD LOCALLY
+  owl-editor:
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
+    image: ontocode-editor:local
+    container_name: ontocode-editor
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
+      FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
+      FUSEKI_GSP_ENDPOINT: http://fuseki:3030/ontocode/data
+      FUSEKI_ADMIN_USER: ${FUSEKI_ADMIN_USER:-admin}
+      FUSEKI_ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
+      DATA_DIR: /app/data
+      SPRING_PROFILES_ACTIVE: dev
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ONTOCODE_EDITOR_REQUIRE_JWT: "false"
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      ONTOLOGY_HTTP_TIMEOUT_MS: ${ONTOLOGY_HTTP_TIMEOUT_MS:-7200000}
+      ONTOLOGY_HTTP_TIMEOUT_SECONDS: ${ONTOLOGY_HTTP_TIMEOUT_SECONDS:-7200s}
+      ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-1}
+      JAVA_OPTS: >-
+        -Xms1g -Xmx3g
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m
+        -DentityExpansionLimit=100000000
+        -Djdk.xml.entityExpansionLimit=100000000
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      JIRA_ENABLED: ${JIRA_ENABLED:-false}
+      JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
+      JIRA_USER_EMAIL: ${JIRA_USER_EMAIL:-sindhuja@coretopia.com}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+      JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
+      JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
+      JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+    volumes:
+      - editor-logs:/app/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+      fuseki:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 4096m
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  # SWRL Rules Service - BUILD LOCALLY
+  swrl-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.swrl
+    image: ontocode-swrl:local
+    container_name: ontocode-swrl
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
+      FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
+      ONTOLOGY_EDITOR_URL: http://owl-editor:8083
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      JAVA_OPTS: >-
+        -Xms256m -Xmx768m
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m
+    volumes:
+      - swrl-logs:/app/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+      fuseki:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 1024m
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Plugin Service - BUILD LOCALLY
+  plugin-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin
+    image: ontocode-plugin:local
+    container_name: ontocode-plugin
+    restart: unless-stopped
+    ports:
+      - "8087:8087"
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ONTOLOGY_EDITOR_URL: http://owl-editor:8083
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
+    depends_on:
+      mongo:
+        condition: service_healthy
+      owl-editor:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 320m
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Plugin Initialization Service - BUILD LOCALLY
+  plugin-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin-init
+    image: ontocode-plugin-init:local
+    container_name: ontocode-plugin-init
+    restart: "no"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      MONGODB_USERNAME: ${MONGO_ROOT_USER:-admin}
+      MONGODB_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
+      MONGODB_AUTH_SOURCE: admin
+    depends_on:
+      mongo:
+        condition: service_healthy
+      plugin-service:
+        condition: service_started
+    networks:
+      - ontology-net
+
+  # Web Application (React Frontend) - BUILD LOCALLY
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp
+    image: ontocode-web:local
+    container_name: ontocode-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      ONTOCODE_API_URL: http://gateway:80
+    depends_on:
+      auth:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  mongo-data:
+  fuseki-data:
+  editor-logs:
+  swrl-logs:
+
+networks:
+  ontology-net:
+    driver: bridge

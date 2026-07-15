@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { sci2CodeService, CitationItem } from '../services/sci2CodeService';
 
 interface QuickPickCitation extends vscode.QuickPickItem {
@@ -21,7 +20,10 @@ export async function insertCitationCommand() {
     // Show more helpful error with what we found
     const openFiles = vscode.workspace.textDocuments
       .filter(d => !d.isUntitled && d.uri.scheme === 'file')
-      .map(d => path.basename(d.fileName))
+      .map(d => {
+        const fileName = d.fileName;
+        return fileName.substring(fileName.lastIndexOf('/') + 1).substring(fileName.lastIndexOf('\\') + 1);
+      })
       .join(', ');
     
     vscode.window.showWarningMessage(
@@ -37,28 +39,32 @@ export async function insertCitationCommand() {
 
   const document = editor.document;
   const fileName = document.fileName;
-  const fileExtension = path.extname(fileName).toLowerCase();
+  const lastDot = fileName.lastIndexOf('.');
+  const fileExtension = lastDot !== -1 ? fileName.substring(lastDot).toLowerCase() : '';
   
   console.log('File name:', fileName);
   console.log('File extension:', fileExtension);
   
-  // Get Zotero library
-  const items = await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: 'Loading Zotero library...',
-      cancellable: false
-    },
-    async () => {
-      return await sci2CodeService.getZoteroLibrary();
-    }
-  );
+  // Determine format based on file extension
+  const format = (fileExtension === '.ttl' || fileExtension === '.n3') 
+    ? 'turtle' 
+    : 'rdfxml';
 
-  if (items.length === 0) {
-    vscode.window.showWarningMessage(
-      'No Zotero items found. Please configure Sci2Code and ensure you have items in your library.'
+  // Get Zotero library
+  let items: any[] = [];
+  try {
+    items = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Loading Zotero library...',
+        cancellable: false
+      },
+      async () => {
+        return await sci2CodeService.getZoteroLibrary();
+      }
     );
-    return;
+  } catch (e) {
+    console.log('Sci2Code not available or failed to load library');
   }
 
   // Create quick pick items
@@ -78,9 +84,17 @@ export async function insertCitationCommand() {
     };
   });
 
+  // Add manual entry option
+  quickPickItems.unshift({
+    label: '$(plus) Add Citation Manually...',
+    description: 'Enter citation details directly without Zotero',
+    key: 'manual',
+    citation: null
+  });
+
   // Show quick pick
   const selected = await vscode.window.showQuickPick(quickPickItems, {
-    placeHolder: 'Search and select a citation to insert',
+    placeHolder: 'Search Zotero or add citation manually',
     matchOnDescription: true,
     matchOnDetail: true,
     ignoreFocusOut: true
@@ -90,10 +104,13 @@ export async function insertCitationCommand() {
     return;
   }
 
-  // Determine format based on file extension
-  const format = (fileExtension === '.ttl' || fileExtension === '.n3') 
-    ? 'turtle' 
-    : 'rdfxml';
+  if (selected.key === 'manual') {
+    const manualItem = await showManualCitationDialog();
+    if (manualItem) {
+      await insertManualCitation(editor, manualItem, format);
+    }
+    return;
+  }
 
   console.log('Using format:', format);
 
@@ -118,7 +135,7 @@ function findOntologyEditor(): vscode.TextEditor | undefined {
   const activeEditor = vscode.window.activeTextEditor;
   if (activeEditor) {
     const fileName = activeEditor.document.fileName;
-    const ext = path.extname(fileName).toLowerCase();
+    const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
     console.log('Active editor:', fileName, 'Extension:', ext);
     
     if (validExtensions.includes(ext)) {
@@ -133,7 +150,7 @@ function findOntologyEditor(): vscode.TextEditor | undefined {
   console.log('Checking visible editors...');
   for (const editor of vscode.window.visibleTextEditors) {
     const fileName = editor.document.fileName;
-    const ext = path.extname(fileName).toLowerCase();
+    const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
     console.log('Visible editor:', fileName, 'Extension:', ext);
     
     if (validExtensions.includes(ext)) {
@@ -149,7 +166,7 @@ function findOntologyEditor(): vscode.TextEditor | undefined {
     if (doc.uri.scheme !== 'file') continue;
     
     const fileName = doc.fileName;
-    const ext = path.extname(fileName).toLowerCase();
+    const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
     console.log('Open document:', fileName, 'Extension:', ext);
     
     if (validExtensions.includes(ext)) {
@@ -237,7 +254,98 @@ async function insertCitation(
   const metadata = await sci2CodeService.getCitationMetadata(citationKey);
   const title = metadata?.title || 'Citation';
   
+  // Update repository citation files
+  if (metadata) {
+    await updateRepositoryCitations(metadata);
+  }
+  
   vscode.window.showInformationMessage(`✓ Inserted citation: ${title}`);
+}
+
+async function updateRepositoryCitations(item: CitationItem): Promise<void> {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders) return;
+
+  const rootPath = workspaceFolders[0].uri.fsPath;
+  const bibPath = vscode.Uri.file(rootPath + '/references.bib');
+  const cffPath = vscode.Uri.file(rootPath + '/CITATION.cff');
+  const mdPath = vscode.Uri.file(rootPath + '/CITATIONS.md');
+
+  try {
+    // 1. Update references.bib
+    const bibSnippet = sci2CodeService.convertToBibTeX(item);
+    let bibContent = '';
+    try {
+      const bibData = await vscode.workspace.fs.readFile(bibPath);
+      bibContent = Buffer.from(bibData).toString('utf8');
+    } catch (e) {
+      // File doesn't exist, start fresh
+    }
+
+    if (!bibContent.includes(item.title)) {
+      bibContent += '\n' + bibSnippet;
+      await vscode.workspace.fs.writeFile(bibPath, Buffer.from(bibContent, 'utf8'));
+      console.log('Updated references.bib');
+    }
+
+    // 2. Update CITATION.cff
+    const cffRef = sci2CodeService.convertToCFFReference(item);
+    let cffContent = '';
+    try {
+      const cffData = await vscode.workspace.fs.readFile(cffPath);
+      cffContent = Buffer.from(cffData).toString('utf8');
+    } catch (e) {
+      // File doesn't exist
+    }
+
+    if (cffContent && !cffContent.includes(item.title)) {
+      // Simple append to references section
+      if (!cffContent.includes('references:')) {
+        cffContent += '\nreferences:\n';
+      }
+      
+      const refString = `  - type: ${cffRef.type}\n` +
+                        `    title: "${cffRef.title}"\n` +
+                        `    authors:\n` +
+                        (cffRef.authors.map((a: any) => `      - family-names: "${a['family-names']}"\n        given-names: "${a['given-names']}"`).join('\n')) + '\n' +
+                        (cffRef.year ? `    year: ${cffRef.year}\n` : '') +
+                        (cffRef.doi ? `    doi: ${cffRef.doi}\n` : '') +
+                        (cffRef.url ? `    url: "${cffRef.url}"\n` : '');
+      
+      cffContent += refString;
+      await vscode.workspace.fs.writeFile(cffPath, Buffer.from(cffContent, 'utf8'));
+      console.log('Updated CITATION.cff');
+    }
+
+    // 3. Update CITATIONS.md
+    let mdContent = '';
+    try {
+      const mdData = await vscode.workspace.fs.readFile(mdPath);
+      mdContent = Buffer.from(mdData).toString('utf8');
+    } catch (e) {
+      // File doesn't exist
+    }
+
+    if (mdContent && !mdContent.includes(item.title)) {
+      const authors = item.creators?.map(c => `${c.lastName}, ${c.firstName.charAt(0)}.`).join(', ') || 'Unknown';
+      const year = item.date ? (item.date.match(/\d{4}/)?.[0] || '') : '';
+      const mdEntry = `\n- **${item.title}**\n  - ${authors}${year ? ` (${year})` : ''}.\n` +
+                      (item.url ? `  - URL: [${item.url}](${item.url})\n` : '') +
+                      (item.doi ? `  - DOI: ${item.doi}\n` : '');
+      
+      if (mdContent.includes('## References')) {
+        mdContent = mdContent.replace('*No additional references yet. Use the Zotero integration to add citations.*', '');
+        mdContent += mdEntry;
+      } else {
+        mdContent += '\n## References\n' + mdEntry;
+      }
+      
+      await vscode.workspace.fs.writeFile(mdPath, Buffer.from(mdContent, 'utf8'));
+      console.log('Updated CITATIONS.md');
+    }
+  } catch (error) {
+    console.error('Failed to update repository citations:', error);
+  }
 }
 
 async function ensurePrefixes(document: vscode.TextDocument, format: 'turtle' | 'rdfxml'): Promise<void> {
@@ -327,4 +435,92 @@ export async function insertCitationAtClass(classIRI: string): Promise<void> {
   } else {
     vscode.window.showWarningMessage(`Could not find class ${classIRI} in document.`);
   }
+}
+
+async function showManualCitationDialog(): Promise<CitationItem | null> {
+  const title = await vscode.window.showInputBox({
+    prompt: 'Enter the title of the work',
+    placeHolder: 'e.g., The OWL API: A Java API for the semantic web',
+    ignoreFocusOut: true
+  });
+  if (!title) return null;
+
+  const author = await vscode.window.showInputBox({
+    prompt: 'Enter the author(s)',
+    placeHolder: 'e.g., Matthew Horridge, Sean Bechhofer',
+    ignoreFocusOut: true
+  });
+  if (!author) return null;
+
+  const year = await vscode.window.showInputBox({
+    prompt: 'Enter the year',
+    placeHolder: 'e.g., 2011',
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      return /^\d{4}$/.test(value) ? null : 'Please enter a valid 4-digit year';
+    }
+  });
+  if (!year) return null;
+
+  const doi = await vscode.window.showInputBox({
+    prompt: 'Enter DOI (optional)',
+    placeHolder: 'e.g., 10.1016/j.websem.2011.01.001',
+    ignoreFocusOut: true
+  });
+
+  const url = await vscode.window.showInputBox({
+    prompt: 'Enter URL (optional)',
+    placeHolder: 'e.g., http://owlcs.github.io/owlapi/',
+    ignoreFocusOut: true
+  });
+
+  // Parse authors
+  const creators = author.split(',').map(a => {
+    const parts = a.trim().split(' ');
+    const lastName = parts.pop() || '';
+    const firstName = parts.join(' ');
+    return { firstName, lastName, creatorType: 'author' };
+  });
+
+  return {
+    key: title.toLowerCase().replace(/\s+/g, '_').substring(0, 20) + '_' + year,
+    title,
+    creators,
+    date: year,
+    doi: doi || undefined,
+    url: url || undefined,
+    itemType: 'manual'
+  };
+}
+
+async function insertManualCitation(
+  editor: vscode.TextEditor,
+  item: CitationItem,
+  format: 'turtle' | 'rdfxml'
+): Promise<void> {
+  const formattedCitation = sci2CodeService.formatManualCitation(item, format);
+
+  // Ensure prefixes are present
+  const document = editor.document;
+  await ensurePrefixes(document, format);
+
+  // Get the current position
+  const position = editor.selection.active;
+  const indent = getIndentation(document, position);
+  const indentedCitation = indentText(formattedCitation, indent);
+
+  // Insert citation
+  const success = await editor.edit(editBuilder => {
+    editBuilder.insert(position, '\n' + indentedCitation + '\n');
+  });
+
+  if (!success) {
+    vscode.window.showErrorMessage('Failed to insert citation into document.');
+    return;
+  }
+
+  // Update repository citation files
+  await updateRepositoryCitations(item);
+  
+  vscode.window.showInformationMessage(`✓ Inserted manual citation: ${item.title}`);
 }

@@ -1,0 +1,127 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns="http://www.example.org/consistent#"
+     xml:base="http://www.example.org/consistent"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+    
+    <owl:Ontology rdf:about="http://www.example.org/consistent">
+        <rdfs:label>Consistent Test Ontology</rdfs:label>
+        <rdfs:comment>A logically consistent OWL ontology for Reasoner Plugin testing. All classes are satisfiable, no contradictions.</rdfs:comment>
+    </owl:Ontology>
+
+    <!-- ======================== -->
+    <!-- CLASSES (all satisfiable) -->
+    <!-- ======================== -->
+
+    <owl:Class rdf:about="http://www.example.org/consistent#Entity">
+        <rdfs:label>Entity</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/consistent#PhysicalObject">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/consistent#Entity"/>
+        <rdfs:label>Physical Object</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/consistent#AbstractConcept">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/consistent#Entity"/>
+        <rdfs:label>Abstract Concept</rdfs:label>
+    </owl:Class>
+
+    <!-- Disjoint but no individual belongs to both — consistent -->
+    <owl:AllDisjointClasses>
+        <owl:members rdf:parseType="Collection">
+            <owl:Class rdf:about="http://www.example.org/consistent#PhysicalObject"/>
+            <owl:Class rdf:about="http://www.example.org/consistent#AbstractConcept"/>
+        </owl:members>
+    </owl:AllDisjointClasses>
+
+    <owl:Class rdf:about="http://www.example.org/consistent#Fruit">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/consistent#PhysicalObject"/>
+        <rdfs:label>Fruit</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/consistent#Apple">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/consistent#Fruit"/>
+        <rdfs:label>Apple</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/consistent#Orange">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/consistent#Fruit"/>
+        <rdfs:label>Orange</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/consistent#Color">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/consistent#AbstractConcept"/>
+        <rdfs:label>Color</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/consistent#Taste">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/consistent#AbstractConcept"/>
+        <rdfs:label>Taste</rdfs:label>
+    </owl:Class>
+
+    <!-- ======================== -->
+    <!-- PROPERTIES               -->
+    <!-- ======================== -->
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/consistent#hasColor">
+        <rdfs:domain rdf:resource="http://www.example.org/consistent#Fruit"/>
+        <rdfs:range rdf:resource="http://www.example.org/consistent#Color"/>
+        <rdfs:label>has color</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/consistent#hasTaste">
+        <rdfs:domain rdf:resource="http://www.example.org/consistent#Fruit"/>
+        <rdfs:range rdf:resource="http://www.example.org/consistent#Taste"/>
+        <rdfs:label>has taste</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/consistent#hasWeight">
+        <rdfs:domain rdf:resource="http://www.example.org/consistent#Fruit"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>has weight</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <!-- ======================== -->
+    <!-- INDIVIDUALS (consistent) -->
+    <!-- ======================== -->
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/consistent#RedColor">
+        <rdf:type rdf:resource="http://www.example.org/consistent#Color"/>
+        <rdfs:label>Red</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/consistent#OrangeColor">
+        <rdf:type rdf:resource="http://www.example.org/consistent#Color"/>
+        <rdfs:label>Orange</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/consistent#SweetTaste">
+        <rdf:type rdf:resource="http://www.example.org/consistent#Taste"/>
+        <rdfs:label>Sweet</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/consistent#SourTaste">
+        <rdf:type rdf:resource="http://www.example.org/consistent#Taste"/>
+        <rdfs:label>Sour</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/consistent#GalaApple">
+        <rdf:type rdf:resource="http://www.example.org/consistent#Apple"/>
+        <hasColor rdf:resource="http://www.example.org/consistent#RedColor"/>
+        <hasTaste rdf:resource="http://www.example.org/consistent#SweetTaste"/>
+        <hasWeight rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">0.18</hasWeight>
+        <rdfs:label>Gala Apple</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/consistent#NavelOrange">
+        <rdf:type rdf:resource="http://www.example.org/consistent#Orange"/>
+        <hasColor rdf:resource="http://www.example.org/consistent#OrangeColor"/>
+        <hasTaste rdf:resource="http://www.example.org/consistent#SweetTaste"/>
+        <hasWeight rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">0.22</hasWeight>
+        <rdfs:label>Navel Orange</rdfs:label>
+    </owl:NamedIndividual>
+
+</rdf:RDF>

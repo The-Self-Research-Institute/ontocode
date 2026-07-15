@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OntoCode – Starting…</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    overflow: hidden;
+    /* drag anywhere on the frameless window */
+    -webkit-app-region: drag;
+  }
+
+  .logo-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 32px;
+  }
+
+  .logo-img {
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(59,130,246,0.4);
+    object-fit: contain;
+  }
+
+  .logo-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    box-shadow: 0 4px 24px rgba(59,130,246,0.4);
+  }
+
+  .app-name {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #f8fafc;
+  }
+
+  .app-tagline {
+    font-size: 12px;
+    color: #64748b;
+    letter-spacing: 0.5px;
+  }
+
+  /* Progress bar */
+  .progress-track {
+    width: 320px;
+    height: 4px;
+    background: #1e293b;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.4s ease;
+  }
+  .progress-fill.indeterminate {
+    width: 30%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0%   { transform: translateX(-400%); }
+    100% { transform: translateX(500%); }
+  }
+
+  /* Log console */
+  .log-area {
+    width: 420px;
+    height: 100px;
+    background: #0a0f1e;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 10px 12px;
+    overflow-y: auto;
+    font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.7;
+    -webkit-app-region: no-drag;
+  }
+
+  .log-line { display: flex; gap: 8px; }
+  .log-badge {
+    min-width: 34px;
+    text-align: right;
+    font-weight: 600;
+    font-size: 10px;
+    padding-top: 1px;
+  }
+  .log-badge.info  { color: #60a5fa; }
+  .log-badge.ok    { color: #34d399; }
+  .log-badge.warn  { color: #fbbf24; }
+  .log-badge.error { color: #f87171; }
+  .log-msg         { color: #94a3b8; }
+</style>
+</head>
+<body>
+
+<div class="logo-area">
+  <img src="splash-logo.png" alt="OntoCode" class="logo-img" width="64" height="64" />
+  <div class="app-name">OntoCode</div>
+  <div class="app-tagline">DESKTOP EDITION</div>
+</div>
+
+<div class="progress-track">
+  <div class="progress-fill indeterminate" id="bar"></div>
+</div>
+
+<div class="log-area" id="log"></div>
+
+<script>
+  const logEl  = document.getElementById('log');
+  const barEl  = document.getElementById('bar');
+
+  const STEPS = [
+    { key: 'java',   label: 'Java 17+',     pct: 10 },
+    { key: 'mongo',  label: 'MongoDB',       pct: 35 },
+    { key: 'fuseki', label: 'Fuseki',        pct: 65 },
+    { key: 'editor', label: 'OWL Editor',    pct: 90 },
+    { key: 'done',   label: 'Ready',         pct: 100 },
+  ];
+
+  function appendLog(level, msg) {
+    const line = document.createElement('div');
+    line.className = 'log-line';
+
+    const badge = document.createElement('span');
+    badge.className = `log-badge ${level}`;
+    badge.textContent = level.toUpperCase();
+
+    const text = document.createElement('span');
+    text.className = 'log-msg';
+    text.textContent = msg;
+
+    line.appendChild(badge);
+    line.appendChild(text);
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+
+    // Advance progress bar based on keywords in the message
+    STEPS.forEach(({ key, pct }) => {
+      const txt = msg.toLowerCase();
+      if (txt.includes(key) || (key === 'editor' && txt.includes('owl editor'))) {
+        setProgress(pct);
+      }
+    });
+  }
+
+  function setProgress(pct) {
+    barEl.classList.remove('indeterminate');
+    barEl.style.width = pct + '%';
+  }
+
+  // Receive log events from the main process via the splash-preload bridge
+  if (window.splashBridge) {
+    window.splashBridge.onLog((level, msg) => appendLog(level, msg));
+  }
+
+  // Seed with an initial message
+  appendLog('info', 'Starting OntoCode Desktop…');
+</script>
+</body>
+</html>

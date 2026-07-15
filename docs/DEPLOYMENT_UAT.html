@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OntoCode UAT Deployment Guide</title>
+  <style>
+    body { background: #ffffff; color: #000000; font-family: system-ui, sans-serif; line-height: 1.5; margin: 0; padding: 1.5rem; max-width: 52rem; }
+    h1 { font-size: 1.5rem; margin-top: 0; }
+    h2 { font-size: 1.15rem; margin-top: 1.75rem; border-bottom: 1px solid #000000; padding-bottom: 0.25rem; }
+    h3 { font-size: 1rem; margin-top: 1.25rem; }
+    p, li { font-size: 0.95rem; }
+    ul { padding-left: 1.25rem; }
+    code, pre { font-family: ui-monospace, monospace; font-size: 0.85rem; background: #ffffff; border: 1px solid #000000; }
+    pre { padding: 0.75rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+    code { padding: 0.1rem 0.25rem; border: 1px solid #000000; }
+    table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.9rem; }
+    th, td { border: 1px solid #000000; padding: 0.4rem 0.5rem; text-align: left; vertical-align: top; }
+    th { font-weight: 600; }
+    .note { border: 1px solid #000000; padding: 0.75rem; margin: 0.75rem 0; }
+    a { color: #000000; text-decoration: underline; }
+    hr { border: none; border-top: 1px solid #000000; margin: 2rem 0; }
+  </style>
+</head>
+<body>
+
+<h1>OntoCode UAT deployment guide</h1>
+<p>UAT (user acceptance testing) is a shared environment for validating releases, integrations, and billing flows before production. It should mirror production topology closely while using non-live payment credentials and disposable or restorable data. Companion: <a href="DEPLOYMENT_PRODUCTION.html">Production deployment guide</a>.</p>
+
+<h2>1. Goals and boundaries</h2>
+<ul>
+  <li><strong>Same services as prod:</strong> MongoDB, GraphDB, auth, gateway, ontology editor, SWRL, plugin service, webapp — so behaviour matches production.</li>
+  <li><strong>Stripe test mode only:</strong> <code>STRIPE_SECRET_KEY</code> must be <code>sk_test_...</code>; price IDs must be test-mode <code>price_...</code> from your Stripe test dashboard.</li>
+  <li><strong>Separate data:</strong> UAT must not use production MongoDB, GraphDB, or secrets. Use its own hosts, volumes, and <code>JWT_SECRET</code>.</li>
+  <li><strong>Safe to reset:</strong> Plan how to wipe or restore UAT data after major billing experiments (see <code>scripts/payment-test</code> only against UAT MongoDB).</li>
+</ul>
+
+<h2>2. Compose file and images</h2>
+<p>Use <code>docker-compose.production.yml</code> when you want the same layout and GraphDB sizing as production (recommended for UAT parity). Use <code>docker-compose.yml</code> for a lighter local-style stack on smaller hosts.</p>
+<pre>docker compose -f docker-compose.production.yml --env-file .env.uat up -d</pre>
+<p>Set <code>DOCKER_REGISTRY</code> and <code>VERSION</code> (or image tags your CI publishes) so UAT pulls explicit candidate builds, for example a release candidate tag rather than <code>latest</code>.</p>
+
+<h2>3. Environment variables (UAT)</h2>
+<p>Copy <code>.env.example</code> to a UAT-only file (for example <code>.env.uat</code>). Never commit it. Below is how key variables should behave in UAT versus production.</p>
+<table>
+  <thead>
+    <tr><th>Variable</th><th>UAT expectation</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>BASE_URL</code></td><td>Public HTTPS URL of the UAT webapp (used in invitation and password-reset emails). Example: <code>https://uat.yourdomain.example</code>.</td></tr>
+    <tr><td><code>AUTH_SERVICE_URL</code> / <code>GATEWAY_URL</code></td><td>URLs clients use to reach auth and gateway from outside the cluster or host (ports depend on your ingress; gateway is often port 80 behind a load balancer).</td></tr>
+    <tr><td><code>JWT_SECRET</code></td><td>Long random string, unique to UAT, not reused in prod or dev laptops.</td></tr>
+    <tr><td><code>MONGO_ROOT_USER</code> / <code>MONGO_ROOT_PASSWORD</code></td><td>Strong credentials; UAT database must not point at production.</td></tr>
+    <tr><td><code>MONGODB_DATABASE</code></td><td>Typically <code>ontocode</code> or a UAT-specific name; must match connection strings in all services.</td></tr>
+    <tr><td><code>GRAPHDB_REPOSITORY</code></td><td>Usually <code>ontocode</code>; separate GraphDB instance or repository from production.</td></tr>
+    <tr><td><code>STRIPE_SECRET_KEY</code></td><td>Test secret key only (<code>sk_test_...</code>).</td></tr>
+    <tr><td><code>STRIPE_PUBLISHABLE_KEY</code></td><td>Test publishable key (<code>pk_test_...</code>).</td></tr>
+    <tr><td><code>STRIPE_WEBHOOK_SECRET</code></td><td>Signing secret from a Stripe <strong>test</strong> webhook endpoint pointing at UAT auth, e.g. <code>https://uat-auth.../api/billing/webhook</code>, or from <code>stripe listen</code> during manual tests.</td></tr>
+    <tr><td><code>STRIPE_PRICE_*</code></td><td>Test price IDs for Pro / Enterprise monthly and yearly plans.</td></tr>
+    <tr><td><code>STRIPE_TRIAL_PERIOD_DAYS</code></td><td>Can match prod or be shortened for faster UAT cycles.</td></tr>
+    <tr><td><code>SMTP_*</code> / <code>EMAIL_FROM</code></td><td>Use a mail sink or non-customer domain (e.g. transactional provider subaccount) so UAT emails never go to real customers.</td></tr>
+    <tr><td><code>BILLING_REMINDER_ENABLED</code> / <code>BILLING_REMINDER_DAYS_BEFORE_LIST</code> / crons</td><td>Enable to validate reminder jobs; use safe recipient lists.</td></tr>
+    <tr><td><code>GATEWAY_HTTP_RESPONSE_TIMEOUT</code> / <code>ONTOLOGY_HTTP_TIMEOUT_*</code></td><td>Match production values if you test large uploads in UAT.</td></tr>
+    <tr><td><code>ADMIN_EMAIL</code> / <code>ADMIN_PASSWORD</code></td><td>Bootstrap admin for UAT only; rotate if exposed.</td></tr>
+    <tr><td><code>JIRA_*</code></td><td>Optional; point at a test Jira project if issue reporting is validated in UAT.</td></tr>
+    <tr><td><code>LOGGING_LEVEL_ROOT</code></td><td><code>INFO</code> or <code>DEBUG</code> for deeper troubleshooting; avoid permanent DEBUG in production.</td></tr>
+  </tbody>
+</table>
+<div class="note">
+  <p>The auth service reads <code>BILLING_REMINDER_DAYS_BEFORE_LIST</code> (comma-separated integers). Compose passes this into the auth container; ensure your <code>.env.uat</code> defines it, not a deprecated single-day variable name.</p>
+</div>
+
+<h2>4. Stripe webhooks in UAT</h2>
+<p>Create a Stripe <strong>test mode</strong> webhook endpoint whose URL reaches the UAT auth service path <code>/api/billing/webhook</code>. Copy the endpoint signing secret into <code>STRIPE_WEBHOOK_SECRET</code>. For ad-hoc developer testing from a laptop, Stripe CLI can forward to a tunnel URL; that secret belongs only on that machine, not in shared UAT unless you rotate it.</p>
+
+<h2>5. Smoke checklist after deploy</h2>
+<ol>
+  <li>GraphDB: repository <code>ontocode</code> exists; REST responds.</li>
+  <li>Auth: register or login; token works through gateway.</li>
+  <li>Editor health: <code>/actuator/health/liveness</code> on port 8083.</li>
+  <li>Webapp loads and calls gateway-backed APIs.</li>
+  <li>Billing: subscribe with a Stripe test card; confirm webhook rows and subscription state in MongoDB.</li>
+</ol>
+<p>For deeper billing scenarios see <a href="PAYMENT_TESTING.html">PAYMENT_TESTING.html</a> if present in your tree.</p>
+
+<h2>6. Networking and ingress</h2>
+<p>UAT hostnames (for example <code>uat-api.example.com</code>) should be distinct from production. TLS certificates can use a separate certificate or the same wildcard with a UAT subdomain. If you reuse <code>k8s/ingress.yaml</code> patterns, duplicate and edit hosts and backend services for the UAT namespace only.</p>
+
+<h2>7. Upgrades and rollback</h2>
+<p>Tag each UAT deployment with a git SHA or semver in <code>VERSION</code>. Keep the previous image tag available; rollback is <code>docker compose ... up -d</code> with the prior <code>VERSION</code> after restoring a database snapshot if schema changed.</p>
+
+<hr>
+<p>OntoCode repository — UAT deployment. Keep secrets out of version control.</p>
+
+</body>
+</html>

@@ -1,0 +1,70 @@
+# OntoCode Windows desktop installer (OntoCode Setup *.exe + win-unpacked)
+#
+# Cross-builds on Linux using Wine (electron-builder). Bundles a Windows JRE via TARGET_PLATFORM=win32.
+#
+# Build from repo root:
+#   docker build -f electron-app/Dockerfile.win -t ontocode-desktop-win .
+#
+# Extract installer to host:
+#   .\electron-app\scripts\docker-extract-desktop.ps1
+
+# syntax=docker/dockerfile:1
+
+# ── Fuseki 6.1.0 (same as fuseki-docker/ + docker-compose.dev.yml ontocode-fuseki:6.1.0) ──
+FROM eclipse-temurin:21-jre-alpine AS fuseki
+
+ENV FUSEKI_VERSION=6.1.0
+ENV FUSEKI_SHA512=75457f45d14397876a41ed51abe7ae5d2f1e708dfe1315765f858158bc5c6813bc036ec1539ddc4dffd26201f5cc31fadec299ca5c3dc2548b723513ed31d326
+ENV ASF_MIRROR=https://www.apache.org/dyn/mirrors/mirrors.cgi?action=download&filename=
+ENV ASF_ARCHIVE=https://archive.apache.org/dist/
+ENV FUSEKI_HOME=/jena-fuseki
+
+RUN set -eux; \
+    apk -U upgrade; \
+    apk add --no-cache bash curl ca-certificates; \
+    rm -rf /var/cache/apk/*
+
+WORKDIR /tmp
+
+RUN echo "$FUSEKI_SHA512  fuseki.tar.gz" > fuseki.tar.gz.sha512 && \
+    (curl --location --silent --show-error --fail --retry-connrefused --retry 3 \
+        --output fuseki.tar.gz \
+        "${ASF_MIRROR}jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz" || \
+     curl --fail --silent --show-error --retry-connrefused --retry 3 \
+        --output fuseki.tar.gz \
+        "${ASF_ARCHIVE}jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz") && \
+    sha512sum -c fuseki.tar.gz.sha512 && \
+    tar zxf fuseki.tar.gz && \
+    mv apache-jena-fuseki* $FUSEKI_HOME && \
+    rm fuseki.tar.gz* && \
+    cd $FUSEKI_HOME && rm -rf fuseki.war && chmod 755 fuseki-server
+
+# ── Desktop builder ──
+FROM electronuserland/builder:22-wine AS builder
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    maven \
+    openjdk-21-jdk-headless \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
+    PATH="/usr/lib/jvm/java-21-openjdk-amd64/bin:${PATH}" \
+    TARGET_PLATFORM=win32 \
+    CI=true
+
+WORKDIR /project
+
+COPY . .
+
+COPY --from=fuseki /jena-fuseki/fuseki-server.jar ./fuseki-docker/fuseki-server.jar
+
+RUN cd /project/ontology-vscode-extension/webview-src && npm ci \
+    && cd /project/electron-app && npm ci
+
+RUN cd /project/electron-app \
+    && node scripts/build-desktop.js --full --resources --plugins --win
+
+FROM alpine:3.20 AS artifact
+COPY --from=builder /project/electron-app/dist-electron/ /dist-electron/

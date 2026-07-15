@@ -5,24 +5,35 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:e2e": "vite --mode e2e",
+    "dev:desktop-e2e": "vite --mode desktop-e2e --port 3002",
     "build": "vite build",
+    "build:electron": "vite build --base ./",
+    "build:vscode": "vite build --base ./",
     "preview": "vite preview"
   },
   "dependencies": {
-    "react-dom": "^19.2.0",
-    "lucide-react": "^0.546.0",
-    "react": "^19.2.0",
-    "vis-network": "latest",
-    "path": "^0.12.7",
+    "@stomp/stompjs": "^7.3.0",
+    "@stripe/react-stripe-js": "^6.3.0",
+    "@stripe/stripe-js": "^9.3.1",
     "axios": "^1.12.2",
-    "fs": "^0.0.1-security",
+    "d3": "^7.8.5",
     "form-data": "^4.0.4",
+    "fs": "^0.0.1-security",
+    "lucide-react": "^0.546.0",
+    "path": "^0.12.7",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "sockjs-client": "^1.6.1",
+    "vis-network": "latest",
     "vscode": "^1.1.37"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/sockjs-client": "^1.5.4",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vite-plugin-istanbul": "^7.2.1"
   }
 }

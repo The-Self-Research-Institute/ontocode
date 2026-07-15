@@ -3,7 +3,8 @@
     "module": "commonjs",
     "target": "es2020",
     "lib": [
-      "ES2020" // Include ES2020 for Node.js environment
+      "ES2020", // Include ES2020 for Node.js environment
+      "DOM" // Include DOM for browser APIs like FormData and File
     ],
     "sourceMap": true,
     "rootDir": "src", // Only compile files under 'src'

@@ -219,11 +219,52 @@ public class SwrlController {
                 result.getInferredAxioms(),
                 result.getErrorMessage()
             );
+            // Pass through rule names and execution mode
+            response.setExecutedRuleNames(result.getExecutedRuleNames());
+            response.setExecutionMode(result.getExecutionMode());
             
             return ResponseEntity.ok(response);
             
         } catch (Exception e) {
             logger.error("Failed to execute rules for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(createErrorResponse("Execution failed: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * ✅ NEW: Execute selected rules by IDs
+     */
+    @PostMapping("/{projectId}/execute/selected")
+    public ResponseEntity<?> executeSelectedRules(
+            @PathVariable String projectId,
+            @RequestBody Map<String, List<String>> request) {
+        
+        try {
+            List<String> ruleIds = request.get("ruleIds");
+            if (ruleIds == null || ruleIds.isEmpty()) {
+                return ResponseEntity.badRequest()
+                    .body(createErrorResponse("Rule IDs are required"));
+            }
+            
+            ExecutionResult result = swrlEngineService.executeSelectedRules(projectId, ruleIds);
+            
+            ExecutionResponse response = new ExecutionResponse(
+                result.isSuccess(),
+                result.getExecutionTimeMs(),
+                result.getInferredAxiomsCount(),
+                ruleIds.size(),
+                result.getInferredAxioms(),
+                result.getErrorMessage()
+            );
+            // Pass through rule names and execution mode
+            response.setExecutedRuleNames(result.getExecutedRuleNames());
+            response.setExecutionMode(result.getExecutionMode());
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            logger.error("Failed to execute selected rules for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(createErrorResponse("Execution failed: " + e.getMessage()));
         }
@@ -238,7 +279,7 @@ public class SwrlController {
             @PathVariable String ruleId) {
         
         try {
-            ExecutionResult result = swrlEngineService.testSingleRule(projectId, ruleId);
+            ExecutionResult result = swrlEngineService.testSingleRuleById(projectId, ruleId);
             return ResponseEntity.ok(result);
             
         } catch (IllegalArgumentException e) {
@@ -412,5 +453,56 @@ public class SwrlController {
             "message", message,
             "timestamp", Instant.now().toString()
         );
+    }
+
+    /**
+     * Execute a SQWRL query and return tabular results
+     */
+    @PostMapping("/{projectId}/sqwrl/query")
+    public ResponseEntity<?> executeSqwrlQuery(
+            @PathVariable String projectId,
+            @RequestBody Map<String, Object> request) {
+        
+        try {
+            String queryText = (String) request.get("queryText");
+            String queryName = (String) request.get("queryName");
+            Integer maxResults = request.get("maxResults") != null 
+                ? ((Number) request.get("maxResults")).intValue() 
+                : null;
+            
+            if (queryText == null || queryText.trim().isEmpty()) {
+                return ResponseEntity.badRequest()
+                    .body(createErrorResponse("Query text is required"));
+            }
+            
+            logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);
+            
+            SwrlEngineService.SqwrlQueryResult result = swrlEngineService.executeSqwrlQuery(
+                projectId, queryText, queryName, maxResults);
+            
+            if (result.isSuccess()) {
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "queryName", result.getQueryName(),
+                    "queryText", result.getQueryText(),
+                    "executionTimeMs", result.getExecutionTimeMs(),
+                    "rowCount", result.getRowCount(),
+                    "columnNames", result.getColumnNames() != null ? result.getColumnNames() : List.of(),
+                    "rows", result.getRows() != null ? result.getRows() : List.of()
+                ));
+            } else {
+                return ResponseEntity.ok(Map.of(
+                    "success", false,
+                    "queryName", result.getQueryName() != null ? result.getQueryName() : "",
+                    "queryText", result.getQueryText() != null ? result.getQueryText() : "",
+                    "errorMessage", result.getErrorMessage() != null ? result.getErrorMessage() : "Unknown error"
+                ));
+            }
+            
+        } catch (Exception e) {
+            logger.error("SQWRL query failed for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(createErrorResponse("SQWRL query failed: " + e.getMessage()));
+        }
     }
 }

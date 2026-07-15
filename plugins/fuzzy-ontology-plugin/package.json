@@ -1,0 +1,53 @@
+{
+  "name": "fuzzy-ontology-plugin",
+  "displayName": "Fuzzy Ontology Advanced Plugin",
+  "description": "Advanced fuzzy ontology support with membership degrees, fuzzy reasoning, and interactive visualization - beyond Protege capabilities",
+  "version": "1.0.0",
+  "publisher": "ontocode",
+  "engines": {
+    "ontocode": "^1.0.0"
+  },
+  "categories": [
+    "Ontology",
+    "Reasoning",
+    "Visualization"
+  ],
+  "keywords": [
+    "fuzzy",
+    "ontology",
+    "membership",
+    "reasoning",
+    "fuzzy-logic",
+    "owl",
+    "visualization"
+  ],
+  "author": {
+    "name": "OntoCode Team"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ontocode/fuzzy-ontology-plugin"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "webpack --mode production",
+    "watch": "webpack --mode development --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "ts-loader": "^9.4.0",
+    "typescript": "^5.3.0",
+    "webpack": "^5.88.0",
+    "webpack-cli": "^5.1.0"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.263.0"
+  },
+  "dependencies": {}
+}
+

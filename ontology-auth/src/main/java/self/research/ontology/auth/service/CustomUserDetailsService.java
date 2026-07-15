@@ -1,16 +1,13 @@
 package self.research.ontology.auth.service;
 
-import self.research.ontology.auth.model.User;
-import self.research.ontology.auth.repository.UserRepository;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
-import org.springframework.security.core.userdetails.User.UserBuilder;
+import self.research.ontology.auth.model.User;
+import self.research.ontology.auth.repository.UserRepository;
 
-import java.util.Collection;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -24,26 +21,34 @@ public class CustomUserDetailsService implements UserDetailsService {
     }
 
     @Override
-    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found with username: " + username));
+    public UserDetails loadUserByUsername(String identifier) throws UsernameNotFoundException {
+        String normalizedIdentifier = identifier == null ? "" : identifier.trim();
 
-        // Use Spring Security's User.UserBuilder to handle account status
-        UserBuilder builder;
-        if (user.isEnabled()) {
-            builder = org.springframework.security.core.userdetails.User.withUsername(user.getUsername());
-            builder.password(user.getPassword());
-            builder.authorities(mapRolesToAuthorities(user.getRoles()));
-        } else {
-            throw new UsernameNotFoundException("User not found with username: " + username);
-        }
+        // Favor email lookup first since we are transitioning to email-based identity
+        User authUser = userRepository.findByEmailIgnoreCase(normalizedIdentifier)
+                .or(() -> userRepository.findByUsername(normalizedIdentifier))
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + normalizedIdentifier));
 
-        return builder.build();
+        String[] authorities = buildAuthorities(authUser.getRoles());
+
+        // We use the EMAIL as the "username" for Spring Security's UserDetails
+        // This ensures that authentication.getName() returns the unique email.
+        return org.springframework.security.core.userdetails.User.withUsername(authUser.getEmail())
+                .password(authUser.getPassword())
+                .authorities(authorities)
+                .accountLocked(authUser.isAccountLocked())
+                .disabled(!authUser.isEnabled())
+                .build();
     }
 
-    private Collection<? extends GrantedAuthority> mapRolesToAuthorities(Set<String> roles) {
-        return roles.stream()
-                .map(SimpleGrantedAuthority::new)
+    private String[] buildAuthorities(Set<String> roles) {
+        if (roles == null || roles.isEmpty()) {
+            return new String[]{"ROLE_USER"};
+        }
+        List<String> mapped = roles.stream()
+                .map(role -> role.startsWith("ROLE_") ? role : "ROLE_" + role.toUpperCase())
                 .collect(Collectors.toList());
+        return mapped.toArray(new String[0]);
     }
 }
+

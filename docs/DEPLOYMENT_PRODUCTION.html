@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OntoCode Production Deployment Guide</title>
+  <style>
+    body { background: #ffffff; color: #000000; font-family: system-ui, sans-serif; line-height: 1.5; margin: 0; padding: 1.5rem; max-width: 52rem; }
+    h1 { font-size: 1.5rem; margin-top: 0; }
+    h2 { font-size: 1.15rem; margin-top: 1.75rem; border-bottom: 1px solid #000000; padding-bottom: 0.25rem; }
+    h3 { font-size: 1rem; margin-top: 1.25rem; }
+    p, li { font-size: 0.95rem; }
+    ul { padding-left: 1.25rem; }
+    code, pre { font-family: ui-monospace, monospace; font-size: 0.85rem; background: #ffffff; border: 1px solid #000000; }
+    pre { padding: 0.75rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+    code { padding: 0.1rem 0.25rem; border: 1px solid #000000; }
+    table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.9rem; }
+    th, td { border: 1px solid #000000; padding: 0.4rem 0.5rem; text-align: left; vertical-align: top; }
+    th { font-weight: 600; }
+    .note { border: 1px solid #000000; padding: 0.75rem; margin: 0.75rem 0; }
+    a { color: #000000; text-decoration: underline; }
+    hr { border: none; border-top: 1px solid #000000; margin: 2rem 0; }
+  </style>
+</head>
+<body>
+
+<h1>OntoCode production deployment guide</h1>
+<p>Production serves real users and real billing. This guide assumes Docker Compose using <code>docker-compose.production.yml</code> (larger GraphDB heap and memory limits than the default development compose) or an equivalent orchestration with the same services. Companion: <a href="DEPLOYMENT_UAT.html">UAT deployment guide</a>. For a full EC2 step-by-step (prerequisites, <code>git pull</code>, <code>.env</code>, log directories, no Kubernetes), see <a href="DEPLOYMENT_PRODUCTION_EC2_DOCKER.html">EC2 Docker production runbook</a>.</p>
+
+<h2>1. Principles</h2>
+<ul>
+  <li><strong>Secrets:</strong> Store production secrets in a secret manager or encrypted CI variables; never commit <code>.env</code> with live keys.</li>
+  <li><strong>Network exposure:</strong> Do not publish MongoDB or GraphDB ports to the public internet. Only gateway (and optionally auth for direct admin tools) should be reachable from outside a private network, typically via TLS termination.</li>
+  <li><strong>Stripe live mode:</strong> <code>STRIPE_SECRET_KEY</code> must be <code>sk_live_...</code>; price IDs must be live-mode <code>price_...</code> objects.</li>
+  <li><strong>No destructive test tools:</strong> Do not run Mongo time-travel or billing mutation scripts from <code>scripts/payment-test</code> against production databases.</li>
+</ul>
+
+<h2>2. Compose and startup</h2>
+<pre>docker compose -f docker-compose.production.yml --env-file .env.production up -d</pre>
+<p>Ensure host directories for log volumes exist if your compose binds <code>/var/log/ontocode/*</code>. Wait for MongoDB and GraphDB health before relying on editor or SWRL.</p>
+<p>Production compose aligns with <code>docker-compose.yml</code> for service list and environment wiring; GraphDB uses a larger heap (6g) and an 8g container memory limit. Verify <code>graphdb-import</code> and <code>graphdb-data</code> volumes are backed up.</p>
+
+<h2>3. Environment variables (production)</h2>
+<p>Create <code>.env.production</code> from <code>.env.example</code> and set every value for the live domain and live integrations.</p>
+<table>
+  <thead>
+    <tr><th>Variable</th><th>Production requirement</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>BASE_URL</code></td><td>Canonical public HTTPS origin of the customer-facing webapp. Wrong values break password reset and invitation links.</td></tr>
+    <tr><td><code>AUTH_SERVICE_URL</code> / <code>GATEWAY_URL</code></td><td>Stable URLs your clients and reverse proxy use; must match TLS certificates and DNS.</td></tr>
+    <tr><td><code>JWT_SECRET</code></td><td>Cryptographically strong, unique to production; must match the value injected into gateway and any service that validates JWTs.</td></tr>
+    <tr><td><code>MONGO_ROOT_PASSWORD</code></td><td>Strong unique password; restrict MongoDB to internal network only.</td></tr>
+    <tr><td><code>MONGODB_URI</code> (if used outside compose)</td><td>Must target the production cluster; include auth and TLS parameters if you use MongoDB TLS.</td></tr>
+    <tr><td><code>GRAPHDB_URL</code> / repository</td><td>Internal service URL inside the network; production GraphDB must be reachable only from application subnets.</td></tr>
+    <tr><td><code>STRIPE_SECRET_KEY</code></td><td>Live secret key (<code>sk_live_...</code>).</td></tr>
+    <tr><td><code>STRIPE_PUBLISHABLE_KEY</code></td><td>Live publishable key (<code>pk_live_...</code>).</td></tr>
+    <tr><td><code>STRIPE_WEBHOOK_SECRET</code></td><td>From Stripe Dashboard live webhook endpoint hitting <code>https://&lt;your-auth-host&gt;/api/billing/webhook</code>.</td></tr>
+    <tr><td><code>STRIPE_PRICE_*</code></td><td>Live price IDs for each plan and billing interval you sell.</td></tr>
+    <tr><td><code>SMTP_HOST</code> / <code>SMTP_PORT</code> / <code>SMTP_USERNAME</code> / <code>SMTP_PASSWORD</code> / <code>EMAIL_FROM</code></td><td>Production-grade SMTP; <code>EMAIL_FROM</code> should be a domain you control with SPF/DKIM configured.</td></tr>
+    <tr><td><code>BILLING_REMINDER_*</code> / <code>BILLING_EXPIRY_CHECK_*</code> / <code>BILLING_AUTORENEWAL_*</code> / <code>INVITATION_CLEANUP_CRON</code></td><td>Enable and tune crons for your timezone and support policy; reminders use <code>BILLING_REMINDER_DAYS_BEFORE_LIST</code> (comma-separated days).</td></tr>
+    <tr><td><code>STORAGE_LIMIT_*</code> / <code>PLAN_*</code></td><td>Business limits and display defaults; align with commercial terms before first customer data.</td></tr>
+    <tr><td><code>GATEWAY_HTTP_RESPONSE_TIMEOUT</code> / <code>ONTOLOGY_HTTP_TIMEOUT_*</code></td><td>Set high enough for your largest supported uploads; keep gateway and editor values consistent.</td></tr>
+    <tr><td><code>ADMIN_EMAIL</code> / <code>ADMIN_PASSWORD</code></td><td>Initial bootstrap only; disable or rotate default admin after onboarding proper operators.</td></tr>
+    <tr><td><code>LOGGING_LEVEL_ROOT</code></td><td>Typically <code>INFO</code> in production; use temporary DEBUG with log volume and disk monitoring.</td></tr>
+    <tr><td><code>DOCKER_REGISTRY</code> / <code>VERSION</code></td><td>Immutable image tags for each release; avoid unversioned <code>latest</code> in production if you require auditability and rollback.</td></tr>
+  </tbody>
+</table>
+
+<h2>4. TLS, ingress, and upload limits</h2>
+<p>Terminate TLS at your load balancer or ingress controller. The example <code>k8s/ingress.yaml</code> sets large body size and long read/send timeouts for big ontology uploads; mirror those values in nginx or equivalent if you terminate outside Kubernetes.</p>
+
+<h2>5. Stripe production webhooks</h2>
+<p>In Stripe Dashboard (live mode), add a single webhook endpoint URL to the auth service. Subscribe only to events your application handles. Rotate <code>STRIPE_WEBHOOK_SECRET</code> if the endpoint is recreated. Monitor failed deliveries in Stripe and application logs.</p>
+
+<h2>6. Backups and disaster recovery</h2>
+<ul>
+  <li><strong>MongoDB:</strong> Scheduled logical or volume snapshots; tested restore procedure.</li>
+  <li><strong>GraphDB:</strong> Repository export or data volume snapshots consistent with your RPO.</li>
+  <li><strong>Configuration:</strong> Store compose files, ingress manifests, and non-secret configuration in git; store secrets separately.</li>
+</ul>
+
+<h2>7. Post-deploy verification</h2>
+<ol>
+  <li>Health endpoints for editor and dependencies.</li>
+  <li>Login and session refresh through gateway.</li>
+  <li>Small file upload and SPARQL query.</li>
+  <li>Stripe live webhook test event (use Stripe’s “send test webhook” where appropriate, without corrupting real subscriptions).</li>
+  <li>Outbound email deliverability (password reset to a controlled mailbox).</li>
+</ol>
+
+<h2>8. Upgrades</h2>
+<p>Freeze writes or announce maintenance if required. Back up databases. Deploy new images by tag. Run migration or smoke tests. Keep previous image tag for fast rollback.</p>
+
+<h2>9. Troubleshooting</h2>
+<ul>
+  <li><strong>502 or timeouts on large uploads:</strong> Increase ingress and gateway timeouts together with editor ontology timeouts.</li>
+  <li><strong>Webhook signature failures:</strong> Wrong <code>STRIPE_WEBHOOK_SECRET</code> or request not reaching auth (path must be <code>/api/billing/webhook</code>).</li>
+  <li><strong>Email links wrong host:</strong> Fix <code>BASE_URL</code> and redeploy auth.</li>
+</ul>
+
+<hr>
+<p>OntoCode repository — production deployment. Treat all credentials as confidential.</p>
+
+</body>
+</html>

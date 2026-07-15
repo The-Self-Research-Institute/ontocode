@@ -1,6 +1,7 @@
 package self.research.ontology.swrl.model;
 
 import java.util.List;
+import java.util.ArrayList;
 
 public class ExecutionResult {
     private boolean success;
@@ -8,6 +9,8 @@ public class ExecutionResult {
     private int inferredAxiomsCount;
     private List<InferredAxiom> inferredAxioms;
     private String errorMessage;
+    private List<String> executedRuleNames = new ArrayList<>();
+    private String executionMode = "all"; // "all" or "selected"
 
     public ExecutionResult() {}
 
@@ -34,4 +37,10 @@ public class ExecutionResult {
 
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+
+    public List<String> getExecutedRuleNames() { return executedRuleNames; }
+    public void setExecutedRuleNames(List<String> executedRuleNames) { this.executedRuleNames = executedRuleNames; }
+
+    public String getExecutionMode() { return executionMode; }
+    public void setExecutionMode(String executionMode) { this.executionMode = executionMode; }
 }

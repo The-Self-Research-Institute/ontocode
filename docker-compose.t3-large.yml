@@ -1,0 +1,76 @@
+# Memory sizing override — t3.large (8 GB RAM)
+# Total container limits ≈ 7.1 GB | leaves ~0.9 GB for OS + Docker overhead
+#
+# Usage:
+#   docker compose -f docker-compose.production.yml -f docker-compose.t3-large.yml up -d
+#
+# NOTE: Reasoner is limited to 2M triples on this tier (vs 5M production default) to reduce OOM risk.
+# Upgrade to t3.xlarge / r6i for heavier reasoning workloads or larger ontologies.
+
+services:
+  mongo:
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25", "--auth"]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  fuseki:
+    environment:
+      JVM_ARGS: "-Xmx1500m -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+    deploy:
+      resources:
+        limits:
+          memory: 1800m
+
+  auth:
+    environment:
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  gateway:
+    environment:
+      JAVA_OPTS: -Xms128m -Xmx512m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  owl-editor:
+    environment:
+      JAVA_OPTS: "-Xms512m -Xmx2g -Xss4m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
+      ONTOCODE_IMPORT_MAX_CONCURRENT: 1
+      ONTOCODE_FASTOPEN_AUTO_WARM: "false"
+      # Raised from 500K — still below production 5M cap due to 8 GB / 2g editor heap.
+      ONTOCODE_REASONER_MAX_TRIPLES: 2000000
+      ONTOCODE_DLQUERY_MAX_CONCURRENT: 1
+      ONTOCODE_DLQUERY_SLOT_BUDGET: 1
+    deploy:
+      resources:
+        limits:
+          memory: 2500m
+
+  swrl-service:
+    environment:
+      JAVA_OPTS: "-Xms128m -Xmx480m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m"
+    deploy:
+      resources:
+        limits:
+          memory: 640m
+
+  plugin-service:
+    environment:
+      JAVA_OPTS: -Xms64m -Xmx192m -XX:+UseG1GC
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  webapp:
+    deploy:
+      resources:
+        limits:
+          memory: 192m
