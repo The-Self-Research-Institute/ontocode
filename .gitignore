@@ -108,3 +108,71 @@ scripts/load-test/
 
 # Electron — compiled plugin bundles (build artifacts)
 electron-app/resources/backend/plugin-bundles/
+# Root-level markdown docs (internal one-off notes/guides) — keep only files actually
+# linked from README.md tracked
+/*.md
+!/README.md
+!/LAUNCHER_README.md
+!/INSTALLATION_GUIDE.md
+!/CITATIONS.md
+
+# One-off personal/ops scripts (account admin, diagnostics, cleanup) — not part of the product
+scripts/add-remove-member.js
+scripts/check-admin.js
+scripts/check-billing.js
+scripts/cleanup.js
+scripts/concurrent-upload-test.js
+scripts/delete-user-complete.bat
+scripts/delete-user-complete.sh
+scripts/diagnose-projects.js
+scripts/diagnose-subscriptions.js
+scripts/diagnose-workspace.js
+scripts/fix-admin-role.js
+scripts/generate-license-keys.js
+scripts/remove-me-from-projects.js
+scripts/set-enterprise-uat.js
+scripts/setup-stripe.sh
+
+# VS Code extension README demo assets — mirrored in the separate links repo, not tracked here
+ontology-vscode-extension/images/
+
+# Built extension packages
+*.vsix
+
+# Stray root-level package files (accidental `npm install` run from repo root)
+/package.json
+/package-lock.json
+
+# Misc stray files at repo root / scripts
+scripts/DESKTOP_INSTALLER_BUILD.md
+scripts/proj-486e0212--2c1d42a7-f4bf-4b15-b2da-c47ddc5f3b8f.owl
+temp-runimport.txt
+/test-elk-reasoner.ps1
+/verify-graphdb-config.ps1
+
+# GraphDB-era scripts (project now runs on Fuseki — see README.md)
+/copy-graphdb-data.bat
+/create-repo-docker.bat
+/create-repository.bat
+/create-repository.ps1
+/migrate-graphdb-storage.ps1
+
+# Stray log file at root
+/log.txt
+
+# Claude Code local settings (per-developer, not shared team config)
+.claude/settings.local.json
+
+# Citation metadata auto-appended by the citation-insertion feature (local noise)
+/references.bib
+/CITATION.cff
+
+# GraphDB license files (project now runs on Fuseki — see README.md)
+/CORETOPIA_GRAPHDB_FREE_v11.1.license
+/CORETOPIA_GRAPHDB_FREE_v11.1.license.b64
+
+# Architecture diagram sources (internal design docs, not part of the product)
+/DESKTOP_SYNC_DIAGRAM.drawio
+/architecture.drawio
+docs/logging_architecture.drawio
+docs/ontocode-desktop.drawio
