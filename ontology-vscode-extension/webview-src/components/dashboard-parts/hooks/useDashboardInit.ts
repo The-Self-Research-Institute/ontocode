@@ -3095,14 +3095,29 @@ export function useDashboardInit(state: DashboardState) {
           break;
 
         case "CLASS_DELETED":
-          console.log("[Dashboard] ðŸ—‘ï¸ Class deleted, refreshing hierarchy");
-          if ((edit as any).parent) {
-            const parentId = (edit as any).parent;
-            console.log(`[Dashboard] Refreshing children of parent: ${parentId}`);
-            loadChildren(parentId);
-          } else {
-            // Fallback to full refresh
-            refreshClassHierarchy();
+          console.log("[Dashboard] Class deleted by remote user — removing from tree then refreshing");
+          {
+            const deletedId =
+              (edit as any).nodeId ||
+              (edit as any).iri ||
+              (edit as any).id ||
+              (edit as any).metadata?.iri ||
+              "";
+            if (deletedId && typeof setClassHierarchy === "function") {
+              const idSet = new Set<string>([String(deletedId)]);
+              const removeNodesRecursively = (nodes: any[]): any[] =>
+                nodes
+                  .filter((node) => !idSet.has(node.id))
+                  .map((node) =>
+                    node.children ? { ...node, children: removeNodesRecursively(node.children) } : node,
+                  );
+              setClassHierarchy((prev: any) => removeNodesRecursively(prev || []));
+            }
+            if ((edit as any).parent) {
+              loadChildren((edit as any).parent);
+            } else {
+              refreshClassHierarchy();
+            }
           }
           break;
 
