@@ -13,8 +13,6 @@ const POLL_INTERVAL_MS = 3000;
 // watchdog — that watchdog is what actually converts a hung job into ERROR;
 // this is just a last-resort guard against polling forever.
 const MAX_POLL_MS = 60 * 60 * 1000;
-/** Prefer streaming to disk when the export is larger than this (browser Blob OOM risk). */
-const STREAM_TO_DISK_THRESHOLD_BYTES = 40 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 
 interface SubmitExportResponse {
@@ -72,25 +70,47 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+type SaveFileHandle = {
+  createWritable: () => Promise<{
+    write: (data: Uint8Array | Blob | ArrayBuffer) => Promise<void>;
+    close: () => Promise<void>;
+    abort: () => Promise<void>;
+  }>;
+};
+
 type SaveFilePickerWindow = Window & {
   showSaveFilePicker?: (options?: {
     suggestedName?: string;
     types?: Array<{ description?: string; accept: Record<string, string[]> }>;
-  }) => Promise<{
-    createWritable: () => Promise<{
-      write: (data: Uint8Array | Blob | ArrayBuffer) => Promise<void>;
-      close: () => Promise<void>;
-      abort: () => Promise<void>;
-    }>;
-  }>;
+  }) => Promise<SaveFileHandle>;
 };
 
-async function streamResponseToDisk(response: Response, filename: string): Promise<boolean> {
+/**
+ * Ask for the destination file BEFORE the export job runs. showSaveFilePicker
+ * requires transient user activation — a few seconds after the Export click —
+ * and a large export job polls for minutes, so requesting the picker after the
+ * job finishes throws SecurityError, which silently disabled stream-to-disk for
+ * exactly the large exports it was built for.
+ *
+ * Returns null when the API is unsupported or not permitted (caller falls back
+ * to a Blob download); throws "cancelled" when the user dismissed the dialog.
+ */
+async function acquireSaveFileHandleUpfront(filename: string): Promise<SaveFileHandle | null> {
   const w = window as SaveFilePickerWindow;
-  if (!w.showSaveFilePicker || !response.body) {
-    return false;
+  if (!w.showSaveFilePicker) return null;
+  try {
+    return await w.showSaveFilePicker({ suggestedName: filename });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('Export download cancelled.');
+    }
+    console.warn('[exportService] Save dialog unavailable — will download as Blob:', err);
+    return null;
   }
-  const handle = await w.showSaveFilePicker({ suggestedName: filename });
+}
+
+async function streamResponseToHandle(response: Response, handle: SaveFileHandle): Promise<boolean> {
+  if (!response.body) return false;
   const writable = await handle.createWritable();
   try {
     const reader = response.body.getReader();
@@ -124,11 +144,17 @@ export async function exportOntologyAsBlob(
   format: string,
   filename?: string,
 ): Promise<Blob | void> {
+  const safeName = filename || `ontology-export.${format === 'turtle' ? 'ttl' : format === 'ntriples' ? 'nt' : 'owl'}`;
+
+  // Must be first — needs the Export click's transient user activation, which
+  // expires long before a large export job finishes. Cancelling here also
+  // skips submitting the job entirely.
+  const handle = await acquireSaveFileHandleUpfront(safeName);
+
   const jobId = await submitExportJob(baseUrl, projectId, format);
   await waitForExportJob(baseUrl, jobId);
 
   const downloadUrl = `${baseUrl}/api/ontology/export-async/download/${jobId}`;
-  const safeName = filename || `ontology-export.${format === 'turtle' ? 'ttl' : format === 'ntriples' ? 'nt' : 'owl'}`;
 
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
@@ -141,20 +167,13 @@ export async function exportOntologyAsBlob(
       throw new Error(`Export download failed (${response.status}).`);
     }
 
-    const contentLength = Number(response.headers.get('content-length') || 0);
-    const preferStream = !contentLength || contentLength >= STREAM_TO_DISK_THRESHOLD_BYTES;
-
-    if (preferStream) {
+    if (handle) {
       try {
-        const streamed = await streamResponseToDisk(response, safeName);
+        const streamed = await streamResponseToHandle(response, handle);
         if (streamed) return;
       } catch (streamErr) {
-        // User cancelled the save dialog — don't fall through to another Blob attempt.
-        if (streamErr instanceof DOMException && streamErr.name === 'AbortError') {
-          throw new Error('Export download cancelled.');
-        }
         console.warn('[exportService] Stream-to-disk failed, falling back to Blob:', streamErr);
-        // Body already consumed if streaming started — re-fetch for Blob fallback.
+        // Body already consumed once streaming started — re-fetch for the Blob fallback.
         const retry = await fetch(downloadUrl, { headers: authHeaders() });
         if (!retry.ok) {
           throw new Error(`Export download failed (${retry.status}).`);

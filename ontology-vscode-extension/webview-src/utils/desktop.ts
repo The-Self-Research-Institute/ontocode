@@ -192,6 +192,21 @@ export async function getOntologyListWithRetry<T = unknown>(
 }
 
 /**
+ * True when desktop has OWLAPI edits Fuseki hasn't caught up on (deferred sync pending).
+ * Always false off-desktop, and false on any error so the UI never blocks on a status probe.
+ */
+export async function isDesktopFusekiSyncPending(projectId: string): Promise<boolean> {
+    if (!isDesktop()) return false;
+    try {
+        const res: any = await apiClient.get(`/api/desktop/fuseki-status/${encodeURIComponent(projectId)}`);
+        const data = res?.data ?? res;
+        return !!data?.fusekiSyncPending;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Start Fuseki (if deferred) and sync the ontology for SPARQL/graph features.
  * Core editing uses OWLAPI only — this is only needed for Fuseki-dependent tabs.
  */
