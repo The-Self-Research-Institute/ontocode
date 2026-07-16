@@ -3423,14 +3423,24 @@ class OntoCodePanel {
             await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: `Exporting ${filename}...`,
-                cancellable: false
-            }, async (progress) => {
-                progress.report({ message: 'This may take several minutes for large ontologies' });
+                cancellable: true
+            }, async (progress, cancellationToken) => {
+                progress.report({ message: 'This may take several minutes for large ontologies. Click Cancel to stop.' });
+
+                // Abort any in-flight HTTP call the moment the user cancels, instead
+                // of waiting for it to finish and only then noticing the token.
+                const abortController = new AbortController();
+                cancellationToken.onCancellationRequested(() => abortController.abort());
+                const throwIfCancelled = () => {
+                    if (cancellationToken.isCancellationRequested) {
+                        throw new Error('EXPORT_CANCELLED');
+                    }
+                };
 
                 const submitRes = await axios.post(
                     `${GATEWAY_URL}/api/ontology/export-async/${encodeURIComponent(projectId)}?format=${encodeURIComponent(format)}`,
                     undefined,
-                    { headers: authHeaders, timeout: 30000 }
+                    { headers: authHeaders, timeout: 30000, signal: abortController.signal }
                 );
                 const jobId = submitRes.data?.jobId;
                 if (!jobId) {
@@ -3440,9 +3450,10 @@ class OntoCodePanel {
                 const deadline = Date.now() + OntoCodePanel.EXPORT_MAX_POLL_MS;
                 let jobStatus = 'PENDING';
                 while (jobStatus !== 'COMPLETED') {
+                    throwIfCancelled();
                     const statusRes = await axios.get(
                         `${GATEWAY_URL}/api/ontology/export-async/status/${jobId}`,
-                        { headers: authHeaders, timeout: 30000 }
+                        { headers: authHeaders, timeout: 30000, signal: abortController.signal }
                     );
                     jobStatus = statusRes.data?.status;
                     if (jobStatus === 'ERROR') {
@@ -3455,11 +3466,13 @@ class OntoCodePanel {
                         await new Promise(resolve => setTimeout(resolve, OntoCodePanel.EXPORT_POLL_INTERVAL_MS));
                     }
                 }
+                throwIfCancelled();
 
                 const response = await axios.get(
                     `${GATEWAY_URL}/api/ontology/export-async/download/${jobId}`,
-                    { headers: authHeaders, responseType: 'arraybuffer', timeout: 300000 }
+                    { headers: authHeaders, responseType: 'arraybuffer', timeout: 300000, signal: abortController.signal }
                 );
+                throwIfCancelled();
 
                 console.log(`[OntoCode] Response status: ${response.status}`);
                 console.log(`[OntoCode] Response data length: ${response.data.byteLength} bytes`);
@@ -3483,6 +3496,15 @@ class OntoCodePanel {
                 }
             });
         } catch (error) {
+            // User clicked Cancel on the progress notification — not an error.
+            // Covers both our explicit marker and an axios request aborted by the signal.
+            if ((error as Error)?.message === 'EXPORT_CANCELLED' || axios.isCancel(error)
+                || (error as Error)?.name === 'CanceledError') {
+                console.log('[OntoCode] Export cancelled by user');
+                vscode.window.showInformationMessage(`Export of ${filename} cancelled.`);
+                this.postMessage({ type: 'downloadOntologyFailed', requestId, cancelled: true });
+                return;
+            }
             console.error('[OntoCode] Download error:', error);
             let errorMessage = 'Failed to download file. See console for details.';
             if (axios.isAxiosError(error)) {
