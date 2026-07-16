@@ -26,7 +26,7 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import type { EdgeType, VisualizationType, OntologyNode } from '../types';
-import { OntographLayoutType, VowlDisplayOptions } from '../viewMemory';
+import { OntographLayoutType, VowlDisplayOptions, DEFAULT_VOWL_OPTIONS } from '../viewMemory';
 
 export const RELATIONSHIP_VISIBILITY_CONTROLS: Array<{
   label: string;
@@ -385,7 +385,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
             >
               <option value="force">Network (Force-Directed)</option>
               <option value="ontograph">Hierarchy (Tree Layout)</option>
-              <option value="vowl">WebVOWL Notation</option>
+              <option value="vowl">WebVOWL+ (OntoCode)</option>
               <option value="spatial3d">3D Spatial Graph</option>
             </select>
           </div>
@@ -562,6 +562,53 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
                       />
                       Set operators
                     </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Merge owl:equivalentClass into one node with a double border and comma label (Document, CreativeWork)">
+                      <input
+                        type="checkbox"
+                        checked={props.vowlDisplayOptions.mergeEquivalents}
+                        onChange={(e) => props.onChangeVowlOptions({ mergeEquivalents: e.target.checked })}
+                        data-testid="graph-merge-equivalents"
+                      />
+                      Merge equivalents
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Show owl:disjointWith axiom edges">
+                      <input
+                        type="checkbox"
+                        checked={props.vowlDisplayOptions.showDisjointness}
+                        onChange={(e) => props.onChangeVowlOptions({ showDisjointness: e.target.checked })}
+                        data-testid="graph-show-disjointness"
+                      />
+                      Disjointness
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Show property edges that loop back to the same class (domain = range)">
+                      <input
+                        type="checkbox"
+                        checked={props.vowlDisplayOptions.showPropertyLoops}
+                        onChange={(e) => props.onChangeVowlOptions({ showPropertyLoops: e.target.checked })}
+                        data-testid="graph-show-property-loops"
+                      />
+                      Property loops
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => props.onChangeVowlOptions({ ...DEFAULT_VOWL_OPTIONS })}
+                      style={{
+                        marginTop: 4,
+                        alignSelf: 'flex-start',
+                        padding: '5px 10px',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        border: '1px solid var(--border)',
+                        borderRadius: 6,
+                        background: 'var(--surface-1)',
+                        color: 'var(--text-primary)',
+                        cursor: 'pointer'
+                      }}
+                      title="Restore OntoCode's tuned WebVOWL+ defaults (spacing, labels, externals)"
+                      data-testid="graph-reset-vowl-defaults"
+                    >
+                      Reset to WebVOWL+ defaults
+                    </button>
                   </>
                 )}
               </div>

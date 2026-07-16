@@ -101,7 +101,11 @@ export class GraphDataFetchService {
             from: classId,
             to: owlThingIri,
             type: 'subClassOf',
-            label: 'subClassOf'
+            label: 'subClassOf',
+            // Synthetic adoption edge (not asserted in the ontology) — the sidebar
+            // hierarchy needs it, but WebVOWL-style rendering must drop it or every
+            // orphan class gets star-wired into one giant Thing hub.
+            metadata: { synthetic: true }
           });
           orphansAdopted++;
         }
@@ -908,7 +912,30 @@ export class GraphDataFetchService {
           }
         }
       } else {
-        console.warn(`  ⚠️ Property ${propLabel} has no domain or range - SKIPPING`);
+        // WebVOWL parity: properties with a missing domain and/or range still render,
+        // defaulting the missing side to owl:Thing. Flagged vowlOnly so force/ontograph
+        // modes (which have no per-edge Thing splitting) don't gain a Thing hub.
+        const owlThing = 'http://www.w3.org/2002/07/owl#Thing';
+        const fallbackDomains = domains.length > 0 ? domains : [owlThing];
+        const fallbackRanges = ranges.length > 0 ? ranges : [owlThing];
+        for (const domain of fallbackDomains) {
+          for (const range of fallbackRanges) {
+            edges.push({
+              id: `${domain}-${propIri}-${range}`,
+              from: domain,
+              to: range,
+              type: 'propertyRelation',
+              label: propLabel,
+              metadata: {
+                propertyIri: propIri,
+                propertyType: 'objectProperty',
+                characteristics: prop.characteristics || [],
+                vowlOnly: true
+              }
+            });
+          }
+        }
+        console.log(`  ➕ Property ${propLabel} missing domain/range — added VOWL-only owl:Thing fallback edge`);
       }
 
       // SubPropertyOf edges — backend calls this property's parents `superProperties`
@@ -1082,7 +1109,39 @@ export class GraphDataFetchService {
           }
         }
       } else {
-        console.warn(`  ⚠️ Data Property ${propLabel} has no domain or range - SKIPPING`);
+        // WebVOWL parity: data properties with a missing domain default to owl:Thing,
+        // missing range defaults to rdfs:Literal (this is how WebVOWL renders FOAF's
+        // nickname / title / phone etc.). Flagged vowlOnly — see object-property fallback.
+        const owlThing = 'http://www.w3.org/2002/07/owl#Thing';
+        const rdfsLiteral = 'http://www.w3.org/2000/01/rdf-schema#Literal';
+        const fallbackDomains = domains.length > 0 ? domains : [owlThing];
+        const fallbackRanges = ranges.length > 0 ? ranges : [rdfsLiteral];
+        for (const domain of fallbackDomains) {
+          for (const range of fallbackRanges) {
+            if (!nodes.find(n => n.id === range)) {
+              nodes.push({
+                id: range,
+                label: range.split('#').pop()?.split('/').pop() || 'Literal',
+                type: 'datatype',
+                uri: range
+              });
+            }
+            edges.push({
+              id: `${domain}-${propIri}-${range}`,
+              from: domain,
+              to: range,
+              type: 'propertyRelation',
+              label: propLabel,
+              metadata: {
+                propertyIri: propIri,
+                propertyType: 'dataProperty',
+                characteristics: prop.characteristics || [],
+                vowlOnly: true
+              }
+            });
+          }
+        }
+        console.log(`  ➕ Data property ${propLabel} missing domain/range — added VOWL-only Thing/Literal fallback edge`);
       }
 
       // SubPropertyOf edges — backend calls this property's parents `superProperties`

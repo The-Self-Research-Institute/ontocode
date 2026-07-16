@@ -23,6 +23,7 @@ import { syncService } from "../../services/syncService";
 import { pluginLoader } from "../../services/pluginLoader";
 import DLQueryPanel from "../DLQueryPanel";
 import { PluginPlaceholder, CodeViewPanel } from "./index";
+import { PromptDialog } from "./DashboardDialogs";
 import type { DashboardState } from "./hooks/useDashboardState";
 import type { DashboardInit } from "./hooks/useDashboardInit";
 import type { DashboardHandlers } from "./hooks/useDashboardHandlers";
@@ -36,6 +37,7 @@ interface MainContentRouterProps {
 
 export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, init, handlers, apiBaseUrl }) => {
   const [importClosureMap, setImportClosureMap] = useState<Record<string, Array<{ iri: string; children?: any[] }>>>({});
+  const [showAddIndividualPrompt, setShowAddIndividualPrompt] = useState(false);
   const {
     projectId, metadata, mainTab, entitiesTab,
     classHierarchy, inferredClassHierarchy,
@@ -125,6 +127,22 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     };
     void loadImportClosure();
   }, [projectId, showImportClosure, ontologyImports, encodeProjectId]);
+
+  const handleConfirmAddIndividual = async (name: string) => {
+    setShowAddIndividualPrompt(false);
+    if (!projectId || !selectedClassForIndividuals) return;
+    try {
+      await ontologyMutationService.addIndividual(
+        projectId,
+        name,
+        selectedClassForIndividuals.id,
+      );
+      await loadClassInstances();
+    } catch (error) {
+      console.error("[Dashboard] Failed to create individual:", error);
+      notificationService.error("Create Failed", "Could not create individual.");
+    }
+  };
 
   // #region Render Methods
 
@@ -1257,21 +1275,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                     />
                     {selectedClassForIndividuals && (
                       <button
-                        onClick={async () => {
-                          const name = window.prompt(`Create individual in ${selectedClassForIndividuals.label}`);
-                          if (!name || !projectId) return;
-                          try {
-                            await ontologyMutationService.addIndividual(
-                              projectId,
-                              name,
-                              selectedClassForIndividuals.id,
-                            );
-                            await loadClassInstances();
-                          } catch (error) {
-                            console.error("[Dashboard] Failed to create individual:", error);
-                            notificationService.error("Create Failed", "Could not create individual.");
-                          }
-                        }}
+                        onClick={() => setShowAddIndividualPrompt(true)}
                         className="px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
                       >
                         Add
@@ -1684,5 +1688,17 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     }
   };
 
-  return renderMainContent();
+  return (
+    <>
+      {renderMainContent()}
+      <PromptDialog
+        isOpen={showAddIndividualPrompt}
+        title="New Individual"
+        message={selectedClassForIndividuals ? `Create individual in ${selectedClassForIndividuals.label}` : undefined}
+        confirmLabel="Create"
+        onConfirm={handleConfirmAddIndividual}
+        onCancel={() => setShowAddIndividualPrompt(false)}
+      />
+    </>
+  );
 };

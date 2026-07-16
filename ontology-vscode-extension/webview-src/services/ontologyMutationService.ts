@@ -142,20 +142,25 @@ export const ontologyMutationService = {
   /**
    * Delete a class
    */
-  async deleteClass(projectId: string, iri: string, userId?: string, username?: string): Promise<void> {
+  async deleteClass(projectId: string, iri: string, userId?: string, username?: string, label?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteClass',
-      iri
+      iri,
+      ...(label ? { label } : {}),
     }], undefined, userId, username);
   },
 
   /**
    * Delete a class and one or more descendant classes in a single atomic request.
    */
-  async deleteClasses(projectId: string, iris: string[], userId?: string, username?: string): Promise<void> {
+  async deleteClasses(projectId: string, iris: string[], userId?: string, username?: string, labels?: Record<string, string>): Promise<void> {
     await this.applyMutations(
       projectId,
-      iris.map((iri) => ({ type: 'deleteClass', iri })),
+      iris.map((iri) => ({
+        type: 'deleteClass',
+        iri,
+        ...(labels?.[iri] ? { label: labels[iri] } : {}),
+      })),
       undefined, userId, username,
     );
   },
