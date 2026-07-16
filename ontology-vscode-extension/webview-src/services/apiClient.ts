@@ -34,6 +34,18 @@ function isUploadRequest(url: string): boolean {
   return url.includes('/api/ontology/upload/') || /\/api\/projects\/[^/]+\/files/.test(url);
 }
 
+// Merge analyze/execute load both ontologies into an OWLAPI model server-side and run
+// synchronously on the request thread — for 200MB-class files that legitimately exceeds
+// the 10-minute default, and a client-side timeout mid-merge leaves the UI out of sync
+// with a server that kept going. Give them the same budget as uploads.
+function isLongRunningRequest(url: string): boolean {
+  return /\/merge\/(analyze|execute)/.test(url);
+}
+
+function requestTimeoutFor(url: string): number {
+  return isUploadRequest(url) || isLongRunningRequest(url) ? UPLOAD_TIMEOUT : TIMEOUT;
+}
+
 function extractUploadProjectId(url: string): string | undefined {
   const uploadMatch = url.match(/\/api\/ontology\/upload\/([^/?]+)/);
   if (uploadMatch) return decodeURIComponent(uploadMatch[1]);
@@ -212,7 +224,7 @@ class ApiClient {
         return;
       }
       const requestId = genReqId();
-      const requestTimeout = isUploadRequest(payload.url) ? UPLOAD_TIMEOUT : TIMEOUT;
+      const requestTimeout = requestTimeoutFor(payload.url);
       const timeout = setTimeout(() => {
         if (pending.has(requestId)) {
           pending.get(requestId)?.reject(new ApiError(`Request ${requestId} timed out after ${requestTimeout / 1000}s`, 408, null, 'TIMEOUT'));
@@ -385,7 +397,7 @@ class ApiClient {
       const postConfig = body instanceof FormData
         ? {
             ...config,
-            timeout: isUploadRequest(url) ? UPLOAD_TIMEOUT : TIMEOUT,
+            timeout: requestTimeoutFor(url),
             headers: { ...config?.headers, 'Content-Type': undefined },
             onUploadProgress: (progressEvent: { loaded: number; total?: number }) => {
               userOnUploadProgress?.(progressEvent as any);
@@ -396,7 +408,7 @@ class ApiClient {
           }
         : {
             ...config,
-            timeout: isUploadRequest(url) ? UPLOAD_TIMEOUT : config?.timeout ?? TIMEOUT,
+            timeout: isUploadRequest(url) || isLongRunningRequest(url) ? UPLOAD_TIMEOUT : config?.timeout ?? TIMEOUT,
             onUploadProgress: userOnUploadProgress
               ? (progressEvent: { loaded: number; total?: number }) => {
                   userOnUploadProgress(progressEvent as any);
