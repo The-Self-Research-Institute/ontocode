@@ -598,7 +598,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     });
   }, []);
 
-  const getEditActionDescription = (operationType: string): string => {
+  const getEditActionDescription = (operationType: string, edit?: any): string => {
     const actionMap: Record<string, string> = {
       CLASS_ADDED: "added a class",
       CLASS_MODIFIED: "modified a class",
@@ -637,7 +637,20 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       SWRL_RULE_MODIFIED: "modified a SWRL rule",
       SWRL_RULE_DELETED: "deleted a SWRL rule",
     };
-    return actionMap[operationType] || "made a change";
+    const base = actionMap[operationType] || "made a change";
+    // Prefer a human label so collaborators don't see raw IRIs / opaque codes
+    if (operationType === "CLASS_DELETED" || operationType === "CLASS_ADDED" || operationType === "CLASS_RENAMED") {
+      const label =
+        edit?.metadata?.label ||
+        edit?.value ||
+        (typeof edit?.nodeId === "string"
+          ? edit.nodeId.split(/[#/]/).pop()
+          : null);
+      if (label && typeof label === "string" && label.length < 80 && !label.includes("://")) {
+        return `${base.replace(/ a class$/, "")} "${label}"`;
+      }
+    }
+    return base;
   };
 
   const addNotification = useCallback((notification: Omit<EditNotification, "id">) => {
@@ -692,7 +705,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       const id = `notif-${Date.now()}-${Math.random()}`;
       const notification: Omit<EditNotification, "id"> = {
         type: "info",
-        message: `${edit.username} ${getEditActionDescription(edit.type)}`,
+        message: `${edit.username || "Someone"} ${getEditActionDescription(edit.type, edit)}`,
         userId: edit.userId,
         username: edit.username,
         userColor: "#888888",

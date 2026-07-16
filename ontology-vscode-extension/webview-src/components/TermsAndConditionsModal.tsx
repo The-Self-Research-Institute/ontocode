@@ -100,7 +100,7 @@ export const TermsAndConditionsModal: React.FC<Props> = ({ isOpen, onClose }) =>
           <section>
             <h3 className="font-semibold text-gray-900 mb-1">6. Open Source Components</h3>
             <p>
-              The {PRODUCT} VSCode extension is licensed under the GNU General Public License v3 (GPL-3.0-or-later).
+              The {PRODUCT} VSCode extension is licensed under the GNU Affero General Public License v3 (AGPL-3.0-or-later).
               Other components of the platform may have different licensing terms, which will be documented
               separately.
             </p>

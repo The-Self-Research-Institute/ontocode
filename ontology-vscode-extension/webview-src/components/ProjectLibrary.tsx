@@ -28,6 +28,7 @@ import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop } from "../utils/desktop";
 import { isAppOnline } from "../utils/connectivity";
 import ReportIssueModal from "./ReportIssueModal";
+import { PromptDialog } from "./dashboard-parts/DashboardDialogs";
 
 interface ProjectLibraryProps {
   projectId: string;
@@ -164,6 +165,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     message: "",
     type: "success",
   });
+  const [showNewFileNamePrompt, setShowNewFileNamePrompt] = useState(false);
   const [showFreePlanDialog, setShowFreePlanDialog] = useState(false);
   const [showOwnerMustImportDialog, setShowOwnerMustImportDialog] = useState(false);
   const [openMenuFileId, setOpenMenuFileId] = useState<string | null>(null);
@@ -327,19 +329,26 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
   };
 
+  const NEW_FILE_VALID_EXTENSIONS = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
+
   const handleCreateNewFile = () => {
     console.log("[ProjectLibrary] 📝 Creating new file for project:", projectId);
     if (isDesktop()) {
-      const fileName = window.prompt("Enter filename for new ontology:", "my-ontology.owl");
-      if (!fileName?.trim()) return;
-      const trimmed = fileName.trim();
-      const validExtensions = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
-      if (!validExtensions.some((ext) => trimmed.toLowerCase().endsWith(ext))) {
-        showToast("File must have a valid extension: .owl, .rdf, .ttl, .n3, .nt, or .jsonld", "error");
-        return;
-      }
-      const ontologyIRI = `http://example.org/ontologies/${trimmed.replace(/\.[^/.]+$/, "")}`;
-      const content = `<?xml version="1.0"?>
+      setShowNewFileNamePrompt(true);
+      return;
+    }
+    if (window.vscode) {
+      window.vscode.postMessage({
+        type: "createNewFile",
+        projectId: projectId,
+      });
+    }
+  };
+
+  const handleConfirmNewFileName = (trimmed: string) => {
+    setShowNewFileNamePrompt(false);
+    const ontologyIRI = `http://example.org/ontologies/${trimmed.replace(/\.[^/.]+$/, "")}`;
+    const content = `<?xml version="1.0"?>
 <rdf:RDF xmlns="${ontologyIRI}#"
      xml:base="${ontologyIRI}"
      xmlns:owl="http://www.w3.org/2002/07/owl#"
@@ -350,16 +359,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     <owl:Ontology rdf:about="${ontologyIRI}"/>
     <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
 </rdf:RDF>`;
-      const file = new File([content], trimmed, { type: "application/rdf+xml" });
-      performUpload(file);
-      return;
-    }
-    if (window.vscode) {
-      window.vscode.postMessage({
-        type: "createNewFile",
-        projectId: projectId,
-      });
-    }
+    const file = new File([content], trimmed, { type: "application/rdf+xml" });
+    performUpload(file);
   };
 
   useEffect(() => {
@@ -1513,6 +1514,22 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           </div>
         </div>
       )}
+
+      {/* New File Name Prompt (desktop) */}
+      <PromptDialog
+        isOpen={showNewFileNamePrompt}
+        title="New Ontology File"
+        message="Enter a filename for the new ontology."
+        defaultValue="my-ontology.owl"
+        confirmLabel="Create"
+        validate={(value) =>
+          NEW_FILE_VALID_EXTENSIONS.some((ext) => value.toLowerCase().endsWith(ext))
+            ? null
+            : "File must have a valid extension: .owl, .rdf, .ttl, .n3, .nt, or .jsonld"
+        }
+        onConfirm={handleConfirmNewFileName}
+        onCancel={() => setShowNewFileNamePrompt(false)}
+      />
 
       {/* Toast Notification */}
       {toast.show && (

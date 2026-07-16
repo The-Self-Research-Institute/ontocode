@@ -1668,6 +1668,15 @@ public class ProjectImportService {
         return true;
     }
 
+    /**
+     * Per-project serialization for {@link #syncProjectToFuseki} — the UI's direct
+     * sync (Fuseki-tab loader / Code View) and the background scheduler can fire
+     * concurrently, and two simultaneous full uploads of a large ontology would
+     * race each other into Fuseki. The second caller waits, then usually returns
+     * {@code alreadyLoaded} from the pending-flag check.
+     */
+    private final ConcurrentHashMap<String, Object> fusekiSyncLocks = new ConcurrentHashMap<>();
+
     /** Lazy Fuseki sync for OWLAPI-first desktop (SPARQL tab, graph view, etc.). */
     public Map<String, Object> syncProjectToFuseki(String projectId) {
         Map<String, Object> result = new HashMap<>();
@@ -1676,6 +1685,7 @@ public class ProjectImportService {
             result.put("skipped", true);
             return result;
         }
+        synchronized (fusekiSyncLocks.computeIfAbsent(projectId, id -> new Object())) {
         try {
             // Draft-aware: sync the working copy (unsaved draft when present) so
             // SPARQL/graph views mirror what the user is editing, not the last save.
@@ -1724,6 +1734,7 @@ public class ProjectImportService {
             result.put("synced", false);
             result.put("error", e.getMessage());
             return result;
+        }
         }
     }
 
