@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -412,6 +413,31 @@ public class StorageManager {
                 log.error("Failed to clear code view cache for project {}", projectId, e);
             }
         }
+        // Every real mutation path (OntologyMutationService.invalidatePublicCodeViewCache,
+        // and code-view-save's own post-save cleanup) routes through this method — unlike
+        // citation insert/remove, which only calls storeCodeViewCache and never this. That
+        // makes this the right hook for a "did the ontology actually change" signal: bump it
+        // here so /content and /content-page can hand it out as sourceVersion, and
+        // code-view-save can detect a stale save without citation edits falsely tripping it.
+        bumpPublicGraphVersion(projectId);
+    }
+
+    // Per-project version counter for the code-view save-conflict guard (see
+    // saveCodeViewAndSync in ProjectLoadController). In-memory only — like
+    // codeViewLineCounts above, it resets on JVM restart, which just resets the
+    // "generation" rather than creating a false positive or negative.
+    private final ConcurrentHashMap<String, Long> publicGraphVersions = new ConcurrentHashMap<>();
+    private final AtomicLong graphVersionCounter = new AtomicLong();
+
+    private void bumpPublicGraphVersion(String projectId) {
+        publicGraphVersions.put(projectId, graphVersionCounter.incrementAndGet());
+    }
+
+    /** Opaque version marker for the project's public-graph ontology content, handed to the
+     * client with /content and /content-page and checked back on code-view-save to detect
+     * an edit made elsewhere while Code View was open. 0 if never mutated this JVM run. */
+    public long getPublicGraphVersion(String projectId) {
+        return publicGraphVersions.getOrDefault(projectId, 0L);
     }
 
     /**
