@@ -11,8 +11,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.*;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -470,15 +471,14 @@ public class OntologyMergeService {
 
             log.info("[MERGE] Found target file ID: {} for file {}", targetFileId, fileName);
 
-            // Step 2: Read the merged file content
-            byte[] fileContent = java.nio.file.Files.readAllBytes(mergedFilePath);
-
-            // Step 3: Create multipart request to update the file
+            // Stream from disk — never Files.readAllBytes for large merges (200MB+ would
+            // double heap and often fail silently, leaving GridFS with a stale/partial file
+            // while the editor disk copy is correct). Auth upload already accepts streamed multipart.
+            long fileSizeBytes = Files.size(mergedFilePath);
             String updateFileUrl = authServiceUrl + "/api/projects/" + projectId + "/files";
 
-            // Create multipart form data
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-            body.add("file", new ByteArrayResource(fileContent) {
+            body.add("file", new FileSystemResource(mergedFilePath.toFile()) {
                 @Override
                 public String getFilename() {
                     return fileName;
@@ -493,8 +493,7 @@ public class OntologyMergeService {
 
             HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
 
-            // Send the update request
-            ResponseEntity<Map<String, Object>> updateResponse = restTemplate.exchange(
+            ResponseEntity<Map<String, Object>> updateResponse = gridFsRestTemplate().exchange(
                 updateFileUrl,
                 HttpMethod.POST,
                 requestEntity,
@@ -502,16 +501,28 @@ public class OntologyMergeService {
             );
 
             if (updateResponse.getStatusCode().is2xxSuccessful()) {
-                log.info("[MERGE] Successfully updated GridFS file {} for project {}", targetFileId, projectId);
+                log.info("[MERGE] Successfully updated GridFS file {} for project {} ({} MB)",
+                        targetFileId, projectId, fileSizeBytes / (1024 * 1024));
             } else {
-                log.warn("[MERGE] Failed to update GridFS file {} for project {}: {}",
+                log.error("[MERGE] Failed to update GridFS file {} for project {}: {} — "
+                        + "library/download via auth may serve a stale file; editor disk copy is authoritative",
                     targetFileId, projectId, updateResponse.getStatusCode());
             }
 
         } catch (Exception e) {
-            log.warn("[MERGE] Failed to update GridFS file for project {} file {}: {}",
-                projectId, fileName, e.getMessage());
+            log.error("[MERGE] Failed to update GridFS file for project {} file {}: {} — "
+                    + "editor disk copy is still correct; re-upload from project library may import a stale GridFS object",
+                projectId, fileName, e.getMessage(), e);
         }
+    }
+
+    /** Long timeouts for streaming large merged OWL files into auth/GridFS. */
+    private RestTemplate gridFsRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(60_000);
+        // 3 hours — aligned with ingress; 200MB+ multipart can take a long time on shared links
+        factory.setReadTimeout(3 * 60 * 60 * 1000);
+        return new RestTemplate(factory);
     }
 
     private Path resolveTargetOntologyFile(String targetProjectId, String targetFileName) throws Exception {

@@ -78,6 +78,15 @@ export interface CodeHighlighterHandle {
 const MAX_LINES_INITIAL = 500; // Show first 500 lines initially
 const CHUNK_SIZE = 200; // Process 200 lines at a time
 const SEARCH_DEBOUNCE_MS = 400; // Debounce search input
+
+// Edit-mode gutter virtualization (line-number + fold columns). Must match the
+// textarea's actual line box height exactly, or gutter rows drift from the lines
+// they label — see the `wrap="off"` on the textarea below, which keeps one
+// logical line == one fixed-height row (soft-wrapped long lines would break this).
+const GUTTER_LINE_HEIGHT = 22.4; // 14px font-size * 1.6 line-height
+const GUTTER_PADDING_TOP = 16; // matches the textarea's own padding-top
+const GUTTER_OVERSCAN_ROWS = 30; // rendered above/below the viewport so fast scrolls don't flash blank
+const FOLD_RECOMPUTE_DEBOUNCE_MS = 300; // defer the O(n) bracket-matching scan while the user is actively typing
 const CONTEXT_LINES = 500; // Lines to show above and below selection
 const MAX_SEARCH_LINES = 10000; // Limit search to prevent hanging on huge files
 const SEARCH_CHUNK_SIZE = 100; // Process 100 lines per chunk for search
@@ -126,6 +135,15 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   const lineNumberGutterRef = useRef<HTMLDivElement>(null);
   const foldGutterRef = useRef<HTMLDivElement>(null);
 
+  // Edit-mode gutter virtualization state: only the rows within [editScrollTop,
+  // editScrollTop + editViewportHeight] (+ overscan) are ever mounted as DOM nodes,
+  // instead of one node per line in the whole document (see CodeHighlighter's
+  // large-file freeze in the Code View plan). Driven by the textarea's own native
+  // scroll — the gutters themselves no longer scroll independently.
+  const [editScrollTop, setEditScrollTop] = useState(0);
+  const [editViewportHeight, setEditViewportHeight] = useState(0);
+  const scrollRafRef = useRef<number | null>(null);
+
   // Derived: error line numbers (1-based) from the syntaxError prop
   const errorLineNumbers = useMemo(() => new Set(parseErrorLines(syntaxError || "")), [syntaxError]);
 
@@ -143,10 +161,11 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       ta.focus();
       ta.setSelectionRange(offset, offset + (lines[zeroIdx]?.length ?? 0));
       // Scroll textarea to that line
-      const lineHeight = 22.4; // matches style lineHeight 1.6 * 14px
-      ta.scrollTop = Math.max(0, zeroIdx * lineHeight - ta.clientHeight / 2);
-      if (lineNumberGutterRef.current) lineNumberGutterRef.current.scrollTop = ta.scrollTop;
-      if (foldGutterRef.current) foldGutterRef.current.scrollTop = ta.scrollTop;
+      ta.scrollTop = Math.max(0, zeroIdx * GUTTER_LINE_HEIGHT - ta.clientHeight / 2);
+      // Drive the gutter window directly rather than waiting for the async 'scroll'
+      // event — goToLine is often called right before the user expects to see the
+      // target line's gutter row (e.g. jumping to a lint issue).
+      setEditScrollTop(ta.scrollTop);
     } else {
       // View mode: use existing handleLineClick
       handleLineClick(zeroIdx);
@@ -503,9 +522,30 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     return currentContent ? currentContent.split("\n").length : 1;
   }, [currentContent]);
 
+  // Defer the fold-detection scan below off the live keystroke for large documents —
+  // it's an O(n) bracket-matching pass, and re-running it synchronously on every
+  // character typed into a large ontology is what made typing feel slow. Small
+  // files (the common case) get zero added latency since there's nothing to gain
+  // from deferring a scan that's already instant.
+  const [debouncedFoldContent, setDebouncedFoldContent] = useState(currentContent);
+  const foldDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (currentContent.length <= 500_000) {
+      setDebouncedFoldContent(currentContent);
+      return;
+    }
+    if (foldDebounceRef.current) clearTimeout(foldDebounceRef.current);
+    foldDebounceRef.current = setTimeout(() => {
+      setDebouncedFoldContent(currentContent);
+    }, FOLD_RECOMPUTE_DEBOUNCE_MS);
+    return () => {
+      if (foldDebounceRef.current) clearTimeout(foldDebounceRef.current);
+    };
+  }, [currentContent]);
+
   // Detect foldable ranges from content (bracket matching + XML tag matching)
   const foldableRanges = useMemo(() => {
-    const lines = currentContent.split("\n");
+    const lines = debouncedFoldContent.split("\n");
     const ranges: Map<number, number> = new Map(); // startLine -> endLine (0-indexed)
 
     // Bracket matching for { }, [ ], ( )
@@ -583,7 +623,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     }
 
     return ranges;
-  }, [currentContent, format]);
+  }, [debouncedFoldContent, format]);
 
   // Clear collapsed ranges when content changes externally
   useEffect(() => {
@@ -635,64 +675,92 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     }
   }, [collapsedRanges]);
 
-  // Edit-mode gutters, memoized: without this, every re-render rebuilds one React
-  // element per line in the WHOLE document (not just the visible ones) — including
-  // re-renders that only moved the cursor (arrow keys, clicks) and didn't touch
-  // content at all. On a large ontology file that's thousands of wasted element
-  // allocations per keystroke and per cursor move, which is what made editing feel slow.
-  const lineNumberGutterItems = useMemo(() => {
-    const items: React.ReactNode[] = [];
-    const lines = currentContent.split("\n");
+  // Maps a rendered "visual row" back to its real 0-based line index, accounting for
+  // collapsed folds (a folded range's start line is one visual row that hides the
+  // lines beneath it). null means "no active folds" — the common case, especially for
+  // large files users haven't folded anything in — so the windowing below can index
+  // straight into the document instead of paying for this O(n) walk on every render.
+  // Built off the debounced content (see foldableRanges above) for the same reason.
+  const visualRowToLineIndex = useMemo(() => {
+    if (collapsedRanges.size === 0) return null;
+    const lines = debouncedFoldContent.split("\n");
+    const mapping: number[] = [];
     let skipUntil = -1;
     for (let i = 0; i < lines.length; i++) {
       if (i <= skipUntil) continue;
-      const isCollapsed = collapsedRanges.has(i);
-      if (isCollapsed) {
-        skipUntil = collapsedRanges.get(i)!;
-      }
-      const isErrLine = errorLineNumbers.has(i + 1);
+      mapping.push(i);
+      const foldEnd = collapsedRanges.get(i);
+      if (foldEnd !== undefined) skipUntil = foldEnd;
+    }
+    return mapping;
+  }, [debouncedFoldContent, collapsedRanges]);
+
+  const editTotalVisualRows = visualRowToLineIndex ? visualRowToLineIndex.length : editLineCount;
+
+  // Viewport window: only rows within [gutterStartRow, gutterEndRow] get mounted as
+  // DOM nodes below, instead of one node per line in the whole document — this is
+  // the actual fix for the large-file freeze (see CodeHighlighter's Code View plan).
+  // Driven by the textarea's real scroll position (editScrollTop/editViewportHeight),
+  // kept in sync by handleTextareaScroll and the ResizeObserver effect further down.
+  const { gutterStartRow, gutterEndRow } = useMemo(() => {
+    const viewportPx = editViewportHeight || 400;
+    const visibleRowCount = Math.ceil(viewportPx / GUTTER_LINE_HEIGHT);
+    const firstRow = Math.max(0, Math.floor(editScrollTop / GUTTER_LINE_HEIGHT) - GUTTER_OVERSCAN_ROWS);
+    const lastRow = Math.min(editTotalVisualRows - 1, firstRow + visibleRowCount + GUTTER_OVERSCAN_ROWS * 2);
+    return { gutterStartRow: firstRow, gutterEndRow: Math.max(firstRow, lastRow) };
+  }, [editScrollTop, editViewportHeight, editTotalVisualRows]);
+
+  const lineNumberGutterItems = useMemo(() => {
+    const items: React.ReactNode[] = [];
+    for (let row = gutterStartRow; row <= gutterEndRow; row++) {
+      const lineIdx = visualRowToLineIndex ? visualRowToLineIndex[row] : row;
+      if (lineIdx === undefined) break;
+      const isErrLine = errorLineNumbers.has(lineIdx + 1);
       items.push(
         <div
-          key={i}
+          key={lineIdx}
           style={{
+            position: "absolute",
+            top: `${GUTTER_PADDING_TOP + row * GUTTER_LINE_HEIGHT - editScrollTop}px`,
+            left: 0,
+            right: 0,
             paddingRight: "4px",
-            minHeight: "22.4px",
+            height: `${GUTTER_LINE_HEIGHT}px`,
             lineHeight: "1.6",
             color: isErrLine ? "#f87171" : undefined,
             fontWeight: isErrLine ? "bold" : undefined,
           }}
           title={isErrLine ? "Syntax error on this line" : undefined}
         >
-          {isErrLine ? "⚠" : ""}{i + 1}
+          {isErrLine ? "⚠" : ""}{lineIdx + 1}
         </div>,
       );
     }
     return items;
-  }, [currentContent, collapsedRanges, errorLineNumbers]);
+  }, [gutterStartRow, gutterEndRow, visualRowToLineIndex, errorLineNumbers, editScrollTop]);
 
   const foldGutterItems = useMemo(() => {
     const items: React.ReactNode[] = [];
-    const lines = currentContent.split("\n");
-    let skipUntil = -1;
-    for (let i = 0; i < lines.length; i++) {
-      if (i <= skipUntil) continue;
-      const isFoldable = foldableRanges.has(i);
-      const isCollapsed = collapsedRanges.has(i);
-      if (isCollapsed) {
-        skipUntil = collapsedRanges.get(i)!;
-      }
+    for (let row = gutterStartRow; row <= gutterEndRow; row++) {
+      const lineIdx = visualRowToLineIndex ? visualRowToLineIndex[row] : row;
+      if (lineIdx === undefined) break;
+      const isFoldable = foldableRanges.has(lineIdx);
+      const isCollapsed = collapsedRanges.has(lineIdx);
       items.push(
         <div
-          key={i}
+          key={lineIdx}
           style={{
-            minHeight: "22.4px",
-            lineHeight: "22.4px",
+            position: "absolute",
+            top: `${GUTTER_PADDING_TOP + row * GUTTER_LINE_HEIGHT - editScrollTop}px`,
+            left: 0,
+            right: 0,
+            height: `${GUTTER_LINE_HEIGHT}px`,
             cursor: isFoldable ? "pointer" : "default",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}
-          onClick={isFoldable ? () => toggleFold(i) : undefined}
+          onClick={isFoldable ? () => toggleFold(lineIdx) : undefined}
           title={isFoldable ? (isCollapsed ? "Unfold" : "Fold") : undefined}
         >
           {isFoldable ? (
@@ -712,7 +780,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       );
     }
     return items;
-  }, [currentContent, collapsedRanges, foldableRanges, toggleFold]);
+  }, [gutterStartRow, gutterEndRow, visualRowToLineIndex, foldableRanges, collapsedRanges, toggleFold, editScrollTop]);
 
   // The plain-textarea edit mode (see the isEditMode branch below) never reads this
   // value — only the view-mode dangerouslySetInnerHTML does. Without this guard, every
@@ -1089,15 +1157,31 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     }
   };
 
-  // Sync line number gutter scroll with textarea scroll
+  // Drives the gutter virtualization window (see gutterStartRow/gutterEndRow above)
+  // off the textarea's real scroll position. rAF-throttled since 'scroll' fires far
+  // more often than a frame — without this, fast scrolling/flinging re-runs the
+  // gutter-item memos many times more than there are frames to show them in.
   const handleTextareaScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
-    if (lineNumberGutterRef.current) {
-      lineNumberGutterRef.current.scrollTop = e.currentTarget.scrollTop;
-    }
-    if (foldGutterRef.current) {
-      foldGutterRef.current.scrollTop = e.currentTarget.scrollTop;
-    }
+    const scrollTop = e.currentTarget.scrollTop;
+    if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      setEditScrollTop(scrollTop);
+    });
   };
+
+  // Keep the gutter viewport height in sync with the textarea's actual rendered
+  // height (window resize, panel resize, entering/leaving edit mode) — needed to
+  // compute how many rows the virtualization window must cover.
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!isEditMode || !ta) return;
+    const updateHeight = () => setEditViewportHeight(ta.clientHeight);
+    updateHeight();
+    const ro = new ResizeObserver(updateHeight);
+    ro.observe(ta);
+    return () => ro.disconnect();
+  }, [isEditMode]);
 
   // Handle keyboard shortcuts and editor features
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1491,7 +1575,9 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
           // Edit mode: VS Code-style editor with line numbers and fold indicators
           <>
             <div className="flex h-full rounded-lg border-2 border-blue-500 overflow-hidden bg-[#1e1e1e]">
-              {/* Line number gutter */}
+              {/* Line number gutter — items are absolutely positioned within this
+                  column, windowed to gutterStartRow..gutterEndRow, so the DOM only
+                  ever holds the visible rows regardless of document size. */}
               <div
                 ref={lineNumberGutterRef}
                 className="bg-[#1e1e1e] select-none overflow-hidden flex-shrink-0"
@@ -1501,16 +1587,15 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
                   fontFamily: 'Consolas, "Courier New", monospace',
                   fontSize: "14px",
                   lineHeight: "1.6",
-                  paddingTop: "16px",
-                  paddingBottom: "40px",
                   color: "#858585",
                   textAlign: "right",
                   borderRight: "none",
+                  position: "relative",
                 }}
               >
                 {lineNumberGutterItems}
               </div>
-              {/* Fold indicator gutter */}
+              {/* Fold indicator gutter — same windowed-absolute-positioning scheme. */}
               <div
                 ref={foldGutterRef}
                 className="bg-[#1e1e1e] select-none overflow-hidden flex-shrink-0"
@@ -1520,11 +1605,10 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
                   fontFamily: 'Consolas, "Courier New", monospace',
                   fontSize: "10px",
                   lineHeight: "1.6",
-                  paddingTop: "16px",
-                  paddingBottom: "40px",
                   color: "#858585",
                   textAlign: "center",
                   borderRight: "1px solid #333",
+                  position: "relative",
                 }}
               >
                 {foldGutterItems}
@@ -1545,7 +1629,14 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
                   updateCursorPosition(e.currentTarget);
                 }}
                 className="code-editor-textarea flex-1 bg-[#1e1e1e] text-white font-mono text-sm resize-none focus:outline-none"
+                // Gutter virtualization assumes one logical line == one fixed-height
+                // (GUTTER_LINE_HEIGHT) row; soft-wrapping a long line into multiple
+                // visual rows would break that and misalign the gutters. wrap="off"
+                // + whiteSpace: pre keeps that invariant — long lines scroll
+                // horizontally instead (the textarea already has overflow: auto).
+                wrap="off"
                 style={{
+                  whiteSpace: "pre",
                   lineHeight: "1.6",
                   tabSize: 4,
                   fontFamily: 'Consolas, "Courier New", monospace',

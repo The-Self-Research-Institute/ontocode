@@ -191,23 +191,16 @@ export class EditorPage {
 
   /** Ensure the Description section/tab is active so domain/range/characteristics are visible */
   async openDescriptionSection() {
-    const loadBtn = this.page.getByRole('button', { name: /load description/i });
-    // If "Load description" is already visible, ClassEditor Description is already active
-    const loadAlreadyVisible = await loadBtn.count() > 0 && await loadBtn.first().isVisible();
-    if (!loadAlreadyVisible) {
-      const descBtn = this.page.getByRole('button', { name: /^Description$/ });
-      if (await descBtn.count() > 0) {
-        await descBtn.first().click().catch(() => {});
-        await this.page.waitForTimeout(300);
-      }
+    const descBtn = this.page.getByRole('button', { name: /^Description$/ });
+    if (await descBtn.count() > 0) {
+      await descBtn.first().click().catch(() => {});
     }
-    // ClassEditor lazy-loads axioms behind a "Load description" button
-    if (await loadBtn.count() > 0 && await loadBtn.first().isVisible()) {
-      await loadBtn.first().click();
-      await this.page.waitForTimeout(500);
-      await loadBtn.waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => {});
-      await this.page.waitForTimeout(300);
-    }
+    // Description auto-loads when the tab opens (Load button removed) — wait for
+    // the loading indicator to appear and clear instead of clicking anything.
+    const loadingIndicator = this.page.getByText(/Loading (description|axioms and restrictions)/i);
+    await loadingIndicator.first().waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {});
+    await loadingIndicator.first().waitFor({ state: 'hidden', timeout: 90_000 }).catch(() => {});
+    await this.page.waitForTimeout(300);
   }
 
   /** Click the "Domains (Intersection)" section header to open the Add Domain dialog */

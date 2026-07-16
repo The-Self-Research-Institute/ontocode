@@ -13,30 +13,53 @@ export const SaveErrorDialog = ({
   error,
   onRetry,
   onClose,
+  isConflict = false,
+  onReload,
 }: {
   isOpen: boolean;
   error: string;
   onRetry: () => void;
   onClose: () => void;
+  /** True for the save-conflict case (ontology changed elsewhere since Code View
+   * was loaded) rather than a genuine save failure — "Retry Save" would just
+   * resubmit the same now-stale content and hit the same conflict again, so this
+   * swaps it for a "Reload" action instead. */
+  isConflict?: boolean;
+  onReload?: () => void;
 }) => {
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-lg w-full mx-4">
-        <h3 className="text-lg font-semibold mb-2 text-red-600">Save Failed — Not Applied</h3>
+        <h3 className="text-lg font-semibold mb-2 text-red-600">
+          {isConflict ? "Ontology Changed — Save Not Applied" : "Save Failed — Not Applied"}
+        </h3>
         <p className="text-sm mb-3" style={{ color: "var(--color-text-secondary)" }}>
-          Your code view content was <span className="font-semibold">not</span> saved to the
-          ontology. Graph View, the Hierarchy Tree, and DL Query will not reflect this edit until
-          the save succeeds. Nothing was written to a local cache either — fix the issue below and
-          try again, or discard your changes.
+          {isConflict ? (
+            <>
+              Your code view content was <span className="font-semibold">not</span> saved — this
+              ontology was changed elsewhere (another tab, or an edit in Class Hierarchy/Individuals)
+              since you opened Code View. Saving now would silently overwrite that change. Reload to
+              see the latest content, then reapply your edit.
+            </>
+          ) : (
+            <>
+              Your code view content was <span className="font-semibold">not</span> saved to the
+              ontology. Graph View, the Hierarchy Tree, and DL Query will not reflect this edit until
+              the save succeeds. Nothing was written to a local cache either — fix the issue below and
+              try again, or discard your changes.
+            </>
+          )}
         </p>
-        <pre
-          className="text-xs whitespace-pre-wrap rounded-md p-3 mb-4 max-h-48 overflow-auto"
-          style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
-        >
-          {error}
-        </pre>
+        {!isConflict && (
+          <pre
+            className="text-xs whitespace-pre-wrap rounded-md p-3 mb-4 max-h-48 overflow-auto"
+            style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
+          >
+            {error}
+          </pre>
+        )}
         <div className="flex justify-end gap-3">
           <button
             onClick={onClose}
@@ -44,12 +67,21 @@ export const SaveErrorDialog = ({
           >
             Keep Editing
           </button>
-          <button
-            onClick={onRetry}
-            className="px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700"
-          >
-            Retry Save
-          </button>
+          {isConflict ? (
+            <button
+              onClick={onReload}
+              className="px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700"
+            >
+              Reload Latest
+            </button>
+          ) : (
+            <button
+              onClick={onRetry}
+              className="px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700"
+            >
+              Retry Save
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -281,6 +313,120 @@ export const DeleteClassDialog = ({
             className="px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700"
           >
             Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Text-input modal replacing bare `window.prompt()` calls, which Electron's
+ * renderer does not implement (only `alert`/`confirm`) — calling `prompt()` in
+ * the desktop build throws "prompt() is and will not be supported" and aborts
+ * the caller silently. Any flow that needs a single free-text value (e.g. a new
+ * file name) on both desktop and web should use this instead.
+ */
+export const PromptDialog = ({
+  isOpen,
+  title,
+  message,
+  defaultValue,
+  placeholder,
+  confirmLabel = "OK",
+  cancelLabel = "Cancel",
+  validate,
+  onConfirm,
+  onCancel,
+}: {
+  isOpen: boolean;
+  title: string;
+  message?: string;
+  defaultValue?: string;
+  placeholder?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  /** Return an error message to block submission, or null/undefined if the trimmed value is valid. */
+  validate?: (value: string) => string | null | undefined;
+  onConfirm: (value: string) => void;
+  onCancel: () => void;
+}) => {
+  const [value, setValue] = useState(defaultValue ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setValue(defaultValue ?? "");
+      setError(null);
+    }
+  }, [isOpen, defaultValue]);
+
+  if (!isOpen) return null;
+
+  const submit = () => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setError("This field is required.");
+      return;
+    }
+    const validationError = validate?.(trimmed);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    onConfirm(trimmed);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onCancel}>
+      <div
+        className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-lg font-semibold mb-2" style={{ color: "var(--color-text)" }}>
+          {title}
+        </h3>
+        {message && (
+          <p className="text-sm mb-3" style={{ color: "var(--color-text-secondary)" }}>
+            {message}
+          </p>
+        )}
+        <input
+          type="text"
+          value={value}
+          autoFocus
+          onChange={(e) => {
+            setValue(e.target.value);
+            setError(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") onCancel();
+          }}
+          placeholder={placeholder}
+          className="w-full px-3 py-2 text-sm border rounded-md focus:ring-2"
+          style={
+            {
+              borderColor: "var(--color-border)",
+              backgroundColor: "var(--color-surface)",
+              color: "var(--color-text)",
+              "--tw-ring-color": "var(--color-primary)",
+            } as React.CSSProperties
+          }
+        />
+        {error && <div className="text-xs text-red-600 mt-2">{error}</div>}
+        <div className="flex justify-end gap-3 mt-4">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            onClick={submit}
+            className="px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700"
+          >
+            {confirmLabel}
           </button>
         </div>
       </div>
