@@ -179,25 +179,60 @@ public class ProjectLoadController {
         long uploadStartTime = System.nanoTime();
         log.info("[ProjectLoadController] ═══ Upload STARTED - projectId: {}, filename: {}, size: {} bytes, ownerEmail: {}, workspaceId: {}, parentProjectId: {}, action: {}, compressed: {}",
             projectId, file.getOriginalFilename(), file.getSize(), ownerEmail, workspaceId, parentProjectId, action, compressed);
+
+        // VALIDATION: Check file size (max 1GB) — multipart-specific, done here before
+        // delegating to the shared InputStream-based path also used by chunk reassembly.
+        long maxSize = 1024L * 1024 * 1024; // 1GB
+        if (file.getSize() > maxSize) {
+            log.warn("File too large: {} bytes (max: {} bytes)", file.getSize(), maxSize);
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                    .body(Map.of(
+                        "success", false,
+                        "error", "File too large. Maximum file size is 300MB. Your file is " + (file.getSize() / (1024 * 1024)) + "MB"
+                    ));
+        }
+
         try {
-            // VALIDATION: Check file size (max 1GB)
+            return processUploadedFile(projectId, file.getInputStream(), file.getOriginalFilename(),
+                    file.getContentType(), ownerEmail, action, importMode, partition, workspaceId,
+                    parentProjectId, compressed, uploadStartTime);
+        } catch (IOException e) {
+            log.error("Upload failed (IO)", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Upload failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error",
+                            e.getMessage() != null ? e.getMessage() : "Unexpected upload error"));
+        }
+    }
+
+    /**
+     * Shared file-processing pipeline: duplicate detection, disk + GridFS storage
+     * (with GZIP auto-detect/decompression), citation extraction, metadata update,
+     * and import dispatch. Called directly by {@link #upload} for single-shot
+     * multipart uploads, and by the chunk-reassembly path once all chunks of a
+     * large upload have arrived and been concatenated back into one stream.
+     */
+    private ResponseEntity<Map<String, Object>> processUploadedFile(
+            String projectId,
+            InputStream fileStream,
+            String originalFilename,
+            String contentType,
+            String ownerEmail,
+            String action,
+            String importMode,
+            String partition,
+            String workspaceId,
+            String parentProjectId,
+            boolean compressed,
+            long uploadStartTime) throws IOException {
+        {
             long stepStart = System.nanoTime();
-            long maxSize = 1024L * 1024 * 1024; // 1GB
-            if (file.getSize() > maxSize) {
-                log.warn("File too large: {} bytes (max: {} bytes)", file.getSize(), maxSize);
-                return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
-                        .body(Map.of(
-                            "success", false,
-                            "error", "File too large. Maximum file size is 1GB. Your file is " + (file.getSize() / (1024 * 1024)) + "MB"
-                        ));
-            }
-
-            log.info("[ProjectLoadController] [TIMING] Validation: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
-
-            stepStart = System.nanoTime();
             String actualProjectId = projectId;
             boolean isReplacement = false;
-            String filename = file.getOriginalFilename();
+            String filename = originalFilename;
             
             // Skip duplicate check for hierarchical project IDs (files from project library)
             // Hierarchical IDs like "proj-123--file-456" are already unique
@@ -279,7 +314,7 @@ public class ProjectLoadController {
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
             Path importRoot = original;
-            boolean ontologyPackage = isOntologyPackage(filename, file.getContentType());
+            boolean ontologyPackage = isOntologyPackage(filename, contentType);
 
             String gridfsFileId;
 
@@ -289,7 +324,7 @@ public class ProjectLoadController {
                 deleteRecursively(libraryDir);
                 Files.createDirectories(libraryDir);
 
-                try (InputStream in = file.getInputStream();
+                try (InputStream in = fileStream;
                      OutputStream out = Files.newOutputStream(packageZip,
                              StandardOpenOption.CREATE,
                              StandardOpenOption.TRUNCATE_EXISTING,
@@ -298,7 +333,7 @@ public class ProjectLoadController {
                     gridfsFileId = gridFSFileService.storeFile(
                         actualProjectId,
                         filename,
-                        file.getContentType(),
+                        contentType,
                         tee
                     );
                 }
@@ -311,7 +346,6 @@ public class ProjectLoadController {
                 log.info("[ProjectLoadController] Ontology package root selected: {}", importRoot);
             } else {
                 // Auto-detect GZIP compression
-                InputStream fileStream = file.getInputStream();
                 InputStream effectiveStream = fileStream;
                 boolean wasCompressed = compressed;
                 
@@ -348,7 +382,7 @@ public class ProjectLoadController {
                     gridfsFileId = gridFSFileService.storeFile(
                         actualProjectId,
                         filename,  // Use potentially modified filename
-                        file.getContentType(),
+                        contentType,
                         tee
                     );
                 }
@@ -411,18 +445,178 @@ public class ProjectLoadController {
                     "isReplacement", isReplacement,
                     "filename", filename,
                     "message", message));
+        }
+    }
+
+    // Chunked-upload sessions currently being reassembled — prevents two requests for the
+    // same uploadId (e.g. a client retry racing the original) from reassembling/dispatching twice.
+    private final java.util.Set<String> chunkReassemblyInFlight =
+        java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+
+    /**
+     * Receives one chunk of a large upload. The client compresses the whole file first (as the
+     * regular /upload endpoint's clients already do), then splits the (possibly compressed) bytes
+     * into fixed-size chunks — this endpoint just concatenates them back in order. Once the final
+     * chunk (by index count, not necessarily arrival order) has been written, it reassembles the
+     * pieces into one file and hands off to the exact same {@link #processUploadedFile} pipeline
+     * the single-shot /upload endpoint uses, so GZIP auto-detection, duplicate handling, GridFS
+     * storage, and import dispatch all behave identically regardless of which path was used.
+     *
+     * Chunks may arrive out of order (client retries), so completeness is checked by counting
+     * files on disk rather than assuming the highest-index chunk is always last.
+     */
+    @PostMapping("/upload-chunk/{projectId:.+}")
+    public ResponseEntity<Map<String, Object>> uploadChunk(
+            @PathVariable String projectId,
+            @RequestParam("chunk") MultipartFile chunk,
+            @RequestParam String uploadId,
+            @RequestParam int chunkIndex,
+            @RequestParam int totalChunks,
+            @RequestParam String chunkHash,
+            @RequestParam String fileName,
+            @RequestParam(required = false) String ownerEmail,
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String importMode,
+            @RequestParam(required = false) String partition,
+            @RequestParam(required = false) String workspaceId,
+            @RequestParam(required = false) String parentProjectId,
+            @RequestParam(required = false, defaultValue = "false") boolean compressed) {
+        try {
+            if (totalChunks <= 0 || chunkIndex < 0 || chunkIndex >= totalChunks) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false, "error", "Invalid chunkIndex/totalChunks"));
+            }
+
+            byte[] chunkBytes = chunk.getBytes();
+
+            // Verify integrity before writing — a corrupted chunk should be retried by the
+            // client, not silently reassembled into a broken file.
+            String actualHash = sha256Hex(chunkBytes);
+            if (!actualHash.equalsIgnoreCase(chunkHash)) {
+                log.warn("[ProjectLoadController] Chunk hash mismatch uploadId={} chunkIndex={}: expected={} actual={}",
+                        uploadId, chunkIndex, chunkHash, actualHash);
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                        "success", false, "error", "Chunk hash mismatch — please retry this chunk",
+                        "chunkIndex", chunkIndex));
+            }
+
+            Path chunkDir = storageManager.chunkUploadDir(uploadId);
+            Path chunkFile = chunkDir.resolve(chunkIndex + ".part");
+            Files.write(chunkFile, chunkBytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+
+            long receivedCount;
+            try (java.util.stream.Stream<Path> files = Files.list(chunkDir)) {
+                receivedCount = files.filter(p -> p.getFileName().toString().endsWith(".part")).count();
+            }
+
+            log.info("[ProjectLoadController] Chunk {}/{} received for uploadId={} ({} bytes, {} of {} on disk)",
+                    chunkIndex + 1, totalChunks, uploadId, chunkBytes.length, receivedCount, totalChunks);
+
+            if (receivedCount < totalChunks) {
+                return ResponseEntity.ok(Map.of(
+                        "success", true, "received", true,
+                        "chunkIndex", chunkIndex, "totalReceived", receivedCount, "totalChunks", totalChunks));
+            }
+
+            // All chunks present — only one request should reassemble (guards against a retried
+            // final chunk racing the original request that's already reassembling).
+            if (!chunkReassemblyInFlight.add(uploadId)) {
+                return ResponseEntity.ok(Map.of(
+                        "success", true, "received", true, "reassembling", true,
+                        "chunkIndex", chunkIndex, "totalChunks", totalChunks));
+            }
+
+            try {
+                Path reassembled = chunkDir.resolve("reassembled.bin");
+                try (OutputStream out = Files.newOutputStream(reassembled,
+                        StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    for (int i = 0; i < totalChunks; i++) {
+                        Path part = chunkDir.resolve(i + ".part");
+                        if (!Files.exists(part)) {
+                            throw new IOException("Missing chunk " + i + " of " + totalChunks + " during reassembly");
+                        }
+                        Files.copy(part, out);
+                    }
+                }
+
+                long reassembledSize = Files.size(reassembled);
+                log.info("[ProjectLoadController] Reassembled {} chunks ({} bytes) for uploadId={}, dispatching to import pipeline",
+                        totalChunks, reassembledSize, uploadId);
+
+                // The single-shot /upload endpoint rejects oversized files before ever reading
+                // them; chunking bypasses that check per-chunk (each part is well under the
+                // limit), so the cap has to be re-applied here against the reassembled total.
+                long maxSize = 1024L * 1024 * 1024; // 1GB
+                if (reassembledSize > maxSize) {
+                    log.warn("Reassembled upload too large: {} bytes (max: {} bytes) for uploadId={}", reassembledSize, maxSize, uploadId);
+                    return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                            .body(Map.of(
+                                "success", false,
+                                "error", "File too large. Maximum file size is 1GB. Your file is " + (reassembledSize / (1024 * 1024)) + "MB"
+                            ));
+                }
+
+                long uploadStartTime = System.nanoTime();
+                try (InputStream reassembledStream = Files.newInputStream(reassembled)) {
+                    return processUploadedFile(projectId, reassembledStream, fileName, "application/octet-stream",
+                            ownerEmail, action, importMode, partition, workspaceId, parentProjectId, compressed,
+                            uploadStartTime);
+                }
+            } finally {
+                chunkReassemblyInFlight.remove(uploadId);
+                deleteRecursively(chunkDir);
+            }
         } catch (IOException e) {
-            log.error("Upload failed (IO)", e);
+            log.error("[ProjectLoadController] Chunk upload failed (IO) uploadId={} chunkIndex={}", uploadId, chunkIndex, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error", e.getMessage()));
         } catch (Exception e) {
-            log.error("Upload failed", e);
+            log.error("[ProjectLoadController] Chunk upload failed uploadId={} chunkIndex={}", uploadId, chunkIndex, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error",
-                            e.getMessage() != null ? e.getMessage() : "Unexpected upload error"));
+                            e.getMessage() != null ? e.getMessage() : "Unexpected chunk upload error"));
         }
     }
-    
+
+    private static String sha256Hex(byte[] data) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(data);
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        }
+    }
+
+    /** Safety net for chunk-upload sessions abandoned mid-transfer (tab closed, network dropped). */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 30 * 60 * 1000)
+    public void sweepAbandonedChunkUploads() {
+        try {
+            Path root = storageManager.chunkUploadsRoot();
+            long maxAgeMs = 2 * 60 * 60 * 1000L; // 2 hours
+            try (java.util.stream.Stream<Path> dirs = Files.list(root)) {
+                dirs.filter(Files::isDirectory).forEach(dir -> {
+                    try {
+                        long ageMs = System.currentTimeMillis() - Files.getLastModifiedTime(dir).toMillis();
+                        if (ageMs > maxAgeMs && !chunkReassemblyInFlight.contains(dir.getFileName().toString())) {
+                            log.info("[ProjectLoadController] Sweeping abandoned chunk upload: {} (age {} min)",
+                                    dir.getFileName(), ageMs / 60000);
+                            deleteRecursively(dir);
+                        }
+                    } catch (IOException e) {
+                        log.warn("[ProjectLoadController] Failed to check/sweep chunk upload dir {}: {}", dir, e.getMessage());
+                    }
+                });
+            }
+        } catch (IOException e) {
+            log.warn("[ProjectLoadController] Chunk upload sweep failed: {}", e.getMessage());
+        }
+    }
+
     /**
      * Server-side import by file reference — avoids browser download/re-upload for large files.
      * Reads the file directly from the shared MongoDB GridFS (via file_metadata UUID → gridfsId),

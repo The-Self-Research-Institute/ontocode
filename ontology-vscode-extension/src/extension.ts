@@ -13,7 +13,7 @@ import { CollaborationManager } from './collaboration/CollaborationManager.web';
 import { ICollaborationManager } from './collaboration/types';
 import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
-import { optimizedUpload, shouldCompressFile, ChunkMetadata } from './utils/uploadOptimizer';
+import { shouldCompressFile, splitIntoChunks } from './utils/uploadOptimizer';
 
 // This file is bundled for two different runtimes: the desktop extension host
 // (real Node.js, full zlib support) and the web extension (browser web worker,
@@ -23,6 +23,27 @@ import { optimizedUpload, shouldCompressFile, ChunkMetadata } from './utils/uplo
 // request headers regardless of this flag.
 const isNodeRuntime = typeof process !== 'undefined' && !!(process.versions && process.versions.node);
 axios.defaults.decompress = isNodeRuntime;
+
+/**
+ * Generates a chunked-upload session id. Uses the standard Web Crypto API (available as a
+ * global in both the desktop extension host's Node runtime and the web extension's browser
+ * worker) rather than Node's `crypto` module, since the latter isn't available in the web build.
+ */
+function generateUploadId(): string {
+    const g = globalThis as any;
+    if (g.crypto && typeof g.crypto.randomUUID === 'function') {
+        return g.crypto.randomUUID();
+    }
+    // Fallback for older runtimes without crypto.randomUUID
+    return `upload-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** SHA-256 hex digest of a chunk, via the Web Crypto API — works in both runtimes (see above). */
+async function sha256Hex(data: Uint8Array): Promise<string> {
+    const g = globalThis as any;
+    const digest: ArrayBuffer = await g.crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 /**
  * Utility: Convert Uint8Array to base64 string (web-compatible)
@@ -2498,41 +2519,18 @@ class OntoCodePanel {
                 formData.append('compressed', 'true');
             }
 
-            // Add action parameter if specified (replace or create_copy)
-            if (action) {
-                formData.append('action', action);
-                console.log(`[OntoCode] ✅ Added action parameter to FormData: ${action}`);
-            } else {
-                console.log(`[OntoCode] ⚠️ No action parameter specified, backend will check for duplicates`);
-            }
-
-            // Extract user email from JWT token
-            if (resolvedOwnerEmail) {
-                formData.append('ownerEmail', resolvedOwnerEmail);
-                console.log(`[OntoCode] ✅ Adding owner email: ${resolvedOwnerEmail}`);
-            } else {
-                // Fallback to extracting from token if not already extracted
+            // Resolve the owner email once (used by both the chunked and single-shot paths below)
+            let finalOwnerEmail = resolvedOwnerEmail;
+            if (!finalOwnerEmail) {
                 try {
                     const tokenParts = token.split('.');
-                    console.log('[OntoCode] Token parts count:', tokenParts.length);
                     if (tokenParts.length === 3) {
-                        // Use web-compatible base64 decoding
                         const base64Payload = tokenParts[1];
-                        console.log('[OntoCode] Base64 payload (first 50 chars):', base64Payload.substring(0, 50));
-
-                        // JWT uses base64url encoding, convert to standard base64
                         const base64 = base64Payload.replace(/-/g, '+').replace(/_/g, '/');
-                        const jsonPayload = atob(base64);
-
-                        console.log('[OntoCode] Decoded payload:', jsonPayload.substring(0, 100));
-                        const payload = JSON.parse(jsonPayload);
-                        console.log('[OntoCode] Parsed payload keys:', Object.keys(payload));
-
+                        const payload = JSON.parse(atob(base64));
                         if (payload.email) {
-                            formData.append('ownerEmail', payload.email);
-                            console.log(`[OntoCode] ✅ Adding owner email: ${payload.email}`);
-                        } else {
-                            console.warn('[OntoCode] ⚠️ No email in token payload. Available fields:', Object.keys(payload));
+                            finalOwnerEmail = payload.email;
+                            console.log(`[OntoCode] ✅ Resolved owner email from token: ${payload.email}`);
                         }
                     }
                 } catch (tokenError) {
@@ -2540,107 +2538,141 @@ class OntoCodePanel {
                 }
             }
 
-            // Add workspaceId if user is in a workspace
-            if (workspaceId) {
-                formData.append('workspaceId', workspaceId);
-                console.log(`[OntoCode] ✅ Adding workspaceId: ${workspaceId}`);
-            } else {
-                console.log(`[OntoCode] ⚠️ No workspaceId - user not in workspace mode`);
-            }
+            // CHUNK_UPLOAD_THRESHOLD is kept well under Cloudflare's 100MB proxy cap (and any
+            // similar CDN/reverse-proxy limit) so large ontologies never hit that wall regardless
+            // of whether compression above happened to shrink them enough on its own — compression
+            // can silently no-op (older VS Code hosts without CompressionStream, unlisted formats
+            // like .omn/.ofn/.obo, or a genuine compression failure), so chunking must not assume it ran.
+            const CHUNK_UPLOAD_THRESHOLD = 40 * 1024 * 1024; // 40MB
+            const wasActuallyCompressed = enableCompression && dataToUpload.length < buffer.length;
 
+            let response: any = null;
+            let lastError: any = null;
             const headers = {
                 'Authorization': `Bearer ${token}`,
                 // Browser FormData sets its own Content-Type with boundary
             };
 
-            // 4. Upload to gateway endpoint
-            // workspaceId MUST be on the query string: FreeViewOnlyInterceptor runs before multipart
-            // is parsed, so request.getParameter("workspaceId") only sees URL params, not FormData.
-            const query = new URLSearchParams();
-            if (importMode) {
-                query.set('importMode', importMode);
-            }
-            if (partition) {
-                query.set('partition', partition);
-            }
-            if (workspaceId) {
-                query.set('workspaceId', workspaceId);
-            }
-            const queryString = query.toString();
-            const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${encodeURIComponent(projectId)}${queryString ? `?${queryString}` : ''}`;
-            const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
+            if (dataToUpload.length > CHUNK_UPLOAD_THRESHOLD) {
+                console.log(`[OntoCode] File is ${(dataToUpload.length / (1024 * 1024)).toFixed(1)}MB (post-compression), using chunked upload`);
+                response = await this.uploadOntologyInChunks(projectId, dataToUpload, fileName, {
+                    ownerEmail: finalOwnerEmail,
+                    action,
+                    importMode,
+                    partition,
+                    workspaceId,
+                    compressed: wasActuallyCompressed,
+                    token,
+                });
+            } else {
+                // Add action parameter if specified (replace or create_copy)
+                if (action) {
+                    formData.append('action', action);
+                    console.log(`[OntoCode] ✅ Added action parameter to FormData: ${action}`);
+                } else {
+                    console.log(`[OntoCode] ⚠️ No action parameter specified, backend will check for duplicates`);
+                }
 
-            console.log(`[OntoCode] Uploading to: ${uploadUrl}`);
-            console.log(`[OntoCode] Upload parameters - fileName: ${fileName}, action: ${action || 'none'}, projectId: ${projectId}`);
-            console.log(`[OntoCode] File size: ${fileData.length} bytes (${fileSizeMB} MB)`);
+                if (finalOwnerEmail) {
+                    formData.append('ownerEmail', finalOwnerEmail);
+                    console.log(`[OntoCode] ✅ Adding owner email: ${finalOwnerEmail}`);
+                }
 
-            // Dynamic timeout based on file size
-            // Base: 10 min, add 1 min per 10MB for GraphDB processing
-            const baseTimeout = 10 * 60 * 1000; // 10 minutes
-            const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000; // 1 min per 10MB
-            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 7_200_000); // Max 2 hours for uploads up to 1GB
+                // Add workspaceId if user is in a workspace
+                if (workspaceId) {
+                    formData.append('workspaceId', workspaceId);
+                    console.log(`[OntoCode] ✅ Adding workspaceId: ${workspaceId}`);
+                } else {
+                    console.log(`[OntoCode] ⚠️ No workspaceId - user not in workspace mode`);
+                }
 
-            console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes (includes GraphDB processing time)`);
+                // 4. Upload to gateway endpoint
+                // workspaceId MUST be on the query string: FreeViewOnlyInterceptor runs before multipart
+                // is parsed, so request.getParameter("workspaceId") only sees URL params, not FormData.
+                const query = new URLSearchParams();
+                if (importMode) {
+                    query.set('importMode', importMode);
+                }
+                if (partition) {
+                    query.set('partition', partition);
+                }
+                if (workspaceId) {
+                    query.set('workspaceId', workspaceId);
+                }
+                const queryString = query.toString();
+                const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${encodeURIComponent(projectId)}${queryString ? `?${queryString}` : ''}`;
+                const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
 
-            // Upload with retry logic (max 3 attempts)
-            const MAX_RETRIES = 3;
-            let lastError: any = null;
-            let response: any = null;
+                console.log(`[OntoCode] Uploading to: ${uploadUrl}`);
+                console.log(`[OntoCode] Upload parameters - fileName: ${fileName}, action: ${action || 'none'}, projectId: ${projectId}`);
+                console.log(`[OntoCode] File size: ${fileData.length} bytes (${fileSizeMB} MB)`);
 
-            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-                try {
-                    if (attempt > 0) {
-                        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s
-                        console.log(`[OntoCode] Retry attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms delay...`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                    }
+                // Dynamic timeout based on file size
+                // Base: 10 min, add 1 min per 10MB for GraphDB processing
+                const baseTimeout = 10 * 60 * 1000; // 10 minutes
+                const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000; // 1 min per 10MB
+                const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 7_200_000); // Max 2 hours for uploads up to 1GB
 
-                    response = await axios.post(uploadUrl, formData, {
-                        headers,
-                        maxRedirects: 0,  // Disable redirects to catch any redirect issues
-                        timeout: uploadTimeout,  // Dynamic timeout based on file size
-                        maxContentLength: Infinity,
-                        maxBodyLength: Infinity,
-                        validateStatus: (status) => status < 500, // Accept all non-5xx responses
-                        onUploadProgress: (progressEvent) => {
-                            const percentCompleted = progressEvent.total
-                                ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
-                                : 0;
-                            const statusMsg = percentCompleted === 100
-                                ? `Upload complete. Processing in GraphDB... (this may take several minutes for large files)`
-                                : `Uploading: ${percentCompleted}%`;
-                            console.log(`[OntoCode] ${statusMsg} (${progressEvent.loaded} / ${progressEvent.total ?? 0} bytes)`);
-                            // Send progress to webview
-                            this.postMessage({
-                                type: 'uploadProgress',
-                                projectId,
-                                percent: percentCompleted,
-                                loaded: progressEvent.loaded,
-                                total: progressEvent.total ?? 0,
-                                message: statusMsg
-                            });
+                console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes (includes GraphDB processing time)`);
+
+                // Upload with retry logic (max 3 attempts)
+                const MAX_RETRIES = 3;
+
+                for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                    try {
+                        if (attempt > 0) {
+                            const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s
+                            console.log(`[OntoCode] Retry attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms delay...`);
+                            await new Promise(resolve => setTimeout(resolve, delay));
                         }
-                    });
 
-                    // Success - break out of retry loop
-                    console.log(`[OntoCode] ✅ Upload successful on attempt ${attempt + 1}`);
-                    break;
+                        response = await axios.post(uploadUrl, formData, {
+                            headers,
+                            maxRedirects: 0,  // Disable redirects to catch any redirect issues
+                            timeout: uploadTimeout,  // Dynamic timeout based on file size
+                            maxContentLength: Infinity,
+                            maxBodyLength: Infinity,
+                            validateStatus: (status) => status < 500, // Accept all non-5xx responses
+                            onUploadProgress: (progressEvent) => {
+                                const percentCompleted = progressEvent.total
+                                    ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
+                                    : 0;
+                                const statusMsg = percentCompleted === 100
+                                    ? `Upload complete. Processing in GraphDB... (this may take several minutes for large files)`
+                                    : `Uploading: ${percentCompleted}%`;
+                                console.log(`[OntoCode] ${statusMsg} (${progressEvent.loaded} / ${progressEvent.total ?? 0} bytes)`);
+                                // Send progress to webview
+                                this.postMessage({
+                                    type: 'uploadProgress',
+                                    projectId,
+                                    percent: percentCompleted,
+                                    loaded: progressEvent.loaded,
+                                    total: progressEvent.total ?? 0,
+                                    message: statusMsg
+                                });
+                            }
+                        });
 
-                } catch (error: any) {
-                    lastError = error;
-                    const status = error?.response?.status;
+                        // Success - break out of retry loop
+                        console.log(`[OntoCode] ✅ Upload successful on attempt ${attempt + 1}`);
+                        break;
 
-                    // Don't retry on authentication/authorization errors
-                    if (status === 401 || status === 403) {
-                        console.error(`[OntoCode] ❌ Auth error (${status}), not retrying`);
-                        throw error;
-                    }
+                    } catch (error: any) {
+                        lastError = error;
+                        const status = error?.response?.status;
 
-                    console.error(`[OntoCode] Upload attempt ${attempt + 1} failed:`, error?.message || error);
+                        // Don't retry on authentication/authorization errors
+                        if (status === 401 || status === 403) {
+                            console.error(`[OntoCode] ❌ Auth error (${status}), not retrying`);
+                            throw error;
+                        }
 
-                    // If this was the last attempt, throw the error
-                    if (attempt === MAX_RETRIES - 1) {
-                        throw error;
+                        console.error(`[OntoCode] Upload attempt ${attempt + 1} failed:`, error?.message || error);
+
+                        // If this was the last attempt, throw the error
+                        if (attempt === MAX_RETRIES - 1) {
+                            throw error;
+                        }
                     }
                 }
             }
@@ -2900,6 +2932,130 @@ class OntoCodePanel {
             // 6. Notify webview of failure, including the error message
             this.postMessage({ type: 'loadingFailed', error: errorMessage });
         }
+    }
+
+    /**
+     * Splits an already-compressed-or-not payload into chunks and uploads them sequentially to
+     * /api/ontology/upload-chunk/{projectId}, so no single HTTP request ever approaches a proxy's
+     * size cap (e.g. Cloudflare's 100MB limit) regardless of total file size. Chunks are uploaded
+     * in order with per-chunk retry; the final chunk's response carries the same shape as the
+     * single-shot /upload endpoint's response (success/projectId/gridfsFileId/...), and this method
+     * returns an axios-response-shaped object so callers can treat it identically either way.
+     */
+    private async uploadOntologyInChunks(
+        projectId: string,
+        data: Uint8Array,
+        fileName: string,
+        opts: {
+            ownerEmail?: string;
+            action?: string;
+            importMode?: string;
+            partition?: string;
+            workspaceId?: string;
+            compressed: boolean;
+            token: string;
+        },
+    ): Promise<{ status: number; data: any }> {
+        const CHUNK_SIZE = 20 * 1024 * 1024; // 20MB per chunk
+        const MAX_RETRIES_PER_CHUNK = 3;
+
+        const uploadId = generateUploadId();
+        const chunks = splitIntoChunks(data, CHUNK_SIZE);
+        const totalChunks = chunks.length;
+        const totalBytes = data.length;
+
+        console.log(`[OntoCode] Chunked upload starting: uploadId=${uploadId}, ${totalChunks} chunks of ~${(CHUNK_SIZE / (1024 * 1024)).toFixed(0)}MB, ${(totalBytes / (1024 * 1024)).toFixed(1)}MB total`);
+
+        let uploadedBytes = 0;
+        let finalResponseData: any = null;
+
+        for (let i = 0; i < totalChunks; i++) {
+            const chunk = chunks[i];
+            const chunkHash = await sha256Hex(chunk);
+            const isLastChunk = i === totalChunks - 1;
+
+            let lastError: any = null;
+            let succeeded = false;
+
+            for (let attempt = 0; attempt < MAX_RETRIES_PER_CHUNK; attempt++) {
+                try {
+                    if (attempt > 0) {
+                        const delay = Math.pow(2, attempt) * 1000;
+                        console.log(`[OntoCode] Retrying chunk ${i + 1}/${totalChunks} after ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES_PER_CHUNK})`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+
+                    const form = new FormData();
+                    form.append('chunk', new Blob([chunk as BlobPart]), fileName);
+                    form.append('uploadId', uploadId);
+                    form.append('chunkIndex', String(i));
+                    form.append('totalChunks', String(totalChunks));
+                    form.append('chunkHash', chunkHash);
+                    form.append('fileName', fileName);
+                    if (opts.ownerEmail) form.append('ownerEmail', opts.ownerEmail);
+                    if (opts.action) form.append('action', opts.action);
+                    if (opts.importMode) form.append('importMode', opts.importMode);
+                    if (opts.partition) form.append('partition', opts.partition);
+                    if (opts.workspaceId) form.append('workspaceId', opts.workspaceId);
+                    form.append('compressed', String(opts.compressed));
+
+                    const chunkResp = await axios.post(
+                        `${GATEWAY_URL}/api/ontology/upload-chunk/${encodeURIComponent(projectId)}`,
+                        form,
+                        {
+                            headers: { 'Authorization': `Bearer ${opts.token}` },
+                            timeout: 5 * 60 * 1000, // 5 min per chunk is generous for 20MB
+                            maxContentLength: Infinity,
+                            maxBodyLength: Infinity,
+                            validateStatus: (status) => status < 500,
+                        },
+                    );
+
+                    if (chunkResp.status >= 400) {
+                        throw Object.assign(new Error(chunkResp.data?.error || `Chunk upload failed with status ${chunkResp.status}`), { response: chunkResp });
+                    }
+
+                    uploadedBytes += chunk.length;
+                    const percent = Math.round((uploadedBytes / totalBytes) * 100);
+                    this.postMessage({
+                        type: 'uploadProgress',
+                        projectId,
+                        percent,
+                        loaded: uploadedBytes,
+                        total: totalBytes,
+                        message: isLastChunk && chunkResp.data?.success && chunkResp.data?.gridfsFileId
+                            ? 'Upload complete. Processing in GraphDB... (this may take several minutes for large files)'
+                            : `Uploading chunk ${i + 1}/${totalChunks}: ${percent}%`,
+                    });
+
+                    if (isLastChunk) {
+                        finalResponseData = chunkResp.data;
+                    }
+                    succeeded = true;
+                    break;
+                } catch (error: any) {
+                    lastError = error;
+                    const status = error?.response?.status;
+                    if (status === 401 || status === 403) {
+                        throw error; // Don't retry auth errors
+                    }
+                    console.error(`[OntoCode] Chunk ${i + 1}/${totalChunks} attempt ${attempt + 1} failed:`, error?.message || error);
+                    if (attempt === MAX_RETRIES_PER_CHUNK - 1) {
+                        throw lastError;
+                    }
+                }
+            }
+
+            if (!succeeded) {
+                throw lastError || new Error(`Failed to upload chunk ${i + 1}/${totalChunks}`);
+            }
+        }
+
+        if (!finalResponseData) {
+            throw new Error('Chunked upload finished without a final response from the server');
+        }
+
+        return { status: 200, data: finalResponseData };
     }
 
     /**
@@ -3503,84 +3659,96 @@ class OntoCodePanel {
                 }
             }
 
-            const formData = new FormData();
-            const fileBlob = new Blob([dataToUpload], { type: 'application/rdf+xml' });
-            const file = new File([fileBlob], fileName, { type: 'application/rdf+xml' });
-            formData.append('file', file);
+            const wasActuallyCompressed = enableCompression && dataToUpload.length < fileData.length;
+            const CHUNK_UPLOAD_THRESHOLD = 40 * 1024 * 1024; // 40MB — see uploadOntologyInChunks doc
 
-            if (enableCompression && dataToUpload.length < fileData.length) {
-                formData.append('compressed', 'true');
-            }
-
-            const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${uploadProjectId}`;
-            const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
-
-            console.log('[OntoCode] Upload URL:', uploadUrl);
-            console.log(`[OntoCode] Uploading file... Size: ${fileSizeMB}MB`);
-
-            // Show notification for large files
-            if (fileData.length > 50 * 1024 * 1024) {
-                const estimatedMinutes = Math.ceil(fileData.length / (10 * 1024 * 1024));
-                vscode.window.showInformationMessage(
-                    `Uploading large file (${fileSizeMB}MB). GraphDB processing may take ${estimatedMinutes}+ minutes.`,
-                    { modal: false }
-                );
-            }
-
-            // Dynamic timeout based on file size
-            const baseTimeout = 10 * 60 * 1000;
-            const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000;
-            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 7_200_000);
-
-            console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes`);
-
-            // Upload with retry logic (max 3 attempts)
-            const MAX_RETRIES = 3;
             let lastError: any = null;
             let response: any = null;
 
-            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-                try {
-                    if (attempt > 0) {
-                        const delay = Math.pow(2, attempt) * 1000;
-                        console.log(`[OntoCode] Retry attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms...`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                    }
+            if (dataToUpload.length > CHUNK_UPLOAD_THRESHOLD) {
+                console.log(`[OntoCode] File is ${(dataToUpload.length / (1024 * 1024)).toFixed(1)}MB (post-compression), using chunked upload`);
+                response = await this.uploadOntologyInChunks(uploadProjectId, dataToUpload, fileName, {
+                    compressed: wasActuallyCompressed,
+                    token,
+                });
+            } else {
+                const formData = new FormData();
+                const fileBlob = new Blob([dataToUpload], { type: 'application/rdf+xml' });
+                const file = new File([fileBlob], fileName, { type: 'application/rdf+xml' });
+                formData.append('file', file);
 
-                    response = await axios.post(uploadUrl, formData, {
-                        headers: {
-                            'Authorization': `Bearer ${token}`
-                        },
-                        maxContentLength: Infinity,
-                        maxBodyLength: Infinity,
-                        timeout: uploadTimeout,
-                        onUploadProgress: (progressEvent) => {
-                            const percentCompleted = progressEvent.total
-                                ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
-                                : 0;
-                            const statusMsg = percentCompleted === 100
-                                ? `Upload complete. Processing in GraphDB...`
-                                : `Uploading: ${percentCompleted}%`;
-                            console.log(`[OntoCode] ${statusMsg} (${progressEvent.loaded} / ${progressEvent.total} bytes)`);
+                if (wasActuallyCompressed) {
+                    formData.append('compressed', 'true');
+                }
+
+                const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${uploadProjectId}`;
+                const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
+
+                console.log('[OntoCode] Upload URL:', uploadUrl);
+                console.log(`[OntoCode] Uploading file... Size: ${fileSizeMB}MB`);
+
+                // Show notification for large files
+                if (fileData.length > 50 * 1024 * 1024) {
+                    const estimatedMinutes = Math.ceil(fileData.length / (10 * 1024 * 1024));
+                    vscode.window.showInformationMessage(
+                        `Uploading large file (${fileSizeMB}MB). GraphDB processing may take ${estimatedMinutes}+ minutes.`,
+                        { modal: false }
+                    );
+                }
+
+                // Dynamic timeout based on file size
+                const baseTimeout = 10 * 60 * 1000;
+                const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000;
+                const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 7_200_000);
+
+                console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes`);
+
+                // Upload with retry logic (max 3 attempts)
+                const MAX_RETRIES = 3;
+
+                for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                    try {
+                        if (attempt > 0) {
+                            const delay = Math.pow(2, attempt) * 1000;
+                            console.log(`[OntoCode] Retry attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms...`);
+                            await new Promise(resolve => setTimeout(resolve, delay));
                         }
-                    });
 
-                    console.log(`[OntoCode] ✅ Upload successful on attempt ${attempt + 1}`);
-                    break;
+                        response = await axios.post(uploadUrl, formData, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            },
+                            maxContentLength: Infinity,
+                            maxBodyLength: Infinity,
+                            timeout: uploadTimeout,
+                            onUploadProgress: (progressEvent) => {
+                                const percentCompleted = progressEvent.total
+                                    ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
+                                    : 0;
+                                const statusMsg = percentCompleted === 100
+                                    ? `Upload complete. Processing in GraphDB...`
+                                    : `Uploading: ${percentCompleted}%`;
+                                console.log(`[OntoCode] ${statusMsg} (${progressEvent.loaded} / ${progressEvent.total} bytes)`);
+                            }
+                        });
 
-                } catch (error: any) {
-                    lastError = error;
-                    const status = error?.response?.status;
+                        console.log(`[OntoCode] ✅ Upload successful on attempt ${attempt + 1}`);
+                        break;
 
-                    if (status === 401 || status === 403) {
-                        console.error(`[OntoCode] ❌ Auth error (${status}), not retrying`);
-                        throw error;
-                    }
+                    } catch (error: any) {
+                        lastError = error;
+                        const status = error?.response?.status;
 
-                    console.error(`[OntoCode] Upload attempt ${attempt + 1} failed:`, error?.message || error);
+                        if (status === 401 || status === 403) {
+                            console.error(`[OntoCode] ❌ Auth error (${status}), not retrying`);
+                            throw error;
+                        }
 
-                    if (attempt === MAX_RETRIES - 1) {
-                        throw error;
+                        console.error(`[OntoCode] Upload attempt ${attempt + 1} failed:`, error?.message || error);
+
+                        if (attempt === MAX_RETRIES - 1) {
+                            throw error;
+                        }
                     }
                 }
             }
