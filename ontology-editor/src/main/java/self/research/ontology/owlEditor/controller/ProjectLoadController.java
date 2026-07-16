@@ -188,7 +188,7 @@ public class ProjectLoadController {
                 return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
                         .body(Map.of(
                             "success", false,
-                            "error", "File too large. Maximum file size is 300MB. Your file is " + (file.getSize() / (1024 * 1024)) + "MB"
+                            "error", "File too large. Maximum file size is 1GB. Your file is " + (file.getSize() / (1024 * 1024)) + "MB"
                         ));
             }
 
@@ -1680,6 +1680,16 @@ public class ProjectLoadController {
             // snapshot rebuild (and any OWLAPI re-warm) re-exports fresh from Fuseki instead of
             // silently parsing whatever stale file happens to be on disk.
             datasetService.markProjectDirty(projectId);
+
+            // The dirty marker above only protects a *future* reload-from-disk (app restart,
+            // re-open) — it does nothing for an already-warm in-memory OWLAPI model in the
+            // current desktop session (Classes/Individuals tabs and the delete-class fast path
+            // all read from it). Without evicting it here, it keeps serving what the ontology
+            // looked like before this save, now diverged from what was just written into Fuseki.
+            if (ontologyCache != null) {
+                ontologyCache.evict(projectId);
+                log.info("[CODE-VIEW-SAVE] Evicted in-memory OWLAPI cache for project {} (now stale vs. reimported Fuseki data)", projectId);
+            }
 
             // Step 3: Clear ALL code-view caches (stale after reimport)
             storageManager.clearCodeViewCache(projectId);

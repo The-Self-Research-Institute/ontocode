@@ -270,15 +270,22 @@ function handleBrowserMessage(message: any) {
         case 'downloadOntology': {
             // Submit the export as a background job and poll until ready, rather than one
             // long-blocking request — a large ontology's export can take longer than axios's
-            // client-side timeout even though the backend supports far longer. See
-            // exportService.ts / OntologyExportJobService.java for the job this polls against.
+            // client-side timeout even though the backend supports far longer. Large exports
+            // stream to disk when the File System Access API is available (avoids ~200MB+
+            // Blob OOM in the tab). See exportService.ts / OntologyExportJobService.java.
             (async () => {
                 try {
-                    const blob = await exportOntologyAsBlob(getGatewayUrl(), message.projectId, message.format);
-                    triggerBlobDownload(blob, message.filename);
+                    await exportOntologyAsBlob(
+                        getGatewayUrl(),
+                        message.projectId,
+                        message.format,
+                        message.filename,
+                    );
                 } catch (err) {
                     console.error('[BrowserBridge] downloadOntology failed:', err);
-                    notificationService.error('Download Failed', 'Could not download ontology file');
+                    const msg = err instanceof Error ? err.message : 'Could not download ontology file';
+                    if (msg.includes('cancelled')) return;
+                    notificationService.error('Download Failed', msg);
                 }
             })();
             break;
