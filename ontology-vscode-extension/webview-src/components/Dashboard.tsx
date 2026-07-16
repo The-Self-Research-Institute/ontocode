@@ -313,6 +313,36 @@ const TopMenuBar = ({
 
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Export loader tracking — the actual submit/poll/download job runs in the host
+  // (browser bridge, Electron preload, or VS Code extension host), not here. These
+  // track which in-flight export the spinner belongs to so a stale completion signal
+  // (e.g. from a cancelled/superseded export) can't clear the wrong one.
+  const exportRequestIdRef = useRef(0);
+  const pendingExportRef = useRef<{ requestId: number; format: string; filename: string } | null>(null);
+  const exportSafetyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handleExportMessage = (event: MessageEvent) => {
+      const message = event.data;
+      if (!message || (message.type !== "downloadOntologyComplete" && message.type !== "downloadOntologyFailed")) return;
+      const pending = pendingExportRef.current;
+      if (!pending || (message.requestId !== undefined && message.requestId !== pending.requestId)) return;
+      if (exportSafetyTimeoutRef.current) {
+        clearTimeout(exportSafetyTimeoutRef.current);
+        exportSafetyTimeoutRef.current = null;
+      }
+      pendingExportRef.current = null;
+      setExportingFormat(null);
+      if (message.type === "downloadOntologyComplete") {
+        notificationService.success("Export Complete", `${pending.filename} downloaded`);
+      } else if (!message.cancelled) {
+        notificationService.error("Export Failed", message.error || `Could not export ${pending.filename}`);
+      }
+    };
+    window.addEventListener("message", handleExportMessage);
+    return () => window.removeEventListener("message", handleExportMessage);
+  }, []);
+
   useEffect(() => {
     import("../utils/appVersion").then(({ getAppVersion }) => {
       getAppVersion().then((v) => setAppVersion(v || "")).catch(() => setAppVersion(""));
@@ -834,10 +864,29 @@ const TopMenuBar = ({
                               setExportingFormat(format);
                               const filename = `${currentProjectId}.${ext}`;
                               const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(currentProjectId)}?format=${format}`;
+                              setShowExportFormats(false);
+                              setOpenMenu(null);
                               try {
                                 if (window.vscode) {
-                                  window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId: currentProjectId, format });
-                                  notificationService.success("Export Started", `Downloading ${filename}`);
+                                  // The host (browser bridge / Electron preload / VS Code extension) runs the
+                                  // actual submit-poll-download job and posts back "downloadOntologyComplete"
+                                  // or "downloadOntologyFailed" when it's actually done — see the matching
+                                  // handler below. Clearing the spinner here (right after firing a fire-and-forget
+                                  // postMessage) used to make it disappear in under a second while a multi-minute
+                                  // export job kept running invisibly in the background.
+                                  exportRequestIdRef.current += 1;
+                                  const requestId = exportRequestIdRef.current;
+                                  pendingExportRef.current = { requestId, format, filename };
+                                  window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId: currentProjectId, format, requestId });
+                                  notificationService.info("Exporting…", `${filename} — this can take a few minutes for large ontologies`);
+                                  if (exportSafetyTimeoutRef.current) clearTimeout(exportSafetyTimeoutRef.current);
+                                  exportSafetyTimeoutRef.current = setTimeout(() => {
+                                    if (pendingExportRef.current?.requestId === requestId) {
+                                      pendingExportRef.current = null;
+                                      setExportingFormat(null);
+                                      notificationService.error("Export Timed Out", `${filename} export did not finish in time. Please try again.`);
+                                    }
+                                  }, 60 * 60 * 1000);
                                 } else {
                                   const res = await fetch(url, {
                                     headers: { Authorization: `Bearer ${localStorage.getItem("authToken") ?? ""}` },
@@ -851,14 +900,12 @@ const TopMenuBar = ({
                                   a.click();
                                   URL.revokeObjectURL(blobUrl);
                                   notificationService.success("Export Complete", `${filename} downloaded`);
+                                  setExportingFormat(null);
                                 }
                               } catch (err: any) {
                                 console.error("Export failed:", err);
                                 notificationService.error("Export Failed", err.message || "Could not export ontology");
-                              } finally {
                                 setExportingFormat(null);
-                                setShowExportFormats(false);
-                                setOpenMenu(null);
                               }
                             }}
                             className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 disabled:opacity-50 flex items-center gap-2"

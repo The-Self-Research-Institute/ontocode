@@ -223,7 +223,9 @@ type WebviewMessage =
     | { type: 'zoteroLibraryError'; error: string; librarySessionId?: number }
     | { type: 'zoteroConfigData'; config: { apiKey: string; userId: string; libraryType: string; groupId?: string } | null }
     | { type: 'citationFormatted'; citation: string; metadata: any; projectId: string }
-    | { type: 'uploadOntologyContentDone'; success: boolean; projectId: string }; // Navigate to subscription plans page
+    | { type: 'uploadOntologyContentDone'; success: boolean; projectId: string } // Navigate to subscription plans page
+    | { type: 'downloadOntologyComplete'; requestId?: number }
+    | { type: 'downloadOntologyFailed'; requestId?: number; error?: string; cancelled?: boolean };
 
 type ExtensionMessage =
     | { type: 'error'; value: string }
@@ -242,7 +244,7 @@ type ExtensionMessage =
     | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
     | { type: 'proxyRequest'; reqId: string; config: any }
     | { type: 'webviewReady' }
-    | { type: 'downloadOntology'; url: string; filename: string; projectId: string; format: string }
+    | { type: 'downloadOntology'; url: string; filename: string; projectId: string; format: string; requestId?: number }
     | { type: 'downloadCurrentOntology' }
     | { type: 'downloadFile'; content: string; filename: string; format: string }
     | { type: 'openExternalUrl'; url: string } // Open a URL in the OS default browser (webview navigation is sandboxed)
@@ -891,7 +893,7 @@ class OntoCodePanel {
                         this.handleProxyRequest(message);
                         break;
                     case 'downloadOntology':
-                        this.handleDownload(message.projectId, message.format, message.filename);
+                        this.handleDownload(message.projectId, message.format, message.filename, message.requestId);
                         break;
                     case 'downloadCurrentOntology':
                         this.handleDownloadCurrent();
@@ -3251,7 +3253,7 @@ class OntoCodePanel {
      * hours — for a large ontology the server was often still working when this client
      * gave up. See OntologyExportJobService.java for the job lifecycle this polls against.
      */
-    private async handleDownload(projectId: string, format: string, filename: string) {
+    private async handleDownload(projectId: string, format: string, filename: string, requestId?: number) {
         try {
             console.log(`[OntoCode] Downloading export for project: ${projectId}, format: ${format}`);
 
@@ -3318,27 +3320,32 @@ class OntoCodePanel {
                     console.log(`[OntoCode] Saving to: ${saveUri.fsPath}`);
                     await (vscode.workspace as any).fs.writeFile(saveUri, new Uint8Array(response.data));
                     vscode.window.showInformationMessage(`File saved successfully to ${saveUri.fsPath}`);
+                    this.postMessage({ type: 'downloadOntologyComplete', requestId });
                 } else {
                     console.log(`[OntoCode] User cancelled save dialog`);
+                    this.postMessage({ type: 'downloadOntologyFailed', requestId, cancelled: true });
                 }
             });
         } catch (error) {
             console.error('[OntoCode] Download error:', error);
+            let errorMessage = 'Failed to download file. See console for details.';
             if (axios.isAxiosError(error)) {
                 const axiosError = error as AxiosError;
                 if (axiosError.response) {
                     console.error('[OntoCode] Error response:', axiosError.response.status, axiosError.response.data);
-                    vscode.window.showErrorMessage(`Download failed: ${axiosError.response.status} - ${JSON.stringify(axiosError.response.data)}`);
+                    errorMessage = `Download failed: ${axiosError.response.status} - ${JSON.stringify(axiosError.response.data)}`;
                 } else if (axiosError.request) {
                     console.error('[OntoCode] No response received');
-                    vscode.window.showErrorMessage('Download failed: No response from server. The file may be too large or the server is taking too long to export it.');
+                    errorMessage = 'Download failed: No response from server. The file may be too large or the server is taking too long to export it.';
                 } else {
                     console.error('[OntoCode] Error:', axiosError.message);
-                    vscode.window.showErrorMessage(`Download failed: ${axiosError.message}`);
+                    errorMessage = `Download failed: ${axiosError.message}`;
                 }
             } else {
-                vscode.window.showErrorMessage((error as Error)?.message || 'Failed to download file. See console for details.');
+                errorMessage = (error as Error)?.message || errorMessage;
             }
+            vscode.window.showErrorMessage(errorMessage);
+            this.postMessage({ type: 'downloadOntologyFailed', requestId, error: errorMessage });
         }
     }
 
