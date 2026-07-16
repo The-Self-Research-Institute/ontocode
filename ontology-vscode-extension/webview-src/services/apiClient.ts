@@ -37,9 +37,11 @@ function isUploadRequest(url: string): boolean {
 // Merge analyze/execute load both ontologies into an OWLAPI model server-side and run
 // synchronously on the request thread — for 200MB-class files that legitimately exceeds
 // the 10-minute default, and a client-side timeout mid-merge leaves the UI out of sync
-// with a server that kept going. Give them the same budget as uploads.
+// with a server that kept going. content-page's first call on a cache miss triggers a
+// full ontology export server-side before returning, so it gets the same budget
+// (subsequent page reads are fast cache hits). Same budget as uploads for all.
 function isLongRunningRequest(url: string): boolean {
-  return /\/merge\/(analyze|execute)/.test(url);
+  return /\/merge\/(analyze|execute)/.test(url) || url.includes('/content-page');
 }
 
 function requestTimeoutFor(url: string): number {
