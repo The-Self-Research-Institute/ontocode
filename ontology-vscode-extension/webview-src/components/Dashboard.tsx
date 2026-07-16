@@ -7647,7 +7647,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     if (!isDesktop() || !projectId) return;
-    const fusekiTabs = ["SPARQL", "Graph", "WebVOWL", "Fuzzy", "DLQuery", "Reasoner"];
+    const fusekiTabs = ["SPARQL", "Graph", "Fuzzy", "DLQuery", "Reasoner"];
     if (!fusekiTabs.includes(mainTab)) return;
     const cur = desktopFusekiPrepRef.current;
     if (cur.projectId === projectId) {
@@ -16658,7 +16658,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     DLQuery: { label: "DL Query", icon: Code },
     CodeView: { label: "Code View", icon: Code },
     SPARQL: { label: "SPARQL Query", icon: DatabaseZap },
-    WebVOWL: { label: "WebVOWL", icon: Network },
     SWRL: { label: "SWRL Rules", icon: Code },
     Fuzzy: { label: "Fuzzy Ontology", icon: Sparkles },
     Changes: { label: "Change Assistant", icon: GitBranch },
