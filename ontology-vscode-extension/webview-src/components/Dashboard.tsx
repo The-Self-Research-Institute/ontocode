@@ -74,7 +74,7 @@ import type {
   Datatype,
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
-import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry } from "../utils/desktop";
+import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
 import { resolveMutationActor } from "../utils/mutationActor";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
@@ -7527,9 +7527,27 @@ const Dashboard: React.FC<DashboardProps> = ({
     const fusekiTabs = ["SPARQL", "Graph", "WebVOWL", "Fuzzy", "DLQuery", "Reasoner"];
     if (!fusekiTabs.includes(mainTab)) return;
     const cur = desktopFusekiPrepRef.current;
-    // Same project: only (re)start from idle — 'failed' waits for an explicit
-    // Try-again click, 'preparing'/'ready'/'bypassed' need no new sync.
-    if (cur.projectId === projectId && cur.status !== "idle") return;
+    if (cur.projectId === projectId) {
+      // 'failed' waits for an explicit Try-again click; 'preparing' is already
+      // syncing; 'bypassed' was the user's choice. 'ready' can't be trusted as-is:
+      // OWLAPI mutations re-mark the deferred-sync flag, and serving these tabs
+      // from a stale triple store is exactly what this gate exists to prevent —
+      // re-check the marker on every activation and re-enter the loader if set.
+      if (cur.status === "ready") {
+        let cancelled = false;
+        void isDesktopFusekiSyncPending(projectId).then((pending) => {
+          if (cancelled || !pending) return;
+          const latest = desktopFusekiPrepRef.current;
+          if (latest.projectId === projectId && latest.status === "ready") {
+            startDesktopFusekiPrep(projectId);
+          }
+        });
+        return () => {
+          cancelled = true;
+        };
+      }
+      if (cur.status !== "idle") return;
+    }
     startDesktopFusekiPrep(projectId);
   }, [mainTab, projectId, startDesktopFusekiPrep]);
 
@@ -7570,6 +7588,31 @@ const Dashboard: React.FC<DashboardProps> = ({
       )}
     </div>
   );
+
+  // Non-blocking variant for tabs where the user can keep working while the
+  // store catches up (SPARQL/DLQuery/Reasoner) — queries just wait for indexing.
+  const renderDesktopFusekiBanner = () => {
+    if (!desktopFusekiBlocked) return null;
+    if (desktopFusekiPrep.status === "failed") {
+      return (
+        <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-400/20 text-amber-300 text-sm">
+          <AlertTriangle size={14} className="flex-shrink-0" />
+          <span>{desktopFusekiPrep.error || "The triple store could not be prepared."}</span>
+          <button
+            onClick={() => projectId && startDesktopFusekiPrep(projectId)}
+            className="ml-auto underline hover:text-amber-200 flex-shrink-0">
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 border-b border-purple-400/20 text-purple-300 text-sm">
+        <Loader2 size={14} className="animate-spin flex-shrink-0" />
+        <span>Preparing triple store — queries will run once indexing finishes.</span>
+      </div>
+    );
+  };
 
   // ── Desktop OWLAPI deferred-hierarchy resolver ────────────────────────────
   // Single responsibility: when fetchData deferred the hierarchy render because
@@ -10803,8 +10846,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         // in-memory delete path (DesktopOwlApiMutationService.tryApply) only engages once the
         // OWLAPI cache is warm. Deleting before that falls through to a raw SPARQL DELETE
         // against a graph that hasn't caught up yet, so the class can appear to come back.
+        // If the cache still isn't warm after the wait, abort rather than take that path.
         if (isDesktop()) {
-          await waitForDesktopOwlApiReady(projectId);
+          const owlApiReady = await waitForDesktopOwlApiReady(projectId);
+          if (!owlApiReady) {
+            showNotification(
+              "The ontology is still loading into memory. Please try deleting again in a moment.",
+              "warning",
+            );
+            return;
+          }
         }
 
         if (iris.length === 1) {
@@ -14206,23 +14257,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="h-full flex flex-col">
               {/* Desktop: non-blocking heads-up while Fuseki spins up — users can
                   keep writing queries; execution succeeds once the store is ready. */}
-              {desktopFusekiBlocked && desktopFusekiPrep.status !== "failed" && (
-                <div className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 border-b border-purple-400/20 text-purple-300 text-sm">
-                  <Loader2 size={14} className="animate-spin flex-shrink-0" />
-                  <span>Preparing triple store — queries will run once indexing finishes.</span>
-                </div>
-              )}
-              {desktopFusekiBlocked && desktopFusekiPrep.status === "failed" && (
-                <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-400/20 text-amber-300 text-sm">
-                  <AlertTriangle size={14} className="flex-shrink-0" />
-                  <span>{desktopFusekiPrep.error || "The triple store could not be prepared."}</span>
-                  <button
-                    onClick={() => projectId && startDesktopFusekiPrep(projectId)}
-                    className="ml-auto underline hover:text-amber-200 flex-shrink-0">
-                    Try again
-                  </button>
-                </div>
-              )}
+              {renderDesktopFusekiBanner()}
               <div className="flex-1 min-h-0">
                 <SparqlPluginComponent
                   projectId={projectId}
@@ -14418,23 +14453,30 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (plugin?.component) {
           const PluginComponent = plugin.component;
           return (
-            <PluginComponent
-              projectId={projectId || ""}
-              apiBaseUrl={getBaseUrl()}
-              selectedReasoner={selectedReasoner}
-              isReasonerRunning={isReasonerRunning}
-              isReasonerLoading={isReasonerLoading}
-              reasonerResults={reasonerResults}
-              consistencyResult={consistencyResult}
-              inferredClassHierarchy={inferredClassHierarchy}
-              inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
-              inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
-              onStartReasoner={startReasoner}
-              onStopReasoner={stopReasoner}
-              onSelectReasoner={handleSelectReasoner}
-              onToggleSync={toggleReasonerSync}
-              isReasonerSynced={isReasonerSynced}
-            />
+            <div className="h-full flex flex-col">
+              {/* Desktop: reasoner reads the triple store — surface sync progress
+                  without blocking reasoner selection/config. */}
+              {renderDesktopFusekiBanner()}
+              <div className="flex-1 min-h-0">
+                <PluginComponent
+                  projectId={projectId || ""}
+                  apiBaseUrl={getBaseUrl()}
+                  selectedReasoner={selectedReasoner}
+                  isReasonerRunning={isReasonerRunning}
+                  isReasonerLoading={isReasonerLoading}
+                  reasonerResults={reasonerResults}
+                  consistencyResult={consistencyResult}
+                  inferredClassHierarchy={inferredClassHierarchy}
+                  inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
+                  inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
+                  onStartReasoner={startReasoner}
+                  onStopReasoner={stopReasoner}
+                  onSelectReasoner={handleSelectReasoner}
+                  onToggleSync={toggleReasonerSync}
+                  isReasonerSynced={isReasonerSynced}
+                />
+              </div>
+            </div>
           );
         }
 
@@ -15763,6 +15805,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         };
 
         return (
+          <div className="h-full flex flex-col">
+            {/* Desktop: DL queries execute against the triple store — surface sync
+                progress without blocking query authoring. */}
+            {renderDesktopFusekiBanner()}
+            <div className="flex-1 min-h-0">
           <DLQueryPanel
             projectId={projectId || ""}
               classHierarchy={classHierarchy}
@@ -15835,6 +15882,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             }}
             showNotification={(message, type) => showToast(message, type)}
           />
+            </div>
+          </div>
         );
       default:
         return <div className="p-6 text-gray-400">Select a tab</div>;
