@@ -73,6 +73,7 @@ import {
 import { useIsDarkTheme } from './hooks/useIsDarkTheme';
 import { usePrefersReducedMotion } from './hooks/usePrefersReducedMotion';
 import { loadLastView, saveLastView, loadUiPrefs, saveUiPrefs, OntographLayoutType, VowlDisplayOptions, DEFAULT_VOWL_OPTIONS } from './viewMemory';
+import { applyVowlTransform, isThingIri, vowlOriginalNodeId } from './vowlTransform';
 import { GraphToolbar, RELATIONSHIP_VISIBILITY_CONTROLS } from './components/GraphToolbar';
 import { WebGLGraphView, buildBenchmarkData } from './renderers/WebGLGraphView';
 import { isWebGLAvailable } from './renderers/graphAdapter';
@@ -474,8 +475,11 @@ const computeVowlLayout = (
   assignRing(individuals, individualRadius, Math.PI * 1.8, -Math.PI / 2);
   assignRing(datatypes, datatypeRadius, Math.PI * 1.2, -Math.PI / 2 + Math.PI / 6);
 
+  // Pin only a genuine shared Thing hub. Per-edge Thing clones from the VOWL
+  // transform (id contains "__vowl__") must stay next to their single neighbor.
   const thingNode = classes.find(
-    node => node.label === 'Thing' || node.id === 'owl:Thing' || node.id.includes('owl#Thing')
+    node => !node.id.includes('__vowl__') &&
+      (node.label === 'Thing' || node.id === 'owl:Thing' || node.id.includes('owl#Thing'))
   );
   if (thingNode) {
     positions.set(thingNode.id, {
@@ -1182,15 +1186,38 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * FILTERING
    * ========================================================================
    */
-  // Helper to determine if a node is external
+  // External = class whose namespace differs from the ontology's dominant namespace
+  // (WebVOWL "color externals" semantics). The dominant namespace is the most common
+  // namespace among class IRIs — more reliable than comparing against projectId.
+  const namespaceOfIri = (iri: string): string | null => {
+    if (!iri || !iri.startsWith('http')) return null;
+    const cut = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
+    return cut > 'https://'.length ? iri.substring(0, cut + 1) : null;
+  };
+  const dominantNamespace = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const n of allNodes) {
+      if (n.type !== 'class') continue;
+      const iri = n.uri || n.id;
+      if (isThingIri(iri)) continue;
+      const ns = namespaceOfIri(iri);
+      if (!ns) continue;
+      counts.set(ns, (counts.get(ns) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    let bestCount = 0;
+    counts.forEach((count, ns) => {
+      if (count > bestCount) { best = ns; bestCount = count; }
+    });
+    return best;
+  }, [allNodes]);
+
   const isExternalNode = useCallback((node: any) => {
-    if (!node) return false;
-    return (
-      node.label?.toLowerCase().includes('external') || 
-      ['Item', 'UserAccount', 'Concept'].includes(node.label || '') ||
-      (node.metadata?.iri && !node.metadata.iri.includes(projectId))
-    );
-  }, [projectId]);
+    if (!node || !dominantNamespace) return false;
+    if (isThingIri(node.uri || node.id)) return false;
+    const ns = namespaceOfIri(node.uri || node.id || '');
+    return !!ns && ns !== dominantNamespace;
+  }, [dominantNamespace]);
 
   // Helper to determine if an edge is functional
   const isFunctionalEdge = useCallback((edge: any) => {
@@ -1257,6 +1284,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         node.type === 'datatype'
       );
       if (GRAPH_DEBUG) console.log(`[Filtering] Force mode: Filtered to classes, individuals, datatypes - ${filtered.length} nodes`);
+    }
+
+    // Datatype nodes that only exist for VOWL fallback edges (missing domain/range
+    // defaults) would float disconnected in non-VOWL modes — hide them there.
+    if (visualizationType !== 'vowl') {
+      const nonVowlConnected = new Set<string>();
+      for (const e of allEdges) {
+        if (e.metadata?.vowlOnly) continue;
+        nonVowlConnected.add(e.from);
+        nonVowlConnected.add(e.to);
+      }
+      filtered = filtered.filter(node => node.type !== 'datatype' || nonVowlConnected.has(node.id));
     }
 
     // OntoGraph Mode: focus on class hierarchy and individuals for clean Protégé-style layout
@@ -1326,6 +1365,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       filters.edgeTypes.has(edge.type) &&
       nodeIds.has(edge.from) &&
       nodeIds.has(edge.to) &&
+      // vowlOnly = WebVOWL-parity fallback edges (missing domain/range defaulted to
+      // owl:Thing / rdfs:Literal). Other modes have no per-edge Thing splitting, so
+      // these would just bloat the Thing hub there.
+      !(edge.metadata?.vowlOnly && visualizationType !== 'vowl') &&
       (assertionView === 'all' ||
         (assertionView === 'inferred' ? isInferredEntity(edge) : !isInferredEntity(edge)))
     );
@@ -1466,6 +1509,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     [filteredNodes, filteredEdges]
   );
 
+  // Same density rule as the render pass: VOWL chips stay always-visible below
+  // this many labeled edges (mirrored in the hover/selection update effect).
+  const vowlChipDensityOk = useMemo(() =>
+    visualizationType === 'vowl' &&
+    filteredEdges.filter(e => e.type === 'propertyRelation' || e.type === 'subClassOf').length <= 400,
+  [visualizationType, filteredEdges]);
+
   const activeLocalFocusId = useMemo(() => {
     if (localGraphFollowSelection && selectedNodeInfo?.id) return selectedNodeInfo.id;
     if (localFocusId) return localFocusId;
@@ -1506,8 +1556,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         n.type === 'class' && !isExternalNode(n) && n.label !== 'Thing'
       );
       
-      // Theme-aware legend colors (reactive — recolors on theme switch)
-      const isDark = isDarkTheme;
+      // VOWL renders on the fixed light WebVOWL canvas — legend matches it
+      const isDark = false;
       
       // Add node type legends with counts - theme aware
       if (hasThing) legend.push({ name: 'Thing', type: 'node', nodeType: 'class', color: isDark ? '#374151' : '#ffffff' });
@@ -1736,9 +1786,24 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (!svgRef.current || filteredNodes.length === 0) return;
 
     const startTime = performance.now();
+
+    // WebVOWL topology transform: split shared Thing/Literal hubs into per-edge
+    // duplicates, drop subClassOf→Thing, merge equivalent classes. Only the render
+    // graph changes — sidebar/legend/analytics stay on the filtered graph.
+    const vowlGraph = visualizationType === 'vowl'
+      ? applyVowlTransform(filteredNodes, filteredEdges)
+      : null;
+    const renderNodes = vowlGraph ? vowlGraph.nodes : filteredNodes;
+    const renderEdges = vowlGraph ? vowlGraph.edges : filteredEdges;
+
+    // VOWL mode always renders on the WebVOWL light canvas (user-preferred look),
+    // so all theme-dependent colors inside this effect use effectiveDark instead
+    // of isDarkTheme. Other modes keep following the app theme.
+    const effectiveDark = visualizationType === 'vowl' ? false : isDarkTheme;
+
     // Derived per render, mode-independent — replaces the former isLargeGraph state,
     // which was only ever set in the ontograph branch and went stale on mode switch.
-    const isLargeGraph = filteredNodes.length > LARGE_GRAPH_THRESHOLD;
+    const isLargeGraph = renderNodes.length > LARGE_GRAPH_THRESHOLD;
 
     if (GRAPH_DEBUG) {
       console.log('[AdvancedGraphView D3] 🎨 Initializing D3 visualization');
@@ -1766,7 +1831,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
 
     const isSpatial3D = visualizationType === 'spatial3d';
-    const nodeDegreeMap = buildDegreeMap(filteredEdges);
+    const nodeDegreeMap = buildDegreeMap(renderEdges);
     const maxBetweenness = Math.max(0.001, ...graphAnalytics.betweenness.values());
     const clusterFor = (nodeId: string) => graphAnalytics.communities.get(nodeId);
     const influenceSize = (nodeId: string, base: number): number => {
@@ -1781,6 +1846,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         setSelectedEdgeId(null);
         setSelectedNodeInfo(null);
       });
+    // WebVOWL's signature light blue-gray canvas in VOWL mode; app surface otherwise
+    svg.style('background', (visualizationType === 'vowl' ? '#eef3f6' : '') as string);
     const g = d3.select(gRef.current);
 
     const width = svgRef.current.clientWidth;
@@ -1820,7 +1887,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Remove existing markers to ensure clean state
     defs.selectAll('marker').remove();
     
-    const isDark = isDarkTheme;
+    const isDark = effectiveDark;
 
     // VOWL-specific arrow markers — neutral filled triangles matching the neutral
     // property lines (classic WebVOWL: the property kind lives in the label chip,
@@ -1841,7 +1908,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // WebVOWL arrowhead convention: subClassOf/isA edges get a HOLLOW outlined
     // triangle; type/property edges get filled triangles. The shape difference (not
     // just color) is what makes relationship kinds readable at a glance.
-    const canvasBg = isDark ? '#111827' : '#ffffff';
+    const canvasBg = visualizationType === 'vowl' ? '#eef3f6' : (isDark ? '#111827' : '#ffffff');
     const appendArrowMarker = (
       id: string,
       color: string,
@@ -1976,7 +2043,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Prepare D3 data — reuse saved positions for stable expand/collapse
     const savedPositions = nodePositionsRef.current;
     const hasSavedPositions = savedPositions.size > 0;
-    const d3Nodes: D3Node[] = filteredNodes.map((node, index) => {
+    const d3Nodes: D3Node[] = renderNodes.map((node, index) => {
       const baseSize = influenceSize(node.id, node.size || settings.nodeSize);
       const sizedNode = { ...node, size: baseSize };
       // Reuse previous position if the node was already rendered (Protégé-style stability)
@@ -2000,7 +2067,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       
       if (visualizationType === 'vowl') {
         // Better initial spread for VOWL mode to reduce initial overlapping
-        const cols = Math.ceil(Math.sqrt(filteredNodes.length));
+        const cols = Math.ceil(Math.sqrt(renderNodes.length));
         const col = index % cols;
         const row = Math.floor(index / cols);
         const cellWidth = Math.max(150, (width - 300) / cols);
@@ -2123,7 +2190,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     const nodeMap = new Map(d3Nodes.map(n => [n.id, n]));
 
-    const d3Edges: D3Edge[] = filteredEdges.map(edge => ({
+    const d3Edges: D3Edge[] = renderEdges.map(edge => ({
       ...edge,
       source: nodeMap.get(edge.from)!,
       target: nodeMap.get(edge.to)!
@@ -2181,9 +2248,62 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     console.log('[AdvancedGraphView D3] ✅ Prepared D3 data - Nodes:', d3Nodes.length, 'Edges:', d3Edges.length);
 
     const nodeCount = d3Nodes.length;
+
+    // ── WebVOWL chip physics ─────────────────────────────────────────────────
+    // In WebVOWL the property-label rectangle IS a node in the force simulation,
+    // sitting mid-edge and linked to both endpoints. That's what spaces edges
+    // apart and keeps labels from overlapping. Here: each chip edge gets an
+    // invisible physics node; the edge is drawn as a curve through it and the
+    // label chip is glued to it. Capped at the same density threshold as chips.
+    const isVowlChipEdge = (d: any) => d.type === 'propertyRelation' || d.type === 'subClassOf';
+    const vowlChipsAlwaysVisible = visualizationType === 'vowl'
+      && d3Edges.filter(isVowlChipEdge).length <= 400;
+
+    const chipNodes: D3Node[] = [];
+    if (visualizationType === 'vowl' && vowlChipsAlwaysVisible) {
+      d3Edges.forEach(e => {
+        if (!isVowlChipEdge(e)) return;
+        const s = e.source as D3Node;
+        const t = e.target as D3Node;
+        const chipId = `__vowlchip__${e.id}`;
+        const saved = savedPositions.get(chipId);
+        const chip: D3Node = {
+          id: chipId,
+          label: '',
+          type: 'class',
+          x: saved?.x ?? ((s.x ?? width / 2) + (t.x ?? width / 2)) / 2 + (Math.random() - 0.5) * 20,
+          y: saved?.y ?? ((s.y ?? height / 2) + (t.y ?? height / 2)) / 2 + (Math.random() - 0.5) * 20
+        };
+        (chip as any).__isChip = true;
+        (e as any).__chipNode = chip;
+        chipNodes.push(chip);
+      });
+    }
+
+    // Simulation links: chip edges are replaced by two half-links through their
+    // chip node (the direct link would fight the chip's midpoint position).
+    const buildSimLinks = (): any[] => {
+      if (chipNodes.length === 0) return d3Edges;
+      const links: any[] = [];
+      d3Edges.forEach(e => {
+        const chip = (e as any).__chipNode as D3Node | undefined;
+        if (chip) {
+          links.push({ source: e.source, target: chip, __halfOf: e });
+          links.push({ source: chip, target: e.target, __halfOf: e });
+        } else {
+          links.push(e);
+        }
+      });
+      return links;
+    };
+    const simLinks = buildSimLinks();
+    const simNodes = chipNodes.length > 0 ? [...d3Nodes, ...chipNodes] : d3Nodes;
     
     // Calculate link distance based on node types and VOWL distance controls
-    const linkDistance = (edge: D3Edge) => {
+    const linkDistance = (edge: D3Edge): number => {
+      // Half-links to a chip node cover half the edge each
+      const half = (edge as any).__halfOf as D3Edge | undefined;
+      if (half) return linkDistance(half) / 2;
       const source = edge.source as D3Node;
       const target = edge.target as D3Node;
       
@@ -2216,7 +2336,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     };
     
     // Calculate link strength - hierarchy edges are stronger
-    const linkStrength = (edge: D3Edge) => {
+    const linkStrength = (edge: D3Edge): number => {
+      const half = (edge as any).__halfOf as D3Edge | undefined;
+      if (half) return Math.min(1.0, linkStrength(half) * 1.4); // firm chips, WebVOWL-style
       if (edge.type === 'subClassOf') {
         return 1.0; // Very strong connection for hierarchy
       }
@@ -2253,8 +2375,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const entrancePlaying = entranceRef.current.phase === 'playing' && !hasSavedPositions;
 
 
-    const simulation = d3.forceSimulation<D3Node>(d3Nodes)
-      .force('link', usePhysics ? d3.forceLink<D3Node, D3Edge>(d3Edges)
+    const simulation = d3.forceSimulation<D3Node>(simNodes)
+      .force('link', usePhysics ? d3.forceLink<D3Node, D3Edge>(simLinks)
         .id(d => d.id)
         .distance(linkDistance)
         .strength(linkStrength)
@@ -2262,6 +2384,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .force('charge', usePhysics ? d3.forceManyBody()
         .strength(d => {
           const node = d as D3Node;
+          // Chip label nodes repel lightly — enough to keep labels apart without
+          // distorting the class layout
+          if ((node as any).__isChip) return -120;
           // Much stronger repulsion in WebVOWL mode for organized layout
           if (visualizationType === 'vowl') {
             if (node.type === 'class') {
@@ -2301,6 +2426,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .force('collision', usePhysics ? d3.forceCollide()
         .radius(d => {
           const node = d as D3Node;
+          // Chip nodes reserve room for their label rectangle (~60×16px)
+          if ((node as any).__isChip) return 30;
           const size = node.size || avgNodeSize;
           const isVeryLargeGraph = nodeCount > 10000;
           
@@ -2363,7 +2490,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return height * 0.6;
         }
         return height / 2;
-      }).strength(visualizationType === 'vowl' ? 0.18 : 0.15) : null)
+      }).strength(d =>
+        (d as any).__isChip ? 0 : (visualizationType === 'vowl' ? 0.18 : 0.15)) : null)
       .force('x', usePhysics ? d3.forceX(d => {
         const node = d as D3Node;
         if (visualizationType === 'force') {
@@ -2385,7 +2513,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return width / 2 + width * sideBias;
         }
         return width / 2;
-      }).strength(visualizationType === 'force' ? 0.14 : visualizationType === 'vowl' ? 0.05 : (visualizationType === 'spatial3d' ? 0.035 : 0.02)) : null)
+      }).strength(d =>
+        (d as any).__isChip ? 0 : (visualizationType === 'force' ? 0.14 : visualizationType === 'vowl' ? 0.05 : (visualizationType === 'spatial3d' ? 0.035 : 0.02))) : null)
       // Large graphs settle in ~100 ticks instead of ~230 (each tick is O(n log n))
       .alphaDecay(usePhysics ? (nodeCount > 2000 ? 0.05 : (visualizationType === 'vowl' ? 0.02 : (visualizationType === 'spatial3d' ? 0.025 : 0.03))) : 1)
       .velocityDecay(usePhysics ? (visualizationType === 'vowl' ? 0.6 : (visualizationType === 'spatial3d' ? 0.58 : 0.5)) : 0.8) // Increased for more damping
@@ -2402,7 +2531,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return vowlLayout!.radii.individual;
         }
         return vowlLayout!.radii.class;
-      }, width / 2, height / 2).strength(0.75));
+      }, width / 2, height / 2).strength(node => ((node as any).__isChip ? 0 : 0.75)));
     }
 
     simulationRef.current = simulation;
@@ -2434,7 +2563,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (usePhysics && visualizationType === 'vowl') {
       const padding = 80;
       simulation.force('bound', () => {
-        d3Nodes.forEach(node => {
+        simNodes.forEach(node => {
           if (node.x && node.y) {
             node.x = Math.max(padding, Math.min(width - padding, node.x));
             node.y = Math.max(padding, Math.min(height - padding, node.y));
@@ -2489,7 +2618,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('fill', 'none')
       .attr('stroke', d => {
         if (isInferredEntity(d)) return '#10b981';
-        const isDark = isDarkTheme;
+        const isDark = effectiveDark;
         
         if (visualizationType === 'vowl') {
           if (d.type === 'subClassOf') {
@@ -2515,8 +2644,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (d.type === 'subClassOf') return isDark ? '#60a5fa' : '#3b82f6'; // Blue for hierarchy
           if (d.type === 'instanceOf') return isDark ? '#a78bfa' : '#7c3aed'; // Purple
           if (d.type === 'propertyRelation') {
-            const sourceNode = allNodes.find(n => n.id === d.from);
-            const targetNode = allNodes.find(n => n.id === d.to);
+            const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
+            const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
             if (sourceNode?.type === 'annotation') return isDark ? '#818cf8' : '#4f46e5'; // Indigo
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return isDark ? '#f472b6' : '#db2777'; // Pink
             return isDark ? '#34d399' : '#059669'; // Emerald for object properties
@@ -2527,7 +2656,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (d.type === 'subClassOf') return isDark ? '#fbbf24' : '#FFA500';
         if (d.type === 'instanceOf') return isDark ? '#cbd5e1' : '#000000';
         if (d.type === 'propertyRelation') {
-          const targetNode = allNodes.find(n => n.id === d.to);
+          const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
           if (targetNode?.type === 'datatype' || targetNode?.label?.startsWith('"')) return isDark ? '#94a3b8' : '#999999';
           return isDark ? '#cbd5e1' : '#000000';
         }
@@ -2568,7 +2697,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         // Force mode - match reference image
         if (d.type === 'subClassOf') return '5 3'; // Dashed for subClassOf
         if (d.type === 'propertyRelation') {
-          const targetNode = allNodes.find(n => n.id === d.to);
+          const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
           if (targetNode?.type === 'datatype' || targetNode?.label?.startsWith('"')) return '4 2'; // Dashed for data properties
         }
         return null; // Solid for instanceOf and object properties
@@ -2578,8 +2707,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (visualizationType === 'vowl') {
           if (d.type === 'operand') return null; // member links carry no arrowheads (VOWL)
           if (d.type === 'propertyRelation') {
-            const sourceNode = allNodes.find(n => n.id === d.from);
-            const targetNode = allNodes.find(n => n.id === d.to);
+            const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
+            const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
             
             if (sourceNode?.type === 'annotation') return 'url(#arrow-vowl-annotation)';
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return 'url(#arrow-vowl-data)';
@@ -2592,8 +2721,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (d.type === 'subClassOf') return 'url(#arrow-ontograph-subClassOf)';
           if (d.type === 'instanceOf') return 'url(#arrow-ontograph-instanceOf)';
           if (d.type === 'propertyRelation') {
-            const sourceNode = allNodes.find(n => n.id === d.from);
-            const targetNode = allNodes.find(n => n.id === d.to);
+            const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
+            const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
             if (sourceNode?.type === 'annotation') return 'url(#arrow-ontograph-annotationProperty)';
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return 'url(#arrow-ontograph-dataProperty)';
             return 'url(#arrow-ontograph-objectProperty)';
@@ -2623,13 +2752,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Classic-WebVOWL chips: in vowl mode, property and subclass labels sit in
     // always-visible colored chips on the edge — the signature WebVOWL look
     // (blue = object property, green = data property, white dashed = Subclass of).
-    // Auto-degrades to hover-only past this many labeled edges so huge graphs
-    // keep their density. Restriction/disjoint edges keep their symbol/badge
-    // rendering and never get chips.
-    const isVowlChipEdge = (d: any) => d.type === 'propertyRelation' || d.type === 'subClassOf';
-    const vowlChipsAlwaysVisible = visualizationType === 'vowl'
-      && d3Edges.filter(isVowlChipEdge).length <= 400;
-
+    // isVowlChipEdge / vowlChipsAlwaysVisible are defined above the simulation:
+    // chip edges also get invisible mid-edge physics nodes (WebVOWL label nodes).
     const linkLabelBg = g.append('g')
       .attr('class', 'link-label-backgrounds')
       .selectAll('rect')
@@ -2639,13 +2763,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('fill', d => {
         // Theme-aware chips: dark surfaces in dark mode so the light label text stays
         // readable (light-on-light chips were the "invisible subClassOf" bug).
-        const isDark = isDarkTheme;
+        const isDark = effectiveDark;
         if (visualizationType === 'vowl') {
           // VOWL-spec chip palette (WebVOWL parity): the property KIND is encoded
           // in the chip color, not the edge line. Functional etc. show as the
           // "(F,…)" suffix, not as a color variant.
-          const sourceNode = allNodes.find(n => n.id === d.from);
-          const targetNode = allNodes.find(n => n.id === d.to);
+          const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
+          const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
 
           if (d.type === 'subClassOf') {
             return isDark ? '#1f2937' : '#ffffff'; // white chip, dashed border (spec)
@@ -2669,8 +2793,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         // Add background colors for other modes too
         if (d.type === 'propertyRelation') {
-          const sourceNode = allNodes.find(n => n.id === d.from);
-          const targetNode = allNodes.find(n => n.id === d.to);
+          const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
+          const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
           const isFunctional = d.metadata?.functional;
 
           // Annotation properties - purple
@@ -2702,17 +2826,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (visualizationType === 'vowl') {
           // Chip borders by property kind (VOWL palette) — the old version keyed
           // colors off substrings of the label text, which looked arbitrary.
-          const sourceNode = allNodes.find(n => n.id === d.from);
-          const targetNode = allNodes.find(n => n.id === d.to);
-          if (d.type === 'subClassOf') return isDarkTheme ? '#9ca3af' : '#6b7280';
+          const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
+          const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
+          if (d.type === 'subClassOf') return effectiveDark ? '#9ca3af' : '#6b7280';
           if (d.type === 'propertyRelation') {
-            if (sourceNode?.type === 'annotation') return isDarkTheme ? '#c4b5fd' : '#7c3aed';
+            if (sourceNode?.type === 'annotation') return effectiveDark ? '#c4b5fd' : '#7c3aed';
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-              return isDarkTheme ? '#a3e635' : '#4d7c0f';
+              return effectiveDark ? '#a3e635' : '#4d7c0f';
             }
-            return isDarkTheme ? '#93c5fd' : '#34608d';
+            return effectiveDark ? '#93c5fd' : '#34608d';
           }
-          return isDarkTheme ? '#93c5fd' : '#2196F3';
+          return effectiveDark ? '#93c5fd' : '#2196F3';
         }
         return 'none';
       })
@@ -2734,13 +2858,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('font-weight', visualizationType === 'vowl' ? '500' : '400')
       .attr('font-family', visualizationType === 'vowl' ? 'Arial, sans-serif' : 'inherit')
       .attr('fill', d => {
-        const isDark = isDarkTheme;
+        const isDark = effectiveDark;
         
         if (visualizationType === 'vowl') {
           // Text colors matched to the VOWL chip fills above — dark ink on the
           // light spec-color chips, light ink on their dark-mode counterparts.
-          const sourceNode = allNodes.find(n => n.id === d.from);
-          const targetNode = allNodes.find(n => n.id === d.to);
+          const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
+          const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
 
           if (d.type === 'subClassOf') {
             return isDark ? '#e5e7eb' : '#374151';
@@ -2763,8 +2887,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         // Color labels by property type with dark mode support
         if (d.type === 'propertyRelation') {
-          const sourceNode = allNodes.find(n => n.id === d.from);
-          const targetNode = allNodes.find(n => n.id === d.to);
+          const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
+          const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
           if (sourceNode?.type === 'annotation') return isDark ? '#c4b5fd' : '#7c3aed';
           if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return isDark ? '#f9a8d4' : '#db2777';
           return isDark ? '#67e8f9' : '#0891b2';
@@ -2801,8 +2925,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         // Add property type prefix and characteristic indicators for clarity
         if (settings.showLabels && d.type === 'propertyRelation') {
-          const sourceNode = allNodes.find(n => n.id === d.from);
-          const targetNode = allNodes.find(n => n.id === d.to);
+          const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
+          const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
           const label = d.label || '';
 
           let prefix = '';
@@ -2996,8 +3120,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const isThing = d.label === 'Thing' || d.id.includes('owl#Thing');
       const isExternal = isExternalNode(d);
       
-      // Detect dark mode for theme-aware colors
-      const isDark = isDarkTheme;
+      // Detect dark mode for theme-aware colors (VOWL is pinned to the light palette)
+      const isDark = effectiveDark;
       
       // WebVOWL color scheme matching reference image - theme aware
       let fill = isDark ? '#6b92c4' : '#acd5f2'; // Default light blue (darker in dark mode)
@@ -3354,6 +3478,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
             .on('mouseout', handleNodeMouseOut);
+
+          // VOWL: merged equivalent classes get the double border (inner ring)
+          if (visualizationType === 'vowl' && (d as any).metadata?.vowlEquivalent) {
+            nodeGroup.append('circle')
+              .attr('r', Math.max(4, circleRadius - 4))
+              .attr('fill', 'none')
+              .attr('stroke', stroke)
+              .attr('stroke-width', 1.2)
+              .style('pointer-events', 'none');
+          }
         }
       }
 
@@ -3372,7 +3506,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       // Add expander +/- icon for non-ontograph modes (ontograph handles its own)
       if (visualizationType !== 'ontograph' && hasChildren(d.id, allEdges, allNodes)) {
         const isExpanded = expandedNodeIds.has(d.id);
-        const isDark = isDarkTheme;
+        const isDark = effectiveDark;
         
         // Position the expander at the bottom-right of the node shape
         let expanderX = 0;
@@ -3459,7 +3593,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Surface-colored halo keeps labels readable over crossing edges at density
     // without label boxes. VOWL mode is exempt: its notation rendering (text
     // inside semantically-shaped nodes) stays exactly as Protégé users expect.
-    const labelHalo = isDarkTheme ? '#1b1e2b' : '#ffffff';
+    const labelHalo = effectiveDark ? '#1b1e2b' : '#ffffff';
     node.append('text')
       .attr('paint-order', 'stroke')
       .attr('stroke', visualizationType === 'vowl' ? 'none' : labelHalo)
@@ -3515,12 +3649,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           // node.each above) instead of re-deriving a guess from TYPE_COLORS —
           // that guess used the raw saturated accent, not the pastel tint most
           // node types render with, which picked white text on light node fills.
-          const painted = (d as any).__nodeFillColor || (isDarkTheme ? '#6b92c4' : '#acd5f2');
+          const painted = (d as any).__nodeFillColor || (effectiveDark ? '#6b92c4' : '#acd5f2');
           return getReadableTextColor(painted);
         }
         if (visualizationType === 'ontograph') {
-          const isDark = isDarkTheme;
-          return isDark ? '#e2e8f0' : '#1e293b'; // Slate tones for modern look
+          return effectiveDark ? '#e2e8f0' : '#1e293b'; // Slate tones for modern look
         }
         if (visualizationType === 'spatial3d') {
           return '#ffffff'; // White text — always readable against node fills
@@ -3641,7 +3774,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .attr('text-anchor', 'middle')
       .attr('font-size', 9)
-      .attr('fill', isDarkTheme ? '#cbd5e1' : '#666')
+      .attr('fill', effectiveDark ? '#cbd5e1' : '#666')
       .attr('font-weight', '600')
       .text(d => {
         // Set-operator caption: "(union)" / "(intersection)" / ... unless compact notation
@@ -3676,6 +3809,45 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const sourcePoint = getRenderPoint(source);
       const targetPoint = getRenderPoint(target);
       const curve = edgeCurvature.get(d.id) || 0;
+
+      // WebVOWL chip physics: the edge bends through its label node's position.
+      const chip = (d as any).__chipNode as D3Node | undefined;
+      if (chip && chip.x != null && chip.y != null) {
+        // Self-loop: draw a cubic loop out through the chip and back
+        if (source === target) {
+          const loopDx = chip.x - sourcePoint.x;
+          const loopDy = chip.y - sourcePoint.y;
+          const loopDist = Math.sqrt(loopDx * loopDx + loopDy * loopDy) || 1;
+          const px = -loopDy / loopDist;
+          const py = loopDx / loopDist;
+          const spread = 45;
+          return `M${sourcePoint.x},${sourcePoint.y}` +
+            `C${chip.x + px * spread},${chip.y + py * spread}` +
+            ` ${chip.x - px * spread},${chip.y - py * spread}` +
+            ` ${sourcePoint.x},${sourcePoint.y}`;
+        }
+        // Quadratic through the chip: control = 2*chip - midpoint (curve passes
+        // exactly through the chip at t=0.5, where the label rect sits)
+        const cx = 2 * chip.x - (sourcePoint.x + targetPoint.x) / 2;
+        const cy = 2 * chip.y - (sourcePoint.y + targetPoint.y) / 2;
+        // Trim at the target boundary along the incoming curve direction
+        const inDx = targetPoint.x - cx;
+        const inDy = targetPoint.y - cy;
+        const inDist = Math.sqrt(inDx * inDx + inDy * inDy) || 1;
+        let tr = (target.size || settings.nodeSize);
+        if (target.type === 'datatype' || target.type === 'dataProperty') {
+          const w = tr * 2.8;
+          const h = tr * 1.8;
+          const absCos = Math.abs(inDx / inDist);
+          const absSin = Math.abs(inDy / inDist);
+          tr = Math.min((w / 2) / Math.max(absCos, 1e-6), (h / 2) / Math.max(absSin, 1e-6)) + 2;
+        } else {
+          tr = tr * 1.8 + 4;
+        }
+        const tx = targetPoint.x - (inDx / inDist) * tr;
+        const ty = targetPoint.y - (inDy / inDist) * tr;
+        return `M${sourcePoint.x},${sourcePoint.y}Q${cx},${cy},${tx},${ty}`;
+      }
 
       // Calculate edge endpoints
       const dx = targetPoint.x - sourcePoint.x;
@@ -3760,6 +3932,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const updateLinkLabelPositions = () => {
       linkLabel.each(function(d: any, i: number) {
         if (d.__culled) return;
+
+        // Chip physics: the label lives exactly at its simulation node
+        const chip = d.__chipNode as D3Node | undefined;
+        if (chip && chip.x != null && chip.y != null) {
+          d3.select(this).attr('x', chip.x).attr('y', chip.y);
+          if (vowlChipsAlwaysVisible && (d.__chipW ?? 0) > 0) {
+            const bg = linkLabelBg.nodes()[i] as SVGRectElement | undefined;
+            if (bg) {
+              bg.setAttribute('x', String(chip.x - d.__chipW / 2));
+              bg.setAttribute('y', String(chip.y - d.__chipH / 2));
+            }
+          }
+          return;
+        }
+
         const sourcePoint = getRenderPoint(d.source as D3Node);
         const targetPoint = getRenderPoint(d.target as D3Node);
         const sourceX = sourcePoint.x;
@@ -3925,7 +4112,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
 
           // Persist node positions so expand/collapse doesn't scramble the graph
-          d3Nodes.forEach(n => {
+          // (simNodes also covers chip label nodes so edges keep their bends)
+          simNodes.forEach(n => {
             if (n.x != null && n.y != null) {
               nodePositionsRef.current.set(n.id, { x: n.x, y: n.y });
             }
@@ -3970,6 +4158,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
 
     // Node interaction handlers
+    // VOWL clones (per-edge Thing/Literal duplicates) resolve back to their
+    // original node for selection details, callbacks, and context-menu actions.
+    function resolveVowlClone(d: D3Node): OntologyNode {
+      const originalId = (d as any).metadata?.cloneOf as string | undefined;
+      if (!originalId) return d as OntologyNode;
+      return allNodes.find(n => n.id === originalId) ?? (d as OntologyNode);
+    }
+
     function handleNodeClick(event: any, d: D3Node) {
       event.stopPropagation();
 
@@ -3984,9 +4180,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         setSelectedNodes(newSelected);
       } else {
         // Single click — just select the node; hierarchy navigator opens only via right-click > Edit
+        const original = resolveVowlClone(d);
         setSelectedNodes(new Set([d.id]));
-        setSelectedNodeInfo(d as OntologyNode);
-        onNodeClickRef.current?.(d.id);
+        setSelectedNodeInfo(original);
+        onNodeClickRef.current?.(original.id);
       }
     }
 
@@ -3994,17 +4191,19 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       event.preventDefault();
       event.stopPropagation();
 
+      const original = resolveVowlClone(d);
+
       // Show context menu
       setContextMenu({
         visible: true,
         x: event.pageX,
         y: event.pageY,
-        nodeId: d.id
+        nodeId: original.id
       });
 
       // Also select the node
       setSelectedNodes(new Set([d.id]));
-      setSelectedNodeInfo(d as OntologyNode);
+      setSelectedNodeInfo(original);
     }
 
     function handleNodeMouseOver(event: any, d: D3Node) {
@@ -4014,7 +4213,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         // Remove any existing tooltips first
         d3.selectAll('.graph-tooltip').remove();
 
-        const isDarkTip = isDarkTheme;
+        const isDarkTip = effectiveDark;
         const accent = ACCENT_COLORS[d.type] || '#3b82f6';
         const tooltip = d3.select('body').append('div')
           .attr('class', 'graph-tooltip')
@@ -4294,8 +4493,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('marker-end', (d: any) => {
         if (visualizationType === 'vowl') {
           if (d.type === 'propertyRelation') {
-            const sourceNode = allNodes.find(n => n.id === d.from);
-            const targetNode = allNodes.find(n => n.id === d.to);
+            const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
+            const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
             
             if (sourceNode?.type === 'annotation') return 'url(#arrow-vowl-annotation)';
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return 'url(#arrow-vowl-data)';
@@ -4309,10 +4508,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return null;
       });
       
-    // Update labels
+    // Update labels — keep always-visible VOWL chips visible (same density rule
+    // as the main render pass), only hover-gate the rest
+    const chipAlwaysVisible = (d: any) =>
+      vowlChipDensityOk && (d.type === 'propertyRelation' || d.type === 'subClassOf');
     g.selectAll('.edge-label')
       .style('opacity', (d: any) => {
         if (visualizationType === 'vowl') {
+          if (chipAlwaysVisible(d)) return 1;
           return (selectedEdgeId === d.id || hoveredEdgeId === d.id) ? 1 : 0;
         }
         return settings.showLabels ? 1 : 0;
@@ -4321,6 +4524,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     g.selectAll('.edge-label-bg')
       .attr('opacity', (d: any) => {
         if (visualizationType === 'vowl') {
+          if (d.type === 'disjointWith') return 0;
+          if (chipAlwaysVisible(d)) return 1;
           return (selectedEdgeId === d.id || hoveredEdgeId === d.id) ? 1 : 0;
         }
         return 0.85;
@@ -4364,7 +4569,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return 1;
       });
 
-  }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery]);
+  }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery, vowlChipDensityOk]);
 
   // Pulse animation class on selected node groups (CSS keyframes in svg <style>).
   // Separate effect: this sweep only depends on selection, so hover moves
@@ -5932,7 +6137,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   [data-testid="graph-svg"] .node > text {
                     transition: opacity 220ms ease;
                     paint-order: stroke;
-                    stroke: ${isDarkTheme ? 'rgba(10,15,28,0.85)' : 'rgba(255,255,255,0.75)'};
+                    stroke: ${(visualizationType === 'vowl' ? false : isDarkTheme) ? 'rgba(10,15,28,0.85)' : 'rgba(255,255,255,0.75)'};
                     stroke-width: 2.5px;
                     stroke-linejoin: round;
                   }
