@@ -23,7 +23,7 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
-    version: "1.1.0-beta.14",
+    version: "1.1.0-beta.14.1",
     date: "July 13, 2026",
     title: "Save Reliability · Graph View Overhaul",
     highlights: [
