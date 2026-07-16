@@ -744,6 +744,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     });
   }, [vowlOptions]);
   
+  // Save-view name prompt — replaces window.prompt(), which Electron's renderer
+  // (the desktop shell this plugin also runs in) does not implement.
+  const [showSaveViewPrompt, setShowSaveViewPrompt] = useState(false);
+  const [saveViewNameDraft, setSaveViewNameDraft] = useState('');
+
   // Hierarchy Dialog State
   const [showHierarchyDialog, setShowHierarchyDialog] = useState(false);
   const [hierarchyDialogPosition, setHierarchyDialogPosition] = useState({ x: 100, y: 100 });
@@ -4790,13 +4795,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   const handleSaveCurrentView = useCallback(() => {
     const defaultName = `${visualizationType}${visualizationType === 'ontograph' ? ` / ${ontographLayoutType}` : ''}`;
-    const name = window.prompt('Save graph view as:', defaultName);
-    if (!name || !name.trim()) return;
+    setSaveViewNameDraft(defaultName);
+    setShowSaveViewPrompt(true);
+  }, [ontographLayoutType, visualizationType]);
+
+  const confirmSaveCurrentView = useCallback((rawName: string) => {
+    const name = rawName.trim();
+    if (!name) return;
 
     const transform = currentTransformRef.current;
     const view: SavedGraphView = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: name.trim(),
+      name,
       createdAt: new Date().toISOString(),
       visualizationType,
       ontographLayoutType,
@@ -4828,6 +4838,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const nextViews = [view, ...savedViews.filter(existing => existing.name !== view.name)].slice(0, 20);
     persistSavedViews(nextViews);
     setSelectedSavedViewId(view.id);
+    setShowSaveViewPrompt(false);
   }, [
     expandedNodeIds,
     filters,
@@ -6606,6 +6617,87 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.4)) !important;
         }
       `}</style>
+
+      {/* Save-view name prompt — see showSaveViewPrompt declaration for why this
+          replaces window.prompt() */}
+      {showSaveViewPrompt && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.5)'
+          }}
+          onClick={() => setShowSaveViewPrompt(false)}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: 8,
+              boxShadow: '0 10px 40px rgba(0,0,0,0.25)',
+              padding: 24,
+              width: '100%',
+              maxWidth: 420
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 12px', fontSize: 16, fontWeight: 600, color: '#1f2937' }}>
+              Save graph view as
+            </h3>
+            <input
+              type="text"
+              autoFocus
+              value={saveViewNameDraft}
+              onChange={(e) => setSaveViewNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') confirmSaveCurrentView(saveViewNameDraft);
+                if (e.key === 'Escape') setShowSaveViewPrompt(false);
+              }}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '8px 12px',
+                fontSize: 14,
+                border: '1px solid #d1d5db',
+                borderRadius: 6
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 16 }}>
+              <button
+                onClick={() => setShowSaveViewPrompt(false)}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: 14,
+                  borderRadius: 6,
+                  border: 'none',
+                  background: '#e5e7eb',
+                  color: '#111827',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => confirmSaveCurrentView(saveViewNameDraft)}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: 14,
+                  borderRadius: 6,
+                  border: 'none',
+                  background: '#7c3aed',
+                  color: '#fff',
+                  cursor: 'pointer'
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

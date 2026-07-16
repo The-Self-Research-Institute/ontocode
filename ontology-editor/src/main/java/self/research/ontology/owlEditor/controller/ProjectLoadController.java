@@ -1667,21 +1667,23 @@ public class ProjectLoadController {
                             "content", cachedContent.get(),
                             "format", format,
                             "projectId", projectId,
-                            "cached", true
+                            "cached", true,
+                            "sourceVersion", storageManager.getPublicGraphVersion(projectId)
                     ));
                 }
             }
-            
+
             // No cache or force refresh - export from GraphDB
             Path exportPath = storageManager.exportOntology(projectId, format);
             String content = Files.readString(exportPath);
-            
+
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "content", content,
                     "format", format,
                     "projectId", projectId,
-                    "cached", false
+                    "cached", false,
+                    "sourceVersion", storageManager.getPublicGraphVersion(projectId)
             ));
         } catch (Exception e) {
             log.error("Failed to get ontology content for project: {}", projectId, e);
@@ -1717,7 +1719,8 @@ public class ProjectLoadController {
                     "startLine", page.startLine(),
                     "lineCount", page.lineCount(),
                     "totalLines", page.totalLines(),
-                    "totalBytes", page.totalBytes()
+                    "totalBytes", page.totalBytes(),
+                    "sourceVersion", storageManager.getPublicGraphVersion(projectId)
             ));
         } catch (Exception e) {
             log.error("Failed to get paged ontology content for project: {}", projectId, e);
@@ -1826,6 +1829,10 @@ public class ProjectLoadController {
     public ResponseEntity<Map<String, Object>> saveCodeViewAndSync(
             @PathVariable String projectId,
             @RequestBody Map<String, Object> request) {
+        // Shared with /save/{projectId}'s draft-publish lock: both endpoints reimport into
+        // the same project's graph, so they must not interleave with each other either.
+        Object lock = projectSaveLocks.computeIfAbsent(projectId, k -> new Object());
+        synchronized (lock) {
         try {
             String content = (String) request.get("content");
             String format = (String) request.getOrDefault("format", "turtle");
@@ -1833,6 +1840,30 @@ public class ProjectLoadController {
             if (content == null || content.isEmpty()) {
                 return ResponseEntity.badRequest()
                         .body(Map.of("success", false, "error", "Content is required"));
+            }
+
+            // Conflict guard: the client's expectedSourceVersion is whatever /content or
+            // /content-page handed it when Code View was loaded. If the public graph has
+            // been mutated since (another tab's save, a Class Hierarchy edit, etc. — anything
+            // that calls storageManager.clearCodeViewCache) the version will have moved on,
+            // and blindly reimporting this content would silently overwrite that change —
+            // code-view-save has no merge path, only a full graph clear + reload. Absent
+            // (older client) skips the check rather than failing closed. Citation insert/remove
+            // never bump this version (they only write the code-view cache, not clearCodeViewCache),
+            // so they never trip a false conflict against the user's own in-progress edit.
+            Object expectedVersionRaw = request.get("expectedSourceVersion");
+            if (expectedVersionRaw instanceof Number expectedVersionNum) {
+                long expectedVersion = expectedVersionNum.longValue();
+                long currentVersion = storageManager.getPublicGraphVersion(projectId);
+                if (expectedVersion != currentVersion) {
+                    log.warn("[CODE-VIEW-SAVE] Conflict for project {}: client expected version {} but current is {}",
+                            projectId, expectedVersion, currentVersion);
+                    Map<String, Object> conflictBody = new java.util.HashMap<>();
+                    conflictBody.put("success", false);
+                    conflictBody.put("conflictBlocked", true);
+                    conflictBody.put("error", "This ontology changed since you opened Code View — reload to see the latest version before saving.");
+                    return ResponseEntity.status(HttpStatus.CONFLICT).body(conflictBody);
+                }
             }
 
             log.info("[CODE-VIEW-SAVE] Saving and syncing code view for project: {} in format: {}, size: {} bytes",
@@ -1933,7 +1964,10 @@ public class ProjectLoadController {
                     "success", true,
                     "projectId", projectId,
                     "format", format,
-                    "message", "Code view saved and synced across all formats"
+                    "message", "Code view saved and synced across all formats",
+                    // Hand back the post-save version so the client can update its baseline
+                    // in place instead of needing a full reload just to save again.
+                    "sourceVersion", storageManager.getPublicGraphVersion(projectId)
             ));
         } catch (Exception e) {
             log.error("[CODE-VIEW-SAVE] Failed for project: {}", projectId, e);
@@ -1942,6 +1976,7 @@ public class ProjectLoadController {
                             "success", false,
                             "error", "Failed to save and sync code view: " + e.getMessage()
                     ));
+        }
         }
     }
 

@@ -158,6 +158,7 @@ import {
   DeleteClassDialog,
   DuplicateFileDialog,
   SaveErrorDialog,
+  PromptDialog,
   LintProblemsPanel,
   DetailsPanel,
   type TopLevelClass,
@@ -1115,8 +1116,10 @@ const OpenFileDialog = ({
   isPlanExpired?: boolean;
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [showNewFileNamePrompt, setShowNewFileNamePrompt] = useState(false);
   const canOpenLocalFile = typeof window !== "undefined" && !!(window as any).vscode;
   const usingProjectFiles = !!parentProjectId;
+  const NEW_FILE_VALID_EXTENSIONS = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
 
   // Backend now filters to only return files (not projects), so just pass through
   const primaryFiles = usingProjectFiles ? projectFiles || [] : myFiles;
@@ -1147,57 +1150,7 @@ const OpenFileDialog = ({
 
   const handleCreateNewFile = async () => {
     if (isDesktop() && parentProjectId) {
-      const fileName = window.prompt("Enter filename for new ontology:", "my-ontology.owl");
-      if (!fileName?.trim()) return;
-      const trimmed = fileName.trim();
-      const validExtensions = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
-      if (!validExtensions.some((ext) => trimmed.toLowerCase().endsWith(ext))) {
-        alert("File must have a valid extension: .owl, .rdf, .ttl, .n3, .nt, or .jsonld");
-        return;
-      }
-      const ontologyIRI = `http://example.org/ontologies/${trimmed.replace(/\.[^/.]+$/, "")}`;
-      const content = `<?xml version="1.0"?>
-<rdf:RDF xmlns="${ontologyIRI}#"
-     xml:base="${ontologyIRI}"
-     xmlns:owl="http://www.w3.org/2002/07/owl#"
-     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-     xmlns:xml="http://www.w3.org/XML/1998/namespace"
-     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
-     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
-    <owl:Ontology rdf:about="${ontologyIRI}"/>
-    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
-</rdf:RDF>`;
-      const file = new File([content], trimmed, { type: "application/rdf+xml" });
-      const formData = new FormData();
-      formData.append("file", file, trimmed);
-      formData.append("fileName", trimmed);
-      formData.append("fileType", "application/rdf+xml");
-      let uploadedFileId: string | undefined;
-      try {
-        const uploadResult = await apiClient.post<{ fileId?: string; filename?: string }>(
-          `/api/projects/${parentProjectId}/files`,
-          formData,
-          { headers: { "Content-Type": "multipart/form-data" } },
-        );
-        uploadedFileId = uploadResult?.fileId;
-      } catch (error: any) {
-        console.error("[OpenFileDialog] Failed to create new file:", error);
-        notificationService.error(
-          "Create File Failed",
-          error?.response?.data?.error || error?.message || "Could not create the new file. See console for details.",
-        );
-        return;
-      }
-      onCreateNewFile?.();
-      // Load the new file directly instead of waiting for the "fileReady" WebSocket
-      // message — on Desktop that signal isn't always delivered promptly (or at all),
-      // which previously left the newly created file sitting in the project unopened
-      // with no visible error. We already have its id from the upload response, so
-      // open it the same way clicking an existing file in this list does.
-      if (uploadedFileId && onLoadProjectFile) {
-        onLoadProjectFile(uploadedFileId, trimmed);
-      }
-      onClose();
+      setShowNewFileNamePrompt(true);
       return;
     }
     if (isDesktop()) {
@@ -1239,6 +1192,55 @@ const OpenFileDialog = ({
       importMode,
       partition: partitionStrategy,
     });
+    onClose();
+  };
+
+  // Only invoked via the PromptDialog opened from the isDesktop() && parentProjectId
+  // branch above, so parentProjectId is always set here.
+  const handleConfirmNewFileName = async (trimmed: string) => {
+    setShowNewFileNamePrompt(false);
+    const ontologyIRI = `http://example.org/ontologies/${trimmed.replace(/\.[^/.]+$/, "")}`;
+    const content = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+    const file = new File([content], trimmed, { type: "application/rdf+xml" });
+    const formData = new FormData();
+    formData.append("file", file, trimmed);
+    formData.append("fileName", trimmed);
+    formData.append("fileType", "application/rdf+xml");
+    let uploadedFileId: string | undefined;
+    try {
+      const uploadResult = await apiClient.post<{ fileId?: string; filename?: string }>(
+        `/api/projects/${parentProjectId}/files`,
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      uploadedFileId = uploadResult?.fileId;
+    } catch (error: any) {
+      console.error("[OpenFileDialog] Failed to create new file:", error);
+      notificationService.error(
+        "Create File Failed",
+        error?.response?.data?.error || error?.message || "Could not create the new file. See console for details.",
+      );
+      return;
+    }
+    onCreateNewFile?.();
+    // Load the new file directly instead of waiting for the "fileReady" WebSocket
+    // message — on Desktop that signal isn't always delivered promptly (or at all),
+    // which previously left the newly created file sitting in the project unopened
+    // with no visible error. We already have its id from the upload response, so
+    // open it the same way clicking an existing file in this list does.
+    if (uploadedFileId && onLoadProjectFile) {
+      onLoadProjectFile(uploadedFileId, trimmed);
+    }
     onClose();
   };
 
@@ -1413,6 +1415,20 @@ const OpenFileDialog = ({
           </button>
         </div>
       </div>
+      <PromptDialog
+        isOpen={showNewFileNamePrompt}
+        title="New Ontology File"
+        message="Enter a filename for the new ontology."
+        defaultValue="my-ontology.owl"
+        confirmLabel="Create"
+        validate={(value) =>
+          NEW_FILE_VALID_EXTENSIONS.some((ext) => value.toLowerCase().endsWith(ext))
+            ? null
+            : "File must have a valid extension: .owl, .rdf, .ttl, .n3, .nt, or .jsonld"
+        }
+        onConfirm={handleConfirmNewFileName}
+        onCancel={() => setShowNewFileNamePrompt(false)}
+      />
     </div>
   );
 };
@@ -2353,13 +2369,34 @@ const Dashboard: React.FC<DashboardProps> = ({
     totalBytes: number;
   } | null>(null);
   const CODE_VIEW_PAGE_LINES = 10_000;
-  // Above this serialized size, Code View switches to paged read-only mode.
-  const CODE_VIEW_LARGE_FILE_BYTES = 10 * 1024 * 1024;
+  // Editable-size ceiling, tiered by format. Turtle/RDF-XML/N-Triples/JSON-LD export
+  // and reimport without ever requiring a full in-memory OWLAPI model (StorageManager's
+  // streamed/buffered export path), so raising their ceiling is safe once the
+  // CodeHighlighter gutter-freeze fix lands. OWL/XML, Manchester, and Functional
+  // Syntax always require a full OWLAPI parse+reserialize to save regardless of file
+  // size (OWLFormatConverter.convertToRDFXML — fixed 30s timeout, StackOverflow-retry
+  // risk) — raising their ceiling buys nothing and only increases exposure to that
+  // existing backend risk, so they keep the original conservative threshold.
+  const CODE_VIEW_STREAMING_FORMATS = new Set(["turtle", "rdfxml", "ntriples", "jsonld"]);
+  const CODE_VIEW_OWLAPI_CEILING_BYTES = 10 * 1024 * 1024;
+  // Starting point for the raised ceiling — tune after the manual large-file
+  // responsiveness pass (see the Code View large-file plan's Verification section).
+  const CODE_VIEW_STREAMING_CEILING_BYTES = 60 * 1024 * 1024;
+  const getCodeViewEditableCeiling = (
+    fmt: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld",
+  ) => (CODE_VIEW_STREAMING_FORMATS.has(fmt) ? CODE_VIEW_STREAMING_CEILING_BYTES : CODE_VIEW_OWLAPI_CEILING_BYTES);
   const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false);
   const [codeViewSyntaxError, setCodeViewSyntaxError] = useState<string | null>(null);
+  // Opaque version handed back by /content and /content-page, checked back on save so a
+  // mutation made elsewhere (another tab, Class Hierarchy edit) while Code View was open
+  // is detected instead of silently overwritten — see saveCodeViewAndSync's conflict guard.
+  const [codeViewSourceVersion, setCodeViewSourceVersion] = useState<number | null>(null);
   // Blocking dialog for a genuine save failure (reimport into the ontology failed) — replaces
   // the old silent cache-only fallback, which showed "Saved" even when nothing synced.
   const [codeViewSaveError, setCodeViewSaveError] = useState<string | null>(null);
+  // True when codeViewSaveError is a version conflict (see above) rather than a genuine
+  // save failure — swaps the dialog's "Retry Save" for "Reload Latest".
+  const [codeViewSaveConflict, setCodeViewSaveConflict] = useState(false);
   const [savingCodeView, setSavingCodeView] = useState(false);
   const lastCodeViewSaveContentRef = useRef<string>("");
   // Lint runs right before save (see handleSaveCodeContent) — non-blocking content
@@ -11660,12 +11697,13 @@ const Dashboard: React.FC<DashboardProps> = ({
             lineCount: number;
             totalLines: number;
             totalBytes: number;
+            sourceVersion?: number;
           }>(`/api/ontology/${projectId}/content-page`, {
             format,
             startLine: "0",
             lineCount: String(CODE_VIEW_PAGE_LINES),
           });
-          if (probe?.success && Number(probe.totalBytes) > CODE_VIEW_LARGE_FILE_BYTES) {
+          if (probe?.success && Number(probe.totalBytes) > getCodeViewEditableCeiling(format)) {
             setCodeViewContent(probe.content ?? "");
             setCodeViewPage({
               startLine: 0,
@@ -11675,6 +11713,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             });
             setCodeViewTruncation(null);
             setCodeViewFormat(format);
+            setCodeViewSourceVersion(probe.sourceVersion != null ? Number(probe.sourceVersion) : null);
             setHasLocalCodeViewChanges(false);
             codeViewDirtyRef.current = false;
             return;
@@ -11690,27 +11729,30 @@ const Dashboard: React.FC<DashboardProps> = ({
           format: string;
           cached?: boolean;
           error?: string;
+          sourceVersion?: number;
         }>(`/api/ontology/${projectId}/content`, { format, forceRefresh: forceRefresh ? "true" : "false" });
         if (response.success) {
+          setCodeViewSourceVersion(response.sourceVersion != null ? Number(response.sourceVersion) : null);
           // Guard the editor against huge documents (see codeViewTruncation).
-          // Above 10M chars (≈10MB serialized) switch to a read-only preview,
-          // capped at 10k lines so the per-line gutter rendering stays snappy.
-          // Cut on a line boundary so the preview never ends mid-statement.
-          const CODE_VIEW_MAX_CHARS = 10 * 1024 * 1024;
+          // Above the format-tiered ceiling, switch to a read-only preview capped at
+          // 10k lines. Cut on a line boundary so the preview never ends mid-statement.
+          // (Legacy fallback — only reached when the backend lacks /content-page,
+          // since that probe above already returns early for large files.)
+          const codeViewMaxChars = getCodeViewEditableCeiling(format);
           const CODE_VIEW_PREVIEW_LINES = 10_000;
           let content = response.content ?? "";
-          if (content.length > CODE_VIEW_MAX_CHARS) {
+          if (content.length > codeViewMaxChars) {
             const totalChars = content.length;
             let cut = -1;
             let previewLines = 0;
-            for (let i = 0; i < CODE_VIEW_MAX_CHARS; i++) {
+            for (let i = 0; i < codeViewMaxChars; i++) {
               if (content.charCodeAt(i) === 10) {
                 cut = i;
                 previewLines++;
                 if (previewLines >= CODE_VIEW_PREVIEW_LINES) break;
               }
             }
-            if (cut <= 0) cut = CODE_VIEW_MAX_CHARS;
+            if (cut <= 0) cut = codeViewMaxChars;
             content = content.slice(0, cut);
             setCodeViewTruncation({ totalChars, previewLines: Math.max(previewLines, 1) });
           } else {
@@ -11989,10 +12031,25 @@ const Dashboard: React.FC<DashboardProps> = ({
           response = await apiClient.post(`/api/ontology/${projectId}/code-view-save`, {
             content: content,
             format: codeViewFormat,
+            // Checked server-side against the current public-graph version; a mismatch means
+            // the ontology changed elsewhere since this content was loaded (see the 409 handling
+            // below). Omitted entirely if we never got a version (e.g. very first load raced an
+            // older backend) — the backend treats that as "skip the check" rather than failing closed.
+            ...(codeViewSourceVersion != null ? { expectedSourceVersion: codeViewSourceVersion } : {}),
           });
         } catch (syncError: any) {
+          if (syncError?.status === 409 || syncError?.data?.conflictBlocked) {
+            const conflictMsg =
+              syncError?.data?.error ||
+              "This ontology changed since you opened Code View — reload to see the latest version before saving.";
+            console.warn("[Dashboard] code-view-save conflict:", conflictMsg);
+            setCodeViewSaveConflict(true);
+            setCodeViewSaveError(conflictMsg);
+            return;
+          }
           const errMsg = syncError?.message || "Failed to reach the save endpoint";
           console.error("[Dashboard] code-view-save request failed:", errMsg);
+          setCodeViewSaveConflict(false);
           setCodeViewSaveError(errMsg);
           return;
         }
@@ -12003,6 +12060,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           setHasLocalCodeViewChanges(false);
           setCodeViewSyntaxError(null);
           setCodeViewSaveError(null);
+          setCodeViewSaveConflict(false);
+          if (response.sourceVersion != null) {
+            setCodeViewSourceVersion(Number(response.sourceVersion));
+          }
           // The ontology file was rewritten — reload all entity views to reflect the new state
           lastClassHierarchyRefreshAt.current = 0;
           refreshClassHierarchy();
@@ -12024,16 +12085,28 @@ const Dashboard: React.FC<DashboardProps> = ({
             "",
           );
           console.error("[Dashboard] Save failed:", errMsg);
+          setCodeViewSaveConflict(!!response.conflictBlocked);
           setCodeViewSaveError(errMsg);
         }
       } catch (error: any) {
         console.error("[Dashboard] Error saving code content:", error);
+        setCodeViewSaveConflict(false);
         setCodeViewSaveError(error.message || "Failed to save content to backend");
       } finally {
         setSavingCodeView(false);
       }
     },
-    [projectId, codeViewFormat, isViewOnlyMember, codeViewTruncation, codeViewPage, setShowProPromptType, refreshClassHierarchy, refreshProperties],
+    [
+      projectId,
+      codeViewFormat,
+      codeViewSourceVersion,
+      isViewOnlyMember,
+      codeViewTruncation,
+      codeViewPage,
+      setShowProPromptType,
+      refreshClassHierarchy,
+      refreshProperties,
+    ],
   );
 
   // Handle insertion at selected location in code view
@@ -14424,9 +14497,16 @@ const Dashboard: React.FC<DashboardProps> = ({
                       <AlertTriangle size={14} className="flex-shrink-0" />
                       <span>
                         This ontology is {(codeViewTruncation.totalChars / (1024 * 1024)).toFixed(0)} MB in this
-                        format — too large to edit here. Showing a read-only preview of the first{" "}
+                        format — too large to edit here
+                        {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
+                          ? "."
+                          : " (OWL/XML, Manchester, and Functional Syntax always require a full reparse to save, so they stay capped regardless of file size)."}
+                        {" "}Showing a read-only preview of the first{" "}
                         {codeViewTruncation.previewLines.toLocaleString()} lines. Export the file to view or edit
-                        the full content.
+                        the full content
+                        {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
+                          ? "."
+                          : ", or switch to Turtle/RDF-XML/N-Triples/JSON-LD for a higher editable size limit."}
                       </span>
                       <button
                         onClick={downloadFullCodeViewFile}
@@ -14443,7 +14523,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                         {(codeViewPage.totalBytes / (1024 * 1024)).toFixed(0)} MB — read-only. Showing lines{" "}
                         {(codeViewPage.startLine + 1).toLocaleString()}–
                         {(codeViewPage.startLine + codeViewPage.lineCount).toLocaleString()} of{" "}
-                        {codeViewPage.totalLines.toLocaleString()}. Export the file to edit it.
+                        {codeViewPage.totalLines.toLocaleString()}. Export the file to edit it
+                        {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
+                          ? "."
+                          : ", or switch to Turtle/RDF-XML/N-Triples/JSON-LD for a higher editable size limit."}
                       </span>
                       <div className="flex items-center gap-2 ml-auto flex-shrink-0">
                         <button
@@ -17086,10 +17169,20 @@ const Dashboard: React.FC<DashboardProps> = ({
       <SaveErrorDialog
         isOpen={!!codeViewSaveError}
         error={codeViewSaveError || ""}
-        onClose={() => setCodeViewSaveError(null)}
+        isConflict={codeViewSaveConflict}
+        onClose={() => {
+          setCodeViewSaveError(null);
+          setCodeViewSaveConflict(false);
+        }}
         onRetry={() => {
           setCodeViewSaveError(null);
           void handleSaveCodeContent(lastCodeViewSaveContentRef.current);
+        }}
+        onReload={() => {
+          setCodeViewSaveError(null);
+          setCodeViewSaveConflict(false);
+          setHasLocalCodeViewChanges(false);
+          void fetchCodeViewContent(codeViewFormat, false, true);
         }}
       />
       {publishConflictDialog.isOpen && (() => {
