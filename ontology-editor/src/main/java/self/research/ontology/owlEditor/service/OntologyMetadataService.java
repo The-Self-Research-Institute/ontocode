@@ -68,8 +68,11 @@ public class OntologyMetadataService {
         if (cachedMetadata.isPresent() && !cachedMetadata.get().isEmpty()) {
             Map<String, Object> cached = cachedMetadata.get();
 
-            // Check if cache contains comprehensive data (has counts or classCount)
-            if (cached.containsKey("counts") || cached.containsKey("classCount") || cached.containsKey("cacheComplete")) {
+            // Reject a "complete" zero-entity cache when triples exist — that was typically a
+            // failed/partial SPARQL metrics pass that then stuck the Classes badge at 0 forever.
+            boolean hasCounts = cached.containsKey("counts") || cached.containsKey("classCount")
+                    || cached.containsKey("cacheComplete");
+            if (hasCounts && !isUnreliableZeroCache(cached)) {
                 log.info("⚡ Using cached metadata for project {} (fast path, skipping GraphDB queries)", projectId);
                 metadata.putAll(cached);
 
@@ -80,6 +83,9 @@ public class OntologyMetadataService {
                 });
 
                 return metadata;
+            }
+            if (hasCounts) {
+                log.warn("♻️ Ignoring unreliable zero-count metadata cache for project {} — recomputing", projectId);
             }
         }
 
@@ -119,18 +125,74 @@ public class OntologyMetadataService {
         
         // Save to cache for future fast loading — but never from a drafter's request, or their
         // draft-inclusive counts would leak into the shared cache and be served to everyone else.
+        // Also never cache a "complete" zero-count payload when the graph has triples: that usually
+        // means SPARQL metrics timed out/failed and would permanently pin the Classes badge at 0.
         if (!hasDraft) {
             try {
-                metadata.put("cacheComplete", true);
-                metadata.put("cachedAt", java.time.Instant.now().toString());
-                projectMetadataService.writeMeta(projectId, new HashMap<>(metadata));
-                log.info("💾 Saved metadata to MongoDB cache for project {}", projectId);
+                if (isUnreliableZeroCache(metadata) || Boolean.TRUE.equals(metadata.get("metricsFailed"))) {
+                    log.warn("⏭️ Skipping metadata cache for project {} — metrics look incomplete "
+                                    + "(classCount={}, triples={}, metricsFailed={})",
+                            projectId,
+                            metadata.get("classCount"),
+                            metadata.get("tripleCount") != null ? metadata.get("tripleCount") : metadata.get("axiomCount"),
+                            metadata.get("metricsFailed"));
+                } else {
+                    metadata.put("cacheComplete", true);
+                    metadata.put("cachedAt", java.time.Instant.now().toString());
+                    projectMetadataService.writeMeta(projectId, new HashMap<>(metadata));
+                    log.info("💾 Saved metadata to MongoDB cache for project {}", projectId);
+                }
             } catch (Exception e) {
                 log.warn("Failed to cache metadata for project {}: {}", projectId, e.getMessage());
             }
         }
 
         return metadata;
+    }
+
+    /** True when entity counts are all zero but the graph clearly has triples (or metricsFailed). */
+    private static boolean isUnreliableZeroCache(Map<String, Object> meta) {
+        if (Boolean.TRUE.equals(meta.get("metricsFailed"))) {
+            return true;
+        }
+        int classCount = toInt(meta.get("classCount"));
+        if (classCount == 0 && meta.get("counts") instanceof Map<?, ?> counts) {
+            Object classes = counts.get("classes");
+            if (classes instanceof Number) {
+                classCount = ((Number) classes).intValue();
+            }
+        }
+        int objectPropertyCount = toInt(meta.get("objectPropertyCount"));
+        int dataPropertyCount = toInt(meta.get("dataPropertyCount"));
+        int individualCount = toInt(meta.get("individualCount"));
+        boolean zeroEntities = classCount == 0 && objectPropertyCount == 0
+                && dataPropertyCount == 0 && individualCount == 0;
+        if (!zeroEntities) {
+            return false;
+        }
+        long triples = 0;
+        Object tripleCountObj = meta.get("tripleCount");
+        Object axiomCountObj = meta.get("axiomCount");
+        if (tripleCountObj instanceof Number) {
+            triples = ((Number) tripleCountObj).longValue();
+        } else if (axiomCountObj instanceof Number) {
+            triples = ((Number) axiomCountObj).longValue();
+        }
+        return triples > 0;
+    }
+
+    private static int toInt(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        if (value instanceof String s) {
+            try {
+                return Integer.parseInt(s);
+            } catch (NumberFormatException ignored) {
+                return 0;
+            }
+        }
+        return 0;
     }
 
     /**
@@ -846,6 +908,7 @@ public class OntologyMetadataService {
             GROUP BY ?type
             """;
         Map<String, Integer> typeCountMap = new HashMap<>();
+        boolean typeCountsFailed = false;
         try {
             TupleQueryResult rs = datasetService.execSelect(projectId, typeCounts);
             while (rs.hasNext()) {
@@ -856,6 +919,7 @@ public class OntologyMetadataService {
                 }
             }
         } catch (Exception e) {
+            typeCountsFailed = true;
             log.error("Error getting type counts for project {}", projectId, e);
         }
 
@@ -870,6 +934,9 @@ public class OntologyMetadataService {
         metrics.put("dataPropertyCount", dataPropertyCount);
         metrics.put("annotationPropertyCount", annotationPropertyCount);
         metrics.put("individualCount", individualCount);
+        if (typeCountsFailed) {
+            metrics.put("metricsFailed", true);
+        }
 
         int tripleCount = (int) datasetService.getDatasetSize(projectId);
         metrics.put("axiomCount", tripleCount);

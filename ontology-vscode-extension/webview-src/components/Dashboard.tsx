@@ -1125,10 +1125,14 @@ const OpenFileDialog = ({
       formData.append("file", file, trimmed);
       formData.append("fileName", trimmed);
       formData.append("fileType", "application/rdf+xml");
+      let uploadedFileId: string | undefined;
       try {
-        await apiClient.post(`/api/projects/${parentProjectId}/files`, formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
+        const uploadResult = await apiClient.post<{ fileId?: string; filename?: string }>(
+          `/api/projects/${parentProjectId}/files`,
+          formData,
+          { headers: { "Content-Type": "multipart/form-data" } },
+        );
+        uploadedFileId = uploadResult?.fileId;
       } catch (error: any) {
         console.error("[OpenFileDialog] Failed to create new file:", error);
         notificationService.error(
@@ -1138,6 +1142,14 @@ const OpenFileDialog = ({
         return;
       }
       onCreateNewFile?.();
+      // Load the new file directly instead of waiting for the "fileReady" WebSocket
+      // message — on Desktop that signal isn't always delivered promptly (or at all),
+      // which previously left the newly created file sitting in the project unopened
+      // with no visible error. We already have its id from the upload response, so
+      // open it the same way clicking an existing file in this list does.
+      if (uploadedFileId && onLoadProjectFile) {
+        onLoadProjectFile(uploadedFileId, trimmed);
+      }
       onClose();
       return;
     }
@@ -3371,20 +3383,32 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
 
           if (status === "COMPLETED") {
-            setLoadingStatusMessage("");
             const topLevel = Number(statusRes?.data?.topLevelClasses ?? 0);
             const hierarchyReady = statusRes?.data?.hierarchyReady ?? topLevel > 0;
             const graphReady = statusRes?.data?.graphReady ?? (Number(statusRes?.data?.graphSize ?? 0) > 0);
             if (hierarchyReady || topLevel > 0) {
+              setLoadingStatusMessage("");
               return { ready: true, status };
             }
-            if (graphReady) {
-              return {
-                ready: false,
-                status: "HIERARCHY_WARMING",
-                error: sanitizeImportMessage(statusRes?.data?.statusMessage) || "Loading class hierarchy…",
-              };
+            // Graph loaded but class tree still building — keep polling. Returning early
+            // here used to abort waitForProcessingComplete during merge/re-import and
+            // left the editor with an empty class tree while the OWL file on disk was fine.
+            if (graphReady || statusRes?.data?.hierarchyWarming) {
+              setLoadingStatusMessage(
+                sanitizeImportMessage(statusRes?.data?.statusMessage) || "Loading class hierarchy…",
+              );
+              setIsHierarchyLoading(true);
+              if (Date.now() >= deadline) {
+                return {
+                  ready: false,
+                  status: "HIERARCHY_WARMING",
+                  error: "Class hierarchy is still building. The file is large — try opening it again in a few minutes.",
+                };
+              }
+              await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+              continue;
             }
+            setLoadingStatusMessage("");
             return { ready: true, status };
           }
 
@@ -4151,6 +4175,32 @@ const Dashboard: React.FC<DashboardProps> = ({
               { signal },
             );
             if (!isStaleLoad()) applyMetadataResponse(res);
+
+            // Web/large-file: class counts are computed async after import. If we opened
+            // before METADATA_READY, the first response can still show 0 — poll a few times.
+            if (!isDesktop() && !isStaleLoad()) {
+              const firstCount = Number((res?.data || res)?.classCount ?? (res?.data || res)?.counts?.classes ?? 0);
+              if (!(firstCount > 0)) {
+                for (let i = 0; i < 20 && !signal.aborted; i++) {
+                  await new Promise((r) => setTimeout(r, 3000));
+                  if (isStaleLoad()) return;
+                  try {
+                    const again = await apiClient.get<any>(
+                      `/api/ontology/metadata/${encodedProjectId}?_t=${Date.now()}&userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}`,
+                      undefined,
+                      { signal },
+                    );
+                    const againCount = Number((again?.data || again)?.classCount ?? (again?.data || again)?.counts?.classes ?? 0);
+                    if (againCount > 0) {
+                      if (!isStaleLoad()) applyMetadataResponse(again);
+                      break;
+                    }
+                  } catch {
+                    /* retry */
+                  }
+                }
+              }
+            }
           } catch (e: any) {
             if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
               console.error("[Dashboard] Metadata/counts load failed:", e?.message || e);
@@ -6546,6 +6596,47 @@ const Dashboard: React.FC<DashboardProps> = ({
                 importStageLabel(stage, message.status.metadata?.message as string | undefined),
               );
               if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
+            }
+
+            // Background metadata indexing finishes after IMPORT_COMPLETED. On web the
+            // class-count badge is often still 0 if the user opened before METADATA_READY.
+            if (
+              message.status.type === "IMPORT_PROGRESS" &&
+              message.status.status === "METADATA_READY" &&
+              message.status.projectId === projectId
+            ) {
+              const meta = message.status.metadata || {};
+              const classCount = Number(meta.classCount);
+              if (Number.isFinite(classCount) && classCount > 0) {
+                setMetadata((prev) =>
+                  ({
+                    ...(prev || {}),
+                    classCount,
+                    tripleCount: meta.tripleCount ?? (prev as any)?.tripleCount,
+                  }) as OntologyMetadata,
+                );
+              } else {
+                // Counts missing from notification — refetch so the badge updates.
+                void apiClient
+                  .get<any>(`/api/ontology/metadata/${encodeProjectId(message.status.projectId)}?_t=${Date.now()}`)
+                  .then((res) => {
+                    const data = res?.data || res;
+                    if (!data || typeof data !== "object") return;
+                    setMetadata((prev) =>
+                      ({
+                        ...(prev || {}),
+                        ...data,
+                        classCount:
+                          data.classCount > 0
+                            ? data.classCount
+                            : data.counts?.classes > 0
+                              ? data.counts.classes
+                              : (prev as any)?.classCount ?? 0,
+                      }) as OntologyMetadata,
+                    );
+                  })
+                  .catch((err) => console.warn("[Dashboard] METADATA_READY refresh failed:", err));
+              }
             }
           }
 
@@ -10708,6 +10799,14 @@ const Dashboard: React.FC<DashboardProps> = ({
           deletedNodeHadChildren = !!(target && (target.hasChildren || (target.children && target.children.length > 0)));
         }
 
+        // Desktop is OWLAPI-first with lazy Fuseki sync (see refreshProperties) — the fast
+        // in-memory delete path (DesktopOwlApiMutationService.tryApply) only engages once the
+        // OWLAPI cache is warm. Deleting before that falls through to a raw SPARQL DELETE
+        // against a graph that hasn't caught up yet, so the class can appear to come back.
+        if (isDesktop()) {
+          await waitForDesktopOwlApiReady(projectId);
+        }
+
         if (iris.length === 1) {
           await ontologyMutationService.deleteClass(
             projectId, iris[0], user?.email || "anonymous", user?.username || "Anonymous",
@@ -11424,6 +11523,13 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       setCodeViewLoading(true);
       try {
+        // Desktop is OWLAPI-first with lazy Fuseki sync — Code View's /content endpoint always
+        // exports from Fuseki (it has no OWLAPI-aware read path), so without this it can show
+        // stale content whenever OWLAPI has edits Fuseki hasn't caught up on yet (e.g. right
+        // after a class add/delete). No-ops instantly off-desktop.
+        if (isDesktop()) {
+          await ensureDesktopFusekiSync(projectId);
+        }
         const response = await apiClient.get<{
           success: boolean;
           content: string;
@@ -17847,12 +17953,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               console.log("[Dashboard] 🔄 Starting data fetch with force refresh...");
 
-              // Reload all ontology data with forceRefresh=true:
-              // - Skips waitForProcessingComplete (we already polled above)
-              // - Adds cache-busting timestamps to all API URLs
-              // - waitForCompletion=true shows loading screen until all data is loaded
+              // Reload all ontology data:
+              // - If hierarchy was ready: forceRefresh busts caches (wait already done).
+              // - If still warming after timeout: leave forceRefresh off and set
+              //   isExpectingFileReady so fetchData re-enters waitForProcessingComplete /
+              //   hierarchy retry instead of painting an empty tree.
               try {
-                await fetchData(targetProjectId, true, undefined, true);
+                const hierarchyReady = !!mergeWaitResult.ready;
+                if (!hierarchyReady) {
+                  setIsExpectingFileReady(true);
+                }
+                await fetchData(targetProjectId, true, undefined, hierarchyReady);
                 console.log("[Dashboard] ✅ Data fetch completed successfully");
               } catch (fetchError) {
                 console.error("[Dashboard] ❌ Failed to fetch data after merge:", fetchError);
