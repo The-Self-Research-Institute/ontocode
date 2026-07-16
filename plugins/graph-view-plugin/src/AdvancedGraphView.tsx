@@ -1508,7 +1508,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (hasThing) legend.push({ name: 'Thing', type: 'node', nodeType: 'class', color: isDark ? '#374151' : '#ffffff' });
       if (externalClasses.length > 0) legend.push({ name: `External Class (${externalClasses.length})`, type: 'node', nodeType: 'class', color: isDark ? '#60a5fa' : '#4682b4' });
       if (internalClasses.length > 0) legend.push({ name: `Internal Class (${internalClasses.length})`, type: 'node', nodeType: 'class', color: isDark ? '#6b92c4' : '#acd5f2' });
-      if (hasDatatype) legend.push({ name: `Datatype (${filteredNodes.filter(n => n.type === 'datatype').length})`, type: 'node', nodeType: 'datatype', color: isDark ? '#d97706' : '#FFD9B3' });
+      if (hasDatatype) legend.push({ name: `Datatype (${filteredNodes.filter(n => n.type === 'datatype').length})`, type: 'node', nodeType: 'datatype', color: isDark ? '#d97706' : '#ffcc33' });
       if (hasIndividual) legend.push({ name: `Individual (${filteredNodes.filter(n => n.type === 'individual').length})`, type: 'node', nodeType: 'individual', color: isDark ? '#fbb6ce' : '#dcd5f7' });
       
       // Add edge type legends based on filtered edges
@@ -1530,16 +1530,28 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return e.type === 'propertyRelation' && source?.type === 'annotation';
         }).length;
 
-        if (objProps > 0) legend.push({ name: `Object Property (${objProps})`, type: 'edge', stroke: isDark ? '#22d3ee' : '#0891b2', strokeDasharray: '0' });
-        if (dataProps > 0) legend.push({ name: `Data Property (${dataProps})`, type: 'edge', stroke: isDark ? '#f472b6' : '#db2777', strokeDasharray: '0' });
-        if (annoProps > 0) legend.push({ name: `Annotation Property (${annoProps})`, type: 'edge', stroke: isDark ? '#a78bfa' : '#7c3aed', strokeDasharray: '0' });
+        // Property kind is now encoded in the label CHIP color (classic WebVOWL),
+        // not the line — legend swatches show the chip palette.
+        if (objProps > 0) legend.push({ name: `Object Property (${objProps})`, type: 'edge', stroke: isDark ? '#60a5fa' : '#acd5f2', strokeDasharray: '0' });
+        if (dataProps > 0) legend.push({ name: `Data Property (${dataProps})`, type: 'edge', stroke: isDark ? '#a3e635' : '#99cc66', strokeDasharray: '0' });
+        if (annoProps > 0) legend.push({ name: `Annotation Property (${annoProps})`, type: 'edge', stroke: isDark ? '#c4b5fd' : '#a78bfa', strokeDasharray: '0' });
       }
       
       if (edgeTypes.has('subClassOf')) legend.push({ name: `SubClass Of (${filteredEdges.filter(e => e.type === 'subClassOf').length})`, type: 'edge', stroke: isDark ? '#9ca3af' : '#374151', strokeDasharray: '5,5' });
-      
-      // Property label colors (if we have propertyRelation edges)
+
+      // Restriction edges carry VOWL badges: ∃ some, ∀ only, ∋ hasValue, ≥/≤/= cardinality
+      if (edgeTypes.has('restriction')) {
+        legend.push({
+          name: `Restriction ∃ ∀ ∋ ≥ ≤ = (${filteredEdges.filter(e => e.type === 'restriction').length})`,
+          type: 'edge',
+          stroke: '#d97706',
+          strokeDasharray: '0',
+        });
+      }
+
+      // Characteristics render as a label suffix (no longer a chip color variant)
       if (edgeTypes.has('propertyRelation')) {
-        legend.push({ name: 'Functional Property (F)', type: 'label', color: '#C8E6C9' });
+        legend.push({ name: 'Characteristics suffix (F, IF, S, T…)', type: 'label', color: isDark ? '#374151' : '#e5e7eb' });
       }
       
       return legend;
@@ -1805,36 +1817,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     
     const isDark = isDarkTheme;
 
-    // VOWL-specific arrow markers - TRIANGLES with specific colors for property types
-    // Object Property (Cyan)
-    defs.append('marker')
-      .attr('id', 'arrow-vowl-object')
-      .attr('viewBox', '0 0 10 10')
-      .attr('refX', 10).attr('refY', 5)
-      .attr('markerWidth', 8).attr('markerHeight', 8)
-      .attr('orient', 'auto')
-      .append('path').attr('d', 'M0,0 L10,5 L0,10 Z')
-      .attr('fill', isDark ? '#22d3ee' : '#0891b2');
-
-    // Data Property (Pink)
-    defs.append('marker')
-      .attr('id', 'arrow-vowl-data')
-      .attr('viewBox', '0 0 10 10')
-      .attr('refX', 10).attr('refY', 5)
-      .attr('markerWidth', 8).attr('markerHeight', 8)
-      .attr('orient', 'auto')
-      .append('path').attr('d', 'M0,0 L10,5 L0,10 Z')
-      .attr('fill', isDark ? '#f472b6' : '#db2777');
-
-    // Annotation Property (Purple)
-    defs.append('marker')
-      .attr('id', 'arrow-vowl-annotation')
-      .attr('viewBox', '0 0 10 10')
-      .attr('refX', 10).attr('refY', 5)
-      .attr('markerWidth', 8).attr('markerHeight', 8)
-      .attr('orient', 'auto')
-      .append('path').attr('d', 'M0,0 L10,5 L0,10 Z')
-      .attr('fill', isDark ? '#a78bfa' : '#7c3aed');
+    // VOWL-specific arrow markers — neutral filled triangles matching the neutral
+    // property lines (classic WebVOWL: the property kind lives in the label chip,
+    // not in line/arrow color). One id per kind is kept so hover styling can still
+    // target them individually.
+    const vowlArrowFill = isDark ? '#94a3b8' : '#374151';
+    (['arrow-vowl-object', 'arrow-vowl-data', 'arrow-vowl-annotation'] as const).forEach(id => {
+      defs.append('marker')
+        .attr('id', id)
+        .attr('viewBox', '0 0 10 10')
+        .attr('refX', 10).attr('refY', 5)
+        .attr('markerWidth', 8).attr('markerHeight', 8)
+        .attr('orient', 'auto')
+        .append('path').attr('d', 'M0,0 L10,5 L0,10 Z')
+        .attr('fill', vowlArrowFill);
+    });
 
     // WebVOWL arrowhead convention: subClassOf/isA edges get a HOLLOW outlined
     // triangle; type/property edges get filled triangles. The shape difference (not
@@ -2490,31 +2487,23 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const isDark = isDarkTheme;
         
         if (visualizationType === 'vowl') {
-          // Determine property type for proper coloring
-          const sourceNode = allNodes.find(n => n.id === d.from);
-          const targetNode = allNodes.find(n => n.id === d.to);
-          
           if (d.type === 'subClassOf') {
             return isDark ? '#9ca3af' : '#374151'; // Light gray in dark mode, dark gray in light mode
           }
           if (d.type === 'operand') {
             return isDark ? '#94a3b8' : '#64748b'; // Plain gray member links for set operators
           }
+          // Classic WebVOWL: property lines stay neutral — the property kind is
+          // encoded in the label chip (blue/green/violet), not the line color.
+          // The old cyan/pink/purple lines are what made vowl mode read as
+          // "not WebVOWL" at a glance.
           if (d.type === 'propertyRelation') {
-            // Annotation properties - purple
-            if (sourceNode?.type === 'annotation') {
-              return isDark ? '#a78bfa' : '#7c3aed';
-            }
-            // Data properties - pink
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-              return isDark ? '#f472b6' : '#db2777';
-            }
-            // Object properties - cyan
-            return isDark ? '#22d3ee' : '#0891b2';
+            return isDark ? '#94a3b8' : '#374151';
           }
-          
+          // Special axiom edges (equivalent/disjoint/restriction/chain) keep
+          // their colors as the differentiating signal in both themes.
           const vowlEdge = vowlNotationService.edgeToVOWLEdge(d);
-          return isDark ? '#94a3b8' : (vowlEdge.stroke || '#000000');
+          return vowlEdge.stroke || (isDark ? '#94a3b8' : '#000000');
         }
         if (visualizationType === 'ontograph') {
           // Modern edge colors matching node accent palette
@@ -2626,6 +2615,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
 
     // Draw edge label backgrounds (colored boxes for WebVOWL - varied colors based on property)
+    // Classic-WebVOWL chips: in vowl mode, property and subclass labels sit in
+    // always-visible colored chips on the edge — the signature WebVOWL look
+    // (blue = object property, green = data property, white dashed = Subclass of).
+    // Auto-degrades to hover-only past this many labeled edges so huge graphs
+    // keep their density. Restriction/disjoint edges keep their symbol/badge
+    // rendering and never get chips.
+    const isVowlChipEdge = (d: any) => d.type === 'propertyRelation' || d.type === 'subClassOf';
+    const vowlChipsAlwaysVisible = visualizationType === 'vowl'
+      && d3Edges.filter(isVowlChipEdge).length <= 400;
+
     const linkLabelBg = g.append('g')
       .attr('class', 'link-label-backgrounds')
       .selectAll('rect')
@@ -2637,26 +2636,27 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         // readable (light-on-light chips were the "invisible subClassOf" bug).
         const isDark = isDarkTheme;
         if (visualizationType === 'vowl') {
-          // Determine property type for proper background coloring
+          // VOWL-spec chip palette (WebVOWL parity): the property KIND is encoded
+          // in the chip color, not the edge line. Functional etc. show as the
+          // "(F,…)" suffix, not as a color variant.
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
-          const isFunctional = d.metadata?.functional;
 
           if (d.type === 'subClassOf') {
-            return isDark ? '#374151' : '#E5E7EB'; // Gray chip
+            return isDark ? '#1f2937' : '#ffffff'; // white chip, dashed border (spec)
           }
 
           if (d.type === 'propertyRelation') {
-            // Annotation properties - purple
+            // Annotation properties - violet (no VOWL spec color; kept distinct)
             if (sourceNode?.type === 'annotation') {
-              return isDark ? (isFunctional ? '#5b21b6' : '#4c1d95') : (isFunctional ? '#E9D5FF' : '#F3E8FF');
+              return isDark ? '#5b21b6' : '#ddd6fe';
             }
-            // Data properties - pink
+            // Data properties - VOWL green
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-              return isDark ? (isFunctional ? '#9d174d' : '#831843') : (isFunctional ? '#FCE7F3' : '#FDF2F8');
+              return isDark ? '#4d7c0f' : '#99cc66';
             }
-            // Object properties - cyan/green
-            return isDark ? (isFunctional ? '#065f46' : '#155e75') : (isFunctional ? '#A7F3D0' : '#CFFAFE');
+            // Object properties - VOWL blue
+            return isDark ? '#1d4ed8' : '#acd5f2';
           }
 
           return isDark ? '#1e3a8a' : '#BBDEFB'; // Default blue
@@ -2686,31 +2686,33 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (visualizationType === 'vowl') {
           // Disjointness is drawn as the VOWL twin-circle symbol, not a text chip
           if (d.type === 'disjointWith') return 0;
-          // Show label background when edge is selected or hovered
+          // Chips are always visible (WebVOWL look) below the density threshold;
+          // everything else reveals on selection/hover.
+          if (vowlChipsAlwaysVisible && isVowlChipEdge(d)) return 1;
           return (selectedEdgeId === d.id || hoveredEdgeId === d.id) ? 1 : 0;
         }
         return (visualizationType as string) === 'vowl' ? 1 : 0.85;
       })
       .attr('stroke', d => {
         if (visualizationType === 'vowl') {
-          const isFunctional = d.metadata?.functional;
-          const label = (d.label || '').toLowerCase();
-          
-          // Matching border colors
-          if (isFunctional) {
-            return '#4CAF50'; // Green border for functional
-          } else if (label.includes('has') || label.includes('tag')) {
-            return '#2196F3'; // Blue border
-          } else if (label.includes('creator') || label.includes('access')) {
-            return '#2196F3'; // Blue border
-          } else if (label.includes('meaning') || label.includes('previous') || label.includes('next')) {
-            return '#9C27B0'; // Purple border
-          } else {
-            return '#2196F3'; // Default blue border
+          // Chip borders by property kind (VOWL palette) — the old version keyed
+          // colors off substrings of the label text, which looked arbitrary.
+          const sourceNode = allNodes.find(n => n.id === d.from);
+          const targetNode = allNodes.find(n => n.id === d.to);
+          if (d.type === 'subClassOf') return isDarkTheme ? '#9ca3af' : '#6b7280';
+          if (d.type === 'propertyRelation') {
+            if (sourceNode?.type === 'annotation') return isDarkTheme ? '#c4b5fd' : '#7c3aed';
+            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+              return isDarkTheme ? '#a3e635' : '#4d7c0f';
+            }
+            return isDarkTheme ? '#93c5fd' : '#34608d';
           }
+          return isDarkTheme ? '#93c5fd' : '#2196F3';
         }
         return 'none';
       })
+      .attr('stroke-dasharray', d =>
+        visualizationType === 'vowl' && d.type === 'subClassOf' ? '3 2' : null)
       .attr('stroke-width', visualizationType === 'vowl' ? 1 : 0)
       .attr('rx', 3)
       .attr('ry', 3)
@@ -2730,28 +2732,28 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const isDark = isDarkTheme;
         
         if (visualizationType === 'vowl') {
-          // Determine property type for proper label coloring
+          // Text colors matched to the VOWL chip fills above — dark ink on the
+          // light spec-color chips, light ink on their dark-mode counterparts.
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
-          
+
           if (d.type === 'subClassOf') {
-            return isDark ? '#d1d5db' : '#1f2937'; // Light gray in dark mode
+            return isDark ? '#e5e7eb' : '#374151';
           }
-          
+
           if (d.type === 'propertyRelation') {
-            // Annotation properties - dark purple
+            // Annotation properties - violet chip
             if (sourceNode?.type === 'annotation') {
-              return isDark ? '#c4b5fd' : '#6b21a8';
+              return isDark ? '#ede9fe' : '#4c1d95';
             }
-            // Data properties - dark pink
+            // Data properties - VOWL green chip
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-              return isDark ? '#f9a8d4' : '#be185d';
+              return isDark ? '#f7fee7' : '#1a2e05';
             }
-            // Object properties - dark cyan
-            const isFunctional = d.metadata?.functional;
-            return isDark ? '#67e8f9' : (isFunctional ? '#2E7D32' : '#065f46');
+            // Object properties - VOWL blue chip
+            return isDark ? '#dbeafe' : '#123a5f';
           }
-          
+
           return isDark ? '#93c5fd' : '#1565C0';
         }
         // Color labels by property type with dark mode support
@@ -2787,7 +2789,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         // Show full label in WebVOWL mode with characteristic indicators
         if (visualizationType === 'vowl') {
           if (d.type === 'disjointWith') return ''; // rendered as the VOWL twin-circle symbol
-          const baseLabel = d.label || d.type || '';
+          // WebVOWL labels inheritance edges "Subclass of", not the raw type name
+          const baseLabel = d.type === 'subClassOf' ? 'Subclass of' : (d.label || d.type || '');
           return vowlOptions.compactNotation ? baseLabel : `${baseLabel}${buildCharSuffix(d)}`;
         }
 
@@ -2810,7 +2813,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .style('pointer-events', 'none')
       .style('opacity', d => {
         if (visualizationType === 'vowl') {
-          // Show label only when edge is selected or hovered
+          // Chips always visible below the density threshold (WebVOWL look);
+          // everything else reveals on selection/hover.
+          if (vowlChipsAlwaysVisible && isVowlChipEdge(d)) return 1;
           return (selectedEdgeId === d.id || hoveredEdgeId === d.id) ? 1 : 0;
         }
         return settings.showLabels ? 1 : 0;
@@ -2859,12 +2864,63 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     };
     updateDisjointSymbols();
 
+    // VOWL cardinality / quantifier badges (WebVOWL parity): restriction edges
+    // always show their kind — "≥ n" (min), "≤ n" (max), "= n" (exactly),
+    // "∃" (someValuesFrom), "∀" (allValuesFrom), "∋" (hasValue) — as a small
+    // always-visible label at the edge midpoint, VOWL-spec style. The full
+    // "property kind n" text remains on the hover/selection label above.
+    const restrictionBadgeText = (d: any): string => {
+      const m = d.metadata || {};
+      const n = m.cardinality;
+      switch (m.restrictionType) {
+        case 'min': return n != null ? `≥ ${n}` : '∃';
+        case 'max': return n != null ? `≤ ${n}` : '∀';
+        case 'exactly': return n != null ? `= ${n}` : '=';
+        case 'only': return '∀';
+        case 'value': return '∋';
+        case 'some':
+        default: return '∃';
+      }
+    };
+    const restrictionBadge = g.append('g')
+      .attr('class', 'restriction-badges')
+      .selectAll('text')
+      .data(visualizationType === 'vowl' && !vowlOptions.compactNotation
+        ? d3Edges.filter(d => d.type === 'restriction')
+        : [])
+      .join('text')
+      .attr('class', 'restriction-badge')
+      .text(restrictionBadgeText)
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'middle')
+      .attr('font-size', 9.5)
+      .attr('font-weight', 600)
+      .attr('fill', isDark ? '#fbbf24' : '#b45309')
+      .attr('stroke', isDark ? '#0b1220' : '#ffffff')
+      .attr('stroke-width', 3)
+      .attr('paint-order', 'stroke')
+      .style('pointer-events', 'none');
+
+    const updateRestrictionBadges = () => {
+      restrictionBadge.attr('transform', (d: any) => {
+        const source = d.source as D3Node;
+        const target = d.target as D3Node;
+        if (source.x == null || source.y == null || target.x == null || target.y == null) return null;
+        return `translate(${(source.x + target.x) / 2},${(source.y + target.y) / 2})`;
+      });
+    };
+    updateRestrictionBadges();
+
     const updateLinkLabelBackgrounds = () => {
       linkLabelBg.each(function(_d, i) {
         const label = linkLabel.nodes()[i];
         if (!label) return;
         const bbox = (label as SVGTextElement).getBBox();
         const padding = 3;
+        // Cache chip dimensions so updateLinkLabelPositions can move the chip
+        // every tick without re-measuring (getBBox per tick thrashes layout).
+        (_d as any).__chipW = bbox.width + padding * 2;
+        (_d as any).__chipH = bbox.height + padding * 2;
         d3.select(this)
           .attr('x', bbox.x - padding)
           .attr('y', bbox.y - padding)
@@ -2872,6 +2928,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .attr('height', bbox.height + padding * 2);
       });
     };
+    if (vowlChipsAlwaysVisible) {
+      // Size chips immediately so they're visible during the initial settle,
+      // not only after the first simulation 'end'.
+      updateLinkLabelBackgrounds();
+    }
 
     // Filter nodes by viewport for large OntoGraph (virtualization)
     let visibleD3Nodes = d3Nodes;
@@ -3036,7 +3097,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('width', rectWidth)
             .attr('height', rectHeight)
             .attr('rx', size * 0.4)
-            .attr('fill', visualizationType === 'vowl' ? glossyFill(isDark ? '#d97706' : '#FFD9B3') : fillPaint)
+            .attr('fill', visualizationType === 'vowl' ? glossyFill(isDark ? '#d97706' : '#ffcc33') : fillPaint)
             .attr('stroke', visualizationType === 'vowl' ? (isDark ? '#d1d5db' : '#000000') : stroke)
             .attr('stroke-width', visualizationType === 'vowl' ? 2 : strokeWidth)
             .attr('stroke-dasharray', visualizationType === 'vowl' ? '5 3' : (strokeDasharray || null))
@@ -3692,7 +3753,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     };
 
     const updateLinkLabelPositions = () => {
-      linkLabel.each(function(d: any) {
+      linkLabel.each(function(d: any, i: number) {
         if (d.__culled) return;
         const sourcePoint = getRenderPoint(d.source as D3Node);
         const targetPoint = getRenderPoint(d.target as D3Node);
@@ -3750,6 +3811,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         d3.select(this)
           .attr('x', labelX)
           .attr('y', labelY);
+
+        // Keep the always-visible VOWL chip glued to its label during the force
+        // simulation using dimensions cached by updateLinkLabelBackgrounds —
+        // getBBox per tick would thrash layout. Text is middle-anchored, so the
+        // chip centers on (labelX, labelY).
+        if (vowlChipsAlwaysVisible && (d.__chipW ?? 0) > 0) {
+          const bg = linkLabelBg.nodes()[i] as SVGRectElement | undefined;
+          if (bg) {
+            bg.setAttribute('x', String(labelX - d.__chipW / 2));
+            bg.setAttribute('y', String(labelY - d.__chipH / 2));
+          }
+        }
       });
     };
 
@@ -3822,12 +3895,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
           // Edge labels: VOWL labels are hover-only (positioned on 'end'); other modes
           // skip the bezier math entirely when labels are switched off.
-          if (visualizationType !== 'vowl' && settings.showLabels !== false) {
+          if ((visualizationType !== 'vowl' && settings.showLabels !== false) || vowlChipsAlwaysVisible) {
             updateLinkLabelPositions();
           }
-          // Disjointness symbols are always visible and few — track the edge midpoint live
+          // Disjointness symbols and restriction badges are always visible and
+          // few — track the edge midpoint live
           if (visualizationType === 'vowl') {
             updateDisjointSymbols();
+            updateRestrictionBadges();
           }
           // Label backgrounds sized once after layout — getBBox in tick forces layout thrash
 
@@ -3860,6 +3935,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       updateEdgePaths(true);
       updateLinkLabelPositions();
       updateDisjointSymbols();
+      updateRestrictionBadges();
       updateLinkLabelBackgrounds();
       applyViewportCulling();
     });
