@@ -390,4 +390,4 @@ See also [CITATION.cff](CITATION.cff), [CITATIONS.md](CITATIONS.md), and [refere
 
 ## License
 
-[GPL v3 License](LICENSE)
+[AGPL v3 License](LICENSE)
