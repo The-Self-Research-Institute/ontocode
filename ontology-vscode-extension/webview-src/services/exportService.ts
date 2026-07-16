@@ -37,10 +37,13 @@ async function submitExportJob(baseUrl: string, projectId: string, format: strin
   return res.jobId;
 }
 
-async function waitForExportJob(baseUrl: string, jobId: string): Promise<void> {
+async function waitForExportJob(baseUrl: string, jobId: string, signal?: AbortSignal): Promise<void> {
   const deadline = Date.now() + MAX_POLL_MS;
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    if (signal?.aborted) {
+      throw new Error('Export download cancelled.');
+    }
     const res = await apiClient.get<ExportJobStatusResponse>(`${baseUrl}/api/ontology/export-async/status/${jobId}`);
     if (res?.status === 'COMPLETED') return;
     if (res?.status === 'ERROR') {
@@ -51,6 +54,26 @@ async function waitForExportJob(baseUrl: string, jobId: string): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
+}
+
+// ── Cancellation ────────────────────────────────────────────────────────────
+// One in-flight export per project. The Dashboard's export pill (web/desktop)
+// calls cancelOntologyExport(); VS Code exports run in the extension host with
+// their own cancellable progress notification and never register here.
+const activeExports = new Map<string, AbortController>();
+
+export type ExportStatus = 'started' | 'completed' | 'cancelled' | 'failed';
+
+function emitExportStatus(projectId: string, filename: string, status: ExportStatus) {
+  window.dispatchEvent(new CustomEvent('ontocode:export-status', { detail: { projectId, filename, status } }));
+}
+
+/** Cancel the in-flight export for a project. Returns false when none is running. */
+export function cancelOntologyExport(projectId: string): boolean {
+  const controller = activeExports.get(projectId);
+  if (!controller) return false;
+  controller.abort();
+  return true;
 }
 
 function authHeaders(): HeadersInit {
@@ -146,48 +169,86 @@ export async function exportOntologyAsBlob(
 ): Promise<Blob | void> {
   const safeName = filename || `ontology-export.${format === 'turtle' ? 'ttl' : format === 'ntriples' ? 'nt' : 'owl'}`;
 
+  if (activeExports.has(projectId)) {
+    throw new Error('An export is already in progress for this project.');
+  }
+
   // Must be first — needs the Export click's transient user activation, which
   // expires long before a large export job finishes. Cancelling here also
-  // skips submitting the job entirely.
+  // skips submitting the job entirely (and never registers/announces the export).
   const handle = await acquireSaveFileHandleUpfront(safeName);
 
-  const jobId = await submitExportJob(baseUrl, projectId, format);
-  await waitForExportJob(baseUrl, jobId);
-
-  const downloadUrl = `${baseUrl}/api/ontology/export-async/download/${jobId}`;
-
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+  const signal = controller.signal;
+  activeExports.set(projectId, controller);
+  emitExportStatus(projectId, safeName, 'started');
+
+  // The download watchdog also aborts this controller — track which one fired
+  // so a user cancel and a timeout report differently.
+  let timedOut = false;
+  let outcome: ExportStatus = 'failed';
+
   try {
-    const response = await fetch(downloadUrl, {
-      headers: authHeaders(),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`Export download failed (${response.status}).`);
-    }
+    const jobId = await submitExportJob(baseUrl, projectId, format);
+    await waitForExportJob(baseUrl, jobId, signal);
 
-    if (handle) {
-      try {
-        const streamed = await streamResponseToHandle(response, handle);
-        if (streamed) return;
-      } catch (streamErr) {
-        console.warn('[exportService] Stream-to-disk failed, falling back to Blob:', streamErr);
-        // Body already consumed once streaming started — re-fetch for the Blob fallback.
-        const retry = await fetch(downloadUrl, { headers: authHeaders() });
-        if (!retry.ok) {
-          throw new Error(`Export download failed (${retry.status}).`);
-        }
-        const blob = await retry.blob();
-        triggerBlobDownload(blob, safeName);
-        return blob;
+    const downloadUrl = `${baseUrl}/api/ontology/export-async/download/${jobId}`;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, DOWNLOAD_TIMEOUT_MS);
+    try {
+      const response = await fetch(downloadUrl, {
+        headers: authHeaders(),
+        signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Export download failed (${response.status}).`);
       }
-    }
 
-    const blob = await response.blob();
-    triggerBlobDownload(blob, safeName);
-    return blob;
+      if (handle) {
+        try {
+          const streamed = await streamResponseToHandle(response, handle);
+          if (streamed) {
+            outcome = 'completed';
+            return;
+          }
+        } catch (streamErr) {
+          // Cancelled/timed out mid-stream — surface it, never fall back to a Blob retry.
+          if (signal.aborted) {
+            throw streamErr;
+          }
+          console.warn('[exportService] Stream-to-disk failed, falling back to Blob:', streamErr);
+          // Body already consumed once streaming started — re-fetch for the Blob fallback.
+          const retry = await fetch(downloadUrl, { headers: authHeaders(), signal });
+          if (!retry.ok) {
+            throw new Error(`Export download failed (${retry.status}).`);
+          }
+          const blob = await retry.blob();
+          triggerBlobDownload(blob, safeName);
+          outcome = 'completed';
+          return blob;
+        }
+      }
+
+      const blob = await response.blob();
+      triggerBlobDownload(blob, safeName);
+      outcome = 'completed';
+      return blob;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  } catch (err) {
+    if (signal.aborted && !timedOut) {
+      outcome = 'cancelled';
+      throw new Error('Export download cancelled.');
+    }
+    if (timedOut) {
+      throw new Error('Export download timed out. Please try again.');
+    }
+    throw err;
   } finally {
-    window.clearTimeout(timeout);
+    activeExports.delete(projectId);
+    emitExportStatus(projectId, safeName, outcome);
   }
 }
