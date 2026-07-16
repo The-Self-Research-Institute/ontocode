@@ -7938,9 +7938,37 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
 
         case "CLASS_DELETED":
-          console.log("[Dashboard] 🗑️ Class deleted by remote user, refreshing hierarchy");
-          // Always do full refresh on deletion — partial refresh can leave orphaned subtrees
-          refreshClassHierarchy();
+          console.log("[Dashboard] 🗑️ Class deleted by remote user, removing from tree then refreshing");
+          {
+            // Instant local removal so the other collaborator doesn't keep seeing a
+            // ghost class (or hit a throttled/failed full refresh that looks like an error).
+            const deletedId =
+              (edit as any).nodeId ||
+              (edit as any).iri ||
+              (edit as any).id ||
+              (edit as any).metadata?.iri ||
+              "";
+            if (deletedId) {
+              const idSet = new Set<string>([String(deletedId)]);
+              const removeNodesRecursively = (nodes: TreeNode[]): TreeNode[] =>
+                nodes
+                  .filter((node) => !idSet.has(node.id))
+                  .map((node) =>
+                    node.children ? { ...node, children: removeNodesRecursively(node.children) } : node,
+                  );
+              setClassHierarchy((prev) => removeNodesRecursively(prev));
+              setSelectedItem((prev) => (prev && idSet.has(prev.id) ? null : prev));
+              setHierarchyAnnotationValues((prev) => {
+                const m = new Map(prev);
+                idSet.forEach((id) => m.delete(id));
+                return m;
+              });
+              idSet.forEach((id) => fetchedAnnotationIrisRef.current.delete(id));
+            }
+            // Full refresh still runs to reconcile with backend (parents, counts, etc.)
+            lastClassHierarchyRefreshAt.current = 0;
+            refreshClassHierarchy();
+          }
           break;
 
         case "CLASS_MODIFIED":
@@ -9226,6 +9254,13 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         console.log("[Dashboard] ✅ Server-side import triggered via uploadByFileRef");
         console.log("[Dashboard] Pending import project:", ontologyProjectId);
+
+        // On Desktop there's no fileReady WebSocket message — start the Electron-side
+        // poller directly (same as handleLoadRetry) so IMPORT_PROGRESS/IMPORT_COMPLETED
+        // reliably reach this project instead of relying on preload.js's incidental
+        // 5s global import watcher, which can miss it or stall on a non-terminal queue status.
+        const poll = (window as any).electronAPI?.pollImportStatus;
+        if (isDesktop() && poll) poll(ontologyProjectId);
 
         // The fileReady message will trigger fetchData via the message handler
         setIsExpectingFileReady(true);
@@ -10965,6 +11000,16 @@ const Dashboard: React.FC<DashboardProps> = ({
           deletedNodeHadChildren = !!(target && (target.hasChildren || (target.children && target.children.length > 0)));
         }
 
+        // Collect labels so collaborators see "deleted Foo" not a raw IRI / opaque code
+        const labelByIri: Record<string, string> = {};
+        const collectLabels = (nodes: TreeNode[]) => {
+          for (const node of nodes) {
+            if (iris.includes(node.id) && node.label) labelByIri[node.id] = node.label;
+            if (node.children) collectLabels(node.children);
+          }
+        };
+        collectLabels(classHierarchy);
+
         // Desktop is OWLAPI-first with lazy Fuseki sync (see refreshProperties) — the fast
         // in-memory delete path (DesktopOwlApiMutationService.tryApply) only engages once the
         // OWLAPI cache is warm. Deleting before that falls through to a raw SPARQL DELETE
@@ -10984,10 +11029,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (iris.length === 1) {
           await ontologyMutationService.deleteClass(
             projectId, iris[0], user?.email || "anonymous", user?.username || "Anonymous",
+            labelByIri[iris[0]],
           );
         } else {
           await ontologyMutationService.deleteClasses(
             projectId, iris, user?.email || "anonymous", user?.username || "Anonymous",
+            labelByIri,
           );
         }
 

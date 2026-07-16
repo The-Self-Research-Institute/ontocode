@@ -23,18 +23,7 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
-    version: "1.1.0-beta.14.2",
-    date: "July 16, 2026",
-    title: "Cancellable Exports · Desktop Stability Fixes",
-    highlights: [
-      "Export — Large ontology exports are now cancellable on all three platforms: web and desktop show a floating \"Exporting… Cancel\" pill, and VS Code shows a native cancellable progress notification.",
-      "Desktop — Fixed a crash when creating a new file, adding an individual, or saving a graph view. These used the browser's window.prompt(), which Electron's renderer doesn't support; they now use an in-app dialog instead.",
-      "Desktop — Fixed the Insert Citation panel showing \"Retry\" instead of \"Configure Zotero\" when Zotero wasn't set up yet, and fixed a crash after configuring Zotero caused by a mismatch between the citation data shape the desktop app fetched and what the panel expected.",
-    ],
-    videoUrl: "",
-  },
-  {
-    version: "1.1.0-beta.14.1",
+    version: "1.1.0-beta.14",
     date: "July 13, 2026",
     title: "Save Reliability · Graph View Overhaul",
     highlights: [
