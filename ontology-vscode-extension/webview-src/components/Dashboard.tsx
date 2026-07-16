@@ -75,6 +75,7 @@ import type {
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
+import { cancelOntologyExport } from "../services/exportService";
 import { resolveMutationActor } from "../utils/mutationActor";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
@@ -2355,6 +2356,26 @@ const Dashboard: React.FC<DashboardProps> = ({
   const CODE_VIEW_PAGE_LINES = 10_000;
   // Above this serialized size, Code View switches to paged read-only mode.
   const CODE_VIEW_LARGE_FILE_BYTES = 10 * 1024 * 1024;
+
+  // In-flight export (web/desktop browser bridge only — VS Code exports run in
+  // the extension host behind a native cancellable progress notification).
+  // Drives the floating "Exporting… Cancel" pill.
+  const [activeExportPill, setActiveExportPill] = useState<{ projectId: string; filename: string } | null>(null);
+  useEffect(() => {
+    const onExportStatus = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { projectId: string; filename: string; status: "started" | "completed" | "cancelled" | "failed" }
+        | undefined;
+      if (!detail) return;
+      if (detail.status === "started") {
+        setActiveExportPill({ projectId: detail.projectId, filename: detail.filename });
+      } else {
+        setActiveExportPill((prev) => (prev && prev.projectId === detail.projectId ? null : prev));
+      }
+    };
+    window.addEventListener("ontocode:export-status", onExportStatus);
+    return () => window.removeEventListener("ontocode:export-status", onExportStatus);
+  }, []);
   const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false);
   const [codeViewSyntaxError, setCodeViewSyntaxError] = useState<string | null>(null);
   // Blocking dialog for a genuine save failure (reimport into the ontology failed) — replaces
@@ -18792,6 +18813,21 @@ const Dashboard: React.FC<DashboardProps> = ({
           setConfirmDialog({ ...confirmDialog, isOpen: false });
         }}
       />
+
+      {/* Export-in-progress pill (web/desktop). VS Code shows its own cancellable
+          progress notification from the extension host instead. */}
+      {activeExportPill && (
+        <div className="fixed bottom-4 right-4 z-[9999] flex items-center gap-3 px-4 py-2 rounded-xl bg-slate-800 border border-white/10 shadow-lg text-sm text-slate-200">
+          <Loader2 size={14} className="animate-spin text-purple-400 flex-shrink-0" />
+          <span>Exporting {activeExportPill.filename}…</span>
+          <button
+            onClick={() => cancelOntologyExport(activeExportPill.projectId)}
+            className="px-2 py-1 rounded-md bg-red-600 hover:bg-red-700 text-white text-xs font-medium"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </>
   );
 };
