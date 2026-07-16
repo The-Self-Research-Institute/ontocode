@@ -352,7 +352,10 @@ let _zoteroLibrarySessionSeq = 0;
 async function _fetchZoteroPage(start, pageSize, searchQuery) {
     const apiKey = localStorage.getItem('zoteroApiKey');
     const userId = localStorage.getItem('zoteroUserId');
-    if (!apiKey || !userId) throw new Error('Zotero not configured. Please add your API key in Settings.');
+    // Sentinel string the React CitationPickerDialog checks for to show a "Configure
+    // Zotero" button instead of a generic "Retry" (which would just repeat this same
+    // failure) — see CitationPickerDialog.tsx's ZOTERO_NOT_CONFIGURED check.
+    if (!apiKey || !userId) throw new Error('ZOTERO_NOT_CONFIGURED');
 
     const libraryType = localStorage.getItem('zoteroLibraryType') || 'user';
     const groupId = localStorage.getItem('zoteroGroupId');
@@ -377,23 +380,11 @@ async function _fetchZoteroPage(start, pageSize, searchQuery) {
         throw new Error(`Zotero API error: ${resp.status}`);
     }
     const totalResults = parseInt(resp.headers.get('Total-Results') || '0', 10);
-    const rawItems = await resp.json();
-    const items = rawItems.map(item => ({
-        key: item.key,
-        title: item.data?.title || '',
-        creators: item.data?.creators || [],
-        date: item.data?.date || '',
-        doi: item.data?.DOI,
-        url: item.data?.url,
-        itemType: item.data?.itemType || '',
-        abstractNote: item.data?.abstractNote,
-        publicationTitle: item.data?.publicationTitle,
-        volume: item.data?.volume,
-        issue: item.data?.issue,
-        pages: item.data?.pages,
-        publisher: item.data?.publisher,
-        tags: item.data?.tags,
-    }));
+    // Zotero's `include=data` response already nests each item's fields under `.data`
+    // (item.key, item.version, item.data.itemType, item.data.title, ...) — the React
+    // CitationPickerDialog (CitationItem type) reads citation.data.itemType etc.
+    // directly, so pass the API response through unchanged instead of re-flattening it.
+    const items = await resp.json();
     return { items, totalResults };
 }
 
