@@ -25,6 +25,12 @@ export interface VowlDisplayOptions {
   colorExternals: boolean;
   /** Show owl:unionOf / intersectionOf / complementOf / oneOf operator nodes. */
   showSetOperators: boolean;
+  /** Merge owl:equivalentClass into one double-border node with comma labels. */
+  mergeEquivalents: boolean;
+  /** Show owl:disjointWith axiom edges. */
+  showDisjointness: boolean;
+  /** Show property self-loops (domain === range on the same class). */
+  showPropertyLoops: boolean;
   /** Multiplier on the base shape width (1 = default size). */
   nodeWidthScale: number;
   /** Multiplier on the base shape height (1 = default size). */
@@ -36,13 +42,18 @@ export interface VowlDisplayOptions {
 
 export const DEFAULT_VOWL_OPTIONS: VowlDisplayOptions = {
   compactNotation: false,
-  maxLabelChars: 25,
+  // Room for "Document, CreativeWork"-style equivalent labels
+  maxLabelChars: 36,
   degreeCollapsing: 0,
   hideSolitarySubclasses: false,
   colorExternals: true,
   showSetOperators: true,
-  nodeWidthScale: 1,
-  nodeHeightScale: 1,
+  mergeEquivalents: true,
+  showDisjointness: true,
+  showPropertyLoops: true,
+  // Closer to stock WebVOWL proportions (less bulky than 1.15)
+  nodeWidthScale: 1.0,
+  nodeHeightScale: 1.0,
   labelFontSize: 11
 };
 

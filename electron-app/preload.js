@@ -62,6 +62,130 @@ async function getAuthToken() {
     try { return localStorage.getItem('authToken'); } catch (_) { return null; }
 }
 
+// ── Ontology export (submit job → poll → download) ──────────────────────────
+// Mirrors webview-src/services/exportService.ts. Duplicated here (rather than
+// imported) because this file runs as a plain preload script, not through the
+// Vite/webpack build the React app uses.
+const EXPORT_POLL_INTERVAL_MS = 3000;
+const EXPORT_MAX_POLL_MS = 60 * 60 * 1000;
+
+async function submitExportJob(projectId, format) {
+    const t = await getAuthToken();
+    const headers = { 'Content-Type': 'application/json' };
+    if (t) headers['Authorization'] = `Bearer ${t}`;
+    const res = await fetch(`${DESKTOP_API}/api/ontology/export-async/${encodeURIComponent(projectId)}?format=${encodeURIComponent(format)}`, {
+        method: 'POST',
+        headers,
+    });
+    if (!res.ok) throw new Error(`Export could not be started (HTTP ${res.status}).`);
+    const data = await res.json();
+    if (!data || !data.jobId) throw new Error('Export could not be started.');
+    return data.jobId;
+}
+
+async function waitForExportJob(jobId) {
+    const t = await getAuthToken();
+    const headers = {};
+    if (t) headers['Authorization'] = `Bearer ${t}`;
+    const deadline = Date.now() + EXPORT_MAX_POLL_MS;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+        const res = await fetch(`${DESKTOP_API}/api/ontology/export-async/status/${jobId}`, { headers });
+        const data = await res.json().catch(() => null);
+        if (data && data.status === 'COMPLETED') return;
+        if (data && data.status === 'ERROR') throw new Error(data.error || 'Export failed.');
+        if (Date.now() >= deadline) throw new Error('Export is taking much longer than expected. Please try again later.');
+        await new Promise((resolve) => setTimeout(resolve, EXPORT_POLL_INTERVAL_MS));
+    }
+}
+
+// Ask for the destination file BEFORE the export job runs. showSaveFilePicker
+// requires transient user activation — a few seconds after the Export click —
+// and a large export job polls for minutes, so requesting the picker after the
+// job finishes throws SecurityError and silently falls back to a full in-memory
+// Blob, which is what breaks large exports. Returns null when the API is
+// unsupported (caller falls back to a Blob download); throws "cancelled" when
+// the user dismissed the dialog.
+async function acquireSaveFileHandleUpfront(filename) {
+    if (!window.showSaveFilePicker) return null;
+    try {
+        return await window.showSaveFilePicker({ suggestedName: filename });
+    } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+            throw new Error('Export download cancelled.');
+        }
+        console.warn('[Preload] Save dialog unavailable — will download as Blob:', err);
+        return null;
+    }
+}
+
+async function streamResponseToHandle(response, handle) {
+    if (!response.body) return false;
+    const writable = await handle.createWritable();
+    try {
+        const reader = response.body.getReader();
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) await writable.write(value);
+        }
+        await writable.close();
+        return true;
+    } catch (err) {
+        try { await writable.abort(); } catch (_) { /* ignore */ }
+        throw err;
+    }
+}
+
+function triggerBlobDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+async function exportOntologyViaJob(projectId, format, filename) {
+    const safeName = filename || `ontology-export.${format === 'turtle' ? 'ttl' : format === 'ntriples' ? 'nt' : 'owl'}`;
+
+    // Must be first — needs the Export click's transient user activation, which
+    // expires long before a large export job finishes. Cancelling here also
+    // skips submitting the job entirely.
+    const handle = await acquireSaveFileHandleUpfront(safeName);
+
+    const jobId = await submitExportJob(projectId, format);
+    await waitForExportJob(jobId);
+
+    const t = await getAuthToken();
+    const headers = {};
+    if (t) headers['Authorization'] = `Bearer ${t}`;
+
+    const response = await fetch(`${DESKTOP_API}/api/ontology/export-async/download/${jobId}`, { headers });
+    if (!response.ok) throw new Error(`Export download failed (${response.status}).`);
+
+    if (handle) {
+        try {
+            const streamed = await streamResponseToHandle(response, handle);
+            if (streamed) return;
+        } catch (streamErr) {
+            console.warn('[Preload] Stream-to-disk failed, falling back to Blob:', streamErr);
+            // Body already consumed once streaming started — re-fetch for the Blob fallback.
+            const retry = await fetch(`${DESKTOP_API}/api/ontology/export-async/download/${jobId}`, { headers });
+            if (!retry.ok) throw new Error(`Export download failed (${retry.status}).`);
+            const blob = await retry.blob();
+            triggerBlobDownload(blob, safeName);
+            return;
+        }
+    }
+
+    const blob = await response.blob();
+    triggerBlobDownload(blob, safeName);
+}
+
 function dispatchImportCompleted(projectId) {
     window.dispatchEvent(new CustomEvent('importStatusUpdate', {
         detail: { type: 'IMPORT_COMPLETED', status: 'COMPLETED', projectId, progress: 100 }
@@ -228,7 +352,10 @@ let _zoteroLibrarySessionSeq = 0;
 async function _fetchZoteroPage(start, pageSize, searchQuery) {
     const apiKey = localStorage.getItem('zoteroApiKey');
     const userId = localStorage.getItem('zoteroUserId');
-    if (!apiKey || !userId) throw new Error('Zotero not configured. Please add your API key in Settings.');
+    // Sentinel string the React CitationPickerDialog checks for to show a "Configure
+    // Zotero" button instead of a generic "Retry" (which would just repeat this same
+    // failure) — see CitationPickerDialog.tsx's ZOTERO_NOT_CONFIGURED check.
+    if (!apiKey || !userId) throw new Error('ZOTERO_NOT_CONFIGURED');
 
     const libraryType = localStorage.getItem('zoteroLibraryType') || 'user';
     const groupId = localStorage.getItem('zoteroGroupId');
@@ -253,23 +380,11 @@ async function _fetchZoteroPage(start, pageSize, searchQuery) {
         throw new Error(`Zotero API error: ${resp.status}`);
     }
     const totalResults = parseInt(resp.headers.get('Total-Results') || '0', 10);
-    const rawItems = await resp.json();
-    const items = rawItems.map(item => ({
-        key: item.key,
-        title: item.data?.title || '',
-        creators: item.data?.creators || [],
-        date: item.data?.date || '',
-        doi: item.data?.DOI,
-        url: item.data?.url,
-        itemType: item.data?.itemType || '',
-        abstractNote: item.data?.abstractNote,
-        publicationTitle: item.data?.publicationTitle,
-        volume: item.data?.volume,
-        issue: item.data?.issue,
-        pages: item.data?.pages,
-        publisher: item.data?.publisher,
-        tags: item.data?.tags,
-    }));
+    // Zotero's `include=data` response already nests each item's fields under `.data`
+    // (item.key, item.version, item.data.itemType, item.data.title, ...) — the React
+    // CitationPickerDialog (CitationItem type) reads citation.data.itemType etc.
+    // directly, so pass the API response through unchanged instead of re-flattening it.
+    const items = await resp.json();
     return { items, totalResults };
 }
 
@@ -386,26 +501,24 @@ contextBridge.exposeInMainWorld('vscode', {
 
             case 'downloadOntology':
             case 'downloadCurrentOntology': {
+                // Submit-then-poll, same as the web browser bridge (exportService.ts) — a
+                // single blocking GET against the old synchronous /export endpoint used to
+                // time out / hang with no feedback on large ontologies. Large results stream
+                // to disk via the File System Access API to avoid holding a huge Blob in
+                // memory. Reports back "downloadOntologyComplete"/"downloadOntologyFailed" so
+                // Dashboard's export button spinner reflects how long this actually took.
                 (async () => {
+                    const requestId = message.requestId;
                     try {
-                        const t = await getAuthToken();
-                        const headers = {};
-                        if (t) headers['Authorization'] = `Bearer ${t}`;
-                        const res = await fetch(message.url, { headers });
-                        if (!res.ok) throw new Error(`Export failed: HTTP ${res.status}`);
-                        const blob = await res.blob();
-                        const blobUrl = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = blobUrl;
-                        a.download = message.filename || 'ontology.owl';
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(blobUrl);
+                        await exportOntologyViaJob(message.projectId, message.format, message.filename);
+                        window.dispatchEvent(new MessageEvent('message', {
+                            data: { type: 'downloadOntologyComplete', requestId },
+                        }));
                     } catch (err) {
                         console.error('[Preload] downloadOntology failed:', err);
+                        const msg = (err && err.message) || 'Could not download ontology file';
                         window.dispatchEvent(new MessageEvent('message', {
-                            data: { type: 'notification', level: 'error', message: 'Export failed: ' + (err.message || 'Unknown error') }
+                            data: { type: 'downloadOntologyFailed', requestId, error: msg, cancelled: msg.includes('cancelled') },
                         }));
                     }
                 })();

@@ -34,6 +34,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -66,6 +68,20 @@ public class StorageManager {
 
     public Path resolveProjectFile(String projectId, String filename) {
         return projectDir(projectId).resolve(filename);
+    }
+
+    /** Scratch directory for in-progress chunked uploads, keyed by client-generated upload session id. */
+    public Path chunkUploadDir(String uploadId) throws IOException {
+        Path dir = projectsRoot.getParent().resolve("chunk-uploads").resolve(uploadId);
+        Files.createDirectories(dir);
+        return dir;
+    }
+
+    /** Root of all in-progress chunked uploads — used by the cleanup sweep to find abandoned sessions. */
+    public Path chunkUploadsRoot() throws IOException {
+        Path dir = projectsRoot.getParent().resolve("chunk-uploads");
+        Files.createDirectories(dir);
+        return dir;
     }
 
     public Path exportOntology(String projectId, String format) throws IOException {
@@ -397,6 +413,31 @@ public class StorageManager {
                 log.error("Failed to clear code view cache for project {}", projectId, e);
             }
         }
+        // Every real mutation path (OntologyMutationService.invalidatePublicCodeViewCache,
+        // and code-view-save's own post-save cleanup) routes through this method — unlike
+        // citation insert/remove, which only calls storeCodeViewCache and never this. That
+        // makes this the right hook for a "did the ontology actually change" signal: bump it
+        // here so /content and /content-page can hand it out as sourceVersion, and
+        // code-view-save can detect a stale save without citation edits falsely tripping it.
+        bumpPublicGraphVersion(projectId);
+    }
+
+    // Per-project version counter for the code-view save-conflict guard (see
+    // saveCodeViewAndSync in ProjectLoadController). In-memory only — like
+    // codeViewLineCounts above, it resets on JVM restart, which just resets the
+    // "generation" rather than creating a false positive or negative.
+    private final ConcurrentHashMap<String, Long> publicGraphVersions = new ConcurrentHashMap<>();
+    private final AtomicLong graphVersionCounter = new AtomicLong();
+
+    private void bumpPublicGraphVersion(String projectId) {
+        publicGraphVersions.put(projectId, graphVersionCounter.incrementAndGet());
+    }
+
+    /** Opaque version marker for the project's public-graph ontology content, handed to the
+     * client with /content and /content-page and checked back on code-view-save to detect
+     * an edit made elsewhere while Code View was open. 0 if never mutated this JVM run. */
+    public long getPublicGraphVersion(String projectId) {
+        return publicGraphVersions.getOrDefault(projectId, 0L);
     }
 
     /**
@@ -419,6 +460,71 @@ public class StorageManager {
     private Path getCodeViewCachePath(String projectId, String format) {
         String extension = extensionFor(format);
         return projectDir(projectId).resolve("codeview-cache").resolve("content." + extension);
+    }
+
+    /** One page of code-view content, read without materializing the whole file. */
+    public record CodeViewPage(String content, long startLine, int lineCount, long totalLines, long totalBytes) {}
+
+    // totalLines per cache file, keyed by path and validated by lastModified — lets
+    // subsequent page reads stop at the end of their window instead of re-scanning
+    // a 200MB file to the end just to repeat the line count.
+    private final ConcurrentHashMap<String, long[]> codeViewLineCounts = new ConcurrentHashMap<>();
+
+    /**
+     * Resolve the code-view cache file for a format, generating it on miss via the
+     * streamed export where possible. Unlike getCodeViewCache(), never loads the
+     * content into memory — callers page through it with readCodeViewPage().
+     */
+    public Path ensureCodeViewFile(String projectId, String format) throws IOException {
+        Path cacheFile = getCodeViewCachePath(projectId, format);
+        if (Files.exists(cacheFile)) {
+            return cacheFile;
+        }
+        Path exportPath = exportOntologyForJob(projectId, format);
+        Files.createDirectories(cacheFile.getParent());
+        Files.copy(exportPath, cacheFile, StandardCopyOption.REPLACE_EXISTING);
+        log.info("Generated code view cache file for project {} format {}: {} bytes",
+                projectId, format, Files.size(cacheFile));
+        return cacheFile;
+    }
+
+    /**
+     * Read lines [startLine, startLine + lineCount) of the code-view file for a format.
+     * Streams line-by-line — heap holds only the requested page, never the whole
+     * document, which is the point: the full /content path buffers the entire
+     * serialization and breaks down for 100MB+ ontologies.
+     */
+    public CodeViewPage readCodeViewPage(String projectId, String format, long startLine, int lineCount)
+            throws IOException {
+        Path file = ensureCodeViewFile(projectId, format);
+        long totalBytes = Files.size(file);
+        long lastModified = Files.getLastModifiedTime(file).toMillis();
+        String countKey = file.toString();
+        long[] cachedCount = codeViewLineCounts.get(countKey);
+        long knownTotalLines = (cachedCount != null && cachedCount[0] == lastModified) ? cachedCount[1] : -1;
+
+        StringBuilder page = new StringBuilder();
+        long line = 0;
+        int collected = 0;
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String current;
+            while ((current = reader.readLine()) != null) {
+                if (line >= startLine && collected < lineCount) {
+                    if (collected > 0) {
+                        page.append('\n');
+                    }
+                    page.append(current);
+                    collected++;
+                    // Total already known from a previous scan — no need to read to EOF.
+                    if (collected == lineCount && knownTotalLines >= 0) {
+                        return new CodeViewPage(page.toString(), startLine, collected, knownTotalLines, totalBytes);
+                    }
+                }
+                line++;
+            }
+        }
+        codeViewLineCounts.put(countKey, new long[] { lastModified, line });
+        return new CodeViewPage(page.toString(), startLine, collected, line, totalBytes);
     }
 
     /**

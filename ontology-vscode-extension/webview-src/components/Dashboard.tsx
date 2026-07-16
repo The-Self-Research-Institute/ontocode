@@ -74,7 +74,8 @@ import type {
   Datatype,
 } from "../types";
 import { useAuth } from "../custom-hook/useAuth";
-import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry } from "../utils/desktop";
+import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
+import { cancelOntologyExport } from "../services/exportService";
 import { resolveMutationActor } from "../utils/mutationActor";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
@@ -158,6 +159,7 @@ import {
   DeleteClassDialog,
   DuplicateFileDialog,
   SaveErrorDialog,
+  PromptDialog,
   LintProblemsPanel,
   DetailsPanel,
   type TopLevelClass,
@@ -312,6 +314,36 @@ const TopMenuBar = ({
   const [appVersion, setAppVersion] = useState("");
 
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Export loader tracking — the actual submit/poll/download job runs in the host
+  // (browser bridge, Electron preload, or VS Code extension host), not here. These
+  // track which in-flight export the spinner belongs to so a stale completion signal
+  // (e.g. from a cancelled/superseded export) can't clear the wrong one.
+  const exportRequestIdRef = useRef(0);
+  const pendingExportRef = useRef<{ requestId: number; format: string; filename: string } | null>(null);
+  const exportSafetyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handleExportMessage = (event: MessageEvent) => {
+      const message = event.data;
+      if (!message || (message.type !== "downloadOntologyComplete" && message.type !== "downloadOntologyFailed")) return;
+      const pending = pendingExportRef.current;
+      if (!pending || (message.requestId !== undefined && message.requestId !== pending.requestId)) return;
+      if (exportSafetyTimeoutRef.current) {
+        clearTimeout(exportSafetyTimeoutRef.current);
+        exportSafetyTimeoutRef.current = null;
+      }
+      pendingExportRef.current = null;
+      setExportingFormat(null);
+      if (message.type === "downloadOntologyComplete") {
+        notificationService.success("Export Complete", `${pending.filename} downloaded`);
+      } else if (!message.cancelled) {
+        notificationService.error("Export Failed", message.error || `Could not export ${pending.filename}`);
+      }
+    };
+    window.addEventListener("message", handleExportMessage);
+    return () => window.removeEventListener("message", handleExportMessage);
+  }, []);
 
   useEffect(() => {
     import("../utils/appVersion").then(({ getAppVersion }) => {
@@ -834,10 +866,29 @@ const TopMenuBar = ({
                               setExportingFormat(format);
                               const filename = `${currentProjectId}.${ext}`;
                               const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(currentProjectId)}?format=${format}`;
+                              setShowExportFormats(false);
+                              setOpenMenu(null);
                               try {
                                 if (window.vscode) {
-                                  window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId: currentProjectId, format });
-                                  notificationService.success("Export Started", `Downloading ${filename}`);
+                                  // The host (browser bridge / Electron preload / VS Code extension) runs the
+                                  // actual submit-poll-download job and posts back "downloadOntologyComplete"
+                                  // or "downloadOntologyFailed" when it's actually done — see the matching
+                                  // handler below. Clearing the spinner here (right after firing a fire-and-forget
+                                  // postMessage) used to make it disappear in under a second while a multi-minute
+                                  // export job kept running invisibly in the background.
+                                  exportRequestIdRef.current += 1;
+                                  const requestId = exportRequestIdRef.current;
+                                  pendingExportRef.current = { requestId, format, filename };
+                                  window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId: currentProjectId, format, requestId });
+                                  notificationService.info("Exporting…", `${filename} — this can take a few minutes for large ontologies`);
+                                  if (exportSafetyTimeoutRef.current) clearTimeout(exportSafetyTimeoutRef.current);
+                                  exportSafetyTimeoutRef.current = setTimeout(() => {
+                                    if (pendingExportRef.current?.requestId === requestId) {
+                                      pendingExportRef.current = null;
+                                      setExportingFormat(null);
+                                      notificationService.error("Export Timed Out", `${filename} export did not finish in time. Please try again.`);
+                                    }
+                                  }, 60 * 60 * 1000);
                                 } else {
                                   const res = await fetch(url, {
                                     headers: { Authorization: `Bearer ${localStorage.getItem("authToken") ?? ""}` },
@@ -851,14 +902,12 @@ const TopMenuBar = ({
                                   a.click();
                                   URL.revokeObjectURL(blobUrl);
                                   notificationService.success("Export Complete", `${filename} downloaded`);
+                                  setExportingFormat(null);
                                 }
                               } catch (err: any) {
                                 console.error("Export failed:", err);
                                 notificationService.error("Export Failed", err.message || "Could not export ontology");
-                              } finally {
                                 setExportingFormat(null);
-                                setShowExportFormats(false);
-                                setOpenMenu(null);
                               }
                             }}
                             className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 disabled:opacity-50 flex items-center gap-2"
@@ -1068,8 +1117,10 @@ const OpenFileDialog = ({
   isPlanExpired?: boolean;
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [showNewFileNamePrompt, setShowNewFileNamePrompt] = useState(false);
   const canOpenLocalFile = typeof window !== "undefined" && !!(window as any).vscode;
   const usingProjectFiles = !!parentProjectId;
+  const NEW_FILE_VALID_EXTENSIONS = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
 
   // Backend now filters to only return files (not projects), so just pass through
   const primaryFiles = usingProjectFiles ? projectFiles || [] : myFiles;
@@ -1100,45 +1151,7 @@ const OpenFileDialog = ({
 
   const handleCreateNewFile = async () => {
     if (isDesktop() && parentProjectId) {
-      const fileName = window.prompt("Enter filename for new ontology:", "my-ontology.owl");
-      if (!fileName?.trim()) return;
-      const trimmed = fileName.trim();
-      const validExtensions = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
-      if (!validExtensions.some((ext) => trimmed.toLowerCase().endsWith(ext))) {
-        alert("File must have a valid extension: .owl, .rdf, .ttl, .n3, .nt, or .jsonld");
-        return;
-      }
-      const ontologyIRI = `http://example.org/ontologies/${trimmed.replace(/\.[^/.]+$/, "")}`;
-      const content = `<?xml version="1.0"?>
-<rdf:RDF xmlns="${ontologyIRI}#"
-     xml:base="${ontologyIRI}"
-     xmlns:owl="http://www.w3.org/2002/07/owl#"
-     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-     xmlns:xml="http://www.w3.org/XML/1998/namespace"
-     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
-     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
-    <owl:Ontology rdf:about="${ontologyIRI}"/>
-    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
-</rdf:RDF>`;
-      const file = new File([content], trimmed, { type: "application/rdf+xml" });
-      const formData = new FormData();
-      formData.append("file", file, trimmed);
-      formData.append("fileName", trimmed);
-      formData.append("fileType", "application/rdf+xml");
-      try {
-        await apiClient.post(`/api/projects/${parentProjectId}/files`, formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-      } catch (error: any) {
-        console.error("[OpenFileDialog] Failed to create new file:", error);
-        notificationService.error(
-          "Create File Failed",
-          error?.response?.data?.error || error?.message || "Could not create the new file. See console for details.",
-        );
-        return;
-      }
-      onCreateNewFile?.();
-      onClose();
+      setShowNewFileNamePrompt(true);
       return;
     }
     if (isDesktop()) {
@@ -1180,6 +1193,55 @@ const OpenFileDialog = ({
       importMode,
       partition: partitionStrategy,
     });
+    onClose();
+  };
+
+  // Only invoked via the PromptDialog opened from the isDesktop() && parentProjectId
+  // branch above, so parentProjectId is always set here.
+  const handleConfirmNewFileName = async (trimmed: string) => {
+    setShowNewFileNamePrompt(false);
+    const ontologyIRI = `http://example.org/ontologies/${trimmed.replace(/\.[^/.]+$/, "")}`;
+    const content = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+    const file = new File([content], trimmed, { type: "application/rdf+xml" });
+    const formData = new FormData();
+    formData.append("file", file, trimmed);
+    formData.append("fileName", trimmed);
+    formData.append("fileType", "application/rdf+xml");
+    let uploadedFileId: string | undefined;
+    try {
+      const uploadResult = await apiClient.post<{ fileId?: string; filename?: string }>(
+        `/api/projects/${parentProjectId}/files`,
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      uploadedFileId = uploadResult?.fileId;
+    } catch (error: any) {
+      console.error("[OpenFileDialog] Failed to create new file:", error);
+      notificationService.error(
+        "Create File Failed",
+        error?.response?.data?.error || error?.message || "Could not create the new file. See console for details.",
+      );
+      return;
+    }
+    onCreateNewFile?.();
+    // Load the new file directly instead of waiting for the "fileReady" WebSocket
+    // message — on Desktop that signal isn't always delivered promptly (or at all),
+    // which previously left the newly created file sitting in the project unopened
+    // with no visible error. We already have its id from the upload response, so
+    // open it the same way clicking an existing file in this list does.
+    if (uploadedFileId && onLoadProjectFile) {
+      onLoadProjectFile(uploadedFileId, trimmed);
+    }
     onClose();
   };
 
@@ -1354,6 +1416,20 @@ const OpenFileDialog = ({
           </button>
         </div>
       </div>
+      <PromptDialog
+        isOpen={showNewFileNamePrompt}
+        title="New Ontology File"
+        message="Enter a filename for the new ontology."
+        defaultValue="my-ontology.owl"
+        confirmLabel="Create"
+        validate={(value) =>
+          NEW_FILE_VALID_EXTENSIONS.some((ext) => value.toLowerCase().endsWith(ext))
+            ? null
+            : "File must have a valid extension: .owl, .rdf, .ttl, .n3, .nt, or .jsonld"
+        }
+        onConfirm={handleConfirmNewFileName}
+        onCancel={() => setShowNewFileNamePrompt(false)}
+      />
     </div>
   );
 };
@@ -2278,11 +2354,70 @@ const Dashboard: React.FC<DashboardProps> = ({
   >("rdfxml");
   const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
+  // Large-file guard: CodeHighlighter materializes per-line gutter elements and
+  // scans the whole document for fold ranges, so past this size the webview
+  // freezes. Above the cap we show a read-only preview of the head of the file
+  // and point users at Export for the full content. null = not truncated.
+  // (Legacy fallback — only used when the backend lacks /content-page.)
+  const [codeViewTruncation, setCodeViewTruncation] = useState<{ totalChars: number; previewLines: number } | null>(null);
+  // Paged read-only mode for large ontologies: the backend serves 10k-line
+  // windows from disk, so neither side ever holds the whole 200MB document.
+  // null = normal full-content editing mode.
+  const [codeViewPage, setCodeViewPage] = useState<{
+    startLine: number;
+    lineCount: number;
+    totalLines: number;
+    totalBytes: number;
+  } | null>(null);
+  const CODE_VIEW_PAGE_LINES = 10_000;
+  // Editable-size ceiling, tiered by format. Turtle/RDF-XML/N-Triples/JSON-LD export
+  // and reimport without ever requiring a full in-memory OWLAPI model (StorageManager's
+  // streamed/buffered export path), so raising their ceiling is safe once the
+  // CodeHighlighter gutter-freeze fix lands. OWL/XML, Manchester, and Functional
+  // Syntax always require a full OWLAPI parse+reserialize to save regardless of file
+  // size (OWLFormatConverter.convertToRDFXML — fixed 30s timeout, StackOverflow-retry
+  // risk) — raising their ceiling buys nothing and only increases exposure to that
+  // existing backend risk, so they keep the original conservative threshold.
+  const CODE_VIEW_STREAMING_FORMATS = new Set(["turtle", "rdfxml", "ntriples", "jsonld"]);
+  const CODE_VIEW_OWLAPI_CEILING_BYTES = 10 * 1024 * 1024;
+  // Starting point for the raised ceiling — tune after the manual large-file
+  // responsiveness pass (see the Code View large-file plan's Verification section).
+  const CODE_VIEW_STREAMING_CEILING_BYTES = 60 * 1024 * 1024;
+  const getCodeViewEditableCeiling = (
+    fmt: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld",
+  ) => (CODE_VIEW_STREAMING_FORMATS.has(fmt) ? CODE_VIEW_STREAMING_CEILING_BYTES : CODE_VIEW_OWLAPI_CEILING_BYTES);
+
+  // In-flight export (web/desktop browser bridge only — VS Code exports run in
+  // the extension host behind a native cancellable progress notification).
+  // Drives the floating "Exporting… Cancel" pill.
+  const [activeExportPill, setActiveExportPill] = useState<{ projectId: string; filename: string } | null>(null);
+  useEffect(() => {
+    const onExportStatus = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { projectId: string; filename: string; status: "started" | "completed" | "cancelled" | "failed" }
+        | undefined;
+      if (!detail) return;
+      if (detail.status === "started") {
+        setActiveExportPill({ projectId: detail.projectId, filename: detail.filename });
+      } else {
+        setActiveExportPill((prev) => (prev && prev.projectId === detail.projectId ? null : prev));
+      }
+    };
+    window.addEventListener("ontocode:export-status", onExportStatus);
+    return () => window.removeEventListener("ontocode:export-status", onExportStatus);
+  }, []);
   const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false);
   const [codeViewSyntaxError, setCodeViewSyntaxError] = useState<string | null>(null);
+  // Opaque version handed back by /content and /content-page, checked back on save so a
+  // mutation made elsewhere (another tab, Class Hierarchy edit) while Code View was open
+  // is detected instead of silently overwritten — see saveCodeViewAndSync's conflict guard.
+  const [codeViewSourceVersion, setCodeViewSourceVersion] = useState<number | null>(null);
   // Blocking dialog for a genuine save failure (reimport into the ontology failed) — replaces
   // the old silent cache-only fallback, which showed "Saved" even when nothing synced.
   const [codeViewSaveError, setCodeViewSaveError] = useState<string | null>(null);
+  // True when codeViewSaveError is a version conflict (see above) rather than a genuine
+  // save failure — swaps the dialog's "Retry Save" for "Reload Latest".
+  const [codeViewSaveConflict, setCodeViewSaveConflict] = useState(false);
   const [savingCodeView, setSavingCodeView] = useState(false);
   const lastCodeViewSaveContentRef = useRef<string>("");
   // Lint runs right before save (see handleSaveCodeContent) — non-blocking content
@@ -3371,20 +3506,32 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
 
           if (status === "COMPLETED") {
-            setLoadingStatusMessage("");
             const topLevel = Number(statusRes?.data?.topLevelClasses ?? 0);
             const hierarchyReady = statusRes?.data?.hierarchyReady ?? topLevel > 0;
             const graphReady = statusRes?.data?.graphReady ?? (Number(statusRes?.data?.graphSize ?? 0) > 0);
             if (hierarchyReady || topLevel > 0) {
+              setLoadingStatusMessage("");
               return { ready: true, status };
             }
-            if (graphReady) {
-              return {
-                ready: false,
-                status: "HIERARCHY_WARMING",
-                error: sanitizeImportMessage(statusRes?.data?.statusMessage) || "Loading class hierarchy…",
-              };
+            // Graph loaded but class tree still building — keep polling. Returning early
+            // here used to abort waitForProcessingComplete during merge/re-import and
+            // left the editor with an empty class tree while the OWL file on disk was fine.
+            if (graphReady || statusRes?.data?.hierarchyWarming) {
+              setLoadingStatusMessage(
+                sanitizeImportMessage(statusRes?.data?.statusMessage) || "Loading class hierarchy…",
+              );
+              setIsHierarchyLoading(true);
+              if (Date.now() >= deadline) {
+                return {
+                  ready: false,
+                  status: "HIERARCHY_WARMING",
+                  error: "Class hierarchy is still building. The file is large — try opening it again in a few minutes.",
+                };
+              }
+              await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+              continue;
             }
+            setLoadingStatusMessage("");
             return { ready: true, status };
           }
 
@@ -4151,6 +4298,32 @@ const Dashboard: React.FC<DashboardProps> = ({
               { signal },
             );
             if (!isStaleLoad()) applyMetadataResponse(res);
+
+            // Web/large-file: class counts are computed async after import. If we opened
+            // before METADATA_READY, the first response can still show 0 — poll a few times.
+            if (!isDesktop() && !isStaleLoad()) {
+              const firstCount = Number((res?.data || res)?.classCount ?? (res?.data || res)?.counts?.classes ?? 0);
+              if (!(firstCount > 0)) {
+                for (let i = 0; i < 20 && !signal.aborted; i++) {
+                  await new Promise((r) => setTimeout(r, 3000));
+                  if (isStaleLoad()) return;
+                  try {
+                    const again = await apiClient.get<any>(
+                      `/api/ontology/metadata/${encodedProjectId}?_t=${Date.now()}&userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}`,
+                      undefined,
+                      { signal },
+                    );
+                    const againCount = Number((again?.data || again)?.classCount ?? (again?.data || again)?.counts?.classes ?? 0);
+                    if (againCount > 0) {
+                      if (!isStaleLoad()) applyMetadataResponse(again);
+                      break;
+                    }
+                  } catch {
+                    /* retry */
+                  }
+                }
+              }
+            }
           } catch (e: any) {
             if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
               console.error("[Dashboard] Metadata/counts load failed:", e?.message || e);
@@ -6547,6 +6720,47 @@ const Dashboard: React.FC<DashboardProps> = ({
               );
               if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
             }
+
+            // Background metadata indexing finishes after IMPORT_COMPLETED. On web the
+            // class-count badge is often still 0 if the user opened before METADATA_READY.
+            if (
+              message.status.type === "IMPORT_PROGRESS" &&
+              message.status.status === "METADATA_READY" &&
+              message.status.projectId === projectId
+            ) {
+              const meta = message.status.metadata || {};
+              const classCount = Number(meta.classCount);
+              if (Number.isFinite(classCount) && classCount > 0) {
+                setMetadata((prev) =>
+                  ({
+                    ...(prev || {}),
+                    classCount,
+                    tripleCount: meta.tripleCount ?? (prev as any)?.tripleCount,
+                  }) as OntologyMetadata,
+                );
+              } else {
+                // Counts missing from notification — refetch so the badge updates.
+                void apiClient
+                  .get<any>(`/api/ontology/metadata/${encodeProjectId(message.status.projectId)}?_t=${Date.now()}`)
+                  .then((res) => {
+                    const data = res?.data || res;
+                    if (!data || typeof data !== "object") return;
+                    setMetadata((prev) =>
+                      ({
+                        ...(prev || {}),
+                        ...data,
+                        classCount:
+                          data.classCount > 0
+                            ? data.classCount
+                            : data.counts?.classes > 0
+                              ? data.counts.classes
+                              : (prev as any)?.classCount ?? 0,
+                      }) as OntologyMetadata,
+                    );
+                  })
+                  .catch((err) => console.warn("[Dashboard] METADATA_READY refresh failed:", err));
+              }
+            }
           }
 
           // Handle import completion
@@ -7433,12 +7647,30 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     if (!isDesktop() || !projectId) return;
-    const fusekiTabs = ["SPARQL", "Graph", "WebVOWL", "Fuzzy", "DLQuery", "Reasoner"];
+    const fusekiTabs = ["SPARQL", "Graph", "Fuzzy", "DLQuery", "Reasoner"];
     if (!fusekiTabs.includes(mainTab)) return;
     const cur = desktopFusekiPrepRef.current;
-    // Same project: only (re)start from idle — 'failed' waits for an explicit
-    // Try-again click, 'preparing'/'ready'/'bypassed' need no new sync.
-    if (cur.projectId === projectId && cur.status !== "idle") return;
+    if (cur.projectId === projectId) {
+      // 'failed' waits for an explicit Try-again click; 'preparing' is already
+      // syncing; 'bypassed' was the user's choice. 'ready' can't be trusted as-is:
+      // OWLAPI mutations re-mark the deferred-sync flag, and serving these tabs
+      // from a stale triple store is exactly what this gate exists to prevent —
+      // re-check the marker on every activation and re-enter the loader if set.
+      if (cur.status === "ready") {
+        let cancelled = false;
+        void isDesktopFusekiSyncPending(projectId).then((pending) => {
+          if (cancelled || !pending) return;
+          const latest = desktopFusekiPrepRef.current;
+          if (latest.projectId === projectId && latest.status === "ready") {
+            startDesktopFusekiPrep(projectId);
+          }
+        });
+        return () => {
+          cancelled = true;
+        };
+      }
+      if (cur.status !== "idle") return;
+    }
     startDesktopFusekiPrep(projectId);
   }, [mainTab, projectId, startDesktopFusekiPrep]);
 
@@ -7479,6 +7711,31 @@ const Dashboard: React.FC<DashboardProps> = ({
       )}
     </div>
   );
+
+  // Non-blocking variant for tabs where the user can keep working while the
+  // store catches up (SPARQL/DLQuery/Reasoner) — queries just wait for indexing.
+  const renderDesktopFusekiBanner = () => {
+    if (!desktopFusekiBlocked) return null;
+    if (desktopFusekiPrep.status === "failed") {
+      return (
+        <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-400/20 text-amber-300 text-sm">
+          <AlertTriangle size={14} className="flex-shrink-0" />
+          <span>{desktopFusekiPrep.error || "The triple store could not be prepared."}</span>
+          <button
+            onClick={() => projectId && startDesktopFusekiPrep(projectId)}
+            className="ml-auto underline hover:text-amber-200 flex-shrink-0">
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 border-b border-purple-400/20 text-purple-300 text-sm">
+        <Loader2 size={14} className="animate-spin flex-shrink-0" />
+        <span>Preparing triple store — queries will run once indexing finishes.</span>
+      </div>
+    );
+  };
 
   // ── Desktop OWLAPI deferred-hierarchy resolver ────────────────────────────
   // Single responsibility: when fetchData deferred the hierarchy render because
@@ -7681,9 +7938,37 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
 
         case "CLASS_DELETED":
-          console.log("[Dashboard] 🗑️ Class deleted by remote user, refreshing hierarchy");
-          // Always do full refresh on deletion — partial refresh can leave orphaned subtrees
-          refreshClassHierarchy();
+          console.log("[Dashboard] 🗑️ Class deleted by remote user, removing from tree then refreshing");
+          {
+            // Instant local removal so the other collaborator doesn't keep seeing a
+            // ghost class (or hit a throttled/failed full refresh that looks like an error).
+            const deletedId =
+              (edit as any).nodeId ||
+              (edit as any).iri ||
+              (edit as any).id ||
+              (edit as any).metadata?.iri ||
+              "";
+            if (deletedId) {
+              const idSet = new Set<string>([String(deletedId)]);
+              const removeNodesRecursively = (nodes: TreeNode[]): TreeNode[] =>
+                nodes
+                  .filter((node) => !idSet.has(node.id))
+                  .map((node) =>
+                    node.children ? { ...node, children: removeNodesRecursively(node.children) } : node,
+                  );
+              setClassHierarchy((prev) => removeNodesRecursively(prev));
+              setSelectedItem((prev) => (prev && idSet.has(prev.id) ? null : prev));
+              setHierarchyAnnotationValues((prev) => {
+                const m = new Map(prev);
+                idSet.forEach((id) => m.delete(id));
+                return m;
+              });
+              idSet.forEach((id) => fetchedAnnotationIrisRef.current.delete(id));
+            }
+            // Full refresh still runs to reconcile with backend (parents, counts, etc.)
+            lastClassHierarchyRefreshAt.current = 0;
+            refreshClassHierarchy();
+          }
           break;
 
         case "CLASS_MODIFIED":
@@ -8969,6 +9254,13 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         console.log("[Dashboard] ✅ Server-side import triggered via uploadByFileRef");
         console.log("[Dashboard] Pending import project:", ontologyProjectId);
+
+        // On Desktop there's no fileReady WebSocket message — start the Electron-side
+        // poller directly (same as handleLoadRetry) so IMPORT_PROGRESS/IMPORT_COMPLETED
+        // reliably reach this project instead of relying on preload.js's incidental
+        // 5s global import watcher, which can miss it or stall on a non-terminal queue status.
+        const poll = (window as any).electronAPI?.pollImportStatus;
+        if (isDesktop() && poll) poll(ontologyProjectId);
 
         // The fileReady message will trigger fetchData via the message handler
         setIsExpectingFileReady(true);
@@ -10708,13 +11000,41 @@ const Dashboard: React.FC<DashboardProps> = ({
           deletedNodeHadChildren = !!(target && (target.hasChildren || (target.children && target.children.length > 0)));
         }
 
+        // Collect labels so collaborators see "deleted Foo" not a raw IRI / opaque code
+        const labelByIri: Record<string, string> = {};
+        const collectLabels = (nodes: TreeNode[]) => {
+          for (const node of nodes) {
+            if (iris.includes(node.id) && node.label) labelByIri[node.id] = node.label;
+            if (node.children) collectLabels(node.children);
+          }
+        };
+        collectLabels(classHierarchy);
+
+        // Desktop is OWLAPI-first with lazy Fuseki sync (see refreshProperties) — the fast
+        // in-memory delete path (DesktopOwlApiMutationService.tryApply) only engages once the
+        // OWLAPI cache is warm. Deleting before that falls through to a raw SPARQL DELETE
+        // against a graph that hasn't caught up yet, so the class can appear to come back.
+        // If the cache still isn't warm after the wait, abort rather than take that path.
+        if (isDesktop()) {
+          const owlApiReady = await waitForDesktopOwlApiReady(projectId);
+          if (!owlApiReady) {
+            showNotification(
+              "The ontology is still loading into memory. Please try deleting again in a moment.",
+              "warning",
+            );
+            return;
+          }
+        }
+
         if (iris.length === 1) {
           await ontologyMutationService.deleteClass(
             projectId, iris[0], user?.email || "anonymous", user?.username || "Anonymous",
+            labelByIri[iris[0]],
           );
         } else {
           await ontologyMutationService.deleteClasses(
             projectId, iris, user?.email || "anonymous", user?.username || "Anonymous",
+            labelByIri,
           );
         }
 
@@ -11424,15 +11744,89 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       setCodeViewLoading(true);
       try {
+        // Desktop is OWLAPI-first with lazy Fuseki sync — Code View's /content endpoint always
+        // exports from Fuseki (it has no OWLAPI-aware read path), so without this it can show
+        // stale content whenever OWLAPI has edits Fuseki hasn't caught up on yet (e.g. right
+        // after a class add/delete). No-ops instantly off-desktop.
+        if (isDesktop()) {
+          await ensureDesktopFusekiSync(projectId);
+        }
+
+        // Probe the paged endpoint first: it reports the total serialized size without
+        // shipping the whole document, so a 200MB ontology never crosses the wire as one
+        // JSON string. Small files fall through to the normal full-content fetch below
+        // (now a server-side cache hit, since the probe generated the cache file).
+        // Older backends without /content-page fall through too.
+        try {
+          const probe = await apiClient.get<{
+            success: boolean;
+            content: string;
+            startLine: number;
+            lineCount: number;
+            totalLines: number;
+            totalBytes: number;
+            sourceVersion?: number;
+          }>(`/api/ontology/${projectId}/content-page`, {
+            format,
+            startLine: "0",
+            lineCount: String(CODE_VIEW_PAGE_LINES),
+          });
+          if (probe?.success && Number(probe.totalBytes) > getCodeViewEditableCeiling(format)) {
+            setCodeViewContent(probe.content ?? "");
+            setCodeViewPage({
+              startLine: 0,
+              lineCount: Number(probe.lineCount) || 0,
+              totalLines: Number(probe.totalLines) || 0,
+              totalBytes: Number(probe.totalBytes) || 0,
+            });
+            setCodeViewTruncation(null);
+            setCodeViewFormat(format);
+            setCodeViewSourceVersion(probe.sourceVersion != null ? Number(probe.sourceVersion) : null);
+            setHasLocalCodeViewChanges(false);
+            codeViewDirtyRef.current = false;
+            return;
+          }
+        } catch (probeError) {
+          console.warn("[Dashboard] content-page probe unavailable, using full content path:", probeError);
+        }
+        setCodeViewPage(null);
+
         const response = await apiClient.get<{
           success: boolean;
           content: string;
           format: string;
           cached?: boolean;
           error?: string;
+          sourceVersion?: number;
         }>(`/api/ontology/${projectId}/content`, { format, forceRefresh: forceRefresh ? "true" : "false" });
         if (response.success) {
-          setCodeViewContent(response.content);
+          setCodeViewSourceVersion(response.sourceVersion != null ? Number(response.sourceVersion) : null);
+          // Guard the editor against huge documents (see codeViewTruncation).
+          // Above the format-tiered ceiling, switch to a read-only preview capped at
+          // 10k lines. Cut on a line boundary so the preview never ends mid-statement.
+          // (Legacy fallback — only reached when the backend lacks /content-page,
+          // since that probe above already returns early for large files.)
+          const codeViewMaxChars = getCodeViewEditableCeiling(format);
+          const CODE_VIEW_PREVIEW_LINES = 10_000;
+          let content = response.content ?? "";
+          if (content.length > codeViewMaxChars) {
+            const totalChars = content.length;
+            let cut = -1;
+            let previewLines = 0;
+            for (let i = 0; i < codeViewMaxChars; i++) {
+              if (content.charCodeAt(i) === 10) {
+                cut = i;
+                previewLines++;
+                if (previewLines >= CODE_VIEW_PREVIEW_LINES) break;
+              }
+            }
+            if (cut <= 0) cut = codeViewMaxChars;
+            content = content.slice(0, cut);
+            setCodeViewTruncation({ totalChars, previewLines: Math.max(previewLines, 1) });
+          } else {
+            setCodeViewTruncation(null);
+          }
+          setCodeViewContent(content);
           setCodeViewFormat(format);
           setHasLocalCodeViewChanges(false);
           codeViewDirtyRef.current = false;
@@ -11443,6 +11837,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         } else {
           console.error("[Dashboard] Code view content fetch returned success=false:", response.error);
+          setCodeViewTruncation(null);
           setCodeViewContent(
             `// Error loading ${format} content: ${response.error || "Unknown error"}\n// Try using Turtle or RDF/XML format instead.`,
           );
@@ -11451,6 +11846,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       } catch (error: any) {
         console.error("Failed to fetch code view content:", error);
         const msg = error?.message || error?.toString() || "Unknown error";
+        setCodeViewTruncation(null);
         setCodeViewContent(
           `// Error loading ${format} content: ${msg}\n// The backend may not support this format for this ontology.\n// Try using Turtle or RDF/XML format instead.`,
         );
@@ -11461,6 +11857,66 @@ const Dashboard: React.FC<DashboardProps> = ({
     },
     [projectId, codeViewFormat, codeViewContent],
   );
+
+  // Navigate to another window of a large document in paged Code View mode.
+  const loadCodeViewPage = useCallback(
+    async (startLine: number) => {
+      if (!projectId || !codeViewPage) return;
+      const clamped = Math.max(0, Math.min(startLine, Math.max(0, codeViewPage.totalLines - 1)));
+      setCodeViewLoading(true);
+      try {
+        const res = await apiClient.get<{
+          success: boolean;
+          content: string;
+          startLine: number;
+          lineCount: number;
+          totalLines: number;
+          totalBytes: number;
+          error?: string;
+        }>(`/api/ontology/${projectId}/content-page`, {
+          format: codeViewFormat,
+          startLine: String(clamped),
+          lineCount: String(CODE_VIEW_PAGE_LINES),
+        });
+        if (res?.success) {
+          setCodeViewContent(res.content ?? "");
+          setCodeViewPage({
+            startLine: clamped,
+            lineCount: Number(res.lineCount) || 0,
+            totalLines: Number(res.totalLines) || 0,
+            totalBytes: Number(res.totalBytes) || 0,
+          });
+        } else {
+          notificationService.error("Load Failed", res?.error || "Could not load this section of the file.");
+        }
+      } catch (error: any) {
+        console.error("[Dashboard] Failed to load code view page:", error);
+        notificationService.error("Load Failed", error?.message || "Could not load this section of the file.");
+      } finally {
+        setCodeViewLoading(false);
+      }
+    },
+    [projectId, codeViewFormat, codeViewPage],
+  );
+
+  // Download the complete serialized file for the current Code View format —
+  // the editing path for documents too large to edit in the browser.
+  const downloadFullCodeViewFile = useCallback(() => {
+    if (!projectId) return;
+    const extByFormat: Record<string, string> = {
+      rdfxml: "owl", turtle: "ttl", ntriples: "nt", owlxml: "owlxml",
+      manchester: "omn", functional: "ofn", jsonld: "jsonld",
+    };
+    const ext = extByFormat[codeViewFormat] || "owl";
+    const filename = `${projectId}.${ext}`;
+    const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(projectId)}?format=${codeViewFormat}`;
+    if (window.vscode) {
+      window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId, format: codeViewFormat });
+      notificationService.success("Export Started", `Downloading ${filename}`);
+    } else {
+      window.open(url, "_blank");
+    }
+  }, [projectId, codeViewFormat]);
 
   // Citation insertion handlers
   const handleCitationSelection = useCallback((citation: any) => {
@@ -11557,6 +12013,17 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      // Hard block, not just UI-disabled: the editor holds only a window/preview
+      // of a large file, and code-view save replaces the whole graph — saving
+      // here would silently delete everything outside the visible portion.
+      if (codeViewTruncation || codeViewPage) {
+        notificationService.error(
+          "Save Disabled",
+          "This file is too large to edit in Code View — only a preview is shown. Export the file, edit it externally, and re-upload.",
+        );
+        return;
+      }
+
       // ── Client-side validation before sending to backend ─────────────────
       // This catches common parse errors instantly without a round-trip.
       if (codeViewFormat === 'rdfxml' || codeViewFormat === 'owlxml') {
@@ -11632,10 +12099,25 @@ const Dashboard: React.FC<DashboardProps> = ({
           response = await apiClient.post(`/api/ontology/${projectId}/code-view-save`, {
             content: content,
             format: codeViewFormat,
+            // Checked server-side against the current public-graph version; a mismatch means
+            // the ontology changed elsewhere since this content was loaded (see the 409 handling
+            // below). Omitted entirely if we never got a version (e.g. very first load raced an
+            // older backend) — the backend treats that as "skip the check" rather than failing closed.
+            ...(codeViewSourceVersion != null ? { expectedSourceVersion: codeViewSourceVersion } : {}),
           });
         } catch (syncError: any) {
+          if (syncError?.status === 409 || syncError?.data?.conflictBlocked) {
+            const conflictMsg =
+              syncError?.data?.error ||
+              "This ontology changed since you opened Code View — reload to see the latest version before saving.";
+            console.warn("[Dashboard] code-view-save conflict:", conflictMsg);
+            setCodeViewSaveConflict(true);
+            setCodeViewSaveError(conflictMsg);
+            return;
+          }
           const errMsg = syncError?.message || "Failed to reach the save endpoint";
           console.error("[Dashboard] code-view-save request failed:", errMsg);
+          setCodeViewSaveConflict(false);
           setCodeViewSaveError(errMsg);
           return;
         }
@@ -11646,6 +12128,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           setHasLocalCodeViewChanges(false);
           setCodeViewSyntaxError(null);
           setCodeViewSaveError(null);
+          setCodeViewSaveConflict(false);
+          if (response.sourceVersion != null) {
+            setCodeViewSourceVersion(Number(response.sourceVersion));
+          }
           // The ontology file was rewritten — reload all entity views to reflect the new state
           lastClassHierarchyRefreshAt.current = 0;
           refreshClassHierarchy();
@@ -11667,16 +12153,28 @@ const Dashboard: React.FC<DashboardProps> = ({
             "",
           );
           console.error("[Dashboard] Save failed:", errMsg);
+          setCodeViewSaveConflict(!!response.conflictBlocked);
           setCodeViewSaveError(errMsg);
         }
       } catch (error: any) {
         console.error("[Dashboard] Error saving code content:", error);
+        setCodeViewSaveConflict(false);
         setCodeViewSaveError(error.message || "Failed to save content to backend");
       } finally {
         setSavingCodeView(false);
       }
     },
-    [projectId, codeViewFormat, isViewOnlyMember, setShowProPromptType, refreshClassHierarchy, refreshProperties],
+    [
+      projectId,
+      codeViewFormat,
+      codeViewSourceVersion,
+      isViewOnlyMember,
+      codeViewTruncation,
+      codeViewPage,
+      setShowProPromptType,
+      refreshClassHierarchy,
+      refreshProperties,
+    ],
   );
 
   // Handle insertion at selected location in code view
@@ -13944,6 +14442,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <button
                     onClick={() => {
                       if (isViewOnlyMember) { handleViewOnlyAction(); return; }
+                      if (codeViewPage || codeViewTruncation) {
+                        notificationService.error("Unavailable for Large Files", "Citations can't be edited in the large-file preview. Export the file to edit it.");
+                        return;
+                      }
                       setShowCitationPicker(true);
                     }}
                     className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
@@ -13955,6 +14457,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <button
                     onClick={() => {
                       if (isViewOnlyMember) { handleViewOnlyAction(); return; }
+                      if (codeViewPage || codeViewTruncation) {
+                        notificationService.error("Unavailable for Large Files", "Citations can't be edited in the large-file preview. Export the file to edit it.");
+                        return;
+                      }
                       setShowManualCitationDialog(true);
                     }}
                     className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-1"
@@ -13966,6 +14472,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <button
                     onClick={() => {
                       if (isViewOnlyMember) { handleViewOnlyAction(); return; }
+                      if (codeViewPage || codeViewTruncation) {
+                        notificationService.error("Unavailable for Large Files", "Citations can't be edited in the large-file preview. Export the file to edit it.");
+                        return;
+                      }
                       setCitationRemovalMode(!citationRemovalMode);
                       if (citationInsertionMode) {
                         setCitationInsertionMode(false);
@@ -14050,6 +14560,84 @@ const Dashboard: React.FC<DashboardProps> = ({
                       </button>
                     </div>
                   )}
+                  {!codeViewLoading && codeViewTruncation && !codeViewPage && (
+                    <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-400/30 text-amber-700 dark:text-amber-300 text-sm">
+                      <AlertTriangle size={14} className="flex-shrink-0" />
+                      <span>
+                        This ontology is {(codeViewTruncation.totalChars / (1024 * 1024)).toFixed(0)} MB in this
+                        format — too large to edit here
+                        {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
+                          ? "."
+                          : " (OWL/XML, Manchester, and Functional Syntax always require a full reparse to save, so they stay capped regardless of file size)."}
+                        {" "}Showing a read-only preview of the first{" "}
+                        {codeViewTruncation.previewLines.toLocaleString()} lines. Export the file to view or edit
+                        the full content
+                        {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
+                          ? "."
+                          : ", or switch to Turtle/RDF-XML/N-Triples/JSON-LD for a higher editable size limit."}
+                      </span>
+                      <button
+                        onClick={downloadFullCodeViewFile}
+                        className="ml-auto px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 flex-shrink-0"
+                      >
+                        Download full file
+                      </button>
+                    </div>
+                  )}
+                  {codeViewPage && (
+                    <div className="flex items-center gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-400/30 text-amber-700 dark:text-amber-300 text-sm flex-wrap">
+                      <AlertTriangle size={14} className="flex-shrink-0" />
+                      <span>
+                        {(codeViewPage.totalBytes / (1024 * 1024)).toFixed(0)} MB — read-only. Showing lines{" "}
+                        {(codeViewPage.startLine + 1).toLocaleString()}–
+                        {(codeViewPage.startLine + codeViewPage.lineCount).toLocaleString()} of{" "}
+                        {codeViewPage.totalLines.toLocaleString()}. Export the file to edit it
+                        {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
+                          ? "."
+                          : ", or switch to Turtle/RDF-XML/N-Triples/JSON-LD for a higher editable size limit."}
+                      </span>
+                      <div className="flex items-center gap-2 ml-auto flex-shrink-0">
+                        <button
+                          onClick={() => loadCodeViewPage(codeViewPage.startLine - CODE_VIEW_PAGE_LINES)}
+                          disabled={codeViewLoading || codeViewPage.startLine <= 0}
+                          className="px-2 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          ← Prev
+                        </button>
+                        <button
+                          onClick={() => loadCodeViewPage(codeViewPage.startLine + codeViewPage.lineCount)}
+                          disabled={
+                            codeViewLoading ||
+                            codeViewPage.startLine + codeViewPage.lineCount >= codeViewPage.totalLines
+                          }
+                          className="px-2 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Next →
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          max={codeViewPage.totalLines}
+                          placeholder="Go to line…"
+                          disabled={codeViewLoading}
+                          className="w-28 px-2 py-1 rounded-md border border-amber-400/40 bg-transparent text-xs"
+                          onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                            if (e.key !== "Enter") return;
+                            const line = parseInt((e.target as HTMLInputElement).value, 10);
+                            if (!Number.isFinite(line) || line < 1) return;
+                            // Align the window so the requested line is at its top.
+                            loadCodeViewPage(line - 1);
+                          }}
+                        />
+                        <button
+                          onClick={downloadFullCodeViewFile}
+                          className="px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700"
+                        >
+                          Download full file
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {codeViewLoading ? (
                     <div className="flex items-center justify-center h-64">
                       <div className="text-gray-500">Loading ontology content...</div>
@@ -14068,7 +14656,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                       onContentChange={handleCodeContentChange}
                       onSaveContent={handleSaveCodeContent}
                       syntaxError={codeViewSyntaxError}
-                      readOnly={isViewOnlyMember}
+                      readOnly={isViewOnlyMember || !!codeViewTruncation || !!codeViewPage}
                       canExport={subscription.canAccessFeature('hasExport') && !isViewOnlyMember}
                       onExportProAction={handleExportProAction}
                     />
@@ -14100,23 +14688,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             <div className="h-full flex flex-col">
               {/* Desktop: non-blocking heads-up while Fuseki spins up — users can
                   keep writing queries; execution succeeds once the store is ready. */}
-              {desktopFusekiBlocked && desktopFusekiPrep.status !== "failed" && (
-                <div className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 border-b border-purple-400/20 text-purple-300 text-sm">
-                  <Loader2 size={14} className="animate-spin flex-shrink-0" />
-                  <span>Preparing triple store — queries will run once indexing finishes.</span>
-                </div>
-              )}
-              {desktopFusekiBlocked && desktopFusekiPrep.status === "failed" && (
-                <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-400/20 text-amber-300 text-sm">
-                  <AlertTriangle size={14} className="flex-shrink-0" />
-                  <span>{desktopFusekiPrep.error || "The triple store could not be prepared."}</span>
-                  <button
-                    onClick={() => projectId && startDesktopFusekiPrep(projectId)}
-                    className="ml-auto underline hover:text-amber-200 flex-shrink-0">
-                    Try again
-                  </button>
-                </div>
-              )}
+              {renderDesktopFusekiBanner()}
               <div className="flex-1 min-h-0">
                 <SparqlPluginComponent
                   projectId={projectId}
@@ -14312,23 +14884,30 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (plugin?.component) {
           const PluginComponent = plugin.component;
           return (
-            <PluginComponent
-              projectId={projectId || ""}
-              apiBaseUrl={getBaseUrl()}
-              selectedReasoner={selectedReasoner}
-              isReasonerRunning={isReasonerRunning}
-              isReasonerLoading={isReasonerLoading}
-              reasonerResults={reasonerResults}
-              consistencyResult={consistencyResult}
-              inferredClassHierarchy={inferredClassHierarchy}
-              inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
-              inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
-              onStartReasoner={startReasoner}
-              onStopReasoner={stopReasoner}
-              onSelectReasoner={handleSelectReasoner}
-              onToggleSync={toggleReasonerSync}
-              isReasonerSynced={isReasonerSynced}
-            />
+            <div className="h-full flex flex-col">
+              {/* Desktop: reasoner reads the triple store — surface sync progress
+                  without blocking reasoner selection/config. */}
+              {renderDesktopFusekiBanner()}
+              <div className="flex-1 min-h-0">
+                <PluginComponent
+                  projectId={projectId || ""}
+                  apiBaseUrl={getBaseUrl()}
+                  selectedReasoner={selectedReasoner}
+                  isReasonerRunning={isReasonerRunning}
+                  isReasonerLoading={isReasonerLoading}
+                  reasonerResults={reasonerResults}
+                  consistencyResult={consistencyResult}
+                  inferredClassHierarchy={inferredClassHierarchy}
+                  inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
+                  inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
+                  onStartReasoner={startReasoner}
+                  onStopReasoner={stopReasoner}
+                  onSelectReasoner={handleSelectReasoner}
+                  onToggleSync={toggleReasonerSync}
+                  isReasonerSynced={isReasonerSynced}
+                />
+              </div>
+            </div>
           );
         }
 
@@ -15657,6 +16236,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         };
 
         return (
+          <div className="h-full flex flex-col">
+            {/* Desktop: DL queries execute against the triple store — surface sync
+                progress without blocking query authoring. */}
+            {renderDesktopFusekiBanner()}
+            <div className="flex-1 min-h-0">
           <DLQueryPanel
             projectId={projectId || ""}
               classHierarchy={classHierarchy}
@@ -15729,6 +16313,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             }}
             showNotification={(message, type) => showToast(message, type)}
           />
+            </div>
+          </div>
         );
       default:
         return <div className="p-6 text-gray-400">Select a tab</div>;
@@ -16119,7 +16705,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     DLQuery: { label: "DL Query", icon: Code },
     CodeView: { label: "Code View", icon: Code },
     SPARQL: { label: "SPARQL Query", icon: DatabaseZap },
-    WebVOWL: { label: "WebVOWL", icon: Network },
     SWRL: { label: "SWRL Rules", icon: Code },
     Fuzzy: { label: "Fuzzy Ontology", icon: Sparkles },
     Changes: { label: "Change Assistant", icon: GitBranch },
@@ -16651,10 +17236,20 @@ const Dashboard: React.FC<DashboardProps> = ({
       <SaveErrorDialog
         isOpen={!!codeViewSaveError}
         error={codeViewSaveError || ""}
-        onClose={() => setCodeViewSaveError(null)}
+        isConflict={codeViewSaveConflict}
+        onClose={() => {
+          setCodeViewSaveError(null);
+          setCodeViewSaveConflict(false);
+        }}
         onRetry={() => {
           setCodeViewSaveError(null);
           void handleSaveCodeContent(lastCodeViewSaveContentRef.current);
+        }}
+        onReload={() => {
+          setCodeViewSaveError(null);
+          setCodeViewSaveConflict(false);
+          setHasLocalCodeViewChanges(false);
+          void fetchCodeViewContent(codeViewFormat, false, true);
         }}
       />
       {publishConflictDialog.isOpen && (() => {
@@ -17847,12 +18442,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               console.log("[Dashboard] 🔄 Starting data fetch with force refresh...");
 
-              // Reload all ontology data with forceRefresh=true:
-              // - Skips waitForProcessingComplete (we already polled above)
-              // - Adds cache-busting timestamps to all API URLs
-              // - waitForCompletion=true shows loading screen until all data is loaded
+              // Reload all ontology data:
+              // - If hierarchy was ready: forceRefresh busts caches (wait already done).
+              // - If still warming after timeout: leave forceRefresh off and set
+              //   isExpectingFileReady so fetchData re-enters waitForProcessingComplete /
+              //   hierarchy retry instead of painting an empty tree.
               try {
-                await fetchData(targetProjectId, true, undefined, true);
+                const hierarchyReady = !!mergeWaitResult.ready;
+                if (!hierarchyReady) {
+                  setIsExpectingFileReady(true);
+                }
+                await fetchData(targetProjectId, true, undefined, hierarchyReady);
                 console.log("[Dashboard] ✅ Data fetch completed successfully");
               } catch (fetchError) {
                 console.error("[Dashboard] ❌ Failed to fetch data after merge:", fetchError);
@@ -18352,6 +18952,21 @@ const Dashboard: React.FC<DashboardProps> = ({
           setConfirmDialog({ ...confirmDialog, isOpen: false });
         }}
       />
+
+      {/* Export-in-progress pill (web/desktop). VS Code shows its own cancellable
+          progress notification from the extension host instead. */}
+      {activeExportPill && (
+        <div className="fixed bottom-4 right-4 z-[9999] flex items-center gap-3 px-4 py-2 rounded-xl bg-slate-800 border border-white/10 shadow-lg text-sm text-slate-200">
+          <Loader2 size={14} className="animate-spin text-purple-400 flex-shrink-0" />
+          <span>Exporting {activeExportPill.filename}…</span>
+          <button
+            onClick={() => cancelOntologyExport(activeExportPill.projectId)}
+            className="px-2 py-1 rounded-md bg-red-600 hover:bg-red-700 text-white text-xs font-medium"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </>
   );
 };
