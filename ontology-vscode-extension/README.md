@@ -278,4 +278,4 @@ Contributions are welcome — see the [GitHub repository](https://github.com/The
 
 ## 📄 License
 
-[GPL-3.0](./LICENSE)
+[AGPL-3.0](./LICENSE)

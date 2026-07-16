@@ -48,7 +48,7 @@ export const OpenSourceLicensesModal: React.FC<OpenSourceLicensesModalProps> = (
           <div className="bg-purple-50 border border-purple-200 rounded-lg px-4 py-3 text-sm text-purple-900">
             <span className="font-semibold">OntoCode VSCode Extension</span> is itself open-source software,
             released under the{" "}
-            <span className="font-medium">GNU General Public License v3 (GPL-3.0-or-later)</span>.
+            <span className="font-medium">GNU Affero General Public License v3 (AGPL-3.0-or-later)</span>.
             The source code will be published at{" "}
             <span className="font-medium">github.com/The-Self-Research-Institute/ontocode</span>{" "}
             when beta registration opens.
