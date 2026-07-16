@@ -273,6 +273,11 @@ function handleBrowserMessage(message: any) {
             // client-side timeout even though the backend supports far longer. Large exports
             // stream to disk when the File System Access API is available (avoids ~200MB+
             // Blob OOM in the tab). See exportService.ts / OntologyExportJobService.java.
+            //
+            // The submit-poll-download cycle can take minutes for large ontologies, so the
+            // caller (Dashboard's export button) keeps its spinner alive until it sees one of
+            // these two messages come back, instead of clearing it right after this fire-and-
+            // forget postMessage resolves.
             (async () => {
                 try {
                     await exportOntologyAsBlob(
@@ -281,11 +286,15 @@ function handleBrowserMessage(message: any) {
                         message.format,
                         message.filename,
                     );
+                    window.dispatchEvent(new MessageEvent('message', {
+                        data: { type: 'downloadOntologyComplete', requestId: message.requestId },
+                    }));
                 } catch (err) {
                     console.error('[BrowserBridge] downloadOntology failed:', err);
                     const msg = err instanceof Error ? err.message : 'Could not download ontology file';
-                    if (msg.includes('cancelled')) return;
-                    notificationService.error('Download Failed', msg);
+                    window.dispatchEvent(new MessageEvent('message', {
+                        data: { type: 'downloadOntologyFailed', requestId: message.requestId, error: msg, cancelled: msg.includes('cancelled') },
+                    }));
                 }
             })();
             break;
