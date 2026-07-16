@@ -1500,6 +1500,42 @@ public class ProjectLoadController {
     }
 
     /**
+     * Paged code-view content for large ontologies. Unlike /content (which buffers the
+     * whole serialization into one JSON string and breaks down past ~100MB), this streams
+     * only the requested line window from the code-view cache file — the client pages
+     * through a 200MB+ document without either side ever holding all of it.
+     */
+    @GetMapping("/{projectId:.+}/content-page")
+    public ResponseEntity<Map<String, Object>> getOntologyContentPage(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "rdfxml") String format,
+            @RequestParam(defaultValue = "0") long startLine,
+            @RequestParam(defaultValue = "10000") int lineCount) {
+        try {
+            long safeStart = Math.max(0, startLine);
+            int safeCount = Math.max(1, Math.min(lineCount, 20_000));
+            StorageManager.CodeViewPage page = storageManager.readCodeViewPage(projectId, format, safeStart, safeCount);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "content", page.content(),
+                    "format", format,
+                    "projectId", projectId,
+                    "startLine", page.startLine(),
+                    "lineCount", page.lineCount(),
+                    "totalLines", page.totalLines(),
+                    "totalBytes", page.totalBytes()
+            ));
+        } catch (Exception e) {
+            log.error("Failed to get paged ontology content for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to get ontology content page: " + e.getMessage()
+                    ));
+        }
+    }
+
+    /**
      * Store code view content in cache to preserve line positions.
      * POST /api/ontology/{projectId}/code-view-cache
      * This is used when the user inserts citations at specific lines.

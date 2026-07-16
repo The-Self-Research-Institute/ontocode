@@ -2290,6 +2290,24 @@ const Dashboard: React.FC<DashboardProps> = ({
   >("rdfxml");
   const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
+  // Large-file guard: CodeHighlighter materializes per-line gutter elements and
+  // scans the whole document for fold ranges, so past this size the webview
+  // freezes. Above the cap we show a read-only preview of the head of the file
+  // and point users at Export for the full content. null = not truncated.
+  // (Legacy fallback — only used when the backend lacks /content-page.)
+  const [codeViewTruncation, setCodeViewTruncation] = useState<{ totalChars: number; previewLines: number } | null>(null);
+  // Paged read-only mode for large ontologies: the backend serves 10k-line
+  // windows from disk, so neither side ever holds the whole 200MB document.
+  // null = normal full-content editing mode.
+  const [codeViewPage, setCodeViewPage] = useState<{
+    startLine: number;
+    lineCount: number;
+    totalLines: number;
+    totalBytes: number;
+  } | null>(null);
+  const CODE_VIEW_PAGE_LINES = 10_000;
+  // Above this serialized size, Code View switches to paged read-only mode.
+  const CODE_VIEW_LARGE_FILE_BYTES = 10 * 1024 * 1024;
   const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false);
   const [codeViewSyntaxError, setCodeViewSyntaxError] = useState<string | null>(null);
   // Blocking dialog for a genuine save failure (reimport into the ontology failed) — replaces
@@ -11581,6 +11599,44 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (isDesktop()) {
           await ensureDesktopFusekiSync(projectId);
         }
+
+        // Probe the paged endpoint first: it reports the total serialized size without
+        // shipping the whole document, so a 200MB ontology never crosses the wire as one
+        // JSON string. Small files fall through to the normal full-content fetch below
+        // (now a server-side cache hit, since the probe generated the cache file).
+        // Older backends without /content-page fall through too.
+        try {
+          const probe = await apiClient.get<{
+            success: boolean;
+            content: string;
+            startLine: number;
+            lineCount: number;
+            totalLines: number;
+            totalBytes: number;
+          }>(`/api/ontology/${projectId}/content-page`, {
+            format,
+            startLine: "0",
+            lineCount: String(CODE_VIEW_PAGE_LINES),
+          });
+          if (probe?.success && Number(probe.totalBytes) > CODE_VIEW_LARGE_FILE_BYTES) {
+            setCodeViewContent(probe.content ?? "");
+            setCodeViewPage({
+              startLine: 0,
+              lineCount: Number(probe.lineCount) || 0,
+              totalLines: Number(probe.totalLines) || 0,
+              totalBytes: Number(probe.totalBytes) || 0,
+            });
+            setCodeViewTruncation(null);
+            setCodeViewFormat(format);
+            setHasLocalCodeViewChanges(false);
+            codeViewDirtyRef.current = false;
+            return;
+          }
+        } catch (probeError) {
+          console.warn("[Dashboard] content-page probe unavailable, using full content path:", probeError);
+        }
+        setCodeViewPage(null);
+
         const response = await apiClient.get<{
           success: boolean;
           content: string;
@@ -11589,7 +11645,31 @@ const Dashboard: React.FC<DashboardProps> = ({
           error?: string;
         }>(`/api/ontology/${projectId}/content`, { format, forceRefresh: forceRefresh ? "true" : "false" });
         if (response.success) {
-          setCodeViewContent(response.content);
+          // Guard the editor against huge documents (see codeViewTruncation).
+          // Above 10M chars (≈10MB serialized) switch to a read-only preview,
+          // capped at 10k lines so the per-line gutter rendering stays snappy.
+          // Cut on a line boundary so the preview never ends mid-statement.
+          const CODE_VIEW_MAX_CHARS = 10 * 1024 * 1024;
+          const CODE_VIEW_PREVIEW_LINES = 10_000;
+          let content = response.content ?? "";
+          if (content.length > CODE_VIEW_MAX_CHARS) {
+            const totalChars = content.length;
+            let cut = -1;
+            let previewLines = 0;
+            for (let i = 0; i < CODE_VIEW_MAX_CHARS; i++) {
+              if (content.charCodeAt(i) === 10) {
+                cut = i;
+                previewLines++;
+                if (previewLines >= CODE_VIEW_PREVIEW_LINES) break;
+              }
+            }
+            if (cut <= 0) cut = CODE_VIEW_MAX_CHARS;
+            content = content.slice(0, cut);
+            setCodeViewTruncation({ totalChars, previewLines: Math.max(previewLines, 1) });
+          } else {
+            setCodeViewTruncation(null);
+          }
+          setCodeViewContent(content);
           setCodeViewFormat(format);
           setHasLocalCodeViewChanges(false);
           codeViewDirtyRef.current = false;
@@ -11600,6 +11680,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         } else {
           console.error("[Dashboard] Code view content fetch returned success=false:", response.error);
+          setCodeViewTruncation(null);
           setCodeViewContent(
             `// Error loading ${format} content: ${response.error || "Unknown error"}\n// Try using Turtle or RDF/XML format instead.`,
           );
@@ -11608,6 +11689,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       } catch (error: any) {
         console.error("Failed to fetch code view content:", error);
         const msg = error?.message || error?.toString() || "Unknown error";
+        setCodeViewTruncation(null);
         setCodeViewContent(
           `// Error loading ${format} content: ${msg}\n// The backend may not support this format for this ontology.\n// Try using Turtle or RDF/XML format instead.`,
         );
@@ -11618,6 +11700,66 @@ const Dashboard: React.FC<DashboardProps> = ({
     },
     [projectId, codeViewFormat, codeViewContent],
   );
+
+  // Navigate to another window of a large document in paged Code View mode.
+  const loadCodeViewPage = useCallback(
+    async (startLine: number) => {
+      if (!projectId || !codeViewPage) return;
+      const clamped = Math.max(0, Math.min(startLine, Math.max(0, codeViewPage.totalLines - 1)));
+      setCodeViewLoading(true);
+      try {
+        const res = await apiClient.get<{
+          success: boolean;
+          content: string;
+          startLine: number;
+          lineCount: number;
+          totalLines: number;
+          totalBytes: number;
+          error?: string;
+        }>(`/api/ontology/${projectId}/content-page`, {
+          format: codeViewFormat,
+          startLine: String(clamped),
+          lineCount: String(CODE_VIEW_PAGE_LINES),
+        });
+        if (res?.success) {
+          setCodeViewContent(res.content ?? "");
+          setCodeViewPage({
+            startLine: clamped,
+            lineCount: Number(res.lineCount) || 0,
+            totalLines: Number(res.totalLines) || 0,
+            totalBytes: Number(res.totalBytes) || 0,
+          });
+        } else {
+          notificationService.error("Load Failed", res?.error || "Could not load this section of the file.");
+        }
+      } catch (error: any) {
+        console.error("[Dashboard] Failed to load code view page:", error);
+        notificationService.error("Load Failed", error?.message || "Could not load this section of the file.");
+      } finally {
+        setCodeViewLoading(false);
+      }
+    },
+    [projectId, codeViewFormat, codeViewPage],
+  );
+
+  // Download the complete serialized file for the current Code View format —
+  // the editing path for documents too large to edit in the browser.
+  const downloadFullCodeViewFile = useCallback(() => {
+    if (!projectId) return;
+    const extByFormat: Record<string, string> = {
+      rdfxml: "owl", turtle: "ttl", ntriples: "nt", owlxml: "owlxml",
+      manchester: "omn", functional: "ofn", jsonld: "jsonld",
+    };
+    const ext = extByFormat[codeViewFormat] || "owl";
+    const filename = `${projectId}.${ext}`;
+    const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(projectId)}?format=${codeViewFormat}`;
+    if (window.vscode) {
+      window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId, format: codeViewFormat });
+      notificationService.success("Export Started", `Downloading ${filename}`);
+    } else {
+      window.open(url, "_blank");
+    }
+  }, [projectId, codeViewFormat]);
 
   // Citation insertion handlers
   const handleCitationSelection = useCallback((citation: any) => {
@@ -11711,6 +11853,17 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (!projectId) {
         console.error("[Dashboard] No projectId available for save");
         notificationService.error("Save Failed", "No project selected");
+        return;
+      }
+
+      // Hard block, not just UI-disabled: the editor holds only a window/preview
+      // of a large file, and code-view save replaces the whole graph — saving
+      // here would silently delete everything outside the visible portion.
+      if (codeViewTruncation || codeViewPage) {
+        notificationService.error(
+          "Save Disabled",
+          "This file is too large to edit in Code View — only a preview is shown. Export the file, edit it externally, and re-upload.",
+        );
         return;
       }
 
@@ -11833,7 +11986,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setSavingCodeView(false);
       }
     },
-    [projectId, codeViewFormat, isViewOnlyMember, setShowProPromptType, refreshClassHierarchy, refreshProperties],
+    [projectId, codeViewFormat, isViewOnlyMember, codeViewTruncation, codeViewPage, setShowProPromptType, refreshClassHierarchy, refreshProperties],
   );
 
   // Handle insertion at selected location in code view
@@ -14101,6 +14254,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <button
                     onClick={() => {
                       if (isViewOnlyMember) { handleViewOnlyAction(); return; }
+                      if (codeViewPage || codeViewTruncation) {
+                        notificationService.error("Unavailable for Large Files", "Citations can't be edited in the large-file preview. Export the file to edit it.");
+                        return;
+                      }
                       setShowCitationPicker(true);
                     }}
                     className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
@@ -14112,6 +14269,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <button
                     onClick={() => {
                       if (isViewOnlyMember) { handleViewOnlyAction(); return; }
+                      if (codeViewPage || codeViewTruncation) {
+                        notificationService.error("Unavailable for Large Files", "Citations can't be edited in the large-file preview. Export the file to edit it.");
+                        return;
+                      }
                       setShowManualCitationDialog(true);
                     }}
                     className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-1"
@@ -14123,6 +14284,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <button
                     onClick={() => {
                       if (isViewOnlyMember) { handleViewOnlyAction(); return; }
+                      if (codeViewPage || codeViewTruncation) {
+                        notificationService.error("Unavailable for Large Files", "Citations can't be edited in the large-file preview. Export the file to edit it.");
+                        return;
+                      }
                       setCitationRemovalMode(!citationRemovalMode);
                       if (citationInsertionMode) {
                         setCitationInsertionMode(false);
@@ -14207,6 +14372,74 @@ const Dashboard: React.FC<DashboardProps> = ({
                       </button>
                     </div>
                   )}
+                  {!codeViewLoading && codeViewTruncation && !codeViewPage && (
+                    <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-400/30 text-amber-700 dark:text-amber-300 text-sm">
+                      <AlertTriangle size={14} className="flex-shrink-0" />
+                      <span>
+                        This ontology is {(codeViewTruncation.totalChars / (1024 * 1024)).toFixed(0)} MB in this
+                        format — too large to edit here. Showing a read-only preview of the first{" "}
+                        {codeViewTruncation.previewLines.toLocaleString()} lines. Export the file to view or edit
+                        the full content.
+                      </span>
+                      <button
+                        onClick={downloadFullCodeViewFile}
+                        className="ml-auto px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 flex-shrink-0"
+                      >
+                        Download full file
+                      </button>
+                    </div>
+                  )}
+                  {codeViewPage && (
+                    <div className="flex items-center gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-400/30 text-amber-700 dark:text-amber-300 text-sm flex-wrap">
+                      <AlertTriangle size={14} className="flex-shrink-0" />
+                      <span>
+                        {(codeViewPage.totalBytes / (1024 * 1024)).toFixed(0)} MB — read-only. Showing lines{" "}
+                        {(codeViewPage.startLine + 1).toLocaleString()}–
+                        {(codeViewPage.startLine + codeViewPage.lineCount).toLocaleString()} of{" "}
+                        {codeViewPage.totalLines.toLocaleString()}. Export the file to edit it.
+                      </span>
+                      <div className="flex items-center gap-2 ml-auto flex-shrink-0">
+                        <button
+                          onClick={() => loadCodeViewPage(codeViewPage.startLine - CODE_VIEW_PAGE_LINES)}
+                          disabled={codeViewLoading || codeViewPage.startLine <= 0}
+                          className="px-2 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          ← Prev
+                        </button>
+                        <button
+                          onClick={() => loadCodeViewPage(codeViewPage.startLine + codeViewPage.lineCount)}
+                          disabled={
+                            codeViewLoading ||
+                            codeViewPage.startLine + codeViewPage.lineCount >= codeViewPage.totalLines
+                          }
+                          className="px-2 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Next →
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          max={codeViewPage.totalLines}
+                          placeholder="Go to line…"
+                          disabled={codeViewLoading}
+                          className="w-28 px-2 py-1 rounded-md border border-amber-400/40 bg-transparent text-xs"
+                          onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                            if (e.key !== "Enter") return;
+                            const line = parseInt((e.target as HTMLInputElement).value, 10);
+                            if (!Number.isFinite(line) || line < 1) return;
+                            // Align the window so the requested line is at its top.
+                            loadCodeViewPage(line - 1);
+                          }}
+                        />
+                        <button
+                          onClick={downloadFullCodeViewFile}
+                          className="px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700"
+                        >
+                          Download full file
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {codeViewLoading ? (
                     <div className="flex items-center justify-center h-64">
                       <div className="text-gray-500">Loading ontology content...</div>
@@ -14225,7 +14458,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                       onContentChange={handleCodeContentChange}
                       onSaveContent={handleSaveCodeContent}
                       syntaxError={codeViewSyntaxError}
-                      readOnly={isViewOnlyMember}
+                      readOnly={isViewOnlyMember || !!codeViewTruncation || !!codeViewPage}
                       canExport={subscription.canAccessFeature('hasExport') && !isViewOnlyMember}
                       onExportProAction={handleExportProAction}
                     />
