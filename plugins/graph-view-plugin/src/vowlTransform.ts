@@ -237,10 +237,21 @@ export function placeVowlNeighborhoods(
     });
   };
 
-  // Inner ring = real classes (Person, Agent, Document…) — WebVOWL's main cloud
-  const innerR = Math.max(280, Math.min(cx, cy) * 0.62);
+  // Spread hubs farther as count grows — FOAF (~10 hubs) was packing into a
+  // hairball when innerR only tracked viewport size, not hub count.
+  const hubCount = Math.max(1, classNbs.length);
+  const periCount = Math.max(1, periNbs.length);
+  const innerR = Math.max(
+    320,
+    Math.min(cx, cy) * 0.55,
+    hubCount * 110
+  );
   // Outer ring = Thing→prop→Literal stars — WebVOWL parks these on the fringe
-  const outerR = Math.max(520, Math.min(cx, cy) * 1.15);
+  const outerR = Math.max(
+    innerR + 280,
+    Math.min(cx, cy) * 1.25,
+    periCount * 55
+  );
 
   if (classNbs.length === 0 && periNbs.length > 0) {
     placeOnRing(periNbs, outerR);
