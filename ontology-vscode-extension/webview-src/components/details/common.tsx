@@ -1571,7 +1571,8 @@ export const MultiSelectSection: React.FC<{
 }> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate, onEdit, projectId, parentEntityIri }) => {
     const [isSelected, setIsSelected] = useState(false);
     
-    // Clean minimal theme colors - const themes = {
+    // Clean minimal theme colors - subtle and professional
+    const themes = {
         blue: {
             headerBg: 'bg-blue-50 border-l-2 border-l-blue-500',
             headerText: 'text-stone-700',
