@@ -256,18 +256,18 @@ export class VOWLNotationService {
    * @param isDark Whether dark mode is active
    */
   getVOWLNodeColor(nodeType: string, isDark: boolean = false): string {
-    // Light mode colors
+    // Light mode — classic WebVOWL (matches HTML harness)
     const lightColorMap: Record<string, string> = {
       'owl:Class': '#acd5f2',
       'owl:NamedIndividual': '#dcd5f7',
       'owl:ObjectProperty': '#acd5f2',
       'owl:DatatypeProperty': '#ffffcc',
       'owl:AnnotationProperty': '#e8d5f2',
-      'rdfs:Datatype': '#FFD9B3',
+      'rdfs:Datatype': '#f5d76e',
       'owl:Thing': '#ffffff',
-      'rdfs:Literal': '#FFD9B3',
+      'rdfs:Literal': '#f5d76e',
       'class': '#acd5f2',
-      'datatype': '#FFD9B3',
+      'datatype': '#f5d76e',
       'individual': '#dcd5f7',
       'property': '#acd5f2',
       'objectProperty': '#acd5f2',
