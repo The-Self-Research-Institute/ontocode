@@ -713,7 +713,7 @@ public class OntologyQueryService {
      *
      * Small (<500K triples):
      *   Full OWL-DL query with equivalentClass/intersectionOf branches and complex
-     *   hasChildren — correct for Protégé-style defined-class hierarchies. Fast enough
+     *   hasChildren — correct for defined-class hierarchies. Fast enough
      *   at this scale (path traversals complete in <5s).
      */
     @Cacheable(value = "classChildren", key = "#projectId + '_' + #parentIri + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
@@ -2423,7 +2423,7 @@ public class OntologyQueryService {
         // Covers: someValuesFrom (existential), allValuesFrom (universal),
         //         onClass (qualified cardinality), hasValue (nominals).
         // Also traverses the blank-node restriction up to its owning named class
-        // via SubClassOf or EquivalentClass — that is what Protégé "Usage" shows.
+        // via SubClassOf or EquivalentClass — that Usage should show.
         String restrictionQuery = PREFIXES + """
             SELECT DISTINCT ?ownerClass ?ownerLabel ?onProp ?propLabel ?restrictionType WHERE {
               {

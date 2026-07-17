@@ -2,6 +2,6 @@
  * OWL Reasoner Plugin Entry Point
  */
 
-export { ProtegeReasonerPlugin as default } from './ProtegeReasonerPlugin';
-export { ProtegeReasonerPlugin as ReasonerPlugin } from './ProtegeReasonerPlugin';
+export { ReasonerPluginView as default } from './ReasonerPluginView';
+export { ReasonerPluginView as ReasonerPlugin } from './ReasonerPluginView';
 export * from './types';

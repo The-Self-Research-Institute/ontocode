@@ -319,7 +319,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
     const newResolutions = new Map(conflictResolutions);
     newResolutions.set(key, action);
 
-    // Cascade to all descendant subclass / sub-property conflicts (Protégé-style)
+    // Cascade to all descendant subclass / sub-property conflicts
     if (analysisResult) {
       const hierarchy = {
         ...analysisResult.classHierarchy,

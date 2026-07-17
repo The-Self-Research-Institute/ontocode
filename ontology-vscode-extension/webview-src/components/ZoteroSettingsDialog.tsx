@@ -82,7 +82,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
       });
       if (!resolvedUserId) {
         setTestResult('error');
-        setTestError('Invalid API key — could not retrieve your User ID from Zotero.');
+        setTestError('Invalid API key — could not retrieve your user ID.');
         setSaving(false);
         return;
       }
@@ -121,7 +121,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
       const resolvedUserId = await sci2CodeBrowserService.fetchUserIdFromApiKey(apiKey.trim());
       if (!resolvedUserId) {
         setTestResult('error');
-        setTestError('Invalid API key — could not retrieve your User ID from Zotero.');
+        setTestError('Invalid API key — could not retrieve your user ID.');
         setTesting(false);
         return;
       }
@@ -176,7 +176,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div className="flex items-center gap-2">
             <Settings className="text-blue-600" size={24} />
-            <h2 className="text-xl font-bold text-gray-800">Zotero / Sci2Code Settings</h2>
+            <h2 className="text-xl font-bold text-gray-800">Citation Library Settings</h2>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition-colors">
             <X size={20} className="text-gray-500" />
@@ -187,7 +187,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
           {/* Instructions */}
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-            <p className="font-medium mb-1">How to get your Zotero API key:</p>
+            <p className="font-medium mb-1">How to get your API key:</p>
             <ol className="list-decimal ml-4 space-y-1">
               <li>
                 Go to{' '}
@@ -197,7 +197,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
                   rel="noopener noreferrer"
                   className="text-blue-600 underline inline-flex items-center gap-1"
                 >
-                  Zotero API Settings <ExternalLink size={12} />
+                  API key settings <ExternalLink size={12} />
                 </a>{' '}
                 and create a new key with Read access.
               </li>
@@ -208,13 +208,13 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
           {/* API Key */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Zotero API Key <span className="text-red-500">*</span>
+              API Key <span className="text-red-500">*</span>
             </label>
             <input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Enter your Zotero API key"
+              placeholder="Enter your citation library API key"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
@@ -248,7 +248,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
                 type="text"
                 value={groupId}
                 onChange={(e) => setGroupId(e.target.value)}
-                placeholder="Enter your Zotero Group ID"
+                placeholder="Enter your group ID"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
@@ -258,7 +258,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
           {testResult === 'success' && (
             <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
               <CheckCircle size={16} />
-              <span>Connection successful! Your Zotero library is accessible.</span>
+              <span>Connection successful! Your citation library is accessible.</span>
             </div>
           )}
           {testResult === 'error' && (

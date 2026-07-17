@@ -1,6 +1,6 @@
 /**
- * Protégé-Style Reasoner Plugin
- * Complete implementation matching desktop Protégé reasoner functionality
+ * OWL Reasoner Plugin
+ * OWL reasoner UI for consistency checking, classification, and inference
  * Includes explanation tooltips, class hierarchy view, and full reasoning features
  */
 
@@ -230,7 +230,7 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
   );
 };
 
-export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
+export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   projectId,
   apiBaseUrl = '',
   selectedReasoner: dashboardSelectedReasoner,
@@ -256,7 +256,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   
   // Ensure the API base URL doesn't end with a slash
   const normalizedApiBaseUrl = resolvedApiBaseUrl.replace(/\/$/, '');
-  // console.log('[ProtegeReasonerPlugin] Using API base URL:', normalizedApiBaseUrl);
+  // console.log('[ReasonerPluginView] Using API base URL:', normalizedApiBaseUrl);
   
   // Use Dashboard state if provided, otherwise use local state
   const usingDashboardState = !!dashboardStartReasoner;
@@ -375,7 +375,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         setInferredAxiomsTotal(data.totalInferredAxioms || data.axioms.length);
       }
     } catch (err) {
-      console.warn('[ProtegeReasonerPlugin] Failed to fetch inferred axioms:', err);
+      console.warn('[ReasonerPluginView] Failed to fetch inferred axioms:', err);
     }
   }, [projectId, normalizedApiBaseUrl]);
 
@@ -410,7 +410,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       };
       const reasonerType = reasonerMap[selectedReasoner.toLowerCase()] || 'HERMIT';
 
-      console.log('[ProtegeReasonerPlugin] Starting reasoner:', {
+      console.log('[ReasonerPluginView] Starting reasoner:', {
         task,
         reasonerType,
         endpoint: `${normalizedApiBaseUrl}${endpoint}`,
@@ -424,16 +424,16 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         body: JSON.stringify({ reasonerType })
       });
 
-      console.log('[ProtegeReasonerPlugin] Response status:', response.status);
+      console.log('[ReasonerPluginView] Response status:', response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('[ProtegeReasonerPlugin] Error response:', errorText);
+        console.error('[ReasonerPluginView] Error response:', errorText);
         throw new Error(`Reasoning failed: ${response.statusText}. ${errorText}`);
       }
 
       let result = await response.json();
-      console.log('[ProtegeReasonerPlugin] Reasoning result:', result);
+      console.log('[ReasonerPluginView] Reasoning result:', result);
 
       // Handle async classify response (taskId-based polling)
       if (result.taskId && task === 'classification') {
@@ -496,7 +496,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
       setReasonerStatus(`${task} completed successfully`);
     } catch (error) {
-      console.error('[ProtegeReasonerPlugin] Reasoning error:', error);
+      console.error('[ReasonerPluginView] Reasoning error:', error);
       setReasonerStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLocalIsRunning(false);
@@ -1005,7 +1005,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
   return (
     <div className={`flex flex-col h-full ${isDark ? 'bg-gray-900 text-gray-100' : 'bg-white text-gray-900'}`}>
-      {/* Protégé-style Toolbar */}
+      {/* Toolbar */}
       <div className={`flex items-center gap-2 px-3 py-2 border-b flex-shrink-0 ${
         isDark ? 'border-gray-700 bg-gray-800' : 'border-gray-300 bg-gray-50'
       }`}>
@@ -1246,7 +1246,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
             </div>
           </div>
         ) : (
-          /* Results View - Protégé Style Layout */
+          /* Results View Layout */
           <>
             {/* Left Panel - Consistency & Stats */}
             <div className={`w-80 border-r flex flex-col overflow-hidden ${
@@ -1773,4 +1773,4 @@ const getStyles = (isDark: boolean): { [key: string]: React.CSSProperties } => (
   }
 });
 
-export default ProtegeReasonerPlugin;
+export default ReasonerPluginView;

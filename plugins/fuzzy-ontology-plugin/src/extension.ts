@@ -1,6 +1,6 @@
 /**
  * Fuzzy Ontology Plugin - Main Extension Entry Point
- * Advanced fuzzy ontology support beyond Protege
+ * Advanced fuzzy ontology support
  */
 
 import { FuzzyOntology, FuzzyConcept, FuzzyIndividual } from './core/FuzzyOntology';

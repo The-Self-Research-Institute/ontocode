@@ -71,12 +71,12 @@
       },
       {
         "command": "ontocode.configureZotero",
-        "title": "OntoCode: Configure Zotero Integration",
+        "title": "OntoCode: Configure Citation Library",
         "category": "OntoCode"
       },
       {
         "command": "ontocode.testZoteroConnection",
-        "title": "OntoCode: Test Zotero Connection",
+        "title": "OntoCode: Test Citation Library Connection",
         "category": "OntoCode"
       },
       {
@@ -155,14 +155,14 @@
         "ontocode.zotero.apiKey": {
           "type": "string",
           "default": "",
-          "description": "Your Zotero API key (get from https://www.zotero.org/settings/keys)",
-          "markdownDescription": "Your Zotero API key. Get one from [Zotero Settings](https://www.zotero.org/settings/keys)"
+          "description": "Citation library API key",
+          "markdownDescription": "Citation library API key used for reference lookup"
         },
         "ontocode.zotero.userId": {
           "type": "string",
           "default": "",
-          "description": "Your Zotero user ID (found in API key page)",
-          "markdownDescription": "Your Zotero user ID. Found on your [API keys page](https://www.zotero.org/settings/keys)"
+          "description": "Citation library user ID",
+          "markdownDescription": "Citation library user ID used for reference lookup"
         },
         "ontocode.zotero.libraryType": {
           "type": "string",
@@ -171,12 +171,12 @@
             "group"
           ],
           "default": "user",
-          "description": "Type of Zotero library (user or group)"
+          "description": "Citation library type (user or group)"
         },
         "ontocode.zotero.groupId": {
           "type": "string",
           "default": "",
-          "description": "Group ID if using a group library"
+          "description": "Group ID if using a group citation library"
         }
       }
     }

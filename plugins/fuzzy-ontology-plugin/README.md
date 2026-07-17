@@ -1,12 +1,8 @@
 # Fuzzy Ontology Plugin for OntoCode
 
-**Advanced fuzzy ontology support beyond Protege** - Implements cutting-edge fuzzy logic reasoning, visualization, and querying based on recent research in fuzzy ontology embeddings.
+Fuzzy logic reasoning, visualization, and querying for ontologies.
 
 ## Features
-
-### 🎯 Beyond Protege
-
-This plugin provides capabilities that go beyond Protege's fuzzy ontology plugin:
 
 1. **Advanced Membership Functions**
    - Triangular, Trapezoidal, Gaussian, Sigmoid, Bell-shaped
@@ -255,19 +251,6 @@ fuzzy-ontology-plugin/
 ├── package.json
 └── README.md
 ```
-
-## Comparison with Protege
-
-| Feature | Protege Fuzzy Plugin | OntoCode Fuzzy Plugin |
-|---------|---------------------|----------------------|
-| T-norms | Limited | Product, Gödel, Łukasiewicz |
-| T-conorms | Limited | Probabilistic, Gödel, Łukasiewicz |
-| Membership Functions | Basic | 5 types (Triangular, Trapezoidal, Gaussian, Sigmoid, Bell) |
-| Visualization | Static | Interactive (Heatmaps, Radar, Trees) |
-| Query Language | No | Full SQL-like DSL |
-| Alpha-embeddings | No | Yes (research-based) |
-| Programmatic API | No | Full TypeScript API |
-| Real-time Reasoning | No | Yes (compositional) |
 
 ## Contributing
 

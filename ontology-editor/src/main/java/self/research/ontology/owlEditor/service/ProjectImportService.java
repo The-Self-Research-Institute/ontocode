@@ -487,7 +487,7 @@ public class ProjectImportService {
                 // Continue anyway - sanitization is best-effort
             }
 
-            // Protégé-style desktop: parse OWLAPI from disk, mark ready immediately, sync Fuseki later.
+            // desktop: parse OWLAPI from disk, mark ready immediately, sync Fuseki later.
             if (owlApiFirst && desktopOntologyLoader != null) {
                 if (completeOwlApiFirstImport(projectId, owlFile, filename, format, importStart, importMarkedCompleted)) {
                     return;
@@ -1332,7 +1332,7 @@ public class ProjectImportService {
 
     /**
      * Resolve an import declaration to a temporary file. This supports the
-     * Protégé-style cases that are safe on the server: HTTP(S), file:// paths
+     * cases that are safe on the server: HTTP(S), file:// paths
      * inside the project directory, and relative/bare filenames found under the
      * project directory. Imports outside the project directory remain declared
      * only; we do not read arbitrary server files.
@@ -1592,7 +1592,7 @@ public class ProjectImportService {
     }
 
     /**
-     * Protégé-style import: persist file, warm OWLAPI, complete without blocking on Fuseki.
+     * import: persist file, warm OWLAPI, complete without blocking on Fuseki.
      * Fuseki sync runs lazily when SPARQL/graph features need it.
      */
     private boolean completeOwlApiFirstImport(String projectId,
@@ -1601,7 +1601,7 @@ public class ProjectImportService {
                                              RDFFormat format,
                                              long importStart,
                                              AtomicBoolean importMarkedCompleted) throws IOException {
-        log.info("[Import {}] OWLAPI-first desktop import (Protégé-style)", projectId);
+        log.info("[Import {}] OWLAPI-first desktop import", projectId);
 
         Map<String, Object> warmMeta = new HashMap<>();
         warmMeta.put("progress", 40);

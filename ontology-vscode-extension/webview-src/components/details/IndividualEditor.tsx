@@ -762,7 +762,7 @@ const IndividualEditor: React.FC<{
               </div>
             </div>
 
-            {/* Add Assertion Dialog (Protégé-style) */}
+            {/* Add Assertion Dialog */}
             <PropertyAssertionDialog
               isOpen={isAddingAssertion}
               title={
@@ -855,8 +855,8 @@ const IndividualEditor: React.FC<{
         />
       )}
 
-      {/* Protégé-style selector for same/different individuals */}
-      {/* Protégé-style type selector */}
+      {/* selector for same/different individuals */}
+      {/* type selector */}
       {typeDialogOpen && (
         <ClassExpressionDialog
           isOpen={true}

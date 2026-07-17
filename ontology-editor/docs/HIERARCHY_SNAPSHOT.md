@@ -1,4 +1,4 @@
-# Protégé-parity hierarchy snapshots (cloud web)
+# hierarchy snapshots (cloud web)
 
 ## Overview
 

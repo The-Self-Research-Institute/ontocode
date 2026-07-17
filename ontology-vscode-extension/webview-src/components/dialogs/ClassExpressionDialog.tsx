@@ -62,9 +62,9 @@ interface ClassExpressionDialogProps {
 export type TabType = 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
 
 /**
- * ClassExpressionDialog - Protégé desktop-style class expression builder
+ * ClassExpressionDialog -  desktop-style class expression builder
  *
- * Matches Protégé desktop UI with:
+ * Matches desktop UI with:
  * - EntityHierarchy for all tree views (classes, properties)
  * - Asserted/Inferred toggles
  * - Compact two-panel layouts for restrictions

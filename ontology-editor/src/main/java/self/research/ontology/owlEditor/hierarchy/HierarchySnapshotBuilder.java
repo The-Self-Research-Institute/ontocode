@@ -11,10 +11,10 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Protégé-parity asserted class hierarchy (structural reasoner for top-level,
+ * asserted class hierarchy (structural reasoner for top-level,
  * explicit subClassOf axioms for children). Shared by desktop warm path and cloud snapshots.
  *
- * <p>The {@code importsScope} parameter mirrors Protégé's View menu:
+ * <p>The {@code importsScope} parameter controls imported ontology visibility:
  * <ul>
  *   <li>{@link Imports#EXCLUDED} — "Show only the active ontology" (default)</li>
  *   <li>{@link Imports#INCLUDED} — "Show the imports closure of the active ontology"</li>
@@ -60,7 +60,7 @@ public class HierarchySnapshotBuilder {
     }
 
     /**
-     * Fast-open path: asserted hierarchy roots (Protégé parity without reasoner precompute).
+     * Fast-open path: asserted hierarchy roots (without reasoner precompute).
      * A named class is top-level when it has no asserted named superclass other than owl:Thing.
      */
     public int countTopLevelAsserted(OWLOntology ont) {
@@ -256,7 +256,7 @@ public class HierarchySnapshotBuilder {
     }
 
     /**
-     * Precomputes direct children for every named class parent (Protégé asserted hierarchy).
+     * Precomputes direct children for every named class parent .
      */
     public Map<String, List<OntologyDto.TreeNode>> buildChildrenIndex(OWLOntology ont, OWLReasoner reasoner) {
         Map<OWLClass, Set<OWLClass>> childrenIndex = assertedChildrenIndex(ont, Imports.EXCLUDED);
@@ -274,7 +274,7 @@ public class HierarchySnapshotBuilder {
     }
 
     /**
-     * One-pass parent -&gt; children index over the WHOLE ontology (Protégé asserted semantics:
+     * One-pass parent -&gt; children index over the WHOLE ontology (asserted semantics:
      * direct subClassOf plus equivalentClass/intersectionOf-derived membership, same as
      * {@link #structuralNamedParents} inverted). Building this once per request and reusing it
      * for every rendered node is O(totalClasses) total instead of O(totalClasses) PER rendered
