@@ -196,12 +196,19 @@ const isRealClassNode = (id: string, nodeById: Map<string, OntologyNode>): boole
   return !!n && n.type === 'class' && !isThingIri(id) && n.label !== 'Thing' && !id.includes(VOWL_CLONE_SEPARATOR);
 };
 
-// VOWL neighborhood star:
-//   INNER = Literals / Things (grow radius with count so labels don't stack)
-//   OUTER = subclasses
-const PROP_RING_BASE = 130;
-const PROP_MIN_CHORD = 110; // room for property chips between Literals
-const SUBCLASS_GAP = 110;   // subclasses sit outside the property star
+// ── Balloon / radial-tree geometry (Melançon & Herman) ───────────────────────
+// Screenshot-#1 look comes from short spokes + wedge packing, NOT from global
+// stress that pulls every linked hub into one hairball.
+//
+// Child i of a node with wedge ω and subtree radii rᵢ sits at:
+//   R ≥ rᵢ / sin(αᵢ / 2)     where αᵢ = ω · sᵢ / Σs
+// Equal children (pure VOWL star): R = r / sin(π/n), chord ≥ 2·CLASS_NODE_R.
+const PROP_RING_BASE = 78;
+const PROP_MIN_CHORD = 72;
+const SUBCLASS_GAP = 52;
+const CLASS_NODE_R = 28;
+const HUB_PAD = 48;
+const LITERAL_BOX_HALF = 42; // half-width of yellow datatype box
 
 /** Radius so n items on a circle keep ≈minChord between neighbors. */
 function starRadiusForCount(count: number, base = PROP_RING_BASE, minChord = PROP_MIN_CHORD): number {
@@ -210,6 +217,36 @@ function starRadiusForCount(count: number, base = PROP_RING_BASE, minChord = PRO
   return Math.max(base, need);
 }
 
+/** Half-width of a property chip label at ~11px font (matches renderer). */
+function chipHalfWidth(label: string | undefined): number {
+  return Math.min(96, String(label ?? '').length * 2.8 + 10);
+}
+
+/** Balloon ring: children of radii rᵢ need R so adjacent balloons don't overlap. */
+function balloonRingRadius(childRadii: number[]): number {
+  const n = childRadii.length;
+  if (n === 0) return 0;
+  if (n === 1) return childRadii[0] + CLASS_NODE_R + 8;
+  // Equal angular slots: R · sin(π/n) ≥ (rᵢ + rᵢ₊₁) / 2  →  R ≥ (rᵢ+rᵢ₊₁)/(2·sin(π/n))
+  let need = 0;
+  for (let i = 0; i < n; i++) {
+    const a = childRadii[i];
+    const b = childRadii[(i + 1) % n];
+    need = Math.max(need, (a + b) / (2 * Math.sin(Math.PI / n)));
+  }
+  // Also clear the parent's own body
+  need = Math.max(need, CLASS_NODE_R + Math.max(...childRadii) + 8);
+  return need;
+}
+
+/** Unit vector that never collapses to (0,0) — exact overlaps must still separate. */
+function safeUnit(dx: number, dy: number): { ux: number; uy: number; dist: number } {
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-6) return { ux: 1, uy: 0, dist: 0 };
+  return { ux: dx / dist, uy: dy / dist, dist };
+}
+
+/** Even angular lattice: θᵢ = θ₀ + 2π·i/n (never spin individuals off-lattice). */
 function placeEvenCircle(
   ids: string[],
   cx: number,
@@ -227,8 +264,51 @@ function placeEvenCircle(
 }
 
 /**
- * VOWL-style star around one class: properties inside, subclasses outside.
- * Ring size grows with property count so chips/Literals don't overlap.
+ * Grow a ring radius until every lattice point clears `occupied` by minDist.
+ * Preserves even angles — WebVOWL look — instead of scattering individuals.
+ */
+function placeEvenCircleClear(
+  ids: string[],
+  cx: number,
+  cy: number,
+  baseRadius: number,
+  positions: Map<string, { x: number; y: number }>,
+  occupied: Map<string, { x: number; y: number }>,
+  minDist: number,
+  startAngle = -Math.PI / 2
+): number {
+  const n = ids.length;
+  if (n === 0) return baseRadius;
+
+  const clears = (r: number): boolean => {
+    for (let i = 0; i < n; i++) {
+      const angle = startAngle + (i / n) * Math.PI * 2;
+      const x = cx + Math.cos(angle) * r;
+      const y = cy + Math.sin(angle) * r;
+      for (const [oid, p] of occupied) {
+        if (ids.includes(oid)) continue;
+        if (Math.hypot(x - p.x, y - p.y) < minDist) return false;
+      }
+    }
+    return true;
+  };
+
+  let r = baseRadius;
+  for (let k = 0; k < 12 && !clears(r); k++) r *= 1.18;
+  placeEvenCircle(ids, cx, cy, r, positions, startAngle);
+  return r;
+}
+
+/**
+ * Balloon star (Melançon–Herman radial tree) around one class.
+ *
+ * Subclasses get equal angular slots on a short outer ring whose radius is
+ * derived from child-balloon radii so spokes stay short and even — the #1 look.
+ * Literals/Things sit on an INNER ring at mid-angles between subclass spokes
+ * (or a side lattice when alone), never competing for the same ray.
+ *
+ * @param outwardAngle parent→this angle; child i=0 continues outward.
+ * @param wedge angular budget for this subtree (2π at roots).
  */
 function placeVowlClassStar(
   classId: string,
@@ -238,7 +318,9 @@ function placeVowlClassStar(
   edges: OntologyEdge[],
   nodeById: Map<string, OntologyNode>,
   positions: Map<string, { x: number; y: number }>,
-  placedClasses: Set<string>
+  placedClasses: Set<string>,
+  outwardAngle = -Math.PI / 2,
+  wedge = Math.PI * 2
 ): void {
   if (placedClasses.has(classId)) return;
   placedClasses.add(classId);
@@ -251,8 +333,6 @@ function placeVowlClassStar(
     if (!other || positions.has(other)) continue;
     const n = nodeById.get(other);
     if (!n) continue;
-    // Only Literals / Things sit on the property ring. Other classes stay independent
-    // hubs (VOWL) — claiming them here left their subclass trees unplaced.
     if (n.type === 'datatype' || isThingIri(other) || n.label === 'Thing' || other.includes(VOWL_CLONE_SEPARATOR)) {
       inner.push(other);
     }
@@ -260,7 +340,6 @@ function placeVowlClassStar(
   const uniqInner = [...new Set(inner)];
   const subclasses = (childrenOf.get(classId) || []).filter(id => !placedClasses.has(id));
 
-  // How many properties share each inner endpoint (Document↔Thing can be 5+)
   const innerDegree = new Map<string, number>();
   for (const e of edges) {
     if (e.type !== 'propertyRelation') continue;
@@ -269,80 +348,142 @@ function placeVowlClassStar(
     innerDegree.set(other, (innerDegree.get(other) ?? 0) + 1);
   }
 
-  const propR = starRadiusForCount(Math.max(1, uniqInner.length));
-  const subclassR = propR + SUBCLASS_GAP;
+  // Local child glyph radii only — grandchildren get their own short stars.
+  // Full subtree disks (true Melançon) explode on deep BFO chains; #1 does not.
+  const useRs = subclasses.map(() => CLASS_NODE_R + 16);
+  // Literal boxes are ~84px wide: adjacent boxes on the ring need chord ≥ 96
+  // or the yellow boxes (and their green chips) overlap side by side.
+  const propR = starRadiusForCount(Math.max(1, uniqInner.length), PROP_RING_BASE, 96) +
+    (uniqInner.length > 0 ? LITERAL_BOX_HALF * 0.35 : 0);
+  let subclassR = subclasses.length > 0
+    ? Math.max(propR + SUBCLASS_GAP, balloonRingRadius(useRs))
+    : propR;
 
-  // OUTER subclasses first — reserve their angles so Thing/Literals don't land
-  // on the same spoke (Document had Thing + PersonalProfileDocument both at bottom).
-  const subclassStart = -Math.PI / 2;
-  placeEvenCircle(subclasses, x, y, subclassR, positions, subclassStart);
-  const blockedAngles = subclasses.map((_, i) => {
-    const n = Math.max(1, subclasses.length);
-    return subclassStart + (i / n) * Math.PI * 2;
-  });
-
-  const angleClear = (a: number): number => {
-    let best = Math.PI;
-    for (const b of blockedAngles) {
-      let d = Math.abs(a - b) % (Math.PI * 2);
-      if (d > Math.PI) d = Math.PI * 2 - d;
-      best = Math.min(best, d);
-    }
-    return best;
-  };
-
-  // INNER: pick angles that stay clear of subclass spokes
-  if (uniqInner.length > 0) {
-    const usedAngles: number[] = [];
-    // Prefer side slots (left/right) for multi-edge Things so curves don't
-    // run through the subclass stack under the hub.
-    const candidates: number[] = [];
-    for (let i = 0; i < 24; i++) candidates.push(-Math.PI + (i / 24) * Math.PI * 2);
-
-    const pickAngle = (preferSide: boolean): number => {
-      let best = candidates[0];
-      let bestScore = -Infinity;
-      for (const a of candidates) {
-        const clear = angleClear(a);
-        let neighbor = Math.PI;
-        for (const u of usedAngles) {
-          let d = Math.abs(a - u) % (Math.PI * 2);
-          if (d > Math.PI) d = Math.PI * 2 - d;
-          neighbor = Math.min(neighbor, d);
-        }
-        // Prefer horizontal-ish for multi-property Things (π and 0)
-        const sideBias = preferSide ? Math.cos(a) * Math.cos(a) : 0;
-        const score = clear * 2 + neighbor + sideBias * 0.8;
-        if (score > bestScore) {
-          bestScore = score;
-          best = a;
-        }
-      }
-      usedAngles.push(best);
-      blockedAngles.push(best);
-      return best;
+  if (subclasses.length > 0) {
+    // Equal slots inside the available wedge (full 2π at roots → classic star).
+    const n = subclasses.length;
+    const slot = wedge / n;
+    const placeAt = (r: number) => {
+      subclasses.forEach((id, i) => {
+        const angle = outwardAngle - wedge / 2 + slot * (i + 0.5);
+        positions.set(id, { x: x + Math.cos(angle) * r, y: y + Math.sin(angle) * r });
+      });
     };
+    placeAt(subclassR);
+    // Grow only if a lattice point collides with a foreign placed node
+    for (let k = 0; k < 10; k++) {
+      let clear = true;
+      for (const id of subclasses) {
+        const p = positions.get(id)!;
+        for (const [oid, op] of positions) {
+          if (oid === id || subclasses.includes(oid) || oid === classId) continue;
+          if (Math.hypot(p.x - op.x, p.y - op.y) < CLASS_NODE_R * 2 + 6) {
+            clear = false;
+            break;
+          }
+        }
+        if (!clear) break;
+      }
+      if (clear) break;
+      subclassR *= 1.14;
+      placeAt(subclassR);
+    }
+  }
 
-    // Place high-degree Things first so they claim clear side angles
+  // Inner literals: mid-angles between subclass spokes (interleaved), short ring.
+  if (uniqInner.length > 0) {
     const ordered = [...uniqInner].sort(
       (a, b) => (innerDegree.get(b) ?? 1) - (innerDegree.get(a) ?? 1)
     );
-    for (const id of ordered) {
-      const deg = innerDegree.get(id) ?? 1;
-      const preferSide = deg >= 2;
-      const angle = pickAngle(preferSide);
-      const r = deg >= 3 ? propR + 70 + deg * 22 : propR;
-      positions.set(id, { x: x + Math.cos(angle) * r, y: y + Math.sin(angle) * r });
+    const nSub = Math.max(1, subclasses.length);
+    const innerStart =
+      subclasses.length > 0
+        ? outwardAngle - wedge / 2 + wedge / (2 * nSub)
+        : outwardAngle + Math.PI / 2;
+    const maxDeg = Math.max(1, ...ordered.map(id => innerDegree.get(id) ?? 1));
+    // Spoke must FIT its chip: L ≥ classR + chip width + literal clearance.
+    // "has observation temporal interval" needs a ~230px spoke; "age" ~120px.
+    let maxChipHalf = 20;
+    for (const e of edges) {
+      if (e.type !== 'propertyRelation') continue;
+      const other = e.from === classId ? e.to : e.to === classId ? e.from : null;
+      if (!other || !uniqInner.includes(other)) continue;
+      maxChipHalf = Math.max(maxChipHalf, chipHalfWidth(e.label));
     }
+    const chipFitR = CLASS_NODE_R + maxChipHalf * 1.35 + 48;
+    // Keep subclasses OUTSIDE the chip-fit literal ring
+    if (subclasses.length > 0 && subclassR < chipFitR + SUBCLASS_GAP) {
+      subclassR = chipFitR + SUBCLASS_GAP;
+      const nSub = subclasses.length;
+      const slot = wedge / nSub;
+      subclasses.forEach((id, i) => {
+        const angle = outwardAngle - wedge / 2 + slot * (i + 0.5);
+        positions.set(id, { x: x + Math.cos(angle) * subclassR, y: y + Math.sin(angle) * subclassR });
+      });
+    }
+    const innerR = Math.max(
+      chipFitR,
+      Math.min(
+        subclassR - CLASS_NODE_R - 10,
+        maxDeg >= 3 ? propR + 28 + maxDeg * 10 : propR
+      )
+    );
+    const n = ordered.length;
+    // Two-radius stagger: adjacent literal boxes alternate near/far rings so
+    // wide yellow boxes + green chips never sit shoulder-to-shoulder.
+    const rNear = Math.max(54, innerR);
+    const rFar = n >= 4 ? rNear + LITERAL_BOX_HALF + 22 : rNear;
+    ordered.forEach((id, i) => {
+      const angle = subclasses.length > 0
+        ? innerStart + (i / n) * wedge
+        : innerStart + (i / n) * Math.PI * 2;
+      const r = i % 2 === 0 ? rNear : rFar;
+      positions.set(id, { x: x + Math.cos(angle) * r, y: y + Math.sin(angle) * r });
+    });
   }
 
   for (const childId of subclasses) {
     const cp = positions.get(childId)!;
-    placeVowlClassStar(childId, cp.x, cp.y, childrenOf, edges, nodeById, positions, placedClasses);
+    const childOut = Math.atan2(cp.y - y, cp.x - x);
+    const n = Math.max(1, subclasses.length);
+    const childWedge = Math.min(wedge / n, Math.PI * 1.15);
+    placeVowlClassStar(
+      childId, cp.x, cp.y, childrenOf, edges, nodeById, positions, placedClasses,
+      childOut, childWedge
+    );
   }
 }
 
-/** Estimate how far a class star reaches (Literals + Things + subclass ring). */
+/**
+ * Isotropic core radius: literal/Thing ring + box margin. This part of a hub
+ * extends in EVERY direction, so two hub centers may never be closer than the
+ * sum of their cores.
+ */
+function estimateClassCoreRadius(
+  classId: string,
+  edges: OntologyEdge[],
+  nodeById: Map<string, OntologyNode>
+): number {
+  let inner = 0;
+  let maxChipHalf = 20;
+  for (const e of edges) {
+    if (e.type !== 'propertyRelation') continue;
+    const other = e.from === classId ? e.to : e.to === classId ? e.from : null;
+    if (!other) continue;
+    const n = nodeById.get(other);
+    if (!n) continue;
+    if (n.type === 'datatype' || isThingIri(other) || n.label === 'Thing' || other.includes(VOWL_CLONE_SEPARATOR)) {
+      inner += 1;
+      maxChipHalf = Math.max(maxChipHalf, chipHalfWidth(e.label));
+    }
+  }
+  if (inner === 0) return CLASS_NODE_R + 12;
+  // Ring must fit the widest chip along its spoke, plus half a literal box.
+  const chipFitR = CLASS_NODE_R + maxChipHalf * 1.35 + 48;
+  return Math.max(starRadiusForCount(Math.max(1, inner)), chipFitR) + 48;
+}
+
+/** Neighborhood disk radius = outer star extent + class glyph. */
 function estimateClassFootprint(
   classId: string,
   childrenOf: Map<string, string[]>,
@@ -361,17 +502,176 @@ function estimateClassFootprint(
     }
   }
   const subclasses = (childrenOf.get(classId) || []).length;
-  const propR = starRadiusForCount(inner);
-  const subclassR = subclasses > 0 ? propR + SUBCLASS_GAP : propR;
-  return Math.max(propR, subclassR) + 40;
+  const propR = starRadiusForCount(Math.max(1, inner));
+  const subclassR = subclasses > 0
+    ? Math.max(propR + SUBCLASS_GAP, starRadiusForCount(subclasses, propR + SUBCLASS_GAP, PROP_MIN_CHORD))
+    : propR;
+  return subclassR + CLASS_NODE_R;
 }
 
 /**
- * Place class trees like VOWL:
- *  - densest hub near center
- *  - other hubs cleared by their star footprints (no overlapping neighborhoods)
- *  - Literals / class-local Things on the inner star
- *  - disconnected orphans in a compact side pack
+ * Stress majorization (SMACOF) over hub centers.
+ * Minimizes  Σᵢⱼ wᵢⱼ·(‖xᵢ−xⱼ‖ − dᵢⱼ)²  with wᵢⱼ = 1/dᵢⱼ².
+ * Each iteration is the closed-form majorizer update, which is guaranteed to
+ * monotonically decrease stress — no tuning, no oscillation, no local pushes.
+ */
+function stressMajorizeDisks(
+  ids: string[],
+  pos: Map<string, { x: number; y: number }>,
+  targetDist: number[][],
+  iterations = 90
+): void {
+  const n = ids.length;
+  if (n < 2) return;
+  const xs = ids.map(id => pos.get(id)!.x);
+  const ys = ids.map(id => pos.get(id)!.y);
+
+  for (let it = 0; it < iterations; it++) {
+    const nx = new Array(n).fill(0);
+    const ny = new Array(n).fill(0);
+    const wsum = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue;
+        const d = targetDist[i][j];
+        if (!Number.isFinite(d) || d <= 0) continue;
+        const w = 1 / (d * d);
+        let dx = xs[i] - xs[j];
+        let dy = ys[i] - ys[j];
+        let dist = Math.hypot(dx, dy);
+        if (dist < 1e-6) {
+          // Deterministic tie-break for coincident points
+          dx = Math.cos(i * 2.399963 + j);
+          dy = Math.sin(i * 2.399963 + j);
+          dist = 1;
+        }
+        nx[i] += w * (xs[j] + (d * dx) / dist);
+        ny[i] += w * (ys[j] + (d * dy) / dist);
+        wsum[i] += w;
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      if (wsum[i] > 0) {
+        xs[i] = nx[i] / wsum[i];
+        ys[i] = ny[i] / wsum[i];
+      }
+    }
+  }
+  ids.forEach((id, i) => pos.set(id, { x: xs[i], y: ys[i] }));
+}
+
+/**
+ * All-pairs metric distances on the hub graph via Dijkstra, where each hub
+ * edge's length is the geometric requirement rᵢ+rⱼ+pad (disk tangency).
+ * Unreachable pairs get 1.6× the graph diameter so components spread apart
+ * but still participate in one coherent embedding.
+ */
+function hubMetricDistances(
+  ids: string[],
+  edgeLen: Map<string, number>, // key "i|j" with i<j (indices)
+  adj: Map<number, Set<number>>
+): number[][] {
+  const n = ids.length;
+  const D: number[][] = Array.from({ length: n }, () => new Array(n).fill(Infinity));
+  for (let s = 0; s < n; s++) {
+    D[s][s] = 0;
+    // Simple O(n²) Dijkstra — hub counts are small (tens, not thousands)
+    const done = new Array(n).fill(false);
+    for (let step = 0; step < n; step++) {
+      let u = -1;
+      let best = Infinity;
+      for (let v = 0; v < n; v++) {
+        if (!done[v] && D[s][v] < best) {
+          best = D[s][v];
+          u = v;
+        }
+      }
+      if (u === -1) break;
+      done[u] = true;
+      for (const v of adj.get(u) || []) {
+        const key = u < v ? `${u}|${v}` : `${v}|${u}`;
+        const w = edgeLen.get(key) ?? Infinity;
+        if (D[s][u] + w < D[s][v]) D[s][v] = D[s][u] + w;
+      }
+    }
+  }
+  let diameter = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (Number.isFinite(D[i][j])) diameter = Math.max(diameter, D[i][j]);
+    }
+  }
+  const far = Math.max(600, diameter * 1.6);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i !== j && !Number.isFinite(D[i][j])) D[i][j] = far;
+    }
+  }
+  return D;
+}
+
+/** Project all class disks apart (Jacobi-style pairwise separation). */
+function projectClassDisks(
+  classIds: string[],
+  positions: Map<string, { x: number; y: number }>,
+  footprints: Map<string, number>,
+  cores: Map<string, number>,
+  moveTree: (id: string, dx: number, dy: number) => void,
+  hasParent: Set<string>,
+  iterations = 48
+): void {
+  for (let iter = 0; iter < iterations; iter++) {
+    let moved = false;
+    for (let i = 0; i < classIds.length; i++) {
+      for (let j = i + 1; j < classIds.length; j++) {
+        const aId = classIds[i];
+        const bId = classIds[j];
+        const a = positions.get(aId);
+        const b = positions.get(bId);
+        if (!a || !b) continue;
+        // Parent–child on the same star: allow closer (they're on a designed ring)
+        const parentChild =
+          (hasParent.has(aId) && !hasParent.has(bId)) ||
+          (hasParent.has(bId) && !hasParent.has(aId));
+        const bothRoots = !hasParent.has(aId) && !hasParent.has(bId);
+        const { ux, uy, dist } = safeUnit(b.x - a.x, b.y - a.y);
+        let sep: number;
+        if (parentChild) {
+          sep = CLASS_NODE_R * 2 + 16;
+        } else if (bothRoots) {
+          // Two hub centers: their literal rings + chips must not interleave
+          const need = (cores.get(aId) ?? 60) + (cores.get(bId) ?? 60) + 24;
+          sep = Math.max(CLASS_NODE_R * 2 + 20, Math.min(need, 460));
+        } else {
+          const need =
+            (footprints.get(aId) ?? 120) * 0.35 + (footprints.get(bId) ?? 120) * 0.35 + CLASS_NODE_R;
+          sep = Math.max(CLASS_NODE_R * 2 + 20, Math.min(need, 140));
+        }
+        if (dist >= sep) continue;
+        const push = (sep - dist) / 2;
+        const aDeep = hasParent.has(aId);
+        const bDeep = hasParent.has(bId);
+        if (aDeep && !bDeep) {
+          moveTree(aId, -ux * push * 2, -uy * push * 2);
+        } else if (bDeep && !aDeep) {
+          moveTree(bId, ux * push * 2, uy * push * 2);
+        } else {
+          moveTree(aId, -ux * push, -uy * push);
+          moveTree(bId, ux * push, uy * push);
+        }
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+}
+
+/**
+ * Place class trees as Melançon–Herman balloons (screenshot-#1 geometry):
+ *  - each subclass tree is a short-spoke star (wedge balloon)
+ *  - within a property-linked hub component: densest nucleus + satellites on a ring
+ *  - components themselves pack as rigid disks (no global stress hairball)
+ *  - Literals on inner mid-angles; pairwise projection cleans residuals
  */
 export function placeVowlNeighborhoods(
   neighborhoods: VowlNeighborhood[],
@@ -391,7 +691,8 @@ export function placeVowlNeighborhoods(
     if (e.type !== 'subClassOf') continue;
     if (!isRealClassNode(e.from, nodeById) || !isRealClassNode(e.to, nodeById)) continue;
     if (!childrenOf.has(e.to)) childrenOf.set(e.to, []);
-    childrenOf.get(e.to)!.push(e.from);
+    const list = childrenOf.get(e.to)!;
+    if (!list.includes(e.from)) list.push(e.from);
     hasParent.add(e.from);
   }
 
@@ -426,59 +727,21 @@ export function placeVowlNeighborhoods(
 
   const placedClasses = new Set<string>();
   const footprints = new Map<string, number>();
+  const cores = new Map<string, number>();
   for (const id of realClassIds) {
     footprints.set(id, estimateClassFootprint(id, childrenOf, edges, nodeById));
+    cores.set(id, estimateClassCoreRadius(id, edges, nodeById));
   }
 
-  // Compass slots around the primary hub — VOWL puts Document south, Account west, etc.
-  const COMPASS = [Math.PI / 2, Math.PI, -Math.PI / 2, 0, Math.PI * 0.75, Math.PI * 0.25, -Math.PI * 0.75, -Math.PI * 0.25];
-  let compassIdx = 0;
+  // Packing radius = local star footprint only (capped). Deep trees place
+  // grandchildren as nested short stars; packing must not treat them as giant disks.
+  const packR = new Map<string, number>();
+  for (const id of realClassIds) {
+    const local = Math.max(footprints.get(id) ?? 120, cores.get(id) ?? 60);
+    packR.set(id, Math.min(local, 220));
+  }
 
-  const clearanceNeeded = (a: string, b: string) =>
-    (footprints.get(a) ?? 160) + (footprints.get(b) ?? 160) + 50;
-
-  /** Find a free point near anchors that doesn't collide with placed class stars. */
-  const findClearSlot = (
-    anchors: { x: number; y: number }[],
-    newId: string,
-    preferredAngle: number
-  ): { x: number; y: number } => {
-    const ax = anchors.reduce((s, p) => s + p.x, 0) / Math.max(1, anchors.length);
-    const ay = anchors.reduce((s, p) => s + p.y, 0) / Math.max(1, anchors.length);
-    const placedHubs = [...placedClasses].filter(id => !hasParent.has(id) || id === roots[0]);
-    // Also keep clear of already-placed subclasses (Person sits on Agent's ring)
-    const blockers = [...placedClasses];
-
-    let best: { x: number; y: number; score: number } | null = null;
-    for (let distMul = 1; distMul <= 4; distMul++) {
-      for (let i = 0; i < 24; i++) {
-        const angle = preferredAngle + (i / 24) * Math.PI * 2;
-        // Base distance from footprint of nearest anchor hub
-        let baseDist = footprints.get(newId) ?? 180;
-        for (const a of anchors) {
-          // rough: use average footprint of placed roots
-          baseDist = Math.max(baseDist, 280);
-        }
-        const dist = baseDist * distMul * 0.55 + (footprints.get(newId) ?? 160);
-        const x = ax + Math.cos(angle) * dist;
-        const y = ay + Math.sin(angle) * dist;
-        let minClear = Infinity;
-        let ok = true;
-        for (const bid of blockers) {
-          const bp = positions.get(bid);
-          if (!bp) continue;
-          const need = clearanceNeeded(newId, bid);
-          const d = Math.hypot(x - bp.x, y - bp.y);
-          minClear = Math.min(minClear, d - need);
-          if (d < need) ok = false;
-        }
-        const score = (ok ? 10000 : 0) + minClear - distMul * 10;
-        if (!best || score > best.score) best = { x, y, score };
-        if (ok && distMul <= 2) return { x, y };
-      }
-    }
-    return best ? { x: best.x, y: best.y } : { x: ax + 360, y: ay + 360 };
-  };
+  const hubCenters = new Map<string, { x: number; y: number }>();
 
   const moveClassTree = (classId: string, dx: number, dy: number) => {
     const q = [classId];
@@ -489,6 +752,8 @@ export function placeVowlNeighborhoods(
       seen.add(id);
       const p = positions.get(id);
       if (p) positions.set(id, { x: p.x + dx, y: p.y + dy });
+      const hc = hubCenters.get(id);
+      if (hc) hubCenters.set(id, { x: hc.x + dx, y: hc.y + dy });
       for (const e of edges) {
         if (e.type !== 'propertyRelation') continue;
         const other = e.from === id ? e.to : e.to === id ? e.from : null;
@@ -503,78 +768,137 @@ export function placeVowlNeighborhoods(
     }
   };
 
-  // 1) Primary hub near center
-  if (roots.length > 0) {
-    placeVowlClassStar(roots[0], cx, cy - 40, childrenOf, edges, nodeById, positions, placedClasses);
-  }
-
-  // 2) Grow property-linked root hubs into clear compass slots
-  const queue = [...placedClasses];
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    const cp = positions.get(cur);
-    if (!cp) continue;
-    const neighbors = [...(classAdj.get(cur) || [])].filter(
-      id => isRealClassNode(id, nodeById) && !placedClasses.has(id) && !hasParent.has(id)
-    );
-    neighbors.sort((a, b) => (propDegree.get(b) ?? 0) - (propDegree.get(a) ?? 0));
-    neighbors.forEach(id => {
-      if (placedClasses.has(id)) return;
-      const known = [...(classAdj.get(id) || [])].filter(x => placedClasses.has(x));
-      const anchors = known.length > 0
-        ? known.map(k => positions.get(k)!).filter(Boolean)
-        : [cp];
-      const preferred = COMPASS[compassIdx++ % COMPASS.length];
-      const slot = findClearSlot(anchors, id, preferred);
-      placeVowlClassStar(id, slot.x, slot.y, childrenOf, edges, nodeById, positions, placedClasses);
-      queue.push(id);
-    });
-  }
-
-  // 3) Remaining roots — footprint-clear slots near related hubs, else side pack
-  const leftoverRoots = roots.filter(id => !placedClasses.has(id));
-  const orphanCx = cx - Math.min(380, width * 0.32);
-  const orphanCy = cy + Math.min(220, height * 0.26);
-
-  const collectDescendants = (id: string): Set<string> => {
-    const out = new Set<string>([id]);
-    const q = [id];
+  // Map every class → root hub
+  const rootOf = new Map<string, string>();
+  for (const root of roots) {
+    const q = [root];
     while (q.length) {
       const c = q.shift()!;
-      for (const ch of childrenOf.get(c) || []) {
-        if (out.has(ch)) continue;
-        out.add(ch);
-        q.push(ch);
-      }
+      if (rootOf.has(c)) continue;
+      rootOf.set(c, root);
+      for (const ch of childrenOf.get(c) || []) q.push(ch);
     }
-    return out;
+  }
+  for (const id of realClassIds) {
+    if (!rootOf.has(id)) rootOf.set(id, id);
+  }
+  const hubIds = [...new Set(rootOf.values())];
+
+  // Hub adjacency via property links across trees
+  const hubAdj = new Map<string, Set<string>>();
+  for (const h of hubIds) hubAdj.set(h, new Set());
+  for (const [a, nbs] of classAdj) {
+    const ra = rootOf.get(a);
+    if (!ra) continue;
+    for (const b of nbs) {
+      const rb = rootOf.get(b);
+      if (!rb || ra === rb) continue;
+      hubAdj.get(ra)!.add(rb);
+      hubAdj.get(rb)!.add(ra);
+    }
+  }
+
+  // Connected components of hubs (property graph)
+  const components: string[][] = [];
+  const seenHub = new Set<string>();
+  for (const h of [...hubIds].sort((a, b) => treeWeight(b) - treeWeight(a))) {
+    if (seenHub.has(h)) continue;
+    const comp: string[] = [];
+    const q = [h];
+    while (q.length) {
+      const cur = q.shift()!;
+      if (seenHub.has(cur)) continue;
+      seenHub.add(cur);
+      comp.push(cur);
+      for (const nb of hubAdj.get(cur) || []) q.push(nb);
+    }
+    comp.sort((a, b) => treeWeight(b) - treeWeight(a));
+    components.push(comp);
+  }
+
+  // Component radius from capped local pack radii (short stars, not deep balloons)
+  const compRadius = (comp: string[]): number => {
+    if (comp.length === 0) return 140;
+    const nucR = packR.get(comp[0]) ?? 140;
+    if (comp.length === 1) return nucR;
+    const sats = comp.slice(1).map(id => packR.get(id) ?? 120);
+    const ring = balloonRingRadius(sats.map(r => Math.min(r, 160)));
+    return Math.min(nucR + ring * 0.55 + Math.max(...sats) * 0.45, 520);
   };
 
-  leftoverRoots.forEach((id, i) => {
-    const tree = collectDescendants(id);
-    const related: string[] = [];
-    for (const e of edges) {
-      if (e.type !== 'propertyRelation') continue;
-      if (tree.has(e.from) && placedClasses.has(e.to)) related.push(e.to);
-      if (tree.has(e.to) && placedClasses.has(e.from)) related.push(e.from);
-    }
-    let x: number;
-    let y: number;
-    if (related.length > 0) {
-      const anchors = related.map(r => positions.get(r)!).filter(Boolean);
-      const preferred = COMPASS[compassIdx++ % COMPASS.length];
-      const slot = findClearSlot(anchors, id, preferred);
-      x = slot.x;
-      y = slot.y;
+  // Place components as meta-balloons: densest at center, others on a circle
+  components.sort((a, b) => treeWeight(b[0]) - treeWeight(a[0]));
+  const compCenters: { x: number; y: number }[] = [];
+  const compRs = components.map(compRadius);
+
+  components.forEach((comp, ci) => {
+    let cpos: { x: number; y: number };
+    if (ci === 0) {
+      cpos = { x: cx, y: cy };
     } else {
-      const cols = Math.max(1, Math.ceil(Math.sqrt(leftoverRoots.length)));
-      x = orphanCx + (i % cols) * 140;
-      y = orphanCy + Math.floor(i / cols) * 140;
+      const angle = -Math.PI / 2 + ((ci - 1) / Math.max(1, components.length - 1)) * Math.PI * 2;
+      const dist = Math.min(compRs[0] + compRs[ci] + HUB_PAD, 420 + ci * 40);
+      cpos = { x: cx + Math.cos(angle) * dist, y: cy + Math.sin(angle) * dist };
+      for (let pass = 0; pass < 24; pass++) {
+        let moved = false;
+        for (let j = 0; j < ci; j++) {
+          const need = Math.min(compRs[ci] + compRs[j] + HUB_PAD, 380);
+          const { ux, uy, dist: d } = safeUnit(cpos.x - compCenters[j].x, cpos.y - compCenters[j].y);
+          if (d >= need) continue;
+          cpos = { x: cpos.x + ux * (need - d), y: cpos.y + uy * (need - d) };
+          moved = true;
+        }
+        if (!moved) break;
+      }
     }
-    placeVowlClassStar(id, x, y, childrenOf, edges, nodeById, positions, placedClasses);
+    compCenters.push(cpos);
+
+    // Nucleus + satellites on a SHORT ring (screenshot #1 left-side stars)
+    const nucleus = comp[0];
+    hubCenters.set(nucleus, { x: cpos.x, y: cpos.y });
+    const sats = comp.slice(1);
+    if (sats.length > 0) {
+      const satRs = sats.map(id => packR.get(id) ?? 120);
+      const nucR = packR.get(nucleus) ?? 140;
+      const ringR = Math.max(
+        nucR + 40 + HUB_PAD * 0.5,
+        balloonRingRadius(satRs.map(r => Math.min(r, 140)))
+      );
+      const cappedRing = Math.min(ringR, 280 + sats.length * 12);
+      sats.forEach((id, i) => {
+        const angle = -Math.PI / 2 + (i / sats.length) * Math.PI * 2;
+        hubCenters.set(id, {
+          x: cpos.x + Math.cos(angle) * cappedRing,
+          y: cpos.y + Math.sin(angle) * cappedRing
+        });
+      });
+    }
   });
 
-  // 4) Leftover classes (safety)
+  // Draw each hub as a short-spoke star
+  const byDensity = [...hubIds].sort((a, b) => treeWeight(b) - treeWeight(a));
+  for (const h of byDensity) {
+    const p = hubCenters.get(h);
+    if (!p) continue;
+    const comp = components.find(c => c.includes(h));
+    let outward = -Math.PI / 2;
+    if (comp && comp[0] !== h) {
+      const nuc = hubCenters.get(comp[0])!;
+      outward = Math.atan2(p.y - nuc.y, p.x - nuc.x);
+    }
+    placeVowlClassStar(
+      h, p.x, p.y, childrenOf, edges, nodeById, positions, placedClasses,
+      outward, Math.PI * 2
+    );
+  }
+
+  const orphanCx = cx - Math.min(320, width * 0.28);
+  const orphanCy = cy + Math.min(180, height * 0.22);
+
+  // Pairwise disk projection — compact, aligned, no stacks
+  projectClassDisks([...placedClasses], positions, footprints, cores, moveClassTree, hasParent);
+
+  // Leftover classes (safety)
   realClassIds.filter(id => !placedClasses.has(id)).forEach((id, i) => {
     placeVowlClassStar(
       id,
@@ -584,76 +908,19 @@ export function placeVowlNeighborhoods(
       edges,
       nodeById,
       positions,
-      placedClasses
+      placedClasses,
+      -Math.PI / 2,
+      Math.PI * 2
     );
   });
 
-  // 5) Resolve remaining star overlaps between hierarchy roots (never collapse subclasses)
-  const rootHubs = [...placedClasses].filter(id => !hasParent.has(id));
-  for (let iter = 0; iter < 40; iter++) {
-    let moved = false;
-    for (let i = 0; i < rootHubs.length; i++) {
-      for (let j = i + 1; j < rootHubs.length; j++) {
-        const aId = rootHubs[i];
-        const bId = rootHubs[j];
-        const a = positions.get(aId);
-        const b = positions.get(bId);
-        if (!a || !b) continue;
-        const need = clearanceNeeded(aId, bId);
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist = Math.hypot(dx, dy) || 0.001;
-        if (dist >= need) continue;
-        const push = (need - dist) / 2;
-        const ux = dx / dist;
-        const uy = dy / dist;
-        moveClassTree(aId, -ux * push, -uy * push);
-        moveClassTree(bId, ux * push, uy * push);
-        moved = true;
-      }
-    }
-    // Also keep root hubs clear of other trees' subclasses (e.g. Document vs Person)
-    for (const rootId of rootHubs) {
-      const rp = positions.get(rootId);
-      if (!rp) continue;
-      for (const other of placedClasses) {
-        if (other === rootId || !hasParent.has(other)) continue;
-        // skip own descendants
-        let walk: string | undefined = other;
-        let own = false;
-        const seen = new Set<string>();
-        while (walk && !seen.has(walk)) {
-          seen.add(walk);
-          if (walk === rootId) { own = true; break; }
-          walk = (edges.find(e => e.type === 'subClassOf' && e.from === walk)?.to);
-        }
-        if (own) continue;
-        const op = positions.get(other);
-        if (!op) continue;
-        const need = (footprints.get(rootId) ?? 160) + 80;
-        const dx = op.x - rp.x;
-        const dy = op.y - rp.y;
-        const dist = Math.hypot(dx, dy) || 0.001;
-        if (dist >= need) continue;
-        const push = (need - dist);
-        const ux = dx / dist;
-        const uy = dy / dist;
-        moveClassTree(rootId, -ux * push, -uy * push);
-        moved = true;
-      }
-    }
-    if (!moved) break;
-  }
-
-  // 6) Domainless Thing→Literal stars — keep them clearly outside the main
-  // cluster so they never sit on class-local Things (title was glued to Agent).
+  // Domainless Thing→Literal stars — keep them clearly outside the main cluster
   const periNbs = neighborhoods.filter(
     nb => (isThingIri(nb.hubId) || nb.hubId.includes(VOWL_CLONE_SEPARATOR)) && !positions.has(nb.hubId)
   );
-  const fringeR = Math.max(420, Math.min(cx, cy) * 0.85);
+  const fringeR = Math.max(360, Math.min(cx, cy) * 0.75);
   periNbs.forEach((nb, i) => {
     const n = Math.max(1, periNbs.length);
-    // Bottom-left / bottom fringe — away from Agent/Person/Document stars
     const angle = Math.PI * 0.55 + (i / Math.max(1, n - 1 || 1)) * Math.PI * 0.7;
     let hx = cx + Math.cos(angle) * fringeR;
     let hy = cy + Math.sin(angle) * fringeR;
@@ -664,12 +931,12 @@ export function placeVowlNeighborhoods(
       positions.forEach(p => {
         const dx = hx - p.x;
         const dy = hy - p.y;
-        const dist = Math.hypot(dx, dy) || 0.001;
+        const { ux, uy, dist } = safeUnit(dx, dy);
         const need = 130;
         if (dist >= need) return;
         const push = (need - dist) * 0.6;
-        hx += (dx / dist) * push;
-        hy += (dy / dist) * push;
+        hx += ux * push;
+        hy += uy * push;
         moved = true;
       });
       if (!moved) break;
@@ -693,12 +960,10 @@ export function placeVowlNeighborhoods(
         const b = positions.get(thingIds[j])!;
         const dx = b.x - a.x;
         const dy = b.y - a.y;
-        const dist = Math.hypot(dx, dy) || 0.001;
+        const { ux, uy, dist } = safeUnit(dx, dy);
         const need = 110;
         if (dist >= need) continue;
         const push = (need - dist) / 2;
-        const ux = dx / dist;
-        const uy = dy / dist;
         // Prefer moving peripheral (no class owner) Things
         const aPeri = !nodes.find(n => n.id === thingIds[i])?.metadata?.vowlOwnerHub;
         const bPeri = !nodes.find(n => n.id === thingIds[j])?.metadata?.vowlOwnerHub;
@@ -709,6 +974,47 @@ export function placeVowlNeighborhoods(
         } else {
           positions.set(thingIds[i], { x: a.x - ux * push, y: a.y - uy * push });
           positions.set(thingIds[j], { x: b.x + ux * push, y: b.y + uy * push });
+        }
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+
+  // Literals must not sit on foreign class circles (yellow-on-blue overlaps).
+  // Own-hub literals stay on their designed ring; everything else is pushed out.
+  const litIds = nodes
+    .filter(n => n.type === 'datatype' || n.label === 'Literal')
+    .map(n => n.id)
+    .filter(id => positions.has(id));
+  const classIdsAll = realClassIds.filter(id => positions.has(id));
+  // Which class owns each literal? The property edge endpoint that is a class.
+  const litOwner = new Map<string, string>();
+  for (const e of edges) {
+    if (e.type !== 'propertyRelation') continue;
+    if (litIds.includes(e.from) && classIdsAll.includes(e.to)) litOwner.set(e.from, e.to);
+    if (litIds.includes(e.to) && classIdsAll.includes(e.from)) litOwner.set(e.to, e.from);
+  }
+  for (let pass = 0; pass < 16; pass++) {
+    let moved = false;
+    for (const lid of litIds) {
+      const lp = positions.get(lid)!;
+      const owner = litOwner.get(lid);
+      for (const cid of classIdsAll) {
+        if (cid === owner) continue; // own hub — ring math already placed this
+        const cp = positions.get(cid)!;
+        const dx = lp.x - cp.x;
+        const dy = lp.y - cp.y;
+        // AABB: literal box ~48×16, class circle ~28
+        const overlapX = 48 + CLASS_NODE_R + 10 - Math.abs(dx);
+        const overlapY = 16 + CLASS_NODE_R + 8 - Math.abs(dy);
+        if (overlapX <= 0 || overlapY <= 0) continue;
+        if (overlapX < overlapY) {
+          const sx = (dx === 0 ? 1 : Math.sign(dx)) * overlapX;
+          positions.set(lid, { x: lp.x + sx, y: lp.y });
+        } else {
+          const sy = (dy === 0 ? 1 : Math.sign(dy)) * overlapY;
+          positions.set(lid, { x: lp.x, y: lp.y + sy });
         }
         moved = true;
       }
