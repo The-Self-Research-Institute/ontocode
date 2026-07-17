@@ -530,6 +530,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const nodePositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   // Hard-pinned WebVOWL+ neighborhood hubs — Fit uses these so zoom-out can't re-squash clusters
   const vowlPinnedHubIdsRef = useRef<Set<string>>(new Set());
+  // When the hub set changes (async data load, project switch), force a fresh
+  // neighborhood seed — otherwise saved coords from an empty/partial first paint
+  // skip placement and the graph settles into a hairball.
+  const vowlHubFingerprintRef = useRef<string>('');
   // Latest culling pass for the current render — callable from zoom/drag/programmatic camera moves
   const applyViewportCullingRef = useRef<() => void>(() => {});
   // Un-hides culled elements and recomputes all edge paths so exports always contain the full graph
@@ -616,6 +620,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
   }, [projectId]);
 
+  // New project → drop previous layout memory (otherwise VOWL skips reseeding)
+  useEffect(() => {
+    nodePositionsRef.current.clear();
+    vowlHubFingerprintRef.current = '';
+    vowlPinnedHubIdsRef.current = new Set();
+  }, [projectId]);
 
   // UI State
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
@@ -1576,7 +1586,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (hasThing) legend.push({ name: 'Thing', type: 'node', nodeType: 'class', color: isDark ? '#374151' : '#ffffff' });
       if (externalClasses.length > 0) legend.push({ name: `External Class (${externalClasses.length})`, type: 'node', nodeType: 'class', color: isDark ? '#60a5fa' : '#4682b4' });
       if (internalClasses.length > 0) legend.push({ name: `Internal Class (${internalClasses.length})`, type: 'node', nodeType: 'class', color: isDark ? '#6b92c4' : '#acd5f2' });
-      if (hasDatatype) legend.push({ name: `Datatype (${filteredNodes.filter(n => n.type === 'datatype').length})`, type: 'node', nodeType: 'datatype', color: isDark ? '#d97706' : '#ffcc33' });
+      if (hasDatatype) legend.push({ name: `Datatype (${filteredNodes.filter(n => n.type === 'datatype').length})`, type: 'node', nodeType: 'datatype', color: isDark ? '#d97706' : '#f5d76e' });
       if (hasIndividual) legend.push({ name: `Individual (${filteredNodes.filter(n => n.type === 'individual').length})`, type: 'node', nodeType: 'individual', color: isDark ? '#fbb6ce' : '#dcd5f7' });
       
       // Add edge type legends based on filtered edges
@@ -2224,41 +2234,35 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     // WebVOWL+ neighborhood placement: seed clusters FAR APART so the graph
     // reads as separate hubs (Person / Document / Agent…) instead of one blob.
-    // Skip when resuming from saved positions (expand/collapse).
+    // Re-seed whenever the hub set changes (async FOAF load after an empty first
+    // paint used to skip this and leave a hairball of long arcs).
     const nodeHubId = new Map<string, string>();
     vowlPinnedHubIdsRef.current = new Set();
-    if (visualizationType === 'vowl' && !hasSavedPositions) {
-      const neighborhoods = buildVowlNeighborhoods(renderNodes, renderEdges);
-      const seeded = placeVowlNeighborhoods(neighborhoods, width, height);
-      for (const nb of neighborhoods) {
-        for (const id of nb.memberIds) nodeHubId.set(id, nb.hubId);
-      }
-      d3Nodes.forEach(node => {
-        const p = seeded.get(node.id);
-        if (p) {
-          node.x = p.x;
-          node.y = p.y;
-        }
-        // HARD-PIN real class hubs. Soft forces always lost to Fit-zoom math:
-        // spreading hubs farther just zooms out more → same on-screen blob.
-        // Pinned hubs stay put; only Literals/Things/chips settle around them.
-        if (nodeHubId.get(node.id) === node.id && node.type === 'class' && !isThingIri(node.id)) {
-          node.fx = node.x;
-          node.fy = node.y;
-          vowlPinnedHubIdsRef.current.add(node.id);
-        }
-      });
-      if (GRAPH_DEBUG) {
-        console.log(`[VOWL+] Seeded ${neighborhoods.length} separate neighborhoods:`,
-          neighborhoods.map(n => `${n.hubId.split(/[#/]/).pop()}(${n.memberIds.length})`).join(', '));
-      }
-    } else if (visualizationType === 'vowl') {
-      // Still tag hubs for the cluster force even when positions are saved
+    if (visualizationType === 'vowl') {
       const neighborhoods = buildVowlNeighborhoods(renderNodes, renderEdges);
       for (const nb of neighborhoods) {
         for (const id of nb.memberIds) nodeHubId.set(id, nb.hubId);
       }
-      // Re-pin hubs at their restored coordinates
+      const fingerprint = neighborhoods.map(n => n.hubId).sort().join('|');
+      const hubsChanged = fingerprint !== vowlHubFingerprintRef.current;
+      if (hubsChanged) {
+        vowlHubFingerprintRef.current = fingerprint;
+        nodePositionsRef.current.clear();
+      }
+      if (hubsChanged || !hasSavedPositions) {
+        const seeded = placeVowlNeighborhoods(neighborhoods, width, height);
+        d3Nodes.forEach(node => {
+          const p = seeded.get(node.id);
+          if (p) {
+            node.x = p.x;
+            node.y = p.y;
+            nodePositionsRef.current.set(node.id, { x: p.x, y: p.y });
+          }
+        });
+      }
+      // HARD-PIN real class hubs. Soft forces always lost to Fit-zoom math:
+      // spreading hubs farther just zooms out more → same on-screen blob.
+      // Pinned hubs stay put; only Literals/Things/chips settle around them.
       d3Nodes.forEach(node => {
         if (nodeHubId.get(node.id) === node.id && node.type === 'class' && !isThingIri(node.id)) {
           if (node.x != null && node.y != null) {
@@ -2268,6 +2272,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
         }
       });
+      if (GRAPH_DEBUG) {
+        console.log(`[VOWL+] ${hubsChanged || !hasSavedPositions ? 'Seeded' : 'Kept'} ${neighborhoods.length} neighborhoods:`,
+          neighborhoods.map(n => `${n.hubId.split(/[#/]/).pop()}(${n.memberIds.length})`).join(', '));
+      }
     }
     
     // Calculate curvature for edges with multiple connections between same nodes
@@ -3243,7 +3251,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     node.each(function(d) {
       const nodeGroup = d3.select(this);
       const size = d.size || settings.nodeSize;
-      const nodeType = d.type;
+      let nodeType = d.type;
       // User-configurable box scale (Notation & density panel) — vowl/force only,
       // where shape size is otherwise a fixed multiple of `size` regardless of label length.
       const widthScale = (visualizationType === 'vowl' || visualizationType === 'force') ? vowlOptions.nodeWidthScale : 1;
@@ -3252,6 +3260,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       // Check if this is owl:Thing or external/internal node
       const isThing = d.label === 'Thing' || d.id.includes('owl#Thing');
       const isExternal = isExternalNode(d);
+      // XSD / rdfs Literal must stay WebVOWL yellow boxes — never steel-blue
+      // "external class" circles (Patient ontologies often ship xsd:integer as class).
+      const nodeIri = String(d.uri || d.id || '');
+      const isXsdOrLiteralIri =
+        nodeIri.includes('XMLSchema') ||
+        nodeIri.includes('rdf-schema#Literal') ||
+        nodeIri.endsWith('#Literal') ||
+        /#(string|integer|decimal|float|double|boolean|date|dateTime|int|long|short)$/i.test(nodeIri);
+      if (nodeType !== 'datatype' && isXsdOrLiteralIri) {
+        nodeType = 'datatype';
+      }
       
       // Detect dark mode for theme-aware colors (VOWL is pinned to the light palette)
       const isDark = effectiveDark;
@@ -3259,7 +3278,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       // WebVOWL color scheme matching reference image - theme aware
       let fill = isDark ? '#6b92c4' : '#acd5f2'; // Default light blue (darker in dark mode)
       
-      if (visualizationType === 'vowl' && nodeType === 'class') {
+      if (visualizationType === 'vowl' && nodeType === 'datatype') {
+        // Classic WebVOWL datatype / Literal yellow (matches HTML harness)
+        fill = isDark ? '#d97706' : '#f5d76e';
+      } else if (visualizationType === 'vowl' && nodeType === 'class') {
         if (isThing) {
           fill = isDark ? '#374151' : '#ffffff'; // Dark gray in dark mode, white in light mode
         } else if (isExternal && vowlOptions.colorExternals) {
@@ -6439,8 +6461,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   [data-testid="graph-svg"] .node > text {
                     transition: opacity 220ms ease;
                     paint-order: stroke;
-                    stroke: ${(visualizationType === 'vowl' ? false : isDarkTheme) ? 'rgba(10,15,28,0.85)' : 'rgba(255,255,255,0.75)'};
-                    stroke-width: 2.5px;
+                    /* VOWL light canvas: flat labels like WebVOWL (no washed-out white halo) */
+                    stroke: ${visualizationType === 'vowl'
+                      ? 'none'
+                      : (isDarkTheme ? 'rgba(10,15,28,0.85)' : 'rgba(255,255,255,0.75)')};
+                    stroke-width: ${visualizationType === 'vowl' ? '0' : '2.5px'};
                     stroke-linejoin: round;
                   }
                   [data-testid="graph-svg"] .edge-path {
