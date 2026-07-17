@@ -186,7 +186,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
 
   return (
     <div style={{ ...styles.toolbar, position: 'relative' }}>
-      {/* MVP view presets — Protégé-style Network vs Hierarchy */}
+      {/* MVP view presets — OntoCode Network vs Hierarchy */}
       <div style={{ display: 'flex', gap: '2px', alignItems: 'center', backgroundColor: 'var(--surface-2)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)' }}>
         <button
           data-testid="graph-preset-network"
@@ -200,7 +200,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
           data-testid="graph-preset-tree"
           onClick={props.onPresetTree}
           style={props.visualizationType === 'ontograph' ? styles.btnActive : styles.btn}
-          title="Tree view — class hierarchy layout (Protégé OntoGraf style)"
+          title="Tree view — class hierarchy layout (OntoCode hierarchy style)"
         >
           Tree
         </button>
@@ -273,7 +273,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
         data-testid="graph-local-toggle"
         onClick={props.onToggleLocal}
         style={props.showLocalGraph ? styles.btnActive : styles.btn}
-        title="Obsidian-style local graph — N-hop neighborhood of selected node"
+        title="OntoCode local graph — N-hop neighborhood of selected node"
       >
         <Crosshair size={16} />
         Local
@@ -296,7 +296,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
         data-testid="graph-insights-toggle"
         onClick={props.onToggleInsights}
         style={props.showAnalytics ? styles.btnActive : styles.btn}
-        title="InfraNodus-style insights — clusters, top concepts, structural gaps"
+        title="OntoCode insights — clusters, top concepts, structural gaps"
       >
         <TrendingUp size={16} />
         Insights
@@ -385,7 +385,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
             >
               <option value="force">Network (Force-Directed)</option>
               <option value="ontograph">Hierarchy (Tree Layout)</option>
-              <option value="vowl">WebVOWL+ (OntoCode)</option>
+              <option value="vowl">VOWL</option>
               <option value="spatial3d">3D Spatial Graph</option>
             </select>
           </div>
@@ -604,10 +604,10 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
                         color: 'var(--text-primary)',
                         cursor: 'pointer'
                       }}
-                      title="Restore OntoCode's tuned WebVOWL+ defaults (spacing, labels, externals)"
+                      title="Restore VOWL defaults (spacing, labels, externals)"
                       data-testid="graph-reset-vowl-defaults"
                     >
-                      Reset to WebVOWL+ defaults
+                      Reset to VOWL defaults
                     </button>
                   </>
                 )}
@@ -658,7 +658,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
               </span>
             )}
           </div>
-          <div style={{ ...styles.relationshipControlsGroup, marginTop: 6 }} title="Protégé-style relationship visibility">
+          <div style={{ ...styles.relationshipControlsGroup, marginTop: 6 }} title="OntoCode relationship visibility">
             <span style={styles.relationshipControlsLabel}>Relations</span>
             {RELATIONSHIP_VISIBILITY_CONTROLS.map(control => {
               const isEnabled = control.edgeTypes.every(type => props.edgeTypeFilters.has(type));

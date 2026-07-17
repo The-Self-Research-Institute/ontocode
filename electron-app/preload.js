@@ -197,7 +197,14 @@ async function checkImportStatus(projectId) {
     const t = await getAuthToken();
     if (t) headers['Authorization'] = `Bearer ${t}`;
 
-    // Check 1: import queue status
+    // Check 1: import queue status. This is the authoritative signal while an import
+    // is actively PROCESSING — the backend deliberately writes PROCESSING synchronously
+    // before enqueueing so pollers see it instead of a stale COMPLETED from a prior
+    // import (see ProjectImportService.submitImport). Checks 2-4 below are best-effort
+    // fallbacks for when this endpoint is unreachable/unknown — they must NOT override
+    // an explicit PROCESSING here, since they can see partial state on large ontologies
+    // (e.g. the first batch of classes already queryable mid-import) and falsely report
+    // 'done' before the import actually finishes.
     try {
         const res = await fetch(`${DESKTOP_API}/api/import-queue/status/${encodeURIComponent(projectId)}`, { headers });
         if (res.ok) {

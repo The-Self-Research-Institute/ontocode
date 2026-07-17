@@ -1,5 +1,5 @@
 /**
- * Graph View Sidebar - Similar to webVOWL plugin
+ * Graph View Sidebar - Similar to VOWL plugin
  * Provides entity selector, filters, statistics, and detailed information
  */
 
@@ -66,7 +66,7 @@ interface GraphViewSidebarProps {
   onGraphNodeCollapse?: (nodeId: string) => void;
   graphExpandedNodeIds?: Set<string>;
   graphVisibleNodeIds?: Set<string>;
-  // Focus mode (Protégé OntoGraf-style neighborhood isolation)
+  // Focus mode (OntoCode hierarchy-style neighborhood isolation)
   focusedNodeId?: string | null;
   onFocusNode?: (nodeId: string) => void;
   onClearFocus?: () => void;
@@ -496,7 +496,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
       {/* === ENTITIES MODE === */}
       {sidebarMode === 'entities' && (
       <>
-      {/* Top Filters (like webVOWL) - Only show when filter button is clicked */}
+      {/* Top Filters (like VOWL) - Only show when filter button is clicked */}
       {showFilterSidebar && (
       <div style={styles.accordionSection}>
         <div 
@@ -563,7 +563,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               )}
             </div>
 
-            {/* Property Visibility Filters (WebVOWL) */}
+            {/* Property Visibility Filters (VOWL) */}
             {(viewMode === 'vowl' || viewMode === 'ontograph') && (
               <div style={styles.filterCategory}>
                 <div style={styles.filterCategoryTitle}>
@@ -961,7 +961,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         );
       })()}
 
-      {/* Entity Details Section (like webVOWL) */}
+      {/* Entity Details Section (like VOWL) */}
       {selectedNode && (
         <div style={styles.accordionSection}>
           {/* Entity Title Header */}
@@ -1368,7 +1368,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 </>
               )}
               
-              {/* Property Label Colors (WebVOWL Mode) */}
+              {/* Property Label Colors (VOWL Mode) */}
               {vowlLegend.filter(item => item.type === 'label').length > 0 && (
                 <>
                   <div style={styles.legendCategory}>Property Label Colors</div>
@@ -1392,7 +1392,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         </div>
       )}
 
-      {/* Ontology Statistics (like webVOWL) */}
+      {/* Ontology Statistics (like VOWL) */}
       <div style={styles.accordionSection}>
         <div 
           className="accordion-header"

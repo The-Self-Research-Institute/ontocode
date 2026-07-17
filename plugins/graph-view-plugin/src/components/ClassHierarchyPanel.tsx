@@ -3,11 +3,11 @@
  * CLASS HIERARCHY PANEL
  * ============================================================================
  *
- * Production-grade Protege-style class hierarchy navigator.
+ * Production-grade OntoCode class hierarchy navigator.
  *
- * Features (Protege parity + improvements):
+ * Features:
  *   - Asserted / Inferred / All view modes with visual differentiation
- *     (inferred-only relationships highlighted, matching Protege's yellow accent)
+ *     (inferred-only relationships highlighted, with yellow accent for inferred-only)
  *   - Sub-class and super-class hierarchy tabs
  *   - Multi-parent classes appear under every asserted parent
  *   - Cycle-safe traversal (defensive visited sets)

@@ -3,7 +3,7 @@ import { X, Plus, Trash2 } from 'lucide-react';
 import type { Datatype } from '../../types';
 
 /**
- * DataPropertyRangeDialog - Protégé-style dialog for selecting data property ranges
+ * DataPropertyRangeDialog - dialog for selecting data property ranges
  */
 
 interface DataPropertyRangeDialogProps {

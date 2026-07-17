@@ -20,7 +20,7 @@ import java.nio.file.Path;
 import java.util.*;
 
 /**
- * Loads OWL from disk, builds Protégé-parity hierarchy snapshot + metrics (bounded heap, not on API hot path).
+ * Loads OWL from disk, builds hierarchy snapshot + metrics (bounded heap, not on API hot path).
  */
 @Service
 public class HierarchySnapshotBuildService {

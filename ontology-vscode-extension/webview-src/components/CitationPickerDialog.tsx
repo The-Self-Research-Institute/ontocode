@@ -41,7 +41,7 @@ interface CitationItem {
     title: string;
     creators: Array<{ firstName: string; lastName: string; creatorType: string }>;
     date: string;
-    /** Zotero canonical name for journal articles, books, theses, etc. */
+    /** Canonical item type name for journal articles, books, theses, etc. */
     DOI?: string;
     /** Lowercase variant some translators / older exports emit. */
     doi?: string;
@@ -101,11 +101,11 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
   const cacheLoadPromiseRef = useRef<Promise<Awaited<ReturnType<typeof loadCitationLibraryCache>>> | null>(null);
   /** After opening the modal, first library request fires immediately; later query changes debounce */
   const skipNextLibraryFetchDebounceRef = useRef(true);
-  /** Ignore paging events from older extension sessions after a newer `requestZoteroLibrary` */
+  /** Ignore paging events from older extension sessions after a newer library request */
   const maxFirstPageSessionRef = useRef(0);
   const activePagingSessionRef = useRef<number | null>(null);
   const sessionBrowseModeRef = useRef<Map<number, "full" | "search">>(new Map());
-  /** Browse mode applied to the next issued request (`full` vs Zotero `q=` scope) — snapshotted onto the session id in the first response */
+  /** Browse mode applied to the next issued request (`full` vs search `q=` scope) — snapshotted onto the session id in the first response */
   const pendingBrowseModeRef = useRef<"full" | "search">("full");
   const totalEstimatedRef = useRef<number | null>(null);
   const loadingRef = useRef(false);
@@ -178,7 +178,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     window.vscode.postMessage({ type: "requestZoteroLibraryMore" });
   }, []);
 
-  /** Gentle background paging so results become complete (full library or all Zotero `q=` hits) */
+  /** Gentle background paging so results become complete (full library or all search hits) */
   useEffect(() => {
     if (!isOpen || !hasMore || loadingMore) return;
     const stagger = searchQuery.trim() ? 70 : openedFromDisk ? 160 : 100;
@@ -238,7 +238,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reopen only: compare against current `searchQuery` without subscribing to every keystroke
   }, [isOpen]);
 
-  /** Refetch whenever the typed query changes: Zotero `q=` (search) vs full-library paging */
+  /** Refetch whenever the typed query changes: search `q=` vs full-library paging */
   useEffect(() => {
     if (!isOpen || !window.vscode) return;
 
@@ -383,7 +383,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
         if (sidE !== null && sidE < maxFirstPageSessionRef.current) return;
 
         firstResponseDone = true;
-        setError(message.error || "Failed to load Zotero library");
+        setError(message.error || "Failed to load citation library");
         setLoading(false);
         setHasMore(false);
         setLoadingMore(false);
@@ -434,7 +434,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     return match ? match[0] : "";
   }, []);
 
-  /** Pull a normalized DOI from any of the Zotero fields (DOI/doi/extra/url). */
+  /** Pull a normalized DOI from citation fields (DOI/doi/extra/url). */
   const extractDoiFromCitation = useCallback(
     (citation: CitationItem): string => extractDoiFromZoteroData(citation.data),
     []
@@ -614,7 +614,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
             {librarySyncPending && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 text-amber-900 text-xs font-medium px-2.5 py-1 border border-amber-200/80">
                 <Loader2 size={12} className={loadingMore ? "animate-spin" : ""} />
-                {hasTypedSearch ? "Searching Zotero" : "Syncing library"}
+                {hasTypedSearch ? "Searching library" : "Syncing library"}
               </span>
             )}
           </div>
@@ -622,7 +622,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
             <button
               onClick={() => setShowZoteroSettings(true)}
               className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Zotero Settings"
+              title="Citation library settings"
             >
               <Settings size={20} className="text-gray-500" />
             </button>
@@ -648,7 +648,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
             <span className="font-medium">Add Citation Manually</span>
           </button>
           <p className="text-xs text-gray-600 mt-2 text-center">
-            Enter citation details directly without Zotero
+            Enter citation details manually
           </p>
         </div> */}
 
@@ -660,7 +660,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search (local + Zotero). Empty = browse whole library."
+              placeholder="Search local cache and library. Empty = browse whole library."
               className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
               autoFocus
             />
@@ -675,7 +675,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
                   (hasTypedSearch ? (
                     <span className="text-amber-800">
                       {" "}
-                      (Zotero is still paging through every item that matches this query)
+                      (Still paging through every item that matches this query)
                     </span>
                   ) : (
                     <span className="text-amber-800">
@@ -702,13 +702,13 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
             <div className="min-w-0 text-sm leading-snug">
               <p className="font-semibold text-amber-950">
                 {hasTypedSearch
-                  ? "Still working — loading every Zotero hit for your search"
-                  : "Still working — your full Zotero library is not loaded yet"}
+                  ? "Still working — loading every matching hit for your search"
+                  : "Still working — your full citation library is not loaded yet"}
               </p>
               <p className="text-xs text-amber-900/90 mt-1">
                 {hasTypedSearch ? (
                   <>
-                    Zotero receives this text as a remote quick search. We then page through every matching item and apply
+                    The library receives this text as a remote quick search. We then page through every matching item and apply
                     your local filters (authors, year, DOI, etc.).{" "}
                     <span className="font-medium tabular-nums">{citations.length}</span>
                     {typeof totalEstimated === "number" && totalEstimated > citations.length
@@ -724,7 +724,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
                 ) : (
                   <>
                     {loadingMore
-                      ? "Fetching the next batch from Zotero right now."
+                      ? "Fetching the next batch from the library right now."
                       : "Waiting to fetch the next batch (this happens in the background)."}
                     {" "}
                     You can keep browsing; the list shows what is downloaded so far (
@@ -755,7 +755,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
             <div className="flex items-center justify-center py-12">
               <div className="text-center">
                 <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mb-2"></div>
-                <p className="text-gray-600">Loading Zotero library...</p>
+                <p className="text-gray-600">Loading citation library...</p>
               </div>
             </div>
           )}
@@ -765,14 +765,14 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
               <div className="text-center">
                 <div className="text-red-500 mb-2">⚠️</div>
                 <p className="text-red-600">
-                  {error === "ZOTERO_NOT_CONFIGURED" ? "Zotero is not configured yet." : error}
+                  {error === "ZOTERO_NOT_CONFIGURED" ? "Citation library is not configured yet." : error}
                 </p>
                 {error === "ZOTERO_NOT_CONFIGURED" ? (
                   <button
                     onClick={() => setShowZoteroSettings(true)}
                     className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 inline-flex items-center gap-2"
                   >
-                    <Settings size={16} /> Configure Zotero
+                    <Settings size={16} /> Configure library
                   </button>
                 ) : (
                   <button
@@ -805,9 +805,9 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
                 )}
                 {!searchQuery && (
                   <p className="text-sm text-gray-500 mt-2">
-                    Make sure Zotero is running and the extension is connected
+                    Make sure the citation library is configured and connected
                     {librarySyncPending && (
-                      <span className="block text-amber-800 mt-1.5">Items are still downloading from Zotero.</span>
+                      <span className="block text-amber-800 mt-1.5">Items are still downloading from the library.</span>
                     )}
                   </p>
                 )}
@@ -890,7 +890,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
                 <Loader2 size={18} className={loadingMore ? "animate-spin" : ""} />
                 <span>
                   {loadingMore
-                    ? "Adding more citations from Zotero…"
+                    ? "Adding more citations from the library…"
                     : "Scroll toward the bottom to load another batch"}
                 </span>
               </div>
@@ -904,7 +904,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
             <p className="text-xs text-amber-900 font-medium mb-2 flex items-center gap-2">
               <Loader2 size={14} className={loadingMore ? "animate-spin text-amber-700" : "text-amber-600"} />
               {hasTypedSearch
-                ? "Zotero search in progress — not every matching item is downloaded yet."
+                ? "Library search in progress — not every matching item is downloaded yet."
                 : "Library sync in progress — results are not complete until this finishes."}
             </p>
           )}

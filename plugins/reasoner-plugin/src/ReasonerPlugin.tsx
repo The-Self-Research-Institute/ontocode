@@ -564,7 +564,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                   <li>Use <strong>Classification</strong> to discover the inferred class hierarchy</li>
                   <li>Run <strong>Realization</strong> to find all types for your individuals</li>
                   <li>Enable <strong>Incremental Reasoning</strong> for faster updates after small changes</li>
-                  <li>Yellow highlights in Protégé indicate inferred relationships</li>
+                  <li>Yellow highlights indicate inferred relationships</li>
                 </ul>
               </div>
             </div>

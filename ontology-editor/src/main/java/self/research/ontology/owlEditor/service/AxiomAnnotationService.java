@@ -11,7 +11,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Read/write OWL 2 axiom annotations (Protégé-style provenance on axioms).
+ * Read/write OWL 2 axiom annotations (provenance on axioms).
  */
 @Service
 @Slf4j

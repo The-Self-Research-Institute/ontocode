@@ -1028,7 +1028,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                             <Info size={12} />
                             <span>
                               Imports are owl:imports declarations. Loaded imports are included in the project graph;
-                              declared-only imports match Protégé declarations but were not resolved on this server.
+                              declared-only imports were not resolved on this server.
                             </span>
                           </div>
                         </div>

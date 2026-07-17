@@ -7,7 +7,7 @@
  *
  * Correctness invariants enforced here:
  *   1. Multi-parent classes are preserved (a class may appear under every
- *      asserted parent — Protege parity).
+ *      asserted parent).
  *   2. Cycles in the asserted hierarchy never recurse infinitely (defensive
  *      visited-sets on every traversal).
  *   3. Public API never returns duplicate IDs.
@@ -371,11 +371,11 @@ export const expandAll = (
   };
 };
 
-/** Ontologies at or below this size open fully expanded (Protégé-style default for teaching files). */
+/** Ontologies at or below this size open fully expanded (OntoCode default for teaching files). */
 const SMALL_ONTOLOGY_NODE_CAP = 400;
 
 /**
- * Initial visibility: class hierarchy roots + one level of children (Protégé-style).
+ * Initial visibility: class hierarchy roots + one level of children (OntoCode).
  * Avoids rendering the full ontology (individuals, properties, deep branches) on first paint.
  */
 export const initialGraphVisibility = (

@@ -133,8 +133,10 @@ scripts/remove-me-from-projects.js
 scripts/set-enterprise-uat.js
 scripts/setup-stripe.sh
 
-# VS Code extension README demo assets — mirrored in the separate links repo, not tracked here
-ontology-vscode-extension/images/
+# VS Code extension README demo assets — mirrored in the separate links repo, not tracked here.
+# Does NOT cover images/icon.png — vsce package needs it (package.json "icon" field).
+ontology-vscode-extension/images/gifs/
+ontology-vscode-extension/images/screenshots/
 
 # Built extension packages
 *.vsix
@@ -176,3 +178,20 @@ temp-runimport.txt
 /architecture.drawio
 docs/logging_architecture.drawio
 docs/ontocode-desktop.drawio
+
+# Plugin internal docs / local test notes (keep on disk, not in repo). READMEs stay tracked.
+plugins/*/TESTING.md
+plugins/*/TESTING.html
+plugins/*/TEST_CASES.md
+plugins/*/EXAMPLES.md
+plugins/*/FEATURES.md
+plugins/*/FEATURE_LIST.md
+plugins/*/ONTOCODE_FEATURES.md
+plugins/*/OPTIMIZATION_NOTES.md
+plugins/*/ROBUSTNESS_IMPROVEMENTS.md
+plugins/*/LARGE_GRAPH_OPTIMIZATIONS.md
+plugins/*/INCONSISTENCY_EXPLANATION.md
+plugins/*/SPARQL_TEST_CASES.md
+plugins/*/SWRL_TEST_CASES.md
+plugins/graph-view-plugin/test-harness.html
+plugins/graph-view-plugin/foaf-harness-sample.ttl
