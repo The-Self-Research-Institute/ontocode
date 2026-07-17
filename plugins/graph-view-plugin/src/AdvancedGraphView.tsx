@@ -2243,7 +2243,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       for (const nb of neighborhoods) {
         for (const id of nb.memberIds) nodeHubId.set(id, nb.hubId);
       }
-      const fingerprint = `v16-peri-thing-disjoint|${neighborhoods.map(n => n.hubId).sort().join('|')}`;
+      const fingerprint = `v26-measured-aabb|${neighborhoods.map(n => n.hubId).sort().join('|')}`;
       const hubsChanged = fingerprint !== vowlHubFingerprintRef.current;
       if (hubsChanged) {
         vowlHubFingerprintRef.current = fingerprint;
@@ -2336,6 +2336,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         pairBuckets.get(key)!.push(e);
       });
 
+      // Per-hub spoke counter so chips on adjacent spokes stagger along-edge
+      const hubSpokeCount = new Map<string, number>();
+
       pairBuckets.forEach(group => {
         const n = group.length;
         group.forEach((e, index) => {
@@ -2343,7 +2346,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const t = e.target as D3Node;
           const chipId = `__vowlchip__${e.id}`;
           const labelLen = String(e.label || (e.type === 'subClassOf' ? 'Subclass of' : '')).length;
-          const chipRadius = Math.max(18, Math.min(48, labelLen * 2.8 + 10));
+          // Half-width at ~11px font ≈ len·2.8+10; capping at 48 made the
+          // repulsion pass blind to long labels ("has observation temporal
+          // interval" is ~100px half-width) — cap at 96 instead.
+          const chipRadius = Math.max(18, Math.min(96, labelLen * 2.8 + 10));
 
           const sx = s.x ?? width / 2;
           const sy = s.y ?? height / 2;
@@ -2357,21 +2363,39 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const px = -uy;
           const py = ux;
 
-          // Sit mid-spoke by default; keep chips OFF the Literal boxes
-          // (0.62 was landing labels on top of yellow Literals).
-          let tAlong = e.type === 'subClassOf' ? 0.5 : 0.5;
+          // Chip slot from ABSOLUTE clearances, not fixed fractions:
+          //   t ∈ [ (hubR + chipH) / L , 1 − (endR + chipH) / L ]
+          // Adjacent spokes of the same hub alternate near/far inside that
+          // window (staggered labeling) so short-fan chips never share a ring.
+          let tAlong = 0.5;
           let side = 0;
           const touchesLiteral =
             s.type === 'datatype' || t.type === 'datatype' ||
             s.label === 'Literal' || t.label === 'Literal';
+          const sIsLit = s.type === 'datatype' || s.label === 'Literal';
+          const hubEnd = touchesLiteral ? (sIsLit ? t : s) : s;
+          const spokeIdx = hubSpokeCount.get(hubEnd.id) ?? 0;
+          hubSpokeCount.set(hubEnd.id, spokeIdx + 1);
+
+          const CLASS_R = 30;      // class circle + stroke
+          const LIT_CLEAR = 40;    // half literal box + margin
+          const chipHalfH = 13;
+          const sClear = (s.type === 'datatype' || s.label === 'Literal') ? LIT_CLEAR : CLASS_R;
+          const tClear = (t.type === 'datatype' || t.label === 'Literal') ? LIT_CLEAR : CLASS_R;
+          const lo = Math.min(0.45, (sClear + chipHalfH) / len);
+          const hi = Math.max(0.55, 1 - (tClear + chipHalfH) / len);
+
           if (n > 1) {
             const slot = index - (n - 1) / 2;
-            tAlong = Math.min(0.78, Math.max(0.22, 0.45 + slot * Math.min(0.14, 0.5 / n)));
+            tAlong = Math.min(hi, Math.max(lo, 0.45 + slot * Math.min(0.14, 0.5 / n)));
             side = slot * Math.max(34, 18 + chipRadius * 0.55);
-          } else if (touchesLiteral) {
-            tAlong = 0.42; // closer to the class hub, clear of the Literal
-          } else if (e.type !== 'subClassOf') {
-            tAlong = 0.55;
+          } else if (e.type === 'subClassOf') {
+            tAlong = lo + (hi - lo) * 0.5;
+          } else {
+            // Stagger along + alternate side of spoke so long horizontal chips
+            // on neighboring spokes never stack (AABB still cleans residuals).
+            tAlong = lo + (hi - lo) * (spokeIdx % 2 === 0 ? 0.28 : 0.72);
+            side = (spokeIdx % 2 === 0 ? 1 : -1) * Math.max(18, chipRadius * 0.35);
           }
 
           const cx0 = sx + dx * tAlong + px * side;
@@ -2397,38 +2421,118 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         });
       });
 
-      // Global repulsion so chips from different pairs also clear each other
-      const minSep = 52;
-      for (let pass = 0; pass < 18; pass++) {
+      // AABB (box) repulsion — chips are wide horizontal rectangles, NOT circles.
+      // Circular separation let two 180px labels stack with centers only 40px apart.
+      const CHIP_HH = 12;
+      for (let pass = 0; pass < 24; pass++) {
+        let moved = false;
         for (let i = 0; i < chipNodes.length; i++) {
           for (let j = i + 1; j < chipNodes.length; j++) {
             const a = chipNodes[i];
             const b = chipNodes[j];
-            let dx = (b.x ?? 0) - (a.x ?? 0);
-            let dy = (b.y ?? 0) - (a.y ?? 0);
-            let dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < 0.001) {
-              const angle = ((i * 37 + j * 73) % 360) * Math.PI / 180;
-              dx = Math.cos(angle);
-              dy = Math.sin(angle);
-              dist = 1;
+            const ax = a.x ?? 0;
+            const ay = a.y ?? 0;
+            const bx = b.x ?? 0;
+            const by = b.y ?? 0;
+            const hwA = (a as any).__chipRadius || 20;
+            const hwB = (b as any).__chipRadius || 20;
+            let dx = bx - ax;
+            let dy = by - ay;
+            const overlapX = hwA + hwB + 14 - Math.abs(dx);
+            const overlapY = CHIP_HH + CHIP_HH + 10 - Math.abs(dy);
+            if (overlapX <= 0 || overlapY <= 0) continue;
+            // Separate on the shallow axis (classic AABB resolve)
+            if (overlapX < overlapY) {
+              const sx = (dx === 0 ? (i % 2 === 0 ? 1 : -1) : Math.sign(dx)) * (overlapX / 2);
+              a.x = ax - sx;
+              b.x = bx + sx;
+            } else {
+              const sy = (dy === 0 ? (i % 2 === 0 ? 1 : -1) : Math.sign(dy)) * (overlapY / 2);
+              a.y = ay - sy;
+              b.y = by + sy;
             }
-            const need = minSep + (((a as any).__chipRadius || 20) + ((b as any).__chipRadius || 20)) * 0.55;
-            if (dist >= need) continue;
-            const push = (need - dist) / 2;
-            const nx = dx / dist;
-            const ny = dy / dist;
-            a.x = (a.x ?? 0) - nx * push;
-            a.y = (a.y ?? 0) - ny * push;
-            b.x = (b.x ?? 0) + nx * push;
-            b.y = (b.y ?? 0) + ny * push;
             a.fx = a.x;
             a.fy = a.y;
             b.fx = b.x;
             b.fy = b.y;
+            moved = true;
           }
         }
+        if (!moved) break;
       }
+
+      // Chips must also clear node glyphs (yellow Literal boxes AND class circles)
+      // using AABB against each glyph's bounding box.
+      const glyphNodes = d3Nodes.filter(
+        nd => nd.type === 'datatype' || nd.label === 'Literal' || nd.type === 'class'
+      );
+      for (let pass = 0; pass < 14; pass++) {
+        let movedAny = false;
+        for (const chip of chipNodes) {
+          const e = (chip as any).__chipEdge as D3Edge | undefined;
+          if (!e) continue;
+          const s = e.source as D3Node;
+          const t = e.target as D3Node;
+          const chipHw = (chip as any).__chipRadius || 20;
+          for (const g of glyphNodes) {
+            const isLit = g.type === 'datatype' || g.label === 'Literal';
+            const gHw = isLit ? 48 : 30;
+            const gHh = isLit ? 16 : 30;
+            const dx = (chip.x ?? 0) - (g.x ?? 0);
+            const dy = (chip.y ?? 0) - (g.y ?? 0);
+            const overlapX = chipHw + gHw + 10 - Math.abs(dx);
+            const overlapY = CHIP_HH + gHh + 8 - Math.abs(dy);
+            if (overlapX <= 0 || overlapY <= 0) continue;
+
+            if (g === s || g === t) {
+              // Own endpoint: slide toward the opposite end of the spoke
+              const other = g === s ? t : s;
+              const hx = (other.x ?? 0) - (chip.x ?? 0);
+              const hy = (other.y ?? 0) - (chip.y ?? 0);
+              const hl = Math.hypot(hx, hy) || 1;
+              const step = Math.min(overlapX, overlapY) * 0.85;
+              chip.x = (chip.x ?? 0) + (hx / hl) * step;
+              chip.y = (chip.y ?? 0) + (hy / hl) * step;
+            } else if (overlapX < overlapY) {
+              const sx = (dx === 0 ? 1 : Math.sign(dx)) * overlapX;
+              chip.x = (chip.x ?? 0) + sx;
+            } else {
+              const sy = (dy === 0 ? 1 : Math.sign(dy)) * overlapY;
+              chip.y = (chip.y ?? 0) + sy;
+            }
+            chip.fx = chip.x;
+            chip.fy = chip.y;
+            movedAny = true;
+          }
+        }
+        if (!movedAny) break;
+      }
+
+      // Bake resolved positions back into (along, side) so the tick loop
+      // preserves AABB separation instead of snapping chips back together.
+      chipNodes.forEach(chip => {
+        const e = (chip as any).__chipEdge as D3Edge | undefined;
+        if (!e) return;
+        const s = e.source as D3Node;
+        const t = e.target as D3Node;
+        const sx = s.x ?? 0;
+        const sy = s.y ?? 0;
+        const tx = t.x ?? 0;
+        const ty = t.y ?? 0;
+        const dx = tx - sx;
+        const dy = ty - sy;
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len;
+        const uy = dy / len;
+        const px = -uy;
+        const py = ux;
+        const cx = chip.x ?? sx;
+        const cy = chip.y ?? sy;
+        const along = ((cx - sx) * ux + (cy - sy) * uy) / len;
+        const side = (cx - sx) * px + (cy - sy) * py;
+        (chip as any).__chipAlong = Math.max(0.12, Math.min(0.88, along));
+        (chip as any).__chipSide = side;
+      });
     }
 
     // Simulation links: chip edges are replaced by two half-links through their
@@ -2461,10 +2565,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       // VOWL: short arrows inside a neighborhood (Literals close, subclasses
       // a bit further). Do NOT multiply by 1.85× — that made long overrides.
       if (visualizationType === 'vowl') {
-        if (edge.type === 'subClassOf') return 220;
+        // Match concentric-ring math (subclassR ≈ propR+95 ≈ 195–240)
+        if (edge.type === 'subClassOf') return 200;
         if (edge.type === 'propertyRelation') {
-          // Parallel properties between same endpoints need longer springs
-          // so fanned chips have room (Document↔Thing, Agent↔Document).
           const sId = source.id;
           const tId = target.id;
           let parallel = 0;
@@ -2474,14 +2577,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             const ot = (other.target as D3Node).id;
             if ((os === sId && ot === tId) || (os === tId && ot === sId)) parallel += 1;
           }
-          const multiBoost = parallel > 1 ? 35 + (parallel - 1) * 28 : 0;
-          if (source.type === 'datatype' || target.type === 'datatype') return 120 + multiBoost;
+          const multiBoost = parallel > 1 ? 28 + (parallel - 1) * 22 : 0;
+          if (source.type === 'datatype' || target.type === 'datatype') return 100 + multiBoost;
           if (isThingIri(source.id) || isThingIri(target.id) ||
-              source.label === 'Thing' || target.label === 'Thing') return 130 + multiBoost;
-          return 170 + multiBoost;
+              source.label === 'Thing' || target.label === 'Thing') return 110 + multiBoost;
+          return 150 + multiBoost;
         }
-        if (source.type === 'datatype' || target.type === 'datatype') return 120;
-        if (edge.type === 'domain' || edge.type === 'range') return 130;
+        if (source.type === 'datatype' || target.type === 'datatype') return 100;
+        if (edge.type === 'domain' || edge.type === 'range') return 110;
         return 140;
       }
 
@@ -2524,9 +2627,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (source?.type === 'datatype' || target?.type === 'datatype') {
           return 0.95;
         }
-        // Object properties between hubs: very weak — VOWL keeps class
-        // neighborhoods visually separate even when an object property links them
-        return visualizationType === 'vowl' ? 0.035 : (nodeCount > 100 ? 0.4 : 0.6);
+        // Object properties between hubs: near-zero — geometry is disk-packed
+        return visualizationType === 'vowl' ? 0.01 : (nodeCount > 100 ? 0.4 : 0.6);
       }
       return nodeCount > 100 ? 0.3 : 0.5;
     };
@@ -2573,12 +2675,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             // across the canvas and drawing long override curves through other nodes).
             return 0;
           }
-          // Mild repulsion only — neighborhoods are already seeded+pinned
+          // Seeded+pinned geometry — charge must not stretch the lattice.
+          // Tiny residual only for unpinned chips/orphans.
           if (visualizationType === 'vowl') {
-            if (isThingIri(node.id) || node.label === 'Thing') return -80;
-            if (node.type === 'class') return -120;
-            if (node.type === 'datatype') return -60;
-            return -50;
+            if (node.fx != null && node.fy != null) return 0;
+            if (isThingIri(node.id) || node.label === 'Thing') return -20;
+            if (node.type === 'datatype') return -15;
+            return -10;
           }
           // Force mode - adaptive strength for large graphs (100k nodes)
           if (visualizationType === 'force') {
@@ -3286,6 +3389,111 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .attr('height', bbox.height + padding * 2);
       });
     };
+
+    /** AABB resolve using MEASURED chip boxes (__chipW/H) — estimates under-size long labels. */
+    const resolveMeasuredChipOverlaps = () => {
+      if (!vowlChipsAlwaysVisible || chipNodes.length === 0) return;
+      for (let pass = 0; pass < 20; pass++) {
+        let moved = false;
+        for (let i = 0; i < chipNodes.length; i++) {
+          for (let j = i + 1; j < chipNodes.length; j++) {
+            const a = chipNodes[i];
+            const b = chipNodes[j];
+            const ea = (a as any).__chipEdge;
+            const eb = (b as any).__chipEdge;
+            const hwA = ((ea?.__chipW ?? ((a as any).__chipRadius || 20) * 2) / 2) + 6;
+            const hwB = ((eb?.__chipW ?? ((b as any).__chipRadius || 20) * 2) / 2) + 6;
+            const hhA = ((ea?.__chipH ?? 24) / 2) + 5;
+            const hhB = ((eb?.__chipH ?? 24) / 2) + 5;
+            const ax = a.x ?? 0;
+            const ay = a.y ?? 0;
+            const bx = b.x ?? 0;
+            const by = b.y ?? 0;
+            const overlapX = hwA + hwB - Math.abs(bx - ax);
+            const overlapY = hhA + hhB - Math.abs(by - ay);
+            if (overlapX <= 0 || overlapY <= 0) continue;
+            if (overlapX < overlapY) {
+              const sx = ((bx - ax) === 0 ? (i % 2 ? 1 : -1) : Math.sign(bx - ax)) * (overlapX / 2);
+              a.x = ax - sx;
+              b.x = bx + sx;
+            } else {
+              const sy = ((by - ay) === 0 ? (i % 2 ? 1 : -1) : Math.sign(by - ay)) * (overlapY / 2);
+              a.y = ay - sy;
+              b.y = by + sy;
+            }
+            a.fx = a.x;
+            a.fy = a.y;
+            b.fx = b.x;
+            b.fy = b.y;
+            moved = true;
+          }
+        }
+        if (!moved) break;
+      }
+      // Clear chips off class/literal glyphs with measured half-sizes
+      const glyphs = d3Nodes.filter(
+        nd => nd.type === 'datatype' || nd.label === 'Literal' || nd.type === 'class'
+      );
+      for (let pass = 0; pass < 10; pass++) {
+        let movedAny = false;
+        for (const chip of chipNodes) {
+          const e = (chip as any).__chipEdge as D3Edge | undefined;
+          if (!e) continue;
+          const hw = ((e as any).__chipW ?? 40) / 2 + 4;
+          const hh = ((e as any).__chipH ?? 24) / 2 + 3;
+          const s = e.source as D3Node;
+          const t = e.target as D3Node;
+          for (const g of glyphs) {
+            const isLit = g.type === 'datatype' || g.label === 'Literal';
+            const gHw = isLit ? 48 : 30;
+            const gHh = isLit ? 16 : 30;
+            const dx = (chip.x ?? 0) - (g.x ?? 0);
+            const dy = (chip.y ?? 0) - (g.y ?? 0);
+            const ox = hw + gHw - Math.abs(dx);
+            const oy = hh + gHh - Math.abs(dy);
+            if (ox <= 0 || oy <= 0) continue;
+            if (g === s || g === t) {
+              const other = g === s ? t : s;
+              const hx = (other.x ?? 0) - (chip.x ?? 0);
+              const hy = (other.y ?? 0) - (chip.y ?? 0);
+              const hl = Math.hypot(hx, hy) || 1;
+              const step = Math.min(ox, oy) * 0.9;
+              chip.x = (chip.x ?? 0) + (hx / hl) * step;
+              chip.y = (chip.y ?? 0) + (hy / hl) * step;
+            } else if (ox < oy) {
+              chip.x = (chip.x ?? 0) + (dx === 0 ? 1 : Math.sign(dx)) * ox;
+            } else {
+              chip.y = (chip.y ?? 0) + (dy === 0 ? 1 : Math.sign(dy)) * oy;
+            }
+            chip.fx = chip.x;
+            chip.fy = chip.y;
+            movedAny = true;
+          }
+        }
+        if (!movedAny) break;
+      }
+      // Re-bake along/side so tick keeps measured separation
+      chipNodes.forEach(chip => {
+        const e = (chip as any).__chipEdge as D3Edge | undefined;
+        if (!e) return;
+        const s = e.source as D3Node;
+        const t = e.target as D3Node;
+        const sx = s.x ?? 0;
+        const sy = s.y ?? 0;
+        const dx = (t.x ?? 0) - sx;
+        const dy = (t.y ?? 0) - sy;
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len;
+        const uy = dy / len;
+        const px = -uy;
+        const py = ux;
+        const cx = chip.x ?? sx;
+        const cy = chip.y ?? sy;
+        (chip as any).__chipAlong = Math.max(0.12, Math.min(0.88, ((cx - sx) * ux + (cy - sy) * uy) / len));
+        (chip as any).__chipSide = (cx - sx) * px + (cy - sy) * py;
+      });
+    };
+
     if (vowlChipsAlwaysVisible) {
       // Size chips immediately so they're visible during the initial settle,
       // not only after the first simulation 'end'.
@@ -4401,7 +4609,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               const ox = (chip.x ?? idealX) - idealX;
               const oy = (chip.y ?? idealY) - idealY;
               const sep = Math.hypot(ox, oy);
-              const cap = 36;
+              const cap = 90; // AABB may move chips far off the spoke mid-point
               const scale = sep > cap ? cap / sep : 1;
               chip.x = idealX + ox * scale;
               chip.y = idealY + oy * scale;
@@ -4458,8 +4666,19 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       updateDisjointSymbols();
       updateRestrictionBadges();
       updateLinkLabelBackgrounds();
+      resolveMeasuredChipOverlaps();
+      updateLinkLabelPositions();
       applyViewportCulling();
     });
+
+    // First measured AABB pass once labels have real getBBox sizes
+    if (vowlChipsAlwaysVisible) {
+      requestAnimationFrame(() => {
+        updateLinkLabelBackgrounds();
+        resolveMeasuredChipOverlaps();
+        updateLinkLabelPositions();
+      });
+    }
 
     // Drag functions
     function dragStarted(event: any, d: D3Node) {
