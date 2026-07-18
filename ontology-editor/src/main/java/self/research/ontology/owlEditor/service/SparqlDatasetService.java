@@ -2678,7 +2678,7 @@ public class SparqlDatasetService {
      * vocabularies. Blindly deleting the xmlns declaration while leaving `prefix:something`
      * elements/attributes in the body (because the ontology's own data genuinely uses that
      * vocabulary) produces XML with an undefined namespace prefix, which any namespace-aware
-     * parser (OWLAPI, Protégé, xmllint) rejects as malformed. Only strip a declaration when the
+     * parser (OWLAPI, OntoCode, xmllint) rejects as malformed. Only strip a declaration when the
      * prefix is truly unused elsewhere in the document.
      */
     private String stripSystemNamespaces(String rdfXml) {

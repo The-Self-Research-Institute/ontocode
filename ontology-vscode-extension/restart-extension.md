@@ -5,7 +5,7 @@
 1. **Close ALL VSCode windows** running the extension
 
 2. **Press F5 in VSCode** (or click "Run and Debug" → "Run Extension")
-   - This will start a new Extension Development Host with fresh cache
+ - This will start a new Extension Development Host with fresh cache
 
 ## If Still Seeing Old UI:
 
@@ -18,8 +18,8 @@ In the Extension Development Host window:
 ### Option B: Clear VSCode Cache Completely
 1. Close all VSCode windows
 2. Delete cache directory:
-   - **Windows**: `%APPDATA%\Code\User\workspaceStorage\*`
-   - **Mac/Linux**: `~/.config/Code/User/workspaceStorage/*`
+ - **Windows**: `%APPDATA%\Code\User\workspaceStorage\*`
+ - **Mac/Linux**: `~/.config/Code/User/workspaceStorage/*`
 3. Restart VSCode
 
 ## What Was Fixed:
@@ -36,7 +36,7 @@ In the Extension Development Host window:
 
 ## Verify It's Working:
 
-The new UI should NOT show Protégé-style dialogs. Instead you should see:
+The new UI should NOT show dialogs. Instead you should see:
 - OntoCode custom dialogs
 - Purple-themed UI
 - Entity renaming with F2 and double-click

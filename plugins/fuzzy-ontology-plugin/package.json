@@ -1,7 +1,7 @@
 {
   "name": "fuzzy-ontology-plugin",
   "displayName": "Fuzzy Ontology Advanced Plugin",
-  "description": "Advanced fuzzy ontology support with membership degrees, fuzzy reasoning, and interactive visualization - beyond Protege capabilities",
+  "description": "Fuzzy ontology support with membership degrees, fuzzy reasoning, and interactive visualization",
   "version": "1.0.0",
   "publisher": "ontocode",
   "engines": {

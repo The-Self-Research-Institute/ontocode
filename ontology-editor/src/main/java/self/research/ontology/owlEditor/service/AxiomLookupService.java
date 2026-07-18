@@ -8,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Locates asserted OWL axioms for an entity row (Protégé-style frame sections).
+ * Locates asserted OWL axioms for an entity row (frame sections).
  */
 @Service
 @Slf4j

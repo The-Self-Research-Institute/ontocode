@@ -133,7 +133,7 @@ Extensible architecture with **3 built-in plugins**:
 
 Two methods to manage citations:
 
-1. **Zotero Integration** — Pull citations directly from your Zotero library
+1. **Citation library** — Pull citations from your connected reference library
 2. **Manual Entry** — Add citations with title, author, year, and optional DOI/URL
 
 OntoCode automatically formats and inserts citations into the ontology file and appends metadata to `CITATION.cff`, `CITATIONS.md`, and `references.bib`.

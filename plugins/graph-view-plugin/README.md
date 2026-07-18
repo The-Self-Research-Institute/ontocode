@@ -2,7 +2,7 @@
 
 🚀 **Enterprise-grade graph visualization with 1000x features and best-in-class performance**
 
-The most advanced ontology visualization plugin ever built. Goes far beyond Protégé with AI-powered reasoning, collaborative editing, temporal modeling, provenance tracking, and comprehensive interoperability.
+The most advanced ontology visualization plugin for OntoCode — with AI-powered reasoning, collaborative editing, temporal modeling, provenance tracking, and comprehensive interoperability.
 
 ---
 

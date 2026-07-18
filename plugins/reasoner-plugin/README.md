@@ -148,19 +148,6 @@ The plugin communicates with the backend reasoner service via REST API:
 4. **Adjust Timeout**: Increase for complex ontologies
 5. **Run Classification First**: Required before realization
 
-## Comparison with Protégé
-
-### Advantages
-- **Web-based**: No installation required
-- **Real-time Feedback**: Progress tracking and status updates
-- **Modern UI**: Clean, intuitive interface
-- **Export Results**: Save reasoning results as JSON
-- **Multiple Reasoners**: Switch between reasoners easily
-- **Integrated**: Works seamlessly with other OntoCode plugins
-
-### Protégé Integration
-This plugin is inspired by Protégé's HermiT reasoner and provides similar capabilities in a web-based environment.
-
 ## Troubleshooting
 
 ### Reasoning Fails

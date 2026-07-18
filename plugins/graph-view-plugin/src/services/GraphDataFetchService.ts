@@ -1,7 +1,7 @@
 /**
  * Graph Data Fetch Service
  * Optimized data fetching from GraphDB with proper error handling and transformation
- * Based on webVOWL plugin's proven approach
+ * Based on VOWL plugin's proven approach
  * 
  * PERFORMANCE NOTE:
  * - Recursive child fetching is DISABLED for large ontologies
@@ -33,7 +33,7 @@ export class GraphDataFetchService {
   /**
    * Fetch complete graph data for visualization
    * Returns nodes and edges in the format expected by the graph view
-   * Recursively fetches ALL classes like webVOWL does
+   * Recursively fetches ALL classes like VOWL does
    */
   async fetchGraphData(): Promise<{ nodes: OntologyNode[], edges: OntologyEdge[] }> {
     console.log('[GraphDataFetchService] 🚀🚀🚀 STARTING FETCH - ontologyId:', this.ontologyId, 'apiBaseUrl:', this.apiBaseUrl);
@@ -103,7 +103,7 @@ export class GraphDataFetchService {
             type: 'subClassOf',
             label: 'subClassOf',
             // Synthetic adoption edge (not asserted in the ontology) — the sidebar
-            // hierarchy needs it, but WebVOWL-style rendering must drop it or every
+            // hierarchy needs it, but VOWL-style rendering must drop it or every
             // orphan class gets star-wired into one giant Thing hub.
             metadata: { synthetic: true }
           });
@@ -265,7 +265,7 @@ export class GraphDataFetchService {
   }
 
   /**
-   * Recursively fetch all children of a class (same as webVOWL)
+   * Recursively fetch all children of a class (same as VOWL)
    */
   private async fetchChildrenRecursively(parentIri: string): Promise<any[]> {
     const url = `${this.apiBaseUrl}/api/ontology/classes/children/${this.ontologyId}?parentIri=${encodeURIComponent(parentIri)}&limit=10000`;
@@ -877,7 +877,7 @@ export class GraphDataFetchService {
           for (const range of ranges) {
             const edgeId = `${domain}-${propIri}-${range}`;
             
-            // Extract characteristics for WebVOWL notation
+            // Extract characteristics for VOWL notation
             const characteristics = prop.characteristics || [];
             const hasChar = (...names: string[]) => names.some(n => characteristics.includes(n));
             const isFunctional = hasChar('Functional', 'FUNCTIONAL');
@@ -912,7 +912,7 @@ export class GraphDataFetchService {
           }
         }
       } else {
-        // WebVOWL parity: properties with a missing domain and/or range still render,
+        // properties with a missing domain and/or range still render,
         // defaulting the missing side to owl:Thing. Flagged vowlOnly so force/ontograph
         // modes (which have no per-edge Thing splitting) don't gain a Thing hub.
         const owlThing = 'http://www.w3.org/2002/07/owl#Thing';
@@ -1088,7 +1088,7 @@ export class GraphDataFetchService {
             }
             const edgeId = `${domain}-${propIri}-${range}`;
             
-            // Extract characteristics for WebVOWL notation
+            // Extract characteristics for VOWL notation
             const characteristics = prop.characteristics || [];
             const isFunctional = characteristics.includes('Functional') || characteristics.includes('FUNCTIONAL');
             
@@ -1109,8 +1109,8 @@ export class GraphDataFetchService {
           }
         }
       } else {
-        // WebVOWL parity: data properties with a missing domain default to owl:Thing,
-        // missing range defaults to rdfs:Literal (this is how WebVOWL renders FOAF's
+        // data properties with a missing domain default to owl:Thing,
+        // missing range defaults to rdfs:Literal (this is how VOWL renders FOAF's
         // nickname / title / phone etc.). Flagged vowlOnly — see object-property fallback.
         const owlThing = 'http://www.w3.org/2002/07/owl#Thing';
         const rdfsLiteral = 'http://www.w3.org/2000/01/rdf-schema#Literal';

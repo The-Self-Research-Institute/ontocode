@@ -9,11 +9,11 @@ import type { Axiom } from '../../types';
 type JustificationAxiom = { type: string; manchester: string; entities: { iri: string; label: string; type: string }[]; isAsserted: boolean };
 type Justification = { index: number; axioms: JustificationAxiom[]; isAsserted: boolean };
 
-// Protégé-style: Text is BLACK, only keywords are colored (magenta/pink)
+// Text is BLACK, only keywords are colored (magenta/pink)
 // Links are shown as underlined text for clickable entities
 const MANCHESTER_KEYWORDS = ['some', 'only', 'value', 'Self', 'min', 'max', 'exactly', 'and', 'or', 'not', 'that', 'inverse'];
 
-// Entity type icons - Protégé style bullets/shapes
+// Entity type icons bullets/shapes
 // Classes: yellow/orange filled circle, Object Properties: blue filled square, Data Properties: green filled square
 export const EntityIcon: React.FC<{ 
   type: 'class' | 'objectProperty' | 'dataProperty' | 'individual' | 'datatype' | 'annotationProperty' | 'mixed';
@@ -90,7 +90,7 @@ const getEntityTypeFromAxiom = (axiom: Axiom, dataProperties: any[] = [], proper
   return 'class';
 };
 
-// Parse and colorize axiom definition - Protégé style
+// Parse and colorize axiom definition
 // Text is BLACK, only keywords (some, and, or, etc.) are MAGENTA/PINK
 // Property names in restrictions can be shown as links (underlined)
 const ColorizedAxiomDefinition: React.FC<{
@@ -101,7 +101,7 @@ const ColorizedAxiomDefinition: React.FC<{
   onNavigate?: (iri: string, type: string) => void; // For clickable links
 }> = ({ definition, axiom, properties = [], dataProperties = [], onNavigate }) => {
   // Tokenize and colorize: only keywords get color, everything else is black
-  // This matches Protégé's style exactly
+  // This matches's style exactly
   if (!definition) return <span className="text-gray-400 italic text-xs">(no definition)</span>;
 
   const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
@@ -402,7 +402,7 @@ export const AxiomRow: React.FC<{
     return undefined;
   };
 
-  // Handle double-click to edit (Protégé-style)
+  // Handle double-click to edit
   const handleDoubleClick = () => {
     if (isViewOnly) { onViewOnlyAction?.(); return; }
     if (!isInferred && (onEdit || onEditClick)) {
@@ -416,7 +416,7 @@ export const AxiomRow: React.FC<{
     }
   };
 
-  // Handle keyboard shortcuts (Protégé-style)
+  // Handle keyboard shortcuts
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!isFocused) return;
 
@@ -656,7 +656,7 @@ export const AxiomSubsection: React.FC<{
   title: string;
   axioms: Axiom[] | undefined;
   inferredAxioms?: Axiom[];
-  /** Protégé-style: inferred rows only when hierarchy/view is in inferred mode */
+  /** Inferred rows only when hierarchy/view is in inferred mode */
   viewMode?: 'asserted' | 'inferred';
   onAdd: (definition: string) => void;
   onEdit?: (id: string, newDefinition: string) => Promise<void> | void;
@@ -759,7 +759,7 @@ export const AxiomSubsection: React.FC<{
   return (
     <div className="mb-4 last:mb-0">
       {theme ? (
-        // Protégé-style header with golden/yellow accent for classes
+        // header with golden/yellow accent for classes
         <button 
           onClick={handleAddButtonClick}
           onKeyDown={handleHeaderKeyDown}
@@ -828,7 +828,7 @@ export const AxiomSubsection: React.FC<{
                 sectionName={title}
               />
             ))}
-            {/* Inferred axioms (Protégé: only in inferred view) */}
+            {/* Inferred axioms (only in inferred view) */}
             {visibleInferred.map(axiom => (
               <AxiomRow
                 key={`inferred-${axiom.id}`}
@@ -900,7 +900,7 @@ const getPropertyLabel = (uri: string): string => {
 
 /**
  * A component that displays a list of annotations (key-value pairs)
- * in Protégé style - grouped by property with full URI displayed.
+ * in - grouped by property with full URI displayed.
  * Sorts annotations to show rdfs:comment first, then rdfs:label, then others alphabetically.
  */
 type AnnotationMap = Record<string, string | string[]>;
@@ -1205,7 +1205,7 @@ export const MultiSelectItem: React.FC<{
         }
     }
     
-    // Icon based on entity type - matches Protégé style
+    // Icon based on entity type - matches
     // Classes: yellow/orange circle, ObjectProperties: blue square, DataProperties: green square
     // Individuals: purple diamond, Datatypes: red circle
     const getIcon = () => {
@@ -1289,7 +1289,7 @@ export const MultiSelectItem: React.FC<{
                 </div>
                 {!isInferred && (
                     <div className={`flex items-center gap-1 transition-all ${isDeleting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                        {/* ? — Explanation (Protégé-style justification) */}
+                        {/* ? — Explanation (justification) */}
                         <button
                             onClick={(e) => { e.stopPropagation(); setShowExplanation(v => !v); if (showAnnotations) setShowAnnotations(false); }}
                             className={`p-1 rounded transition-all ${showExplanation ? 'text-blue-600 bg-blue-50 opacity-100' : 'text-gray-400 hover:bg-blue-100 hover:text-blue-600'}`}
@@ -1345,7 +1345,7 @@ export const MultiSelectItem: React.FC<{
                 )}
             </div>
 
-            {/* Explanation panel — Protégé-style justification dialog */}
+            {/* Explanation panel — justification dialog */}
             {showExplanation && !isInferred && (
                 <div className="mx-1.5 mb-1.5 bg-blue-50 border border-blue-200 rounded text-xs" onClick={(e) => e.stopPropagation()}>
                     {/* Title bar */}
@@ -1355,7 +1355,7 @@ export const MultiSelectItem: React.FC<{
                             Explanation for '{displayName}'{sectionName ? ` ${sectionName}` : ''}
                         </span>
                     </div>
-                    {/* Filter row — matches Protégé's radio layout */}
+                    {/* Filter row — matches's radio layout */}
                     <div className="px-2 pt-2 pb-1 grid grid-cols-2 gap-x-4 gap-y-0.5">
                         <label className="flex items-center gap-1 cursor-pointer">
                             <input type="radio" name={`just-${item}`} checked={justType === 'regular'}
@@ -1443,7 +1443,7 @@ export const MultiSelectItem: React.FC<{
                 </div>
             )}
 
-            {/* Annotations panel — like Protégé's "Annotations for DataPropertyRange" dialog */}
+            {/* Annotations panel — "Annotations for DataPropertyRange" dialog */}
             {showAnnotations && !isInferred && (
                 <div className="mx-1.5 mb-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs">
                     <div className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-1.5">
@@ -1571,7 +1571,7 @@ export const MultiSelectSection: React.FC<{
 }> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate, onEdit, projectId, parentEntityIri }) => {
     const [isSelected, setIsSelected] = useState(false);
     
-    // Clean minimal theme colors - Protégé-style
+    // Clean minimal theme colors - subtle and professional
     const themes = {
         blue: {
             headerBg: 'bg-blue-50 border-l-2 border-l-blue-500',
@@ -1652,7 +1652,7 @@ export const MultiSelectSection: React.FC<{
                  ) : null}
                  {(!items || items.length === 0) && (!inferredItems || inferredItems.length === 0) && (
                     <div className="p-2 text-xs text-gray-400 italic">
-                        {/* Empty - matches Protégé's minimal empty state */}
+                        {/* Empty - matches's minimal empty state */}
                     </div>
                  )}
              </div>

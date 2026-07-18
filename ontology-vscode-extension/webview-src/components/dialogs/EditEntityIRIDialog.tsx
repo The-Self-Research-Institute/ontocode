@@ -67,7 +67,7 @@ const EditEntityIRIDialog: React.FC<EditEntityIRIDialogProps> = ({
         </div>
         <div className="p-4 space-y-3">
           <p className="text-xs text-gray-600">
-            Protégé-style rename: updates this entity&apos;s IRI in every axiom that references it.
+            rename: updates this entity&apos;s IRI in every axiom that references it.
           </p>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Current IRI</label>

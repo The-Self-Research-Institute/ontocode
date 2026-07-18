@@ -1,6 +1,6 @@
 /**
  * Graph View Plugin Entry Point
- * Integrated with WebVOWL VOWL Notation Support
+ * Integrated with VOWL Notation Support
  */
 
 export { AdvancedGraphView as default } from './AdvancedGraphView';
@@ -13,9 +13,9 @@ export { vowlNotationService } from './services/VOWLNotationService';
 export type { VOWLNodeData, VOWLEdgeData, VOWLGraphData } from './services/VOWLNotationService';
 
 // Views
-export { ProtegeStyleGraphView } from './ProtegeStyleGraphView';
+export { OntoHierarchyGraphView } from './OntoHierarchyGraphView';
 
-// Hierarchy / focus components (Protege-parity + Obsidian-inspired)
+// Hierarchy / focus components (OntoCode hierarchy)
 export {
   ClassHierarchyPanel,
   type ClassHierarchyPanelProps,

@@ -32,7 +32,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Service for merging ontologies similar to Protege PROMPT.
+ * Service for merging ontologies .
  * Supports:
  * - Simple merge (union of ontologies)
  * - Conflict detection (duplicate classes, properties, different definitions)
@@ -804,7 +804,7 @@ public class OntologyMergeService {
 
     /**
      * Keep both - rename source entities to avoid conflicts using OWLEntityRenamer
-     * This matches Protege's renaming behavior
+     * Renaming behavior
      */
     private void performKeepBoth(OWLOntology source, OWLOntology target,
                                 OWLOntologyManager manager, MergeOptions options,
@@ -1185,7 +1185,7 @@ public class OntologyMergeService {
      * referenced (e.g. SubClassOf(Dog, Animal) is a defining axiom of Dog,
      * not of Animal).
      *
-     * This is the Protégé-style "definition" of an entity:
+     * This is the "definition" of an entity:
      * - Declaration
      * - Annotation assertions about the entity
      * - SubClassOf / EquivalentClasses / DisjointClasses where entity is the subject class
@@ -1333,7 +1333,7 @@ public class OntologyMergeService {
     }
 
     /**
-     * Add entity with renaming using OWLEntityRenamer (Protege-style).
+     * Add entity with renaming using OWLEntityRenamer.
      * Finds the entity in any role (class, property, individual, annotation property, datatype),
      * renames it, and then adds ALL referencing axioms to the target.
      */

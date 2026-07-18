@@ -15,7 +15,7 @@ interface MembershipFunctionCanvasProps {
 }
 
 /**
- * Canvas-based membership function visualizer (Protégé-style)
+ * Canvas-based membership function visualizer 
  * Draws curve preview for triangular, trapezoidal, Gaussian, sigmoid functions
  */
 const MembershipFunctionCanvas: React.FC<MembershipFunctionCanvasProps> = ({

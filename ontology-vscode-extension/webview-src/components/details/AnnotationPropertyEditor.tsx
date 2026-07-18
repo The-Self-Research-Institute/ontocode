@@ -275,7 +275,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
       </div>
       <CollaboratorPresenceBar entityId={item.id} />
 
-      {/* Tabs - Protégé style with Annotations, Description, Usage */}
+      {/* Tabs with Annotations, Description, Usage */}
       <div className="flex border-b border-gray-200 bg-gray-50">
         <button 
           onClick={() => setActiveTab('annotations')}

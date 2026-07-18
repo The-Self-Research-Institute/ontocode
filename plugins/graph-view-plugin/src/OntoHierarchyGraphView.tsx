@@ -1,11 +1,9 @@
 /**
- * ============================================================================
- * PROTEGE-STYLE ONTOGRAF VIEW
- * ============================================================================
+ * OntoCode hierarchy graph view
  *
  * Production rewrite — every toolbar button, search input, context menu and
  * assertion-mode toggle is now wired to a real handler. The class hierarchy
- * panel uses the new <ClassHierarchyPanel /> for full Protege parity
+ * panel uses the new <ClassHierarchyPanel /> 
  * (multi-parent, virtualized, keyboard-navigable, etc).
  */
 
@@ -46,7 +44,7 @@ import type { OntologyNode, OntologyEdge, EdgeType, NodeType } from './types';
 // Types
 // ---------------------------------------------------------------------------
 
-interface ProtegeStyleGraphViewProps {
+interface OntoHierarchyGraphViewProps {
   projectId: string;
   /** Optional ontology display name shown in the header. */
   ontologyName?: string;
@@ -113,7 +111,7 @@ const PRECOMPUTED_LAYOUTS: ReadonlySet<LayoutType> = new Set(['radial', 'circula
 // Component
 // ---------------------------------------------------------------------------
 
-export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({
+export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
   projectId,
   ontologyName,
   initialData,
@@ -471,7 +469,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({
     const canvas = containerRef.current.querySelector('canvas');
     if (!canvas) return;
     const link = document.createElement('a');
-    link.download = `ontograf-${projectId}-${Date.now()}.png`;
+    link.download = `ontocode-${projectId}-${Date.now()}.png`;
     link.href = (canvas as HTMLCanvasElement).toDataURL('image/png');
     link.click();
   }, [projectId]);
@@ -486,7 +484,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.download = `ontograf-${projectId}-${Date.now()}.json`;
+    link.download = `ontocode-${projectId}-${Date.now()}.json`;
     link.href = url;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -506,7 +504,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({
     const positions = net.getPositions();
     try {
       localStorage.setItem(
-        `ontograf-view-${projectId}`,
+        `ontocode-view-${projectId}`,
         JSON.stringify({ positions, layoutType, assertionMode })
       );
     } catch {
@@ -686,7 +684,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({
         >
           <RefreshCw
             size={16}
-            style={{ animation: loading ? 'ontograf-spin 1s linear infinite' : 'none' }}
+            style={{ animation: loading ? 'ontocode-spin 1s linear infinite' : 'none' }}
           />
         </button>
         <button
@@ -948,7 +946,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({
               }}
             >
               <div style={{ textAlign: 'center' }}>
-                <RefreshCw size={28} style={{ animation: 'ontograf-spin 1s linear infinite' }} />
+                <RefreshCw size={28} style={{ animation: 'ontocode-spin 1s linear infinite' }} />
                 <div style={{ marginTop: 8, fontSize: 13, color: '#475569' }}>Loading graph…</div>
               </div>
             </div>
@@ -957,7 +955,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({
       </div>
 
       <style>{`
-        @keyframes ontograf-spin {
+        @keyframes ontocode-spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
@@ -1009,7 +1007,7 @@ function getEdgeStyle(
   inferredOnly: boolean
 ): { dashes: false | number[]; color: string; arrows: { to: { enabled: boolean; type?: string } } } {
   if (inferredOnly) {
-    // Mimic Protege's inferred highlight: dashed yellow.
+    // Inferred highlight: dashed yellow.
     return {
       dashes: [4, 3],
       color: '#b45309',
@@ -1121,4 +1119,4 @@ const iconBtnGhost: React.CSSProperties = {
   display: 'flex'
 };
 
-export default ProtegeStyleGraphView;
+export default OntoHierarchyGraphView;

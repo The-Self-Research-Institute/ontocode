@@ -61,7 +61,7 @@ public class OntologyAdminController {
         hierarchyIndexService.scheduleBuild(projectId);
         return ResponseEntity.accepted().body(Map.of(
                 "success", true,
-                "message", "Protégé-parity hierarchy snapshot rebuild scheduled",
+                "message", "hierarchy snapshot rebuild scheduled",
                 "projectId", projectId));
     }
 

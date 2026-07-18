@@ -224,7 +224,7 @@ export const ConfirmDialog = ({
 };
 
 /**
- * Protégé-style class delete confirmation: lets the user choose between deleting
+ * Class delete confirmation: lets the user choose between deleting
  * just the target class or cascading to all its asserted descendants. Kept separate
  * from the generic ConfirmDialog above (which many other flows depend on) so this
  * radio-choice + descendant-fetch behavior can't regress unrelated confirm dialogs.

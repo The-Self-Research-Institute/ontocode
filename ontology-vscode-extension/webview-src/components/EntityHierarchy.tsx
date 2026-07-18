@@ -349,7 +349,7 @@ const EntityHierarchy = ({
     switch (itemType) {
         case 'Classes':
           Icon = Package;
-          // Multi-parent: double-border (Protégé-style) — class has >1 parent
+          // Multi-parent: double-border — class has >1 parent
           // Defined: amber-300 with equivalence indicator
           // Normal: solid amber-400
           iconClasses = isMultiParent
@@ -562,7 +562,7 @@ const EntityHierarchy = ({
   }, [filteredData, expandedNodes, entitiesTab]);
 
   // Classes that appear more than once in the visible tree are multi-parent.
-  // Shown with a double-border icon (Protégé-style) so the user understands
+  // Shown with a double-border icon so the user understands
   // they're not duplicates — the class genuinely has multiple parent classes.
   const multiParentIds = useMemo(() => {
     if (entitiesTab !== 'Classes') return new Set<string>();
@@ -662,7 +662,7 @@ const EntityHierarchy = ({
           {!hideToolbarActions && (
           <div className="flex items-center gap-0.5">
               {/*
-                Toolbar layout, Bug #46 (matches Protégé):
+                Toolbar layout, Bug #46 (matches):
                   • Primary "Add" button is CONTEXTUAL — no selection creates
                     a top-level entity (under owl:Thing / topObjectProperty /
                     topDataProperty), with selection creates a sibling. This
