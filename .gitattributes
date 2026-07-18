@@ -1,0 +1,7 @@
+# Shell scripts must keep LF line endings regardless of the checkout platform's
+# core.autocrlf setting — they run inside Linux containers (Docker entrypoints,
+# fuseki-docker/docker-entrypoint.sh) or via bash on CI, and a CRLF-corrupted
+# script fails at runtime with cryptic errors like ": not found" / "illegal option -".
+*.sh text eol=lf
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf

@@ -206,11 +206,15 @@ function Invoke-Ec2Deploy {
 
 function Build-Desktop {
     param([string]$Target)
+    # Match the auto-update URL baked into the installer to the environment we upload to:
+    # a dev-uploaded exe must check dev for updates, a prod one must check prod. $ApiBase
+    # is the single source of truth for which environment this release targets.
+    $devSuffix = if ($ApiBase -match 'dev') { ':dev' } else { '' }
     Push-Location "$Root\electron-app"
     switch ($Target) {
-        "win"   { npm run dist:win }
-        "mac"   { npm run dist:mac }
-        "linux" { npm run dist:linux }
+        "win"   { npm run "dist:win$devSuffix" }
+        "mac"   { npm run "dist:mac$devSuffix" }
+        "linux" { npm run "dist:linux$devSuffix" }
     }
     Pop-Location
 }

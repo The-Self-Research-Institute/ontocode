@@ -136,7 +136,7 @@ export function applyTreeLayout(
    * The previous implementation positioned each subtree from local sibling
    * indexes, so separate branches at the same depth could overlap. The leaf-slot
    * pass above gives every leaf a unique breadth position and centers parents
-   * over their descendants, matching the readable Protégé OntoGraf style.
+   * over their descendants, matching the readable OntoCode hierarchy style.
    */
   /*
    * Fallback for any node skipped due to cycles/multiple-parent structures:

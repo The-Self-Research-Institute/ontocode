@@ -254,7 +254,7 @@ const ObjectPropertyExpressionDialog: React.FC<ObjectPropertyExpressionDialogPro
               <span className="w-5 flex-shrink-0" />
             )}
             
-            {/* Property Icon (colored rectangle like Protégé) */}
+            {/* Property Icon (colored rectangle ) */}
             <span className={`w-3 h-3 rounded-sm flex-shrink-0 ${
               isSelected ? themeColors.primaryLight : themeColors.primary
             }`} />

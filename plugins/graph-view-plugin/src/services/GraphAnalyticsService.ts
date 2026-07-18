@@ -1,5 +1,5 @@
 /**
- * Graph analytics for ontology visualization (InfraNodus-inspired).
+ * Graph analytics for ontology visualization (OntoCode).
  * Pure functions — safe to call on filtered subgraphs.
  */
 

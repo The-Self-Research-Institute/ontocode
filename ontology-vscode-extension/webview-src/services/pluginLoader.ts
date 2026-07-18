@@ -354,7 +354,7 @@ class PluginLoaderService {
       }
 
       // Get the default export (the React component)
-      const component = pluginModule.default || pluginModule.WebVOWL || pluginModule;
+      const component = pluginModule.default || pluginModule;
 
       if (!component) {
         throw new Error(`Plugin ${pluginId} did not export a default component`);

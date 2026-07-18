@@ -101,7 +101,7 @@ export const getShortcutDisplay = (shortcut: KeyboardShortcut, isMac: boolean = 
 };
 
 /**
- * Default Protégé-style shortcuts (configurable)
+ * Default keyboard shortcuts (configurable)
  */
 export const DEFAULT_SHORTCUTS = {
   // Entity Creation

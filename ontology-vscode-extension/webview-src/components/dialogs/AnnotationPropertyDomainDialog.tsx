@@ -4,9 +4,9 @@ import type { TreeNode } from '../../types';
 import apiClient from '../../services/apiClient';
 
 /**
- * AnnotationPropertyDomainDialog - Protégé-style dialog for selecting annotation property domains
+ * AnnotationPropertyDomainDialog - dialog for selecting annotation property domains
  * 
- * Based on Protégé's OWLAnnotationPropertyDomainEditor.java:
+ * Annotation property domain selection:
  * - Two tabs: "Select Class" (class hierarchy selector) and "Edit raw IRI" (direct IRI input)
  * - Size: 500x500 in original
  * - Uses OWLClassSelectorWrapper for class selection
@@ -209,7 +209,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
               <span className="w-5 flex-shrink-0" />
             )}
 
-            {/* Class Icon (yellow circle like Protégé) */}
+            {/* Class Icon (yellow circle ) */}
             <span className={`w-3 h-3 rounded-full flex-shrink-0 ${
               isSelected ? 'bg-amber-300' : 'bg-amber-400'
             }`} />
@@ -259,7 +259,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
           </button>
         </div>
 
-        {/* Toolbar - Protégé style: Add subclass, Add sibling, Delete, Filter dropdown */}
+        {/* Toolbar: Add subclass, Add sibling, Delete, Filter dropdown */}
         {showToolbar && (
           <div className="flex items-center gap-1 px-2 py-1.5 border-b bg-gray-50">
             {/* Add Subclass Button */}
@@ -319,7 +319,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
           </div>
         )}
 
-        {/* Tabs - Protégé style */}
+        {/* Tabs */}
         <div className="flex border-b border-gray-200 bg-gray-50">
           <button
             onClick={() => setActiveTab('select-class')}

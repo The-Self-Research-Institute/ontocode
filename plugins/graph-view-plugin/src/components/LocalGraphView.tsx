@@ -3,7 +3,7 @@
  * LOCAL GRAPH VIEW
  * ============================================================================
  *
- * Obsidian-inspired focused neighborhood view of an ontology graph.
+ * OntoCode focused neighborhood view of an ontology graph.
  *
  * Centers on a single "focus" node and renders its N-hop neighborhood with a
  * smooth force-directed layout (D3 v7). Designed for the right-pane / sidebar
@@ -423,7 +423,7 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
         >
           <Crosshair size={14} />
           <span style={{ fontWeight: 600 }}>Local graph</span>
-          <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>Obsidian-style</span>
+          <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>OntoCode</span>
           <span style={{ color: 'var(--text-secondary)' }}>·</span>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             depth

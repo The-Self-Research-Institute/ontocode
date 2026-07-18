@@ -28,7 +28,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * DL Query Controller - Manchester OWL Syntax queries like Protege's DL Query Tab
+ * DL Query Controller - Manchester OWL Syntax queries
  * 
  * Supports querying for:
  * - Subclasses (direct and indirect)
@@ -37,7 +37,7 @@ import java.util.stream.Collectors;
  * - Instances (individuals of the class expression)
  * 
  * References:
- * - https://protegewiki.stanford.edu/wiki/DLQueryTab
+ * - 
  * - https://www.w3.org/TR/owl2-manchester-syntax/
  */
 @RestController
@@ -164,7 +164,7 @@ public class DLQueryController {
 
     /**
      * Add the current DL Query expression as a named defined class, matching
-     * Protégé's DL Query "Add to ontology" behavior:
+     * DL Query "Add to ontology" behavior:
      * NewClass EquivalentTo <Manchester expression>.
      */
     @PostMapping("/{projectId}/dl/add")

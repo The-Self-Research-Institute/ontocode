@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Protégé-style ontology statistics from an in-memory OWLAPI model + structural reasoner.
+ * ontology statistics from an in-memory OWLAPI model + structural reasoner.
  */
 @Component
 public class OntologyMetricsComputer {
@@ -66,7 +66,7 @@ public class OntologyMetricsComputer {
 
     /**
      * Entailed anonymous SubClassOf axioms (direct) not present in the asserted ontology.
-     * Matches Protégé "hidden GCI" using the structural reasoner already loaded for hierarchy.
+     * Matches "hidden GCI" using the structural reasoner already loaded for hierarchy.
      */
     private int computeHiddenGciCount(OWLOntology ontology, OWLReasoner reasoner) {
         try {

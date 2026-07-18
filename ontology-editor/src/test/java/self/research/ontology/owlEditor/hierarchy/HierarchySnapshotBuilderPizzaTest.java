@@ -13,7 +13,7 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Protégé parity: Pizza tutorial roots and intersection-subClassOf children.
+ * Pizza tutorial roots and intersection-subClassOf children.
  */
 class HierarchySnapshotBuilderPizzaTest {
 
@@ -29,7 +29,7 @@ class HierarchySnapshotBuilderPizzaTest {
             "http://www.semanticweb.org/pizzatutorial/ontologies/2020/PizzaTutorial#PizzaTopping";
 
     @Test
-    void assertedTopLevel_matchesProtegePizzaTutorial() throws Exception {
+    void assertedTopLevel_matchesOntoCodePizzaTutorial() throws Exception {
         Path owl = Path.of("..", "PizzaTutorialWithDataV2.owl").normalize();
         assertTrue(owl.toFile().exists(), "Pizza tutorial fixture missing: " + owl);
 

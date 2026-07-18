@@ -40,7 +40,7 @@ import java.util.concurrent.TimeoutException;
  * Loads an OWL file into OWLAPI after Fuseki import completes and stores the
  * parsed model + structural reasoner in ProjectOntologyCache.
  *
- * Protégé-style fast path: one in-memory parse, then instant hierarchy without Fuseki SPARQL.
+ * fast path: one in-memory parse, then instant hierarchy without Fuseki SPARQL.
  * Active on desktop and on cloud when {@code ontocode.fastopen.enabled=true} (default).
  */
 @Service
@@ -110,7 +110,7 @@ public class DesktopOntologyLoader {
 
     /**
      * At startup, kick off OWLAPI loading for the most recently accessed projects
-     * (up to 3) so the first project the user opens is already warm — like Protégé.
+     * (up to 3) so the first project the user opens is already warm — .
      * Uses the existing desktopModelExecutor thread pool (max 2 concurrent loads).
      */
     @EventListener(ApplicationReadyEvent.class)
@@ -147,7 +147,7 @@ public class DesktopOntologyLoader {
 
     /**
      * Block until the OWLAPI model is cached (or timeout). Used by the desktop UI
-     * so the first screen uses in-memory APIs like Protégé instead of slow SPARQL.
+     * so the first screen uses in-memory APIs instead of slow SPARQL.
      */
     public Map<String, Object> warmProject(String projectId, long timeoutMs) {
         if (isHierarchyReady(projectId)) {
@@ -368,7 +368,7 @@ public class DesktopOntologyLoader {
                 .orElse(0L);
     }
 
-    /** Start OWLAPI parse in parallel with Fuseki import (Protégé-style fast-open). */
+    /** Start OWLAPI parse in parallel with Fuseki import (fast-open). */
     public void startParallelWarm(String projectId, Path owlFilePath) {
         startParallelWarm(projectId, owlFilePath, false);
     }
@@ -535,7 +535,7 @@ public class DesktopOntologyLoader {
                         owlFilePath.toString());
             }
 
-            // Protege-parity: show the asserted hierarchy immediately (no reasoner), same as
+            // show the asserted hierarchy immediately (no reasoner), same as
             // Cloud fast-open. Precomputing a structural reasoner over the whole ontology here
             // made every top-level/count query on Desktop pay reasoner.getSuperClasses() calls
             // per candidate class - for large ontologies (GO/ChEBI, 50k-90k classes) that alone
