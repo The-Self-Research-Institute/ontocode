@@ -40,7 +40,7 @@ public class AsyncConfig implements AsyncConfigurer {
      * it from owlParsingExecutor also means a heavy model build never starves the
      * import pipeline (and vice versa). CallerRuns applies natural backpressure.
      */
-    /** Post-import OWLAPI hierarchy snapshot builds (Protégé-parity index for cloud web UI). */
+    /** Post-import OWLAPI hierarchy snapshot builds (index for cloud web UI). */
     @Bean(name = "hierarchyIndexExecutor")
     public Executor hierarchyIndexExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

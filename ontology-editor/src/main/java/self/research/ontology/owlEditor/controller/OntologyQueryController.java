@@ -84,7 +84,7 @@ public class OntologyQueryController {
     @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.ReasonerIndividualAssertionMerger reasonerIndividualAssertionMerger;
 
-    /** Desktop Protégé-style: OWLAPI is authoritative; Fuseki may not be synced yet. */
+    /** Desktop: OWLAPI is authoritative; Fuseki may not be synced yet. */
     @Value("${ontocode.desktop.owlapi-first:false}")
     private boolean owlApiFirst;
 
@@ -243,7 +243,7 @@ public class OntologyQueryController {
     }
 
     /**
-     * Desktop: load the ontology into OWLAPI memory (Protégé-style) before the UI
+     * Desktop: load the ontology into OWLAPI memory before the UI
      * runs heavy Fuseki SPARQL. Blocks up to timeoutMs (default 5 min).
      */
     @org.springframework.web.bind.annotation.PostMapping("/warm/{projectId:.+}")
@@ -311,7 +311,7 @@ public class OntologyQueryController {
             if (desktopOntologyLoader != null) {
                 desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
             }
-            // Cloud: precomputed OWLAPI snapshot (Protégé-parity) — main-graph-only, so a
+            // Cloud: precomputed OWLAPI snapshot () — main-graph-only, so a
             // drafter falls through to the live SPARQL path below instead (draft-scope-aware).
             if (!hasDraft) {
                 Optional<Map<String, Object>> snapshot = hierarchyIndexService.topLevelResponse(projectId, limit);
@@ -766,7 +766,7 @@ public class OntologyQueryController {
         boolean hasDraft = ctxUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
 
-        // 1. OWLAPI in-memory (desktop / warm cloud) — instant, Protégé-parity
+        // 1. OWLAPI in-memory (desktop / warm cloud) — instant, 
         if (!hasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             Map<String, Object> details = new java.util.LinkedHashMap<>(
                     desktopHierarchyService.classDetails(projectId, classIri));

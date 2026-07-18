@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * In-memory cache of parsed OWLOntology + optional structural OWLReasoner.
  *
  * Active in desktop mode and in cloud when fast-open is enabled (default).
- * Cloud fast-open uses asserted hierarchy (no reasoner precompute) for Protégé-like open times.
+ * Cloud fast-open uses asserted hierarchy (no reasoner precompute) for open times.
  */
 @Component
 @Conditional(FastOpenCondition.class)

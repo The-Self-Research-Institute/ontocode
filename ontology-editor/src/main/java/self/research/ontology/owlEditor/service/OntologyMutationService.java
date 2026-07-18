@@ -142,7 +142,7 @@ public class OntologyMutationService {
         log.info("[MUTATION] {}", sparql);
         
         try {
-            // Protégé-style desktop: OWLAPI patch or in-memory SPARQL; defer Fuseki until SPARQL/graph.
+            // desktop: OWLAPI patch or in-memory SPARQL; defer Fuseki until SPARQL/graph.
             if (!draft && desktopOwlApiMutationService != null
                     && desktopOwlApiMutationService.tryApply(projectId, ops, sparql)) {
                 long version = metadataService.incrementMutationVersion(projectId);
@@ -579,7 +579,7 @@ public class OntologyMutationService {
                 + "}";
         } else if (type.equals("addInverseProperty")) {
             // owl:inverseOf is symmetric in OWL — insert both directions so both
-            // properties show each other as inverse (matches Protégé behaviour).
+            // properties show each other as inverse (keeps inverses bidirectional).
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> owl:inverseOf <" + op.target() + "> .\n"
                 + "<" + op.target() + "> owl:inverseOf <" + op.iri() + "> .\n"

@@ -1,7 +1,7 @@
 {
   "name": "@ontocode/reasoner-plugin",
   "displayName": "OWL Reasoner Plugin",
-  "description": "HermiT-inspired OWL reasoner for consistency checking, classification, realization, and inference - Advanced reasoning beyond Protégé capabilities",
+  "description": "OWL reasoner for consistency checking, classification, realization, and inference",
   "version": "1.0.0",
   "publisher": "ontocode",
   "engines": {

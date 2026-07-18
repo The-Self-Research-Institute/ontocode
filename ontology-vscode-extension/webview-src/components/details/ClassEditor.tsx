@@ -354,7 +354,7 @@ const ClassEditor: React.FC<{
     }
   }, [propDataPropertyHierarchy]);
 
-  // Disjoint With State (multi-class selector like Protégé)
+  // Disjoint With State (multi-class selector )
   const [isDisjointWithOpen, setIsDisjointWithOpen] = useState(false);
   const [editingDisjointWithId, setEditingDisjointWithId] = useState<string | undefined>();
   const [editingDisjointWithTarget, setEditingDisjointWithTarget] = useState<string | undefined>();
@@ -952,7 +952,7 @@ const ClassEditor: React.FC<{
     setEditorInitialRestrictionData(restrictionData);
     setEditorSubjectClassIri(subjectClassIri);
 
-    // Add mode shows the full Protégé-style builder set. Edit mode shows the
+    // Add mode shows the full builder set. Edit mode shows the
     // expression editor plus only the builder that matches the existing axiom.
     if (existingValue && existingId) {
       if (initialTab === "dataRestriction" || restrictionData?.isDataProperty) {
@@ -2428,7 +2428,7 @@ const ClassEditor: React.FC<{
         metadata={metadata}
       />
 
-      {/* Disjoint With Class Selector (like Desktop Protégé) */}
+      {/* Disjoint With Class Selector () */}
       <MultiClassSelectorDialog
         isOpen={isDisjointWithOpen}
         onClose={() => {

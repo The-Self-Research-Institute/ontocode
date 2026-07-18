@@ -285,7 +285,7 @@ public class DesktopHierarchyService {
     }
 
     /**
-     * OWLAPI in-memory supplements for class details (Protégé parity, no Fuseki SPARQL).
+     * OWLAPI in-memory supplements for class details.
      * Covers multi-valued annotations merge, AllDisjointClasses, disjointUnion, hasKey,
      * GCIs, anonymous ancestor axioms, and structural-reasoner inferred axioms.
      */
@@ -811,7 +811,7 @@ public class DesktopHierarchyService {
     }
 
     /**
-     * Protégé-parity usage: covers every axiom type that references this class.
+     * usage: covers every axiom type that references this class.
      * Uses EntitySearcher.getReferencingAxioms equivalent via OWLOntology.referencingAxioms()
      * which is an O(1) HashMap lookup in OWLAPI — milliseconds even on Mondo (3.1M triples).
      */

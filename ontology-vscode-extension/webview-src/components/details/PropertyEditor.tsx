@@ -406,7 +406,7 @@ const PropertyEditor: React.FC<{
             </div>
             <CollaboratorPresenceBar entityId={item.id} />
 
-            {/* Tabs - Protégé style */}
+            {/* Tabs */}
             <div className="flex border-b border-gray-200 bg-gray-50">
                 <button 
                     onClick={() => setActiveTab('annotations')}
@@ -447,7 +447,7 @@ const PropertyEditor: React.FC<{
             <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
                 {activeTab === 'annotations' && (
                     <div className="space-y-0">
-                        {/* Annotations Panel Header - Protégé style */}
+                        {/* Annotations Panel Header */}
                         <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
                             <span className="text-sm font-semibold">Annotations: {item.label}</span>
                             <div className="flex items-center gap-1">
@@ -472,7 +472,7 @@ const PropertyEditor: React.FC<{
 
                 {activeTab === 'description' && (
                     <div className="space-y-0">
-                        {/* Description Panel Header - Protégé style */}
+                        {/* Description Panel Header */}
                         <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
                             <span className="text-sm font-semibold">Description: {item.label}</span>
                         </div>

@@ -1,15 +1,14 @@
 /**
  * DL Query Panel - Enhanced Description Logic Query Interface
  * 
- * Based on Protege's DL Query Tab functionality:
+ * DL Query panel:
  * - Manchester OWL Syntax for class expressions
  * - Query for subclasses, superclasses, equivalent classes, instances
  * - Syntax highlighting and auto-completion hints
  * - Example queries for common patterns
  * 
  * References:
- * - https://protegewiki.stanford.edu/wiki/DLQueryTab
- * - https://oboacademy.github.io/obook/tutorial/basic-dl-query/
+  * - https://oboacademy.github.io/obook/tutorial/basic-dl-query/
  */
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
@@ -288,7 +287,7 @@ const generateExampleQueries = (
   return result;
 };
 
-// Query type options (matching Protege's checkboxes)
+// Query type options
 const QUERY_TYPES = [
   { id: 'directSuperclasses', label: 'Direct superclasses', icon: ArrowUp, description: 'Immediate parent classes' },
   { id: 'superclasses', label: 'Superclasses', icon: ArrowUp, description: 'All ancestor classes' },
