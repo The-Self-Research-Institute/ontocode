@@ -2110,12 +2110,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectorAllowedTabs, setSelectorAllowedTabs] = useState<TabType[]>(['hierarchy', 'objectRestriction', 'classExpression']);
   const [selectorInitialTab, setSelectorInitialTab] = useState<TabType>('hierarchy');
 
-  // Annotation Property Description Dialogs (Protégé-style)
+  // Annotation Property Description Dialogs
   const [isAnnotationDomainDialogOpen, setIsAnnotationDomainDialogOpen] = useState(false);
   const [isAnnotationRangeDialogOpen, setIsAnnotationRangeDialogOpen] = useState(false);
   const [isAnnotationSuperpropertyDialogOpen, setIsAnnotationSuperpropertyDialogOpen] = useState(false);
 
-  // Data Property Range Dialog (Protégé-style - shows datatypes)
+  // Data Property Range Dialog (shows datatypes)
   const [isDataPropertyRangeDialogOpen, setIsDataPropertyRangeDialogOpen] = useState(false);
 
   // Publish conflict dialog (three-way merge vs force publish)
@@ -2164,7 +2164,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   // SPARQL UPDATEs against GraphDB Free (2-connection cap) and trigger 504s.
   const isMutatingRef = useRef(false);
 
-  // Protégé-style class delete dialog (radio choice: class only vs. class + asserted descendants).
+  // Class delete dialog (radio choice: class only vs. class + asserted descendants).
   // Separate from confirmDialog above since it needs its own descendant-fetch + radio state.
   const [deleteClassDialog, setDeleteClassDialog] = useState<{
     isOpen: boolean;
@@ -3155,7 +3155,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       // After successful classification, load full recursive hierarchies from the main API
-      // This ensures we have the full depth like Desktop Protégé, not just the bundle's view
+      // This ensures we have the full depth across the full hierarchy, not just the bundle's view
       console.log("[Dashboard] Reasoner completed, loading full recursive hierarchies...");
 
       // Load hierarchies sequentially to avoid overwhelming GraphDB
@@ -4439,7 +4439,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             const lists = await fetchProjects();
 
             // Non-workspace web: apply directly to avoid draft loss when navigating away.
-            // Desktop: always use Protege-style private draft until Save (local named graph).
+            // Desktop: always use private draft until Save (local named graph).
             const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId && !isDesktop();
 
             if (!lists) {
@@ -4565,7 +4565,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
 
             if (isDesktop() && !isShared) {
-              console.log("[Dashboard] 📝 Desktop private draft mode (Protege-style — Save to publish)");
+              console.log("[Dashboard] 📝 Desktop private draft mode (Save to publish)");
             } else if (isNonWorkspaceMode && !isShared) {
               console.log("[Dashboard] 📝 Non-workspace mode - mutations apply directly to GraphDB");
             }
@@ -6396,7 +6396,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           window.vscode.postMessage({ type: "getQueueStatus", projectId: message.projectId });
         }
         if (isDesktop()) {
-          // Desktop: block with Protégé-style loading dialog
+          // Desktop: block with loading dialog
           setShowLoadingChoice(true);
         } else {
           // Webapp: stay in project library — import card shows live progress
@@ -7589,7 +7589,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] Classes tab active, view mode:", currentHierarchyViewMode);
     if (currentHierarchyViewMode === "inferred") {
       // Always load full recursive hierarchy from API when in inferred mode
-      // to ensure we have the full depth like Desktop Protégé
+      // to ensure we have the full hierarchy depth
       console.log("[Dashboard] Loading inferred hierarchy from API...");
       loadInferredHierarchy();
     } else {
@@ -8507,7 +8507,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const loadInstalledPlugins = async () => {
       try {
         pluginLoader.loadFromStorage();
-        // Protégé parity: ship SPARQL, Reasoner, Graph, SWRL, etc. as built-in tabs (not marketplace-only).
+        // Ship SPARQL, Reasoner, Graph, SWRL, etc. as built-in tabs (not marketplace-only).
         pluginLoader.ensureDefaultBuiltInPlugins();
         const installed = pluginLoader.getInstalledPlugins();
 
@@ -8850,7 +8850,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId || isSaving) return;
 
     // Desktop: explicit Save promotes the on-disk draft (draft/ontology.draft.owl)
-    // to ontology.current.owl and deletes the draft folder — Protégé-style save.
+    // to ontology.current.owl and deletes the draft folder — save.
     if (isDesktop()) {
       setIsSaving(true);
       try {
@@ -10979,7 +10979,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
         // For a single (non-cascade) delete, check up front whether the target has children —
         // if so, "delete only" orphans them (they lose their sole parent and must reappear as
-        // top-level classes, Protégé-parity). The local tree surgery below removes the deleted
+        // top-level classes). The local tree surgery below removes the deleted
         // node's whole subtree wholesale, so it can't know the orphans' new position — a real
         // hierarchy refresh is needed instead of leaving them hidden until the user manually
         // refreshes. Cascade deletes (iris.length > 1) don't need this: every descendant is
@@ -11102,7 +11102,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      // Classes get the Protégé-style "delete only" vs "delete + descendants" dialog instead
+      // Classes get the "delete only" vs "delete + descendants" dialog instead
       // of the generic confirm dialog — see performDeleteClasses/DeleteClassDialog.
       if (activeTab === "Classes") {
         setDeleteClassDialog({ isOpen: true, iri: item.id, label: item.label });
@@ -11600,7 +11600,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     return () => window.removeEventListener("graph-view:delete-class", handleGraphDelete as EventListener);
   }, [findClassNodeById, handleDeleteItem, projectId, showNotification]);
 
-  // Keyboard shortcuts (Protégé-style) - must be after handleAddItem and handleDeleteItem
+  // Keyboard shortcuts - must be after handleAddItem and handleDeleteItem
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in input/textarea
@@ -11646,7 +11646,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem, selectedItem]);
 
-  // Undo / Redo (Protégé-style) — rolls back via Change Assistant history API
+  // Undo / Redo — rolls back via Change Assistant history API
   useEffect(() => {
     if (!projectId) return;
 
@@ -11959,7 +11959,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     console.log("[Dashboard] Manual citation created:", manualCitation);
 
-    // Set up for search-based insertion (same flow as Zotero citations)
+    // Set up for search-based citation insertion
     setPendingCitation(manualCitation);
     setCitationInsertionMode(true);
     setShowManualCitationDialog(false);
@@ -11996,7 +11996,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Code-view save does a whole-ontology reimport into the PUBLIC/main graph
       // (bulkLoadChunked) — it has no draft-graph path. In the WEBAPP, saving it while in
       // Draft mode would overwrite the shared public ontology, so block it there.
-      // Desktop is single-user and ALWAYS in "private" mode (Protégé-style, Save-to-publish);
+      // Desktop is single-user and ALWAYS in "private" mode (Save-to-publish);
       // there is no shared public graph to protect and code-view save is a normal desktop
       // operation, so it must NOT be blocked on desktop.
       if (!isDesktop() && ontologyMutationService.isPrivateEditMode()) {
@@ -12191,7 +12191,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       let insertAtIndex = 0; // Declare at function scope
 
       try {
-        // Extract citation data - Zotero citations have data nested in .data property
+        // Extract citation data — library items nest fields under .data
         const citationData = pendingCitation.data || pendingCitation;
         const citationKey = pendingCitation.key || `citation_${Date.now()}`;
 
@@ -12499,9 +12499,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         const citationLines: string[] = [];
 
         if (codeViewFormat === "turtle" || codeViewFormat === "ntriples") {
-          // Generate comprehensive Turtle format with all Zotero details
+          // Generate comprehensive Turtle citation block
           citationLines.push("");
-          citationLines.push("###  Zotero Citation: " + escapeTurtle(title));
+          citationLines.push("###  Citation: " + escapeTurtle(title));
           citationLines.push(
             `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}> rdf:type owl:NamedIndividual ,`,
           );
@@ -12581,7 +12581,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           // Generate Manchester OWL syntax format
           const escManchester = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, " ");
           citationLines.push("");
-          citationLines.push(`# Zotero Citation: ${title}`);
+          citationLines.push(`# Citation: ${title}`);
           citationLines.push(`Individual: <urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}>`);
           citationLines.push(`    Types: prov:Entity`);
           citationLines.push(`    Annotations:`);
@@ -12608,7 +12608,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           const escFunc = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, " ");
           const citUri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}>`;
           citationLines.push("");
-          citationLines.push(`# Zotero Citation: ${title}`);
+          citationLines.push(`# Citation: ${title}`);
           citationLines.push(`Declaration(NamedIndividual(${citUri}))`);
           citationLines.push(`ClassAssertion(<http://www.w3.org/ns/prov#Entity> ${citUri})`);
           citationLines.push(
@@ -12640,7 +12640,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         } else if (codeViewFormat === "owlxml") {
           // Generate OWL/XML format
           citationLines.push("");
-          citationLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
+          citationLines.push(`    <!-- Citation: ${escapeXml(title)} -->`);
           citationLines.push(`    <Declaration>`);
           citationLines.push(
             `        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}"/>`,
@@ -12687,9 +12687,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
           citationLines.push("");
         } else if (codeViewFormat === "rdfxml") {
-          // Generate comprehensive RDF/XML format with all Zotero details
+          // Generate comprehensive RDF/XML citation block
           citationLines.push("");
-          citationLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
+          citationLines.push(`    <!-- Citation: ${escapeXml(title)} -->`);
           citationLines.push(
             `    <owl:NamedIndividual rdf:about="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}">`,
           );
@@ -12910,7 +12910,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         function generateTurtleCitationBlock(): string[] {
           const citLines: string[] = [];
           citLines.push("");
-          citLines.push("###  Zotero Citation: " + escapeTurtle(title));
+          citLines.push("###  Citation: " + escapeTurtle(title));
           citLines.push(`<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}> rdf:type owl:NamedIndividual ,`);
           citLines.push("         prov:Entity ;");
           citLines.push(`    dc:title "${escapeTurtle(title)}" ;`);
@@ -12944,7 +12944,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         function generateRdfXmlCitationBlock(): string[] {
           const citLines: string[] = [];
           citLines.push("");
-          citLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
+          citLines.push(`    <!-- Citation: ${escapeXml(title)} -->`);
           citLines.push(
             `    <owl:NamedIndividual rdf:about="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}">`,
           );
@@ -12999,7 +12999,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           const escNt = (s: string) =>
             s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
           citLines.push("");
-          citLines.push(`# Zotero Citation: ${title}`);
+          citLines.push(`# Citation: ${title}`);
           citLines.push(
             `${uri} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .`,
           );
@@ -13032,7 +13032,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           const citLines: string[] = [];
           const escManchester = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, " ");
           citLines.push("");
-          citLines.push(`# Zotero Citation: ${title}`);
+          citLines.push(`# Citation: ${title}`);
           citLines.push(`Individual: <urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}>`);
           citLines.push(`    Types: prov:Entity`);
           citLines.push(`    Annotations:`);
@@ -13056,7 +13056,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           const escFunc = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, " ");
           const citUri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}>`;
           citLines.push("");
-          citLines.push(`# Zotero Citation: ${title}`);
+          citLines.push(`# Citation: ${title}`);
           citLines.push(`Declaration(NamedIndividual(${citUri}))`);
           citLines.push(`ClassAssertion(<http://www.w3.org/ns/prov#Entity> ${citUri})`);
           citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/title> ${citUri} "${escFunc(title)}")`);
@@ -13083,7 +13083,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         function generateOwlXmlCitationBlock(): string[] {
           const citLines: string[] = [];
           citLines.push("");
-          citLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
+          citLines.push(`    <!-- Citation: ${escapeXml(title)} -->`);
           citLines.push(`    <Declaration>`);
           citLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}"/>`);
           citLines.push(`    </Declaration>`);
@@ -13961,7 +13961,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 15); i--) {
           const line = lines[i].trim();
 
-          // Check for comment line (Zotero Citation marker)
+          // Check for citation comment marker
           if (line.includes("Zotero Citation") || line.startsWith("###") || line.startsWith("<!--")) {
             blockStart = i;
             foundComment = true;
@@ -14058,7 +14058,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.log(`[Dashboard] Citation block: lines ${blockStart} to ${blockEnd}`);
       }
 
-      // Also capture preceding comment lines (### Zotero Citation) that might be separate
+      // Also capture preceding citation comment lines that might be separate
       const sortedLines = [...linesToRemove].sort((a, b) => a - b);
       if (sortedLines.length > 0) {
         const firstLine = sortedLines[0];
@@ -14449,10 +14449,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                       setShowCitationPicker(true);
                     }}
                     className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
-                    title={isViewOnlyMember ? "Pro feature: Zotero citations require a Pro plan" : "Insert citation from Zotero"}
+                    title={isViewOnlyMember ? "Pro feature: citations require a Pro plan" : "Insert citation"}
                   >
                     <BookOpen size={16} />
-                    Zotero Citation
+                    Citation
                   </button>
                   <button
                     onClick={() => {
@@ -14546,7 +14546,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                         <strong>🗑️ Citation Removal Mode Active</strong>
                         <div className="text-xs mt-1">
                           Citation lines are highlighted in <span className="bg-red-800 px-1 rounded">red</span>. Click
-                          on any citation line to remove it. Search for "Zotero Citation" or "urn:citation" to find
+                          on any citation line to remove it. Search for "Citation" or "urn:citation" to find
                           citations.
                         </div>
                       </div>
@@ -15498,7 +15498,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                             <Info size={12} />
                             <span>
                               Imports are owl:imports declarations. Loaded imports are included in the project graph;
-                              declared-only imports match Protégé declarations but were not resolved on this server.
+                              declared-only imports were not resolved on this server.
                             </span>
                           </div>
                         </div>
@@ -16604,7 +16604,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  // Handlers for Annotation Property Description Dialogs (Protégé-style)
+  // Handlers for Annotation Property Description Dialogs
   const [annotationEditingItem, setAnnotationEditingItem] = useState<{ rel: 'domain'|'range'|'subProperty'; iri: string } | null>(null);
 
   const handleOpenAnnotationDomainDialog = (editingItem?: string) => {
@@ -18247,7 +18247,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         title="Set parent property"
       />
 
-      {/* Object Property Expression Dialog - Protégé-style with inverse checkbox */}
+      {/* Object Property Expression Dialog with inverse checkbox */}
       <ObjectPropertyExpressionDialog
         isOpen={isObjectPropertyExpressionDialogOpen}
         onClose={() => {
@@ -18267,7 +18267,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         propertyType={(selectedItem as any)?.type === "DatatypeProperty" ? "data" : "object"}
       />
 
-      {/* Annotation Property Domain Dialog (Protégé-style) */}
+      {/* Annotation Property Domain Dialog */}
       <AnnotationPropertyDomainDialog
         isOpen={isAnnotationDomainDialogOpen}
         onClose={() => setIsAnnotationDomainDialogOpen(false)}
@@ -18280,7 +18280,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         selectedDomains={(selectedItem as AnnotationProperty & { domains?: string[] })?.domains}
       />
 
-      {/* Annotation Property Range Dialog (Protégé-style) */}
+      {/* Annotation Property Range Dialog */}
       <AnnotationPropertyRangeDialog
         isOpen={isAnnotationRangeDialogOpen}
         onClose={() => setIsAnnotationRangeDialogOpen(false)}
@@ -18290,7 +18290,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         selectedRanges={(selectedItem as AnnotationProperty & { ranges?: string[] })?.ranges}
       />
 
-      {/* Annotation Property Superproperty Dialog (Protégé-style) */}
+      {/* Annotation Property Superproperty Dialog */}
       <AnnotationPropertySuperpropertyDialog
         isOpen={isAnnotationSuperpropertyDialogOpen}
         onClose={() => setIsAnnotationSuperpropertyDialogOpen(false)}
@@ -18307,7 +18307,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         selectedSuperproperties={(selectedItem as AnnotationProperty & { superProperties?: string[] })?.superProperties}
       />
 
-      {/* Data Property Range Dialog (Protégé-style - shows datatypes) */}
+      {/* Data Property Range Dialog (shows datatypes) */}
       <DataPropertyRangeDialog
         isOpen={isDataPropertyRangeDialogOpen}
         onClose={() => {
@@ -18751,7 +18751,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       )}
 
-      {/* Import Dialog - Protégé Style */}
+      {/* Import Dialog */}
       {isImportDialogOpen && (
         <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center">
           <div

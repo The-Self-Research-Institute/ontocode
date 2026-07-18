@@ -217,7 +217,7 @@ public class OntologyIndexService {
         meta.put("axioms", metadataService.getGeneralClassAxioms(projectId));
         log.info("[IndexService {}] [TIMING] General class axioms query: {} ms", projectId, (System.nanoTime() - queryStart) / 1_000_000);
         
-        // Add axiom counts for Protégé-like display
+        // Add axiom counts for display
         meta.put("axiomCount", logicalAxioms + declarations);
         meta.put("logicalAxiomCount", logicalAxioms);
         meta.put("declarationAxiomCount", declarations);

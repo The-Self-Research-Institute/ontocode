@@ -2343,7 +2343,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
           ) : (
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="text-sm text-gray-600 mb-4">
-                <p>SWRL Built-in predicates based on <a href="https://github.com/protegeproject/swrlapi" target="_blank" rel="noopener noreferrer" className="text-purple-600 hover:underline">SWRLAPI</a>. Click a built-in to insert it into your rule.</p>
+                <p>SWRL built-in predicates. Click a built-in to insert it into your rule.</p>
               </div>
               {SWRL_BUILTINS.map(category => (
                 <div key={category.name} className="border border-gray-200 rounded-lg overflow-hidden">

@@ -16,7 +16,7 @@ import java.util.Collections;
 import java.util.Optional;
 
 /**
- * Protégé-style entity IRI rename via OWLAPI {@link OWLEntityRenamer}.
+ * entity IRI rename via OWLAPI {@link OWLEntityRenamer}.
  */
 @Service
 @Slf4j

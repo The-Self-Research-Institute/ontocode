@@ -96,6 +96,14 @@ metadata:
     app: plugin-service
 spec:
   type: ClusterIP
+  # Async classify tasks (and the ontology cache) live in pod memory:
+  # a status poll routed to a different replica than the POST /classify
+  # that created the task returns 404. Pin each caller to one pod until
+  # task state moves to a shared store.
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
   ports:
   - port: 8087
     targetPort: 8087

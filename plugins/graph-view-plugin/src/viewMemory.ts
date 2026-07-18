@@ -51,7 +51,7 @@ export const DEFAULT_VOWL_OPTIONS: VowlDisplayOptions = {
   mergeEquivalents: true,
   showDisjointness: true,
   showPropertyLoops: true,
-  // Closer to stock WebVOWL proportions (less bulky than 1.15)
+  // Closer to VOWL proportions (less bulky than 1.15)
   nodeWidthScale: 1.0,
   nodeHeightScale: 1.0,
   labelFontSize: 11
@@ -63,7 +63,7 @@ export interface GraphUiPrefs {
   showPropertyPanel: boolean;
   /** Sessions since the toolbar restructure shipped; drives the one-time overflow hint. */
   toolbarHintSessions?: number;
-  /** Notation/density options — persisted per user (WebVOWL forgets these on reload). */
+  /** Notation/density options — persisted per user (VOWL forgets these on reload). */
   vowlOptions?: VowlDisplayOptions;
 }
 

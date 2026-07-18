@@ -1173,7 +1173,7 @@ public class OntologyMetadataService {
             log.debug("Using cached prefixes from MongoDB for project {} ({} entries)", projectId, prefixMap.size());
         }
 
-        // Always include the standard OWL/RDF/RDFS/XSD prefixes (like Protégé shows by default).
+        // Always include the standard OWL/RDF/RDFS/XSD prefixes .
         // User-defined prefixes take precedence; we only add a standard one if not already present.
         Map<String, String> defaults = new java.util.LinkedHashMap<>();
         defaults.put("owl",   "http://www.w3.org/2002/07/owl#");

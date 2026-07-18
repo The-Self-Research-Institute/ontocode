@@ -19,7 +19,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * REST controller for ontology merging operations (similar to Protege PROMPT)
+ * REST controller for ontology merging operations 
  */
 @RestController
 @CrossOrigin(originPatterns = "*")

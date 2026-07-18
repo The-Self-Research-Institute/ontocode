@@ -183,16 +183,5 @@ public class ReasonerController {
 }
 ```
 
-### 🎓 Inspired by HermiT
-This plugin is inspired by the HermiT reasoner developed by the University of Oxford:
-- **Original HermiT**: http://www.hermit-reasoner.com/
-- **Protégé Plugin**: https://protegewiki.stanford.edu/wiki/HermiT
-- **Authors**: Boris Motik, Birte Glimm, Giorgos Stoilos, Ian Horrocks, Rob Shearer
-
-### 📝 License
+### License
 MIT License - Free to use and modify
-
----
-
-## ✨ Congratulations!
-Your OWL Reasoner Plugin is ready to use. Install it from the marketplace and start reasoning over your ontologies!

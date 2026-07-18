@@ -18,7 +18,7 @@ function authHeaders(): Record<string, string> {
   return headers;
 }
 
-// Fuzzy modifier functions (like Protégé)
+// Fuzzy modifier functions
 
 const FUZZY_MODIFIERS = {
   'extremely': (degree: number) => Math.pow(degree, 4),

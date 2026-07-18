@@ -3,9 +3,9 @@ import { X, Search, ChevronDown, ChevronRight, Tag, Plus, Trash2 } from 'lucide-
 import type { TreeNode, AnnotationProperty } from '../../types';
 
 /**
- * AnnotationPropertySuperpropertyDialog - Protégé-style dialog for selecting annotation property superproperties
+ * AnnotationPropertySuperpropertyDialog - dialog for selecting annotation property superproperties
  * 
- * Based on Protégé's OWLSubAnnotationPropertyFrameSection which uses OWLAnnotationPropertyEditor
+ * Based on 's OWLSubAnnotationPropertyFrameSection which uses OWLAnnotationPropertyEditor
  * - Lists annotation properties in a hierarchy
  * - Allows selecting one or more annotation properties as superproperties
  * - Toolbar with Add subproperty, Add sibling property, Delete property buttons
@@ -182,7 +182,7 @@ const AnnotationPropertySuperpropertyDialog: React.FC<AnnotationPropertySuperpro
               <span className="w-5 flex-shrink-0" />
             )}
 
-            {/* Annotation Property Icon (orange tag like Protégé) */}
+            {/* Annotation Property Icon (orange tag ) */}
             <Tag size={12} className={`flex-shrink-0 ${
               isSelected ? 'text-orange-300' : 'text-orange-500'
             }`} />
@@ -233,7 +233,7 @@ const AnnotationPropertySuperpropertyDialog: React.FC<AnnotationPropertySuperpro
           </button>
         </div>
 
-        {/* Toolbar - Protégé style: Add subproperty, Add sibling, Delete, Filter dropdown */}
+        {/* Toolbar: Add subproperty, Add sibling, Delete, Filter dropdown */}
         {showToolbar && (
           <div className="flex items-center gap-1 px-2 py-1.5 border-b bg-gray-50">
             {/* Add Subproperty Button */}
@@ -293,7 +293,7 @@ const AnnotationPropertySuperpropertyDialog: React.FC<AnnotationPropertySuperpro
           </div>
         )}
 
-        {/* Tabs - Protégé style */}
+        {/* Tabs */}
         <div className="flex border-b border-gray-200 bg-gray-50">
           <button
             onClick={() => setActiveTab('select-property')}

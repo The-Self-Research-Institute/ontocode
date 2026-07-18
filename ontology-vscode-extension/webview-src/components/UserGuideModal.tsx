@@ -1462,12 +1462,12 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
 
                   <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #ec4899" }}>
                     <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
-                      📚 Citation Management (Zotero Integration)
+                      Citation Management
                     </h5>
                     <ul style={styles.list}>
                       <li>
-                        <strong>Insert from Zotero:</strong> Click <strong>📚 Zotero Citation</strong> in the toolbar to
-                        browse your Zotero library and select a citation — then click on a code line to insert it at
+                        <strong>Insert citation:</strong> Click <strong>Citation</strong> in the toolbar to
+                        browse your reference library and select a citation — then click on a code line to insert it at
                         that location
                       </li>
                       <li>

@@ -45,7 +45,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     version: "1.1.0-beta.12",
     date: "June 25, 2026",
     highlights: [
-      "TSRI-166: Graph View — Fixed stale cache showing the wrong ontology after switching projects. Also added Obsidian-style local graph view — click Local in the toolbar to see the neighbourhood of the selected node in place of the main canvas.",
+      "TSRI-166: Graph View — Fixed stale cache showing the wrong ontology after switching projects. Also added local graph view — click Local in the toolbar to see the neighbourhood of the selected node in place of the main canvas.",
       "Submit Issue — Fixed network error when submitting issue reports or feature requests from the desktop app.",
     ],
     videoUrl: "",
