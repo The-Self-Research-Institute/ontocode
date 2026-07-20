@@ -493,79 +493,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               </div>
             );
           })()}
-          {hierarchyNavigatorContent && (
-            <div
-              style={{
-                flexShrink: 0,
-                maxHeight: '45%',
-                overflow: 'auto',
-                display: 'flex',
-                flexDirection: 'column',
-                borderBottom: '2px solid var(--border, #e5e7eb)'
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 10px',
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  color: '#fff',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  flexShrink: 0
-                }}
-              >
-                <span
-                  style={{
-                    flex: 1,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}
-                  title={hierarchyNavigatorLabel ? `Editing: ${hierarchyNavigatorLabel}` : 'Editing'}
-                >
-                  Editing: {hierarchyNavigatorLabel || '…'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onPopOutHierarchyNavigator?.()}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#fff',
-                    cursor: 'pointer',
-                    padding: '2px 4px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    borderRadius: 4
-                  }}
-                  title="Pop out as floating window"
-                >
-                  <ExternalLink size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onCloseHierarchyNavigator?.()}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#fff',
-                    cursor: 'pointer',
-                    padding: '2px 4px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    borderRadius: 4
-                  }}
-                  title="Close"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              {hierarchyNavigatorContent}
-            </div>
-          )}
           <div style={{ flex: 1, minHeight: 0 }}>
             <ClassHierarchyPanel
               nodes={nodes}
@@ -589,6 +516,81 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               readonly
             />
           </div>
+          {hierarchyNavigatorContent && (
+            <div
+              style={{
+                flexShrink: 0,
+                maxHeight: '45%',
+                overflow: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                borderTop: '1px solid var(--border, #e5e7eb)'
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  background: 'var(--surface-1, #f9fafb)',
+                  color: 'var(--text-secondary, #6b7280)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  flexShrink: 0
+                }}
+              >
+                <span
+                  style={{
+                    flex: 1,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title={hierarchyNavigatorLabel ? `Editing: ${hierarchyNavigatorLabel}` : 'Editing'}
+                >
+                  {hierarchyNavigatorLabel || '…'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onPopOutHierarchyNavigator?.()}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                    padding: '2px 4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    borderRadius: 4,
+                    opacity: 0.7
+                  }}
+                  title="Pop out as floating window"
+                >
+                  <ExternalLink size={12} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCloseHierarchyNavigator?.()}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                    padding: '2px 4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    borderRadius: 4,
+                    opacity: 0.7
+                  }}
+                  title="Close"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+              {hierarchyNavigatorContent}
+            </div>
+          )}
         </div>
       )}
 
