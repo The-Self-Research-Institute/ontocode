@@ -69,6 +69,23 @@ export interface LlmInsightRequest {
   gaps: Array<{ a: string; b: string; suggestion: string }>;
 }
 
+/** Context describing the node the user currently has selected in the graph. */
+export interface SelectedNodeContext {
+  label: string;
+  type: string;
+  iri?: string;
+  /** Labels of directly connected (visible) nodes. */
+  neighbors: string[];
+  /** Top words of the topic cluster the node belongs to, if known. */
+  clusterTopWords?: string[];
+}
+
+/** One AI-suggested topic related to the selected node. */
+export interface TopicSuggestion {
+  topic: string;
+  reason: string;
+}
+
 export class LlmConfigError extends Error {}
 export class LlmRequestError extends Error {}
 
@@ -144,7 +161,7 @@ export function setStoredModel(model: string): void {
   }
 }
 
-function buildPrompt(req: LlmInsightRequest): string {
+function buildContextBlock(req: LlmInsightRequest): string {
   const clusters = req.clusters
     .slice(0, 8)
     .map((c, i) => `  ${i + 1}. [${c.size} concepts] ${c.topWords.slice(0, 5).join(', ')}`)
@@ -155,9 +172,6 @@ function buildPrompt(req: LlmInsightRequest): string {
     .join('\n');
 
   return [
-    'You are an ontology engineering assistant. Analyze the following knowledge-graph',
-    'analytics for an OWL ontology and produce concise, actionable insights.',
-    '',
     `Ontology: ${req.ontologyName || 'Untitled'}`,
     `Total concepts: ${req.nodeCount}`,
     `Topic clusters: ${req.clusterCount}`,
@@ -171,6 +185,27 @@ function buildPrompt(req: LlmInsightRequest): string {
     '',
     'Structural gaps (missing bridges):',
     gaps || '  (none)',
+  ].join('\n');
+}
+
+function describeSelectedNode(node: SelectedNodeContext): string {
+  return [
+    `Selected node: "${node.label}" (${node.type}${node.iri ? `, IRI ${node.iri}` : ''})`,
+    `Directly connected concepts: ${node.neighbors.slice(0, 20).join(', ') || '(none visible)'}`,
+    node.clusterTopWords?.length
+      ? `Topic cluster around it: ${node.clusterTopWords.slice(0, 5).join(', ')}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildPrompt(req: LlmInsightRequest): string {
+  return [
+    'You are an ontology engineering assistant. Analyze the following knowledge-graph',
+    'analytics for an OWL ontology and produce concise, actionable insights.',
+    '',
+    buildContextBlock(req),
     '',
     'Respond in markdown with three short sections:',
     '1. **Summary** — 2-3 sentences describing the ontology structure.',
@@ -282,14 +317,7 @@ async function callOpenAI(key: string, model: string, prompt: string, signal?: A
   return text.trim();
 }
 
-/**
- * Generate insights via the user's chosen LLM provider. Returns markdown text.
- * Throws LlmConfigError when no key is set, LlmRequestError on API failure.
- */
-export async function generateGraphInsights(
-  req: LlmInsightRequest,
-  signal?: AbortSignal,
-): Promise<string> {
+async function callProvider(prompt: string, signal?: AbortSignal): Promise<string> {
   const key = getStoredApiKey();
   if (!key) {
     const provider = getStoredProvider();
@@ -299,7 +327,6 @@ export async function generateGraphInsights(
 
   const provider = getStoredProvider();
   const model = getStoredModel();
-  const prompt = buildPrompt(req);
 
   try {
     switch (provider) {
@@ -318,4 +345,111 @@ export async function generateGraphInsights(
       'Could not reach the AI provider. Check your connection and firewall settings.',
     );
   }
+}
+
+/**
+ * Generate insights via the user's chosen LLM provider. Returns markdown text.
+ * Throws LlmConfigError when no key is set, LlmRequestError on API failure.
+ */
+export async function generateGraphInsights(
+  req: LlmInsightRequest,
+  signal?: AbortSignal,
+): Promise<string> {
+  return callProvider(buildPrompt(req), signal);
+}
+
+/**
+ * Answer a free-form user question about the graph, optionally grounded in the
+ * currently selected node. Returns markdown text.
+ */
+export async function askGraphQuestion(
+  question: string,
+  req: LlmInsightRequest,
+  node?: SelectedNodeContext | null,
+  signal?: AbortSignal,
+): Promise<string> {
+  const trimmed = question.trim();
+  if (!trimmed) throw new LlmRequestError('Type a question first.');
+
+  const prompt = [
+    'You are an ontology engineering assistant. Use the knowledge-graph analytics',
+    "below as context and answer the user's question about this OWL ontology.",
+    '',
+    buildContextBlock(req),
+    ...(node ? ['', describeSelectedNode(node)] : []),
+    '',
+    `User question: ${trimmed}`,
+    '',
+    'Answer in concise markdown. Ground statements in the context above; if the context',
+    'is insufficient, say what additional information would be needed. Keep it under 250 words.',
+  ].join('\n');
+
+  return callProvider(prompt, signal);
+}
+
+/**
+ * Suggest related topics for the selected node — subclasses, siblings, related
+ * concepts, or missing links worth modeling next. Returns a parsed list.
+ */
+export async function suggestTopicsForNode(
+  node: SelectedNodeContext,
+  req: LlmInsightRequest,
+  signal?: AbortSignal,
+): Promise<TopicSuggestion[]> {
+  const prompt = [
+    'You are an ontology engineering assistant helping to extend an OWL ontology.',
+    'Based on the selected node and its context, suggest topics to model next:',
+    'subclasses, sibling concepts, related concepts, or missing links.',
+    '',
+    buildContextBlock(req),
+    '',
+    describeSelectedNode(node),
+    '',
+    'Respond with ONLY a JSON array (no prose, no code fences) of 5 to 8 items shaped as:',
+    '[{"topic": "Short Topic Name", "reason": "one line on why it belongs near the selected node"}]',
+    'Topics must be concise noun phrases (max 4 words) and must not duplicate the',
+    'directly connected concepts listed above.',
+  ].join('\n');
+
+  const raw = await callProvider(prompt, signal);
+  const parsed = parseTopicSuggestions(raw);
+  if (!parsed.length) {
+    throw new LlmRequestError('The AI provider returned no usable topic suggestions. Try again.');
+  }
+  return parsed;
+}
+
+function parseTopicSuggestions(raw: string): TopicSuggestion[] {
+  // Providers occasionally wrap the JSON in ```json fences or add a lead-in sentence
+  // despite the instructions — extract the outermost array before parsing.
+  const unfenced = raw.replace(/```(?:json)?/gi, '').trim();
+  const start = unfenced.indexOf('[');
+  const end = unfenced.lastIndexOf(']');
+  if (start !== -1 && end > start) {
+    try {
+      const arr = JSON.parse(unfenced.slice(start, end + 1));
+      if (Array.isArray(arr)) {
+        return arr
+          .map((it: { topic?: unknown; reason?: unknown }) => ({
+            topic: String(it?.topic ?? '').trim(),
+            reason: String(it?.reason ?? '').trim(),
+          }))
+          .filter((it) => it.topic.length > 0 && it.topic.length <= 80)
+          .slice(0, 8);
+      }
+    } catch {
+      /* fall through to line parsing */
+    }
+  }
+  // Fallback: bullet or numbered lines ("- Topic — reason", "1. Topic: reason").
+  return unfenced
+    .split('\n')
+    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = line.match(/^(.{2,80}?)\s*[—–:]\s+(.+)$/);
+      return m ? { topic: m[1].trim(), reason: m[2].trim() } : { topic: line.slice(0, 80), reason: '' };
+    })
+    .filter((it) => it.topic.length > 1)
+    .slice(0, 8);
 }

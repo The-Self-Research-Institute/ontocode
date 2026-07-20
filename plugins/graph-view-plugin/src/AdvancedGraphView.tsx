@@ -7048,6 +7048,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         <AnalyticsPanel
           analytics={graphAnalytics}
           nodes={filteredNodes}
+          edges={filteredEdges}
           selectedNode={selectedNodeInfo}
           colorByCluster={colorByCluster}
           onToggleColorByCluster={setColorByCluster}
