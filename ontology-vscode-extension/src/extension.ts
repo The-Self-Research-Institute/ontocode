@@ -9,6 +9,8 @@ import { sci2CodeService } from './services/sci2CodeService';
 import { zoteroApiService } from './services/zoteroApiService';
 import { issueReportService } from './services/issueReportService';
 import { extractDoiFromZoteroData } from './utils/doi';
+import { buildZoteroCitationNode } from './utils/jsonLdCitation';
+import { OntoCodeSidebarProvider } from './views/sidebarProvider';
 // Use web-compatible collaboration manager in browser environment
 import { CollaborationManager } from './collaboration/CollaborationManager.web';
 import { ICollaborationManager } from './collaboration/types';
@@ -307,6 +309,15 @@ export async function activate(context: vscode.ExtensionContext) {
     await updateDeploymentUrls(context);
     console.log('[OntoCode] Deployment URLs loaded');
 
+    // OntoCode Activity Bar sidebar — a discoverability home for commands
+    // otherwise only reachable via the Command Palette, a keybinding, or a
+    // right-click menu.
+    const sidebarProvider = new OntoCodeSidebarProvider(context);
+    context.subscriptions.push(
+        vscode.window.registerTreeDataProvider('ontocode.sidebarView', sidebarProvider),
+        vscode.commands.registerCommand('ontocode.refreshSidebar', () => sidebarProvider.refresh())
+    );
+
     // Check for invitation token in URL (for test-web environment)
     if (typeof window !== 'undefined' && window.location) {
         const urlParams = new URLSearchParams(window.location.search);
@@ -474,6 +485,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 OntoCodePanel.currentPanel.dispose();
             }
             vscode.window.showInformationMessage('You have been successfully logged out.');
+            sidebarProvider.refresh();
         }),
         vscode.commands.registerCommand('ontocode.showCollaborationStatus', async () => {
             console.log('[OntoCode] 📊 Showing collaboration status...');
@@ -514,9 +526,11 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('ontocode.openCitationPicker', () => CitationPickerPanel.createOrShow(context.extensionUri)),
         vscode.commands.registerCommand('ontocode.configureZotero', async () => {
             await zoteroApiService.showConfigInstructions();
+            sidebarProvider.refresh();
         }),
         vscode.commands.registerCommand('ontocode.testZoteroConnection', async () => {
             await zoteroApiService.testConnection();
+            sidebarProvider.refresh();
         }),
         vscode.commands.registerCommand('ontocode.openWebview', async () => {
             await OntoCodePanel.createOrShow(context.extensionUri, context, false);
@@ -571,7 +585,7 @@ export async function activate(context: vscode.ExtensionContext) {
             const item = await zoteroApiService.fetchItem(key);
             return item ? item.data : null;
         },
-        formatCitationForOntology: async (key: string, format?: 'turtle' | 'rdfxml', overrideDoi?: string): Promise<string> => {
+        formatCitationForOntology: async (key: string, format?: 'turtle' | 'rdfxml' | 'jsonld', overrideDoi?: string): Promise<string> => {
             console.log('[OntoCode] formatCitationForOntology called for key:', key, 'format:', format);
 
             // Fetch the real item from Zotero — no mock fallback (see comment above).
@@ -593,29 +607,38 @@ export async function activate(context: vscode.ExtensionContext) {
             // or embedded in the free-text `extra` field/url), not just data.DOI.
             const resolvedDoi = overrideDoi || extractDoiFromZoteroData(data);
 
+            if (format === 'jsonld') {
+                // Returns just the citation node as JSON text (not a whole document) —
+                // insertCitation()/insertManualCitation() in citationInsertion.ts parse
+                // this back and splice it into the host document's @graph, since a
+                // JSON-LD file can't be edited by inserting raw text at a cursor
+                // without risking invalid JSON.
+                const node = buildZoteroCitationNode({ key, title: data.title, authors, year, doi: resolvedDoi, url: data.url });
+                return JSON.stringify(node, null, 2);
+            }
+
             // Same prov:/dc:/foaf:/rdfs: shape ensurePrefixes() in citationInsertion.ts
             // provisions in the document — the previous bibo:-based template declared
             // a prefix ensurePrefixes never inserts.
             if (format === 'rdfxml') {
-                let xml = `<?xml version="1.0"?>\n`;
-                xml += `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n`;
-                xml += `         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n`;
-                xml += `         xmlns:owl="http://www.w3.org/2002/07/owl#"\n`;
-                xml += `         xmlns:dc="http://purl.org/dc/elements/1.1/"\n`;
-                xml += `         xmlns:foaf="http://xmlns.com/foaf/0.1/"\n`;
-                xml += `         xmlns:prov="http://www.w3.org/ns/prov#"\n`;
-                xml += `         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">\n\n`;
-                xml += `    <!-- Zotero Citation: ${escapeXml(data.title)} -->\n`;
-                xml += `    <owl:NamedIndividual rdf:about="urn:citation:${escapedKey}">\n`;
-                xml += `        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
-                xml += `        <dc:title>${escapeXml(data.title)}</dc:title>\n`;
-                xml += `        <dc:creator>${escapeXml(authors)}</dc:creator>\n`;
-                if (year) xml += `        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
-                if (resolvedDoi) xml += `        <dc:identifier>doi:${escapeXml(resolvedDoi)}</dc:identifier>\n`;
-                if (data.url) xml += `        <foaf:homepage rdf:resource="${escapeXml(data.url)}"/>\n`;
-                xml += `        <rdfs:comment>Zotero citation</rdfs:comment>\n`;
-                xml += `    </owl:NamedIndividual>\n`;
-                xml += `</rdf:RDF>`;
+                // Bare fragment, not a standalone document: every caller inserts
+                // this directly into an already-open .owl/.rdf file's existing
+                // <rdf:RDF> root, so it must NOT carry its own <?xml?>/<rdf:RDF>
+                // wrapper — that would nest a second root element and a
+                // mid-document XML declaration, which is invalid XML. The host
+                // document's root tag is expected to declare rdf/rdfs/owl/dc/
+                // foaf/prov (ensurePrefixes() in citationInsertion.ts guarantees
+                // this for the Ctrl+Shift+C path before insertion).
+                let xml = `<!-- Zotero Citation: ${escapeXml(data.title)} -->\n`;
+                xml += `<owl:NamedIndividual rdf:about="urn:citation:${escapedKey}">\n`;
+                xml += `    <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
+                xml += `    <dc:title>${escapeXml(data.title)}</dc:title>\n`;
+                xml += `    <dc:creator>${escapeXml(authors)}</dc:creator>\n`;
+                if (year) xml += `    <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
+                if (resolvedDoi) xml += `    <dc:identifier>doi:${escapeXml(resolvedDoi)}</dc:identifier>\n`;
+                if (data.url) xml += `    <foaf:homepage rdf:resource="${escapeXml(data.url)}"/>\n`;
+                xml += `    <rdfs:comment>Zotero citation</rdfs:comment>\n`;
+                xml += `</owl:NamedIndividual>`;
                 return xml;
             }
 
@@ -4320,9 +4343,11 @@ class OntoCodePanel {
                 return;
             }
 
-            // Fix RDF/XML from Sci2Code if it's missing namespace declarations
-            if (format === 'rdfxml' && formattedCitation.includes('rdf:Description') && !formattedCitation.includes('<rdf:RDF')) {
-                console.log('[OntoCode] Wrapping incomplete RDF/XML with proper namespace declarations');
+            // formatCitationForOntology's rdfxml branch now always returns a bare
+            // fragment (no <rdf:RDF> wrapper — see its comment). This backend-insert
+            // path posts a standalone document to GraphDB, so wrap it here.
+            if (format === 'rdfxml' && !formattedCitation.includes('<rdf:RDF')) {
+                console.log('[OntoCode] Wrapping RDF/XML fragment with proper namespace declarations');
                 formattedCitation = this.wrapRdfXml(formattedCitation);
                 console.log('[OntoCode] Wrapped RDF/XML preview:', formattedCitation.substring(0, 500));
             }

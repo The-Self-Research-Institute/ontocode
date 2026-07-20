@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
-import { sci2CodeService, CitationItem } from '../services/sci2CodeService';
+import { sci2CodeService, CitationItem, CitationFormat } from '../services/sci2CodeService';
 import { validateDoiOnline } from '../services/doiValidationService';
 import { extractDoiFromZoteroData, isValidDoiFormat, normalizeDoi } from '../utils/doi';
+import { insertCitationNodeIntoJsonLd } from '../utils/jsonLdCitation';
 
 interface QuickPickCitation extends vscode.QuickPickItem {
   key: string;
@@ -133,9 +134,31 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
   console.log('File extension:', fileExtension);
   
   // Determine format based on file extension
-  const format = (fileExtension === '.ttl' || fileExtension === '.n3') 
-    ? 'turtle' 
+  const format: CitationFormat = (fileExtension === '.ttl' || fileExtension === '.n3')
+    ? 'turtle'
+    : fileExtension === '.jsonld'
+    ? 'jsonld'
     : 'rdfxml';
+
+  const manualEntryItem: QuickPickCitation = {
+    label: '$(plus) Add Citation Manually...',
+    description: 'Enter citation details directly without Zotero',
+    key: 'manual',
+    citation: null
+  };
+
+  // Show the picker immediately with a visible busy spinner while the library
+  // loads in the background — a background notification toast (the previous
+  // approach) is easy to miss entirely since it appears away from where the
+  // user is looking right after pressing the shortcut.
+  const quickPick = vscode.window.createQuickPick<QuickPickCitation>();
+  quickPick.placeholder = 'Loading your Zotero library...';
+  quickPick.matchOnDescription = true;
+  quickPick.matchOnDetail = true;
+  quickPick.ignoreFocusOut = true;
+  quickPick.busy = true;
+  quickPick.items = [manualEntryItem];
+  quickPick.show();
 
   // Get Zotero library. sci2CodeService/zoteroApiService already show specific,
   // actionable dialogs for "not configured" and real fetch errors (invalid key,
@@ -144,16 +167,7 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
   // back gracefully to manual entry instead of the whole command failing.
   let items: any[] = [];
   try {
-    items = await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: 'Loading Zotero library...',
-        cancellable: false
-      },
-      async () => {
-        return await sci2CodeService.getZoteroLibrary();
-      }
-    );
+    items = await sci2CodeService.getZoteroLibrary();
   } catch (e) {
     console.error('Failed to load Zotero library:', e);
     vscode.window.showErrorMessage(
@@ -164,11 +178,11 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
   // Create quick pick items
   const quickPickItems: QuickPickCitation[] = items.map(item => {
     const title = item.data?.title || 'Untitled';
-    const creators = item.data?.creators?.map((c: any) => 
+    const creators = item.data?.creators?.map((c: any) =>
       `${c.firstName} ${c.lastName}`.trim()
     ).join(', ') || 'Unknown author';
     const year = item.data?.date ? extractYear(item.data.date) : '';
-    
+
     return {
       label: title,
       description: `${item.data?.itemType || 'Item'} ${year ? `(${year})` : ''}`,
@@ -178,21 +192,15 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
     };
   });
 
-  // Add manual entry option
-  quickPickItems.unshift({
-    label: '$(plus) Add Citation Manually...',
-    description: 'Enter citation details directly without Zotero',
-    key: 'manual',
-    citation: null
-  });
+  quickPick.items = [manualEntryItem, ...quickPickItems];
+  quickPick.placeholder = 'Search Zotero or add citation manually';
+  quickPick.busy = false;
 
-  // Show quick pick
-  const selected = await vscode.window.showQuickPick(quickPickItems, {
-    placeHolder: 'Search Zotero or add citation manually',
-    matchOnDescription: true,
-    matchOnDetail: true,
-    ignoreFocusOut: true
+  const selected = await new Promise<QuickPickCitation | undefined>(resolve => {
+    quickPick.onDidAccept(() => resolve(quickPick.selectedItems[0]));
+    quickPick.onDidHide(() => resolve(undefined));
   });
+  quickPick.dispose();
 
   if (!selected) {
     return;
@@ -234,7 +242,7 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
 
 // Helper function to find an editor with an ontology file
 function findOntologyEditor(): vscode.TextEditor | undefined {
-  const validExtensions = ['.owl', '.ttl', '.rdf', '.n3', '.nt'];
+  const validExtensions = ['.owl', '.ttl', '.rdf', '.n3', '.nt', '.jsonld'];
   
   console.log('=== Searching for ontology editor ===');
   
@@ -317,10 +325,42 @@ function indentText(text: string, indent: string): string {
   return lines.map(line => indent + line).join('\n');
 }
 
+/**
+ * Inserts a formatted citation into the document. JSON-LD isn't line-oriented
+ * like Turtle/RDF-XML, so it can't be spliced in as raw text at the cursor
+ * without risking invalid JSON — instead the whole document is parsed,
+ * the citation node is added to @graph, and the result is re-serialized.
+ */
+async function insertFormattedCitation(
+  editor: vscode.TextEditor,
+  format: CitationFormat,
+  formattedCitation: string
+): Promise<boolean> {
+  const document = editor.document;
+  await ensurePrefixes(document, format);
+
+  if (format === 'jsonld') {
+    const node = JSON.parse(formattedCitation);
+    const newText = insertCitationNodeIntoJsonLd(document.getText(), node);
+    const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+    return await editor.edit(editBuilder => {
+      editBuilder.replace(fullRange, newText);
+    });
+  }
+
+  const position = editor.selection.active;
+  const indent = getIndentation(document, position);
+  const indentedCitation = indentText(formattedCitation, indent);
+
+  return await editor.edit(editBuilder => {
+    editBuilder.insert(position, '\n' + indentedCitation + '\n');
+  });
+}
+
 async function insertCitation(
   editor: vscode.TextEditor,
   citationKey: string,
-  format: 'turtle' | 'rdfxml',
+  format: CitationFormat,
   validatedDoi?: string
 ): Promise<void> {
   const formattedCitation = await vscode.window.withProgress(
@@ -339,19 +379,7 @@ async function insertCitation(
     return;
   }
 
-  // Ensure prefixes are present
-  const document = editor.document;
-  await ensurePrefixes(document, format);
-
-  // Get the current position before making edits
-  const position = editor.selection.active;
-  const indent = getIndentation(document, position);
-  const indentedCitation = indentText(formattedCitation, indent);
-
-  // Insert citation
-  const success = await editor.edit(editBuilder => {
-    editBuilder.insert(position, '\n' + indentedCitation + '\n');
-  });
+  const success = await insertFormattedCitation(editor, format, formattedCitation);
 
   if (!success) {
     vscode.window.showErrorMessage('Failed to insert citation into document.');
@@ -456,9 +484,14 @@ async function updateRepositoryCitations(item: CitationItem): Promise<void> {
   }
 }
 
-async function ensurePrefixes(document: vscode.TextDocument, format: 'turtle' | 'rdfxml'): Promise<void> {
+export async function ensurePrefixes(document: vscode.TextDocument, format: CitationFormat): Promise<void> {
+  // JSON-LD has no separate "ensure prefixes" pass: insertCitationNodeIntoJsonLd
+  // merges any missing @context entries as part of its own parse/mutate/
+  // reserialize step, since that has to happen atomically with the insert anyway.
+  if (format === 'jsonld') return;
+
   const text = document.getText();
-  
+
   if (format === 'turtle') {
     const requiredPrefixes = [
       { prefix: '@prefix dc:', declaration: '@prefix dc: <http://purl.org/dc/terms/> .' },
@@ -490,24 +523,43 @@ async function ensurePrefixes(document: vscode.TextDocument, format: 'turtle' | 
       }
     }
   } else if (format === 'rdfxml') {
-    if (!text.includes('xmlns:dc=') || !text.includes('xmlns:prov=') || 
-        !text.includes('xmlns:foaf=') || !text.includes('xmlns:xsd=')) {
-      
-      const addNamespaces = await vscode.window.showInformationMessage(
-        'Your RDF/XML file may be missing required namespace declarations. Would you like to see the required namespaces?',
-        'Show', 'Cancel'
-      );
-      
-      if (addNamespaces === 'Show') {
-        const channel = vscode.window.createOutputChannel('OntoCode Namespaces');
-        channel.appendLine('Add these to your root RDF element:');
-        channel.appendLine('xmlns:dc="http://purl.org/dc/terms/"');
-        channel.appendLine('xmlns:prov="http://www.w3.org/ns/prov#"');
-        channel.appendLine('xmlns:foaf="http://xmlns.com/foaf/0.1/"');
-        channel.appendLine('xmlns:xsd="http://www.w3.org/2001/XMLSchema#"');
-        channel.show();
-      }
+    // URIs matched to what formatCitationForOntology's rdfxml fragment actually
+    // emits (dc:title/creator/date/identifier, foaf:homepage, prov#Entity type) —
+    // see extension.ts's formatCitationForOntology.
+    const requiredNamespaces: Record<string, string> = {
+      'xmlns:dc': 'http://purl.org/dc/elements/1.1/',
+      'xmlns:foaf': 'http://xmlns.com/foaf/0.1/',
+      'xmlns:prov': 'http://www.w3.org/ns/prov#',
+      'xmlns:xsd': 'http://www.w3.org/2001/XMLSchema#',
+    };
+
+    const rootMatch = text.match(/<rdf:RDF([^>]*)>/i);
+    if (!rootMatch || rootMatch.index === undefined) {
+      // No <rdf:RDF> root to attach namespaces to — nothing safe to do here;
+      // the citation insert below will fail visibly instead of silently.
+      return;
     }
+
+    const existingAttrs = rootMatch[1];
+    const missing = Object.entries(requiredNamespaces).filter(
+      ([prefix]) => !new RegExp(prefix.replace(':', '\\:'), 'i').test(existingAttrs)
+    );
+    if (missing.length === 0) return;
+
+    const editors = vscode.window.visibleTextEditors.filter(e =>
+      e.document.uri.toString() === document.uri.toString()
+    );
+    if (editors.length === 0) return;
+
+    const editor = editors[0];
+    const startPos = document.positionAt(rootMatch.index);
+    const endPos = document.positionAt(rootMatch.index + rootMatch[0].length);
+    const newAttrs = missing.map(([prefix, uri]) => `\n         ${prefix}="${uri}"`).join('');
+    const enhancedRoot = `<rdf:RDF${existingAttrs}${newAttrs}>`;
+
+    await editor.edit(editBuilder => {
+      editBuilder.replace(new vscode.Range(startPos, endPos), enhancedRoot);
+    });
   }
 }
 
@@ -617,23 +669,10 @@ async function showManualCitationDialog(
 async function insertManualCitation(
   editor: vscode.TextEditor,
   item: CitationItem,
-  format: 'turtle' | 'rdfxml'
+  format: CitationFormat
 ): Promise<void> {
   const formattedCitation = sci2CodeService.formatManualCitation(item, format);
-
-  // Ensure prefixes are present
-  const document = editor.document;
-  await ensurePrefixes(document, format);
-
-  // Get the current position
-  const position = editor.selection.active;
-  const indent = getIndentation(document, position);
-  const indentedCitation = indentText(formattedCitation, indent);
-
-  // Insert citation
-  const success = await editor.edit(editBuilder => {
-    editBuilder.insert(position, '\n' + indentedCitation + '\n');
-  });
+  const success = await insertFormattedCitation(editor, format, formattedCitation);
 
   if (!success) {
     vscode.window.showErrorMessage('Failed to insert citation into document.');

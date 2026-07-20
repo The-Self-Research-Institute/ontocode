@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import { buildZoteroCitationNode } from '../utils/jsonLdCitation';
+
+export type CitationFormat = 'turtle' | 'rdfxml' | 'jsonld';
 
 export interface CitationItem {
   key: string;
@@ -20,7 +23,7 @@ export interface CitationItem {
 interface Sci2CodeAPI {
   getZoteroLibrary(): Promise<any[]>;
   getZoteroItem(key: string): Promise<any | null>;
-  formatCitationForOntology(key: string, format?: 'turtle' | 'rdfxml', overrideDoi?: string): Promise<string>;
+  formatCitationForOntology(key: string, format?: CitationFormat, overrideDoi?: string): Promise<string>;
   getCitationMetadata(key: string): Promise<CitationItem | null>;
   isAuthenticated?(): Promise<boolean>; // Make it optional
 }
@@ -30,15 +33,13 @@ class Sci2CodeService {
   private extensionId = 'self.ontocode-extension'; // Use OntoCode's own extension ID
   private initializationAttempted = false;
 
-  async initialize(): Promise<boolean> {
-    // Only the "find + activate the extension, grab its exports" part is worth
-    // caching (it's the expensive one-time lookup). The auth/configuration
-    // check below always re-runs even when this.api is already cached — it's
-    // a cheap local check, and skipping it once this.api is set meant a user
-    // who declined to configure Zotero once would never be asked again for
-    // the rest of the VS Code session (this.api was set before the auth
-    // check even ran, so every later call's "if (!this.api)" guard elsewhere
-    // in this class bypassed initialize() — and therefore the prompt — entirely).
+  /**
+   * Finds/activates OntoCode's own extension exports and caches them — no
+   * prompts, no side effects, safe to call from passive UI (e.g. the sidebar
+   * status row) that shouldn't pop up a "configure Zotero?" dialog just
+   * because it rendered.
+   */
+  private async ensureApi(): Promise<boolean> {
     if (!this.api) {
       this.initializationAttempted = true;
 
@@ -97,6 +98,20 @@ class Sci2CodeService {
       }
     }
 
+    return true;
+  }
+
+  /**
+   * Full init used by the actual insert-citation commands: finds/activates
+   * the API (silent) and, if Zotero isn't configured yet, offers to configure
+   * it right now. Has user-facing side effects — only call this from a flow
+   * the user just explicitly triggered (Insert Citation, Open Citation
+   * Picker), never from passive/background UI.
+   */
+  async initialize(): Promise<boolean> {
+    const ok = await this.ensureApi();
+    if (!ok || !this.api) return false;
+
     // Check whether Zotero is configured (optional, don't fail if method doesn't exist)
     if (typeof this.api.isAuthenticated === 'function') {
       const isAuth = await this.api.isAuthenticated();
@@ -127,6 +142,24 @@ class Sci2CodeService {
     }
 
     return true;
+  }
+
+  /**
+   * Silent status read for passive UI (sidebar status row) — never prompts.
+   */
+  async getConnectionStatus(): Promise<'connected' | 'not-configured' | 'unavailable'> {
+    const ok = await this.ensureApi();
+    if (!ok || !this.api) return 'unavailable';
+
+    if (typeof this.api.isAuthenticated !== 'function') return 'unavailable';
+
+    try {
+      const isAuth = await this.api.isAuthenticated();
+      return isAuth ? 'connected' : 'not-configured';
+    } catch (error) {
+      console.error('Failed to check Zotero connection status:', error);
+      return 'unavailable';
+    }
   }
 
   async getZoteroLibrary(): Promise<any[]> {
@@ -199,7 +232,7 @@ class Sci2CodeService {
     };
   }
 
-  async formatCitationForOntology(key: string, format: 'turtle' | 'rdfxml' = 'turtle', overrideDoi?: string): Promise<string | null> {
+  async formatCitationForOntology(key: string, format: CitationFormat = 'turtle', overrideDoi?: string): Promise<string | null> {
     const initialized = await this.initialize();
     if (!initialized || !this.api) {
       return null;
@@ -214,11 +247,16 @@ class Sci2CodeService {
     }
   }
 
-  formatManualCitation(item: CitationItem, format: 'turtle' | 'rdfxml' = 'turtle'): string {
+  formatManualCitation(item: CitationItem, format: CitationFormat = 'turtle'): string {
     const key = item.key.replace(/[^a-zA-Z0-9]/g, '');
     const authors = item.creators?.map(c => `${c.firstName} ${c.lastName}`).join(', ') || 'Unknown';
     const year = item.date ? (item.date.match(/\d{4}/)?.[0] || '') : '';
-    
+
+    if (format === 'jsonld') {
+      const node = buildZoteroCitationNode({ key, title: item.title, authors, year, doi: item.doi, url: item.url });
+      return JSON.stringify(node, null, 2);
+    }
+
     if (format === 'turtle') {
       let ttl = `@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n`;
       ttl += `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n`;
@@ -238,26 +276,20 @@ class Sci2CodeService {
       ttl += `    rdfs:comment "Manually added citation" .\n`;
       return ttl;
     } else {
-      // Generate complete RDF/XML document with proper namespace declarations
-      let xml = `<?xml version="1.0"?>\n`;
-      xml += `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n`;
-      xml += `         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n`;
-      xml += `         xmlns:owl="http://www.w3.org/2002/07/owl#"\n`;
-      xml += `         xmlns:dc="http://purl.org/dc/elements/1.1/"\n`;
-      xml += `         xmlns:foaf="http://xmlns.com/foaf/0.1/"\n`;
-      xml += `         xmlns:prov="http://www.w3.org/ns/prov#"\n`;
-      xml += `         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">\n\n`;
-      xml += `    <!-- Manual Citation: ${this.escapeXml(item.title)} -->\n`;
-      xml += `    <owl:NamedIndividual rdf:about="urn:citation:${key}">\n`;
-      xml += `        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
-      xml += `        <dc:title>${this.escapeXml(item.title)}</dc:title>\n`;
-      xml += `        <dc:creator>${this.escapeXml(authors)}</dc:creator>\n`;
-      if (year) xml += `        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
-      if (item.doi) xml += `        <dc:identifier>doi:${this.escapeXml(item.doi)}</dc:identifier>\n`;
-      if (item.url) xml += `        <foaf:homepage rdf:resource="${this.escapeXml(item.url)}"/>\n`;
-      xml += `        <rdfs:comment>Manually added citation</rdfs:comment>\n`;
-      xml += `    </owl:NamedIndividual>\n`;
-      xml += `</rdf:RDF>`;
+      // Bare fragment, not a standalone document — see formatCitationForOntology's
+      // rdfxml comment in extension.ts for why: this gets inserted directly into
+      // an already-open file's existing <rdf:RDF> root, so it must not carry its
+      // own <?xml?>/<rdf:RDF> wrapper.
+      let xml = `<!-- Manual Citation: ${this.escapeXml(item.title)} -->\n`;
+      xml += `<owl:NamedIndividual rdf:about="urn:citation:${key}">\n`;
+      xml += `    <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
+      xml += `    <dc:title>${this.escapeXml(item.title)}</dc:title>\n`;
+      xml += `    <dc:creator>${this.escapeXml(authors)}</dc:creator>\n`;
+      if (year) xml += `    <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
+      if (item.doi) xml += `    <dc:identifier>doi:${this.escapeXml(item.doi)}</dc:identifier>\n`;
+      if (item.url) xml += `    <foaf:homepage rdf:resource="${this.escapeXml(item.url)}"/>\n`;
+      xml += `    <rdfs:comment>Manually added citation</rdfs:comment>\n`;
+      xml += `</owl:NamedIndividual>`;
       return xml;
     }
   }

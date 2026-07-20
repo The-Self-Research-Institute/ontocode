@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { sci2CodeService } from '../services/sci2CodeService';
+import { ensurePrefixes } from '../features/citationInsertion';
 
 export class CitationPickerPanel {
   public static currentPanel: CitationPickerPanel | undefined;
@@ -131,6 +132,10 @@ export class CitationPickerPanel {
       vscode.window.showErrorMessage('Failed to format citation.');
       return;
     }
+
+    // The fragment relies on the host document's root tag already declaring
+    // rdf/rdfs/owl/dc/foaf/prov — ensure that before inserting.
+    await ensurePrefixes(editor.document, format);
 
     // Insert at cursor position
     const position = editor.selection.active;
