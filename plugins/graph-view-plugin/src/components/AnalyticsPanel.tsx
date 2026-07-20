@@ -7,15 +7,17 @@ import React, { useMemo, useState, useCallback } from 'react';
 import {
   BarChart3, GitBranch, Lightbulb, Network, TrendingUp,
   X, Search, Layers, Copy, Zap, ChevronDown, ChevronUp,
-  Clock, MessageSquare, ArrowRight, Hash, EyeOff
+  Clock, MessageSquare, ArrowRight, Hash, EyeOff, Send, Sparkles, Pencil, Plus
 } from 'lucide-react';
-import type { OntologyNode } from '../types';
+import type { OntologyNode, OntologyEdge } from '../types';
 import type { GraphAnalytics, StructuralGap, DiscourseStructure } from '../services/GraphAnalyticsService';
 import {
-  generateGraphInsights, getStoredApiKey, setStoredApiKey, hasApiKey,
+  generateGraphInsights, askGraphQuestion, suggestTopicsForNode,
+  getStoredApiKey, setStoredApiKey, hasApiKey,
   getStoredProvider, setStoredProvider, getStoredModel, setStoredModel,
   getAvailableProviders, getProviderModels,
   LlmConfigError, type LlmInsightRequest, type LlmProvider,
+  type SelectedNodeContext, type TopicSuggestion,
 } from '../services/LlmInsightsService';
 
 type TabId = 'topics' | 'concepts' | 'gaps' | 'trends';
@@ -23,6 +25,8 @@ type TabId = 'topics' | 'concepts' | 'gaps' | 'trends';
 interface AnalyticsPanelProps {
   analytics: GraphAnalytics;
   nodes: OntologyNode[];
+  /** Visible edges — used to describe the selected node's neighborhood to the AI. */
+  edges?: OntologyEdge[];
   selectedNode?: OntologyNode | null;
   onSelectNode?: (node: OntologyNode) => void;
   onHighlightGap?: (gap: StructuralGap) => void;
@@ -188,6 +192,7 @@ const FocusMeter: React.FC<{ ds: DiscourseStructure; onDiversify?: () => void }>
 export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
   analytics,
   nodes,
+  edges,
   selectedNode,
   onSelectNode,
   onHighlightGap,
@@ -203,9 +208,15 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
   const [selectedCluster, setSelectedCluster] = useState<ClusterInfo | null>(null);
 
   // BYOK LLM insights (user supplies their own API key — no OntoCode cost)
-  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmAction, setLlmAction] = useState<'insights' | 'ask' | 'topics' | null>(null);
+  const llmLoading = llmAction !== null;
   const [llmError, setLlmError] = useState<string>('');
   const [llmText, setLlmText] = useState<string>('');
+  const [question, setQuestion] = useState<string>('');
+  const [topicSuggestions, setTopicSuggestions] = useState<TopicSuggestion[]>([]);
+  const [editingTopicIdx, setEditingTopicIdx] = useState<number | null>(null);
+  const [topicDraft, setTopicDraft] = useState<string>('');
+  const [newTopic, setNewTopic] = useState<string>('');
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [provider, setProvider] = useState<LlmProvider>(getStoredProvider());
   const [model, setModel] = useState<string>(getStoredModel());
@@ -252,13 +263,40 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
     gaps: analytics.gaps.map(g => ({ a: g.labelA, b: g.labelB, suggestion: g.suggestion })),
   }), [analytics, nodes, clusters]);
 
-  const handleGenerateLlmInsights = useCallback(async () => {
-    if (!hasApiKey()) {
-      setShowKeyInput(true);
-      setKeyDraft(getStoredApiKey());
-      return;
+  // Neighborhood context for the selected node, fed to the AI prompts.
+  const selectedNodeContext = useMemo((): SelectedNodeContext | null => {
+    if (!selectedNode) return null;
+    const labelById = new Map(nodes.map(n => [n.id, n.label]));
+    const neighborIds = new Set<string>();
+    for (const e of edges ?? []) {
+      if (e.from === selectedNode.id) neighborIds.add(e.to);
+      else if (e.to === selectedNode.id) neighborIds.add(e.from);
     }
-    setLlmLoading(true);
+    neighborIds.delete(selectedNode.id);
+    const neighbors = [...neighborIds]
+      .map(id => labelById.get(id))
+      .filter((l): l is string => !!l);
+    const clusterId = analytics.communities.get(selectedNode.id);
+    const cluster = clusters.find(c => c.id === clusterId);
+    return {
+      label: selectedNode.label,
+      type: selectedNode.type,
+      iri: selectedNode.uri,
+      neighbors,
+      clusterTopWords: cluster?.topWords,
+    };
+  }, [selectedNode, nodes, edges, analytics, clusters]);
+
+  const ensureKey = useCallback((): boolean => {
+    if (hasApiKey()) return true;
+    setShowKeyInput(true);
+    setKeyDraft(getStoredApiKey());
+    return false;
+  }, []);
+
+  const handleGenerateLlmInsights = useCallback(async () => {
+    if (llmAction || !ensureKey()) return;
+    setLlmAction('insights');
     setLlmError('');
     setLlmText('');
     setShowAiBox(true);
@@ -271,9 +309,93 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
       }
       setLlmError(e instanceof Error ? e.message : 'Failed to generate insights.');
     } finally {
-      setLlmLoading(false);
+      setLlmAction(null);
     }
-  }, [buildLlmRequest]);
+  }, [llmAction, ensureKey, buildLlmRequest]);
+
+  const handleAskQuestion = useCallback(async () => {
+    const q = question.trim();
+    if (!q || llmAction || !ensureKey()) return;
+    setLlmAction('ask');
+    setLlmError('');
+    setLlmText('');
+    setShowAiBox(true);
+    try {
+      const text = await askGraphQuestion(q, buildLlmRequest(), selectedNodeContext);
+      setLlmText(text);
+    } catch (e) {
+      if (e instanceof LlmConfigError) {
+        setShowKeyInput(true);
+      }
+      setLlmError(e instanceof Error ? e.message : 'Failed to answer the question.');
+    } finally {
+      setLlmAction(null);
+    }
+  }, [question, llmAction, ensureKey, buildLlmRequest, selectedNodeContext]);
+
+  const handleSuggestTopics = useCallback(async () => {
+    if (!selectedNodeContext || llmAction || !ensureKey()) return;
+    setLlmAction('topics');
+    setLlmError('');
+    setTopicSuggestions([]);
+    setEditingTopicIdx(null);
+    setTopicDraft('');
+    setShowAiBox(true);
+    try {
+      const topics = await suggestTopicsForNode(selectedNodeContext, buildLlmRequest());
+      setTopicSuggestions(topics);
+    } catch (e) {
+      if (e instanceof LlmConfigError) {
+        setShowKeyInput(true);
+      }
+      setLlmError(e instanceof Error ? e.message : 'Failed to suggest topics.');
+    } finally {
+      setLlmAction(null);
+    }
+  }, [selectedNodeContext, llmAction, ensureKey, buildLlmRequest]);
+
+  // A suggested topic that already exists in the graph selects that node;
+  // an unknown one is copied to the clipboard as a modeling candidate.
+  const handleTopicClick = useCallback((t: TopicSuggestion) => {
+    const match = nodes.find(n => n.label.toLowerCase() === t.topic.toLowerCase());
+    if (match) onSelectNode?.(match);
+    else navigator.clipboard?.writeText(t.topic).catch(() => {});
+  }, [nodes, onSelectNode]);
+
+  const startTopicEdit = useCallback((i: number, current: string) => {
+    setEditingTopicIdx(i);
+    setTopicDraft(current);
+  }, []);
+
+  // Commit the inline edit; an emptied topic is removed from the list.
+  const commitTopicEdit = useCallback(() => {
+    setTopicSuggestions(prev => {
+      if (editingTopicIdx === null || editingTopicIdx >= prev.length) return prev;
+      const t = topicDraft.trim();
+      if (!t) return prev.filter((_, i) => i !== editingTopicIdx);
+      return prev.map((s, i) => (i === editingTopicIdx ? { ...s, topic: t } : s));
+    });
+    setEditingTopicIdx(null);
+    setTopicDraft('');
+  }, [editingTopicIdx, topicDraft]);
+
+  const cancelTopicEdit = useCallback(() => {
+    setEditingTopicIdx(null);
+    setTopicDraft('');
+  }, []);
+
+  const removeTopic = useCallback((i: number) => {
+    setTopicSuggestions(prev => prev.filter((_, idx) => idx !== i));
+    setEditingTopicIdx(null);
+    setTopicDraft('');
+  }, []);
+
+  const addCustomTopic = useCallback(() => {
+    const t = newTopic.trim();
+    if (!t) return;
+    setTopicSuggestions(prev => [...prev, { topic: t, reason: 'Added by you' }]);
+    setNewTopic('');
+  }, [newTopic]);
 
   const handleSaveKey = useCallback(() => {
     setStoredProvider(provider);
@@ -406,7 +528,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                   title="Generate AI insights using your own Gemini API key"
                 >
                   <Zap size={12} />
-                  {llmLoading ? 'Generating…' : 'AI Insights (your key)'}
+                  {llmAction === 'insights' ? 'Generating…' : 'AI Insights (your key)'}
                 </button>
                 <button
                   type="button"
@@ -417,6 +539,70 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                   <Search size={13} />
                 </button>
               </div>
+
+              {/* Custom AI message — free-form question about the graph / selected node */}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                <textarea
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleAskQuestion();
+                    }
+                  }}
+                  placeholder={selectedNode
+                    ? `Ask AI about "${selectedNode.label}" or the graph…`
+                    : 'Ask AI about this graph…'}
+                  rows={2}
+                  data-testid="graph-ai-question"
+                  style={{
+                    flex: 1, resize: 'none', padding: '6px 8px', fontSize: 11, lineHeight: 1.4,
+                    borderRadius: 6, border: '1px solid var(--border)',
+                    background: 'var(--surface-1)', color: 'var(--text-primary)', fontFamily: 'inherit'
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleAskQuestion}
+                  disabled={llmLoading || !question.trim()}
+                  title="Send your question to the AI (Enter)"
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    padding: '0 10px', border: 'none', borderRadius: 6,
+                    background: llmAction === 'ask' ? 'var(--surface-3)' : '#6366f1',
+                    color: llmAction === 'ask' ? 'var(--text-tertiary)' : '#fff',
+                    cursor: llmLoading || !question.trim() ? 'default' : 'pointer',
+                    opacity: !question.trim() ? 0.6 : 1
+                  }}
+                >
+                  <Send size={12} />
+                </button>
+              </div>
+
+              {/* Topic suggestions for the selected node */}
+              {selectedNode && (
+                <button
+                  type="button"
+                  onClick={handleSuggestTopics}
+                  disabled={llmLoading}
+                  data-testid="graph-ai-suggest-topics"
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    gap: 6, padding: '5px 10px', marginBottom: 6,
+                    background: llmAction === 'topics' ? 'var(--surface-3)' : 'linear-gradient(90deg,#0ea5e9,#6366f1)',
+                    color: llmAction === 'topics' ? 'var(--text-tertiary)' : '#fff',
+                    border: 'none', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                    cursor: llmLoading ? 'default' : 'pointer'
+                  }}
+                  title={`Suggest related topics for "${selectedNode.label}" based on its connections`}
+                >
+                  <Sparkles size={12} />
+                  {llmAction === 'topics'
+                    ? 'Suggesting…'
+                    : `Suggest topics for “${selectedNode.label.length > 18 ? `${selectedNode.label.slice(0, 17)}…` : selectedNode.label}”`}
+                </button>
+              )}
 
               {showKeyInput && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 6 }}>
@@ -537,6 +723,144 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                   maxHeight: 240, overflowY: 'auto'
                 }}>
                   {llmText}
+                </div>
+              )}
+
+              {topicSuggestions.length > 0 && (
+                <div style={{ marginTop: 6 }} data-testid="graph-ai-topic-suggestions">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                    <Sparkles size={10} style={{ color: '#6366f1' }} />
+                    <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                      Suggested topics{selectedNode ? ` for “${selectedNode.label}”` : ''}
+                    </span>
+                    <span style={{ flex: 1 }} />
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(topicSuggestions.map(t => t.topic).join('\n')).catch(() => {})}
+                      style={{ ...actionBtn, border: 'none', background: 'none' }}
+                      title="Copy all topics"
+                    >
+                      <Copy size={10} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setTopicSuggestions([]); cancelTopicEdit(); }}
+                      style={{ ...actionBtn, border: 'none', background: 'none' }}
+                      title="Dismiss suggestions"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {topicSuggestions.map((t, i) => {
+                      if (editingTopicIdx === i) {
+                        return (
+                          <input
+                            key={`edit-${i}`}
+                            autoFocus
+                            value={topicDraft}
+                            onChange={(e) => setTopicDraft(e.target.value)}
+                            onBlur={commitTopicEdit}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.preventDefault(); commitTopicEdit(); }
+                              if (e.key === 'Escape') { e.preventDefault(); cancelTopicEdit(); }
+                            }}
+                            style={{
+                              padding: '3px 9px', borderRadius: 999, fontSize: 11,
+                              border: '1px solid var(--accent)', outline: 'none',
+                              background: 'var(--surface-1)', color: 'var(--text-primary)',
+                              width: Math.max(80, Math.min(200, topicDraft.length * 7 + 30))
+                            }}
+                          />
+                        );
+                      }
+                      const existing = nodes.some(n => n.label.toLowerCase() === t.topic.toLowerCase());
+                      return (
+                        <span
+                          key={`${t.topic}-${i}`}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 2, padding: '3px 6px 3px 9px',
+                            borderRadius: 999, fontSize: 11,
+                            border: existing ? '1px solid var(--accent)' : '1px dashed var(--border)',
+                            background: existing ? 'var(--accent-tint)' : 'var(--surface-1)',
+                            color: existing ? 'var(--accent)' : 'var(--text-primary)',
+                            fontWeight: existing ? 600 : 400
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleTopicClick(t)}
+                            onDoubleClick={() => startTopicEdit(i, t.topic)}
+                            title={`${t.reason || t.topic}${existing
+                              ? ' — already in the graph; click to select it'
+                              : ' — not in the graph yet; click to copy the name'}. Double-click to edit.`}
+                            style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 4,
+                              border: 'none', background: 'none', padding: 0, cursor: 'pointer',
+                              font: 'inherit', color: 'inherit'
+                            }}
+                          >
+                            {existing ? <Search size={9} /> : <Copy size={9} />}
+                            {t.topic}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => startTopicEdit(i, t.topic)}
+                            title="Edit this topic"
+                            style={{
+                              border: 'none', background: 'none', padding: '1px 2px', cursor: 'pointer',
+                              color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center'
+                            }}
+                          >
+                            <Pencil size={9} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeTopic(i)}
+                            title="Remove this topic"
+                            style={{
+                              border: 'none', background: 'none', padding: '1px 2px', cursor: 'pointer',
+                              color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center'
+                            }}
+                          >
+                            <X size={9} />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                  {/* Free-text: add your own topic to the list */}
+                  <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                    <input
+                      value={newTopic}
+                      onChange={(e) => setNewTopic(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); addCustomTopic(); }
+                      }}
+                      placeholder="Add your own topic…"
+                      data-testid="graph-ai-add-topic"
+                      style={{
+                        flex: 1, padding: '4px 8px', fontSize: 11, borderRadius: 999,
+                        border: '1px dashed var(--border)', outline: 'none',
+                        background: 'var(--surface-1)', color: 'var(--text-primary)'
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={addCustomTopic}
+                      disabled={!newTopic.trim()}
+                      title="Add topic (Enter)"
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        padding: '0 8px', border: '1px solid var(--border)', borderRadius: 999,
+                        background: newTopic.trim() ? 'var(--surface-2)' : 'var(--surface-1)',
+                        color: newTopic.trim() ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                        cursor: newTopic.trim() ? 'pointer' : 'default'
+                      }}
+                    >
+                      <Plus size={11} />
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
