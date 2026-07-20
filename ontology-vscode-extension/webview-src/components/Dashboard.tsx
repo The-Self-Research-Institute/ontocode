@@ -55,6 +55,7 @@ import {
   LayoutDashboard,
   AlertTriangle,
   Monitor,
+  Scale,
 } from "lucide-react";
 import apiClient, { ApiError, getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -109,6 +110,7 @@ import ShareDialog from "./ShareDialog";
 import MergeWizard from "./MergeWizard";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { UserGuideModal } from "./UserGuideModal";
+import { OpenSourceLicensesModal } from "./OpenSourceLicensesModal";
 import ThemeSettings from "./ThemeSettings";
 // ImportProgressToast removed per user request
 import { QueueStatusIndicator, GlobalQueueStats } from "./QueueStatusIndicator";
@@ -207,6 +209,7 @@ const TopMenuBar = ({
   onReportIssue,
   onOpenUserGuide,
   onOpenReleaseNotes,
+  onOpenLicenses,
   onOpenMergeWizard,
   syncMode,
   onToggleSyncMode,
@@ -262,6 +265,7 @@ const TopMenuBar = ({
   onReportIssue: () => void;
   onOpenUserGuide: () => void;
   onOpenReleaseNotes: () => void;
+  onOpenLicenses: () => void;
   onOpenMergeWizard: () => void;
   syncMode: "private" | "public";
   onToggleSyncMode: () => void;
@@ -771,6 +775,16 @@ const TopMenuBar = ({
                     >
                       <Bug size={14} />
                       Report Issue
+                    </button>
+                    <button
+                      onClick={() => {
+                        onOpenLicenses();
+                        setOpenMenu(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                    >
+                      <Scale size={14} />
+                      Open Source Licenses
                     </button>
                     <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
                     <button
@@ -2306,6 +2320,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState("");
   const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
+  const [isLicensesOpen, setIsLicensesOpen] = useState(false);
 
   // Auto-open release notes once per new app version; closing the modal
   // records the seen version (see ReleaseNotesModal onClose below). Lives
@@ -17504,6 +17519,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onReportIssue={() => setIsReportIssueModalOpen(true)}
           onOpenUserGuide={() => setIsUserGuideOpen(true)}
           onOpenReleaseNotes={() => setIsReleaseNotesOpen(true)}
+          onOpenLicenses={() => setIsLicensesOpen(true)}
           hierarchyDisplayMode={hierarchyDisplayMode}
           onHierarchyDisplayModeChange={setHierarchyDisplayMode}
           hierarchyImportsScope={hierarchyImportsScope}
@@ -18564,6 +18580,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* User Guide Modal - only in cloud mode */}
       {isCloudDeployment && <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />}
+
+      <OpenSourceLicensesModal isOpen={isLicensesOpen} onClose={() => setIsLicensesOpen(false)} />
 
       <DraftCopyModal
         phase={draftCopyPhase}

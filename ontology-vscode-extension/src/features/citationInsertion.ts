@@ -1,12 +1,99 @@
 import * as vscode from 'vscode';
 import { sci2CodeService, CitationItem } from '../services/sci2CodeService';
+import { validateDoiOnline } from '../services/doiValidationService';
+import { extractDoiFromZoteroData, isValidDoiFormat, normalizeDoi } from '../utils/doi';
 
 interface QuickPickCitation extends vscode.QuickPickItem {
   key: string;
   citation: any;
 }
 
-export async function insertCitationCommand() {
+const AUTH_TOKEN_KEY = 'ontocode.authToken';
+
+/**
+ * Authoritatively validate a DOI (doi.org, via the editor backend) and, if it
+ * doesn't resolve or doesn't match this citation, let the user correct it,
+ * use it anyway, drop it, or cancel the whole insertion — the keyboard-shortcut
+ * path used to embed whatever was in Zotero's DOI field completely unchecked.
+ *
+ * Returns `{ cancelled: true }` if the user backs out entirely; otherwise
+ * `{ doi }` with `doi` possibly undefined (user chose to insert without one).
+ */
+async function resolveDoiForInsertion(
+  context: vscode.ExtensionContext,
+  gatewayUrl: string,
+  candidateDoi: string,
+  meta: { title?: string; publicationTitle?: string; year?: string }
+): Promise<{ doi?: string; cancelled: boolean }> {
+  const token = await (context as any).secrets.get(AUTH_TOKEN_KEY);
+  let doi = normalizeDoi(candidateDoi);
+
+  while (true) {
+    if (!doi || !isValidDoiFormat(doi)) {
+      const choice = await vscode.window.showQuickPick(
+        [
+          { label: '$(edit) Enter a DOI', action: 'enter' as const },
+          { label: '$(check) Insert without a DOI', action: 'skip' as const },
+          { label: '$(x) Cancel', action: 'cancel' as const },
+        ],
+        {
+          placeHolder: doi
+            ? `"${doi}" isn't a valid DOI format`
+            : 'No DOI found for this citation',
+          ignoreFocusOut: true,
+        }
+      );
+      if (!choice || choice.action === 'cancel') return { cancelled: true };
+      if (choice.action === 'skip') return { doi: undefined, cancelled: false };
+      const entered = await vscode.window.showInputBox({
+        prompt: 'Enter DOI',
+        value: doi,
+        placeHolder: 'e.g., 10.1016/j.websem.2011.01.001',
+        ignoreFocusOut: true,
+      });
+      if (entered === undefined) continue; // Esc — loop back to the same prompt
+      doi = normalizeDoi(entered);
+      continue;
+    }
+
+    const result = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Validating DOI...' },
+      () => validateDoiOnline(gatewayUrl, token, { doi, ...meta })
+    );
+
+    if (result.valid && result.relevant) {
+      return { doi: result.normalizedDoi || doi, cancelled: false };
+    }
+
+    const reason = result.error
+      || (result.valid
+        ? 'This DOI resolves, but its registrar metadata does not match this citation (title/year).'
+        : 'This DOI does not resolve at doi.org.');
+
+    const choice = await vscode.window.showQuickPick(
+      [
+        { label: `$(warning) Use "${doi}" anyway`, action: 'force' as const },
+        { label: '$(edit) Enter a different DOI', action: 'enter' as const },
+        { label: '$(check) Insert without a DOI', action: 'skip' as const },
+        { label: '$(x) Cancel', action: 'cancel' as const },
+      ],
+      { placeHolder: reason, ignoreFocusOut: true }
+    );
+    if (!choice || choice.action === 'cancel') return { cancelled: true };
+    if (choice.action === 'force') return { doi, cancelled: false };
+    if (choice.action === 'skip') return { doi: undefined, cancelled: false };
+    const entered = await vscode.window.showInputBox({
+      prompt: 'Enter a corrected DOI',
+      value: doi,
+      placeHolder: 'e.g., 10.1016/j.websem.2011.01.001',
+      ignoreFocusOut: true,
+    });
+    if (entered === undefined) continue; // Esc — re-show the same choice for the same doi
+    doi = normalizeDoi(entered);
+  }
+}
+
+export async function insertCitationCommand(context: vscode.ExtensionContext, gatewayUrl: string) {
   // Debug: Log all open editors
   console.log('=== DEBUG: Looking for ontology editor ===');
   console.log('Active editor:', vscode.window.activeTextEditor?.document.fileName);
@@ -50,7 +137,11 @@ export async function insertCitationCommand() {
     ? 'turtle' 
     : 'rdfxml';
 
-  // Get Zotero library
+  // Get Zotero library. sci2CodeService/zoteroApiService already show specific,
+  // actionable dialogs for "not configured" and real fetch errors (invalid key,
+  // network failure, etc.) — this catch is just a last-resort net, not the
+  // primary error path, so items staying [] here still lets the picker fall
+  // back gracefully to manual entry instead of the whole command failing.
   let items: any[] = [];
   try {
     items = await vscode.window.withProgress(
@@ -64,7 +155,10 @@ export async function insertCitationCommand() {
       }
     );
   } catch (e) {
-    console.log('Sci2Code not available or failed to load library');
+    console.error('Failed to load Zotero library:', e);
+    vscode.window.showErrorMessage(
+      `Could not load your Zotero library: ${e instanceof Error ? e.message : String(e)}. You can still add a citation manually.`
+    );
   }
 
   // Create quick pick items
@@ -105,8 +199,8 @@ export async function insertCitationCommand() {
   }
 
   if (selected.key === 'manual') {
-    const manualItem = await showManualCitationDialog();
-    if (manualItem) {
+    const manualItem = await showManualCitationDialog(context, gatewayUrl);
+    if (manualItem && manualItem !== 'cancelled') {
       await insertManualCitation(editor, manualItem, format);
     }
     return;
@@ -114,14 +208,27 @@ export async function insertCitationCommand() {
 
   console.log('Using format:', format);
 
+  // Validate the citation's DOI (or offer to add/correct one) before inserting —
+  // this used to embed selected.citation.data?.DOI completely unchecked.
+  const data = selected.citation?.data;
+  const candidateDoi = extractDoiFromZoteroData(data);
+  const { doi, cancelled } = await resolveDoiForInsertion(context, gatewayUrl, candidateDoi, {
+    title: data?.title,
+    publicationTitle: data?.publicationTitle,
+    year: data?.date ? extractYear(data.date) : undefined,
+  });
+  if (cancelled) {
+    return;
+  }
+
   // Make sure editor is still valid and focused
   const currentEditor = vscode.window.activeTextEditor;
   if (currentEditor && currentEditor.document.uri.toString() === editor.document.uri.toString()) {
-    await insertCitation(currentEditor, selected.key, format);
+    await insertCitation(currentEditor, selected.key, format, doi);
   } else {
     // Re-focus the original editor
     const reopenedEditor = await vscode.window.showTextDocument(editor.document, editor.viewColumn);
-    await insertCitation(reopenedEditor, selected.key, format);
+    await insertCitation(reopenedEditor, selected.key, format, doi);
   }
 }
 
@@ -213,7 +320,8 @@ function indentText(text: string, indent: string): string {
 async function insertCitation(
   editor: vscode.TextEditor,
   citationKey: string,
-  format: 'turtle' | 'rdfxml'
+  format: 'turtle' | 'rdfxml',
+  validatedDoi?: string
 ): Promise<void> {
   const formattedCitation = await vscode.window.withProgress(
     {
@@ -222,7 +330,7 @@ async function insertCitation(
       cancellable: false
     },
     async () => {
-      return await sci2CodeService.formatCitationForOntology(citationKey, format);
+      return await sci2CodeService.formatCitationForOntology(citationKey, format, validatedDoi);
     }
   );
 
@@ -403,7 +511,7 @@ async function ensurePrefixes(document: vscode.TextDocument, format: 'turtle' | 
   }
 }
 
-export async function insertCitationAtClass(classIRI: string): Promise<void> {
+export async function insertCitationAtClass(classIRI: string, context: vscode.ExtensionContext, gatewayUrl: string): Promise<void> {
   const editor = findOntologyEditor();
   if (!editor) {
     vscode.window.showWarningMessage('No ontology file is open.');
@@ -431,13 +539,16 @@ export async function insertCitationAtClass(classIRI: string): Promise<void> {
   if (position) {
     await vscode.window.showTextDocument(editor.document, editor.viewColumn);
     editor.selection = new vscode.Selection(position, position);
-    await insertCitationCommand();
+    await insertCitationCommand(context, gatewayUrl);
   } else {
     vscode.window.showWarningMessage(`Could not find class ${classIRI} in document.`);
   }
 }
 
-async function showManualCitationDialog(): Promise<CitationItem | null> {
+async function showManualCitationDialog(
+  context: vscode.ExtensionContext,
+  gatewayUrl: string
+): Promise<CitationItem | 'cancelled' | null> {
   const title = await vscode.window.showInputBox({
     prompt: 'Enter the title of the work',
     placeHolder: 'e.g., The OWL API: A Java API for the semantic web',
@@ -462,7 +573,7 @@ async function showManualCitationDialog(): Promise<CitationItem | null> {
   });
   if (!year) return null;
 
-  const doi = await vscode.window.showInputBox({
+  const doiInput = await vscode.window.showInputBox({
     prompt: 'Enter DOI (optional)',
     placeHolder: 'e.g., 10.1016/j.websem.2011.01.001',
     ignoreFocusOut: true
@@ -473,6 +584,16 @@ async function showManualCitationDialog(): Promise<CitationItem | null> {
     placeHolder: 'e.g., http://owlcs.github.io/owlapi/',
     ignoreFocusOut: true
   });
+
+  // Validate the DOI the same way a Zotero-sourced one is — a manually typed
+  // DOI is just as likely to be mistyped or made up as a bad Zotero field.
+  // An empty field skips straight through (no DOI was ever offered).
+  let doi: string | undefined;
+  if (doiInput?.trim()) {
+    const resolved = await resolveDoiForInsertion(context, gatewayUrl, doiInput, { title, year });
+    if (resolved.cancelled) return 'cancelled';
+    doi = resolved.doi;
+  }
 
   // Parse authors
   const creators = author.split(',').map(a => {
@@ -487,7 +608,7 @@ async function showManualCitationDialog(): Promise<CitationItem | null> {
     title,
     creators,
     date: year,
-    doi: doi || undefined,
+    doi,
     url: url || undefined,
     itemType: 'manual'
   };

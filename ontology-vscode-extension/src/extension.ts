@@ -8,6 +8,7 @@ import { CitationPickerPanel } from './webview/citationPicker';
 import { sci2CodeService } from './services/sci2CodeService';
 import { zoteroApiService } from './services/zoteroApiService';
 import { issueReportService } from './services/issueReportService';
+import { extractDoiFromZoteroData } from './utils/doi';
 // Use web-compatible collaboration manager in browser environment
 import { CollaborationManager } from './collaboration/CollaborationManager.web';
 import { ICollaborationManager } from './collaboration/types';
@@ -508,7 +509,7 @@ export async function activate(context: vscode.ExtensionContext) {
             console.log('  User ID:', userId);
             console.log('  Connected:', isConnected);
         }),
-        vscode.commands.registerCommand('ontocode.insertCitation', insertCitationCommand),
+        vscode.commands.registerCommand('ontocode.insertCitation', () => insertCitationCommand(context, GATEWAY_URL)),
         // Fix: Use context.extensionUri to get the extension's URI.
         vscode.commands.registerCommand('ontocode.openCitationPicker', () => CitationPickerPanel.createOrShow(context.extensionUri)),
         vscode.commands.registerCommand('ontocode.configureZotero', async () => {
@@ -552,99 +553,29 @@ export async function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Export API for other extensions or internal use (replaces external Sci2Code dependency)
-    // Mock Zotero data for testing - must have nested 'data' property to match webview expectations
-    const mockZoteroLibrary = [
-        {
-            key: 'DEMO001',
-            data: {
-                title: 'Semantic Web Technologies: A Survey',
-                creators: [{ firstName: 'John', lastName: 'Smith', creatorType: 'author' }],
-                date: '2023',
-                doi: '10.1000/demo.001',
-                itemType: 'journalArticle',
-                abstractNote: 'A comprehensive survey of semantic web technologies and ontology development.',
-                publicationTitle: 'Journal of Web Semantics',
-                volume: '45',
-                pages: '1-25'
-            }
-        },
-        {
-            key: 'DEMO002',
-            data: {
-                title: 'OWL 2 Web Ontology Language Primer',
-                creators: [
-                    { firstName: 'Pascal', lastName: 'Hitzler', creatorType: 'author' },
-                    { firstName: 'Markus', lastName: 'Krötzsch', creatorType: 'author' }
-                ],
-                date: '2012',
-                url: 'https://www.w3.org/TR/owl2-primer/',
-                itemType: 'webpage',
-                abstractNote: 'This document provides an introduction to the OWL 2 Web Ontology Language.',
-                publisher: 'W3C'
-            }
-        },
-        {
-            key: 'DEMO003',
-            data: {
-                title: 'Knowledge Representation and Reasoning',
-                creators: [{ firstName: 'Frank', lastName: 'van Harmelen', creatorType: 'editor' }],
-                date: '2020',
-                itemType: 'book',
-                abstractNote: 'Foundations of knowledge representation and automated reasoning systems.',
-                publisher: 'MIT Press',
-                pages: '500'
-            }
-        }
-    ];
-
+    // Export API for other extensions or internal use (replaces external Sci2Code dependency).
+    // No mock/demo fallback here — sci2CodeService.initialize() already confirms
+    // Zotero is configured (via isAuthenticated below) and prompts to configure it
+    // if not, before any of these are called. Silently substituting fake data on
+    // a fetch error or empty library used to be indistinguishable from real data
+    // in the citation picker, risking a fabricated citation landing in a real
+    // ontology — see zoteroApiService.fetchLibrary for real error surfacing.
     return {
         getZoteroLibrary: async (): Promise<any[]> => {
             console.log('[OntoCode] getZoteroLibrary called');
-
-            // Try to fetch from Zotero API first
-            if (zoteroApiService.isConfigured()) {
-                console.log('[OntoCode] Fetching from Zotero API...');
-                const items = await zoteroApiService.fetchLibrary(10000);
-                if (items && items.length > 0) {
-                    console.log(`[OntoCode] Returning ${items.length} items from Zotero API`);
-                    return items;
-                }
-            } else {
-                console.log('[OntoCode] Zotero not configured, showing instructions');
-                // Don't block - just show info and return mock data
-                setTimeout(() => {
-                    zoteroApiService.showConfigInstructions();
-                }, 500);
-            }
-
-            // Fall back to mock data
-            console.log('[OntoCode] Returning mock Zotero data');
-            return mockZoteroLibrary;
+            return await zoteroApiService.fetchLibrary(10000);
         },
         getZoteroItem: async (key: string): Promise<any | null> => {
             console.log('[OntoCode] getZoteroItem called for key:', key);
-
-            // Try to fetch from Zotero API first
-            if (zoteroApiService.isConfigured()) {
-                const item = await zoteroApiService.fetchItem(key);
-                if (item) {
-                    return item.data;
-                }
-            }
-
-            // Fall back to mock data
-            const item = mockZoteroLibrary.find(item => item.key === key);
+            if (!zoteroApiService.isConfigured()) return null;
+            const item = await zoteroApiService.fetchItem(key);
             return item ? item.data : null;
         },
-        formatCitationForOntology: async (key: string, format?: 'turtle' | 'rdfxml'): Promise<string> => {
+        formatCitationForOntology: async (key: string, format?: 'turtle' | 'rdfxml', overrideDoi?: string): Promise<string> => {
             console.log('[OntoCode] formatCitationForOntology called for key:', key, 'format:', format);
 
-            // Try to fetch the real item from Zotero first — the old version only ever
-            // looked in mockZoteroLibrary, so any real (non-demo) citation key always
-            // fell through to `return ''`, which the caller in citationInsertion.ts
-            // treats as failure ("Failed to format citation.").
-            let data: { title: string; creators: Array<{ firstName: string; lastName: string }>; date?: string; DOI?: string; url?: string } | undefined;
+            // Fetch the real item from Zotero — no mock fallback (see comment above).
+            let data: { title: string; creators: Array<{ firstName: string; lastName: string }>; date?: string; DOI?: string; doi?: string; extra?: string; url?: string } | undefined;
             if (zoteroApiService.isConfigured()) {
                 const realItem = await zoteroApiService.fetchItem(key);
                 if (realItem) data = realItem.data;
@@ -656,6 +587,11 @@ export async function activate(context: vscode.ExtensionContext) {
             const escapedKey = key.replace(/[^a-zA-Z0-9]/g, '');
             const authors = data.creators?.map(c => `${c.firstName} ${c.lastName}`).join(', ') || 'Unknown';
             const year = data.date ? (data.date.match(/\d{4}/)?.[0] || '') : '';
+            // overrideDoi wins when the caller already validated/corrected it
+            // (citationInsertion.ts's DOI validation step) — otherwise fall back to
+            // whatever Zotero field actually has it (uppercase DOI, lowercase doi,
+            // or embedded in the free-text `extra` field/url), not just data.DOI.
+            const resolvedDoi = overrideDoi || extractDoiFromZoteroData(data);
 
             // Same prov:/dc:/foaf:/rdfs: shape ensurePrefixes() in citationInsertion.ts
             // provisions in the document — the previous bibo:-based template declared
@@ -675,7 +611,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 xml += `        <dc:title>${escapeXml(data.title)}</dc:title>\n`;
                 xml += `        <dc:creator>${escapeXml(authors)}</dc:creator>\n`;
                 if (year) xml += `        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
-                if (data.DOI) xml += `        <dc:identifier>doi:${escapeXml(data.DOI)}</dc:identifier>\n`;
+                if (resolvedDoi) xml += `        <dc:identifier>doi:${escapeXml(resolvedDoi)}</dc:identifier>\n`;
                 if (data.url) xml += `        <foaf:homepage rdf:resource="${escapeXml(data.url)}"/>\n`;
                 xml += `        <rdfs:comment>Zotero citation</rdfs:comment>\n`;
                 xml += `    </owl:NamedIndividual>\n`;
@@ -696,7 +632,7 @@ export async function activate(context: vscode.ExtensionContext) {
             ttl += `    dc:title "${escapeTurtle(data.title)}" ;\n`;
             ttl += `    dc:creator "${escapeTurtle(authors)}" ;\n`;
             if (year) ttl += `    dc:date "${year}"^^xsd:gYear ;\n`;
-            if (data.DOI) ttl += `    dc:identifier "doi:${escapeTurtle(data.DOI)}" ;\n`;
+            if (resolvedDoi) ttl += `    dc:identifier "doi:${escapeTurtle(resolvedDoi)}" ;\n`;
             if (data.url) ttl += `    foaf:homepage <${data.url}> ;\n`;
             ttl += `    rdfs:comment "Zotero citation" .\n`;
             return ttl;
@@ -704,22 +640,17 @@ export async function activate(context: vscode.ExtensionContext) {
         getCitationMetadata: async (key: string): Promise<any | null> => {
             console.log('[OntoCode] getCitationMetadata called for key:', key);
 
-            // Try to fetch from Zotero API first
-            if (zoteroApiService.isConfigured()) {
-                const item = await zoteroApiService.fetchItem(key);
-                if (item) {
-                    return item.data;
-                }
-            }
-
-            // Fall back to mock data
-            const item = mockZoteroLibrary.find(i => i.key === key);
+            if (!zoteroApiService.isConfigured()) return null;
+            const item = await zoteroApiService.fetchItem(key);
             return item ? item.data : null;
         },
         isAuthenticated: async (): Promise<boolean> => {
-            // Check if user is authenticated with OntoCode
-            const token = await (context as any).secrets.get(TOKEN_KEY);
-            return !!token;
+            // "Authenticated" here means "Zotero is configured" — this used to
+            // check OntoCode's own login token, which is unrelated and meant a
+            // logged-out-of-OntoCode user (or a logged-in one with no Zotero key
+            // set up) got a confusing "log in to Zotero" prompt that called a
+            // VS Code command (sci2code.login) which doesn't exist anywhere.
+            return zoteroApiService.isConfigured();
         }
     };
 }

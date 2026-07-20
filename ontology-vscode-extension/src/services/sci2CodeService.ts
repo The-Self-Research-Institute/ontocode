@@ -20,7 +20,7 @@ export interface CitationItem {
 interface Sci2CodeAPI {
   getZoteroLibrary(): Promise<any[]>;
   getZoteroItem(key: string): Promise<any | null>;
-  formatCitationForOntology(key: string, format?: 'turtle' | 'rdfxml'): Promise<string>;
+  formatCitationForOntology(key: string, format?: 'turtle' | 'rdfxml', overrideDoi?: string): Promise<string>;
   getCitationMetadata(key: string): Promise<CitationItem | null>;
   isAuthenticated?(): Promise<boolean>; // Make it optional
 }
@@ -31,98 +31,114 @@ class Sci2CodeService {
   private initializationAttempted = false;
 
   async initialize(): Promise<boolean> {
-    if (this.initializationAttempted && this.api !== null) {
-      return true;
-    }
+    // Only the "find + activate the extension, grab its exports" part is worth
+    // caching (it's the expensive one-time lookup). The auth/configuration
+    // check below always re-runs even when this.api is already cached — it's
+    // a cheap local check, and skipping it once this.api is set meant a user
+    // who declined to configure Zotero once would never be asked again for
+    // the rest of the VS Code session (this.api was set before the auth
+    // check even ran, so every later call's "if (!this.api)" guard elsewhere
+    // in this class bypassed initialize() — and therefore the prompt — entirely).
+    if (!this.api) {
+      this.initializationAttempted = true;
 
-    this.initializationAttempted = true;
+      try {
+        console.log('Looking for Sci2Code extension with ID:', this.extensionId);
 
-    try {
-      console.log('Looking for Sci2Code extension with ID:', this.extensionId);
-      
-      const extension = vscode.extensions.getExtension(this.extensionId);
-      
-      if (!extension) {
-        console.error('Sci2Code extension not found');
-        
-        // List all installed extensions for debugging
-        const allExtensions = vscode.extensions.all
-          .filter(ext => !ext.id.startsWith('vscode.'))
-          .map(ext => ext.id);
-        console.log('Installed extensions:', allExtensions);
-        
-        const install = await vscode.window.showWarningMessage(
-          `Sci2Code extension (${this.extensionId}) is required for citation features. Please ensure it's installed.`,
-          'Show Extensions', 'Cancel'
-        );
-        
-        if (install === 'Show Extensions') {
-          await vscode.commands.executeCommand('workbench.extensions.search', 'sci2code');
-        }
-        return false;
-      }
+        const extension = vscode.extensions.getExtension(this.extensionId);
 
-      console.log('Sci2Code extension found, checking activation...');
-      
-      if (!extension.isActive) {
-        console.log('Activating Sci2Code extension...');
-        await extension.activate();
-      }
+        if (!extension) {
+          console.error('Sci2Code extension not found');
 
-      this.api = extension.exports as Sci2CodeAPI;
-      
-      if (!this.api) {
-        console.error('Sci2Code extension exports are undefined');
-        vscode.window.showErrorMessage(
-          'Sci2Code extension did not export an API. Please update the extension.'
-        );
-        return false;
-      }
+          // List all installed extensions for debugging
+          const allExtensions = vscode.extensions.all
+            .filter(ext => !ext.id.startsWith('vscode.'))
+            .map(ext => ext.id);
+          console.log('Installed extensions:', allExtensions);
 
-      console.log('Sci2Code API initialized successfully');
-      console.log('Available API methods:', Object.keys(this.api));
-      
-      // Check authentication (optional, don't fail if method doesn't exist)
-      if (typeof this.api.isAuthenticated === 'function') {
-        const isAuth = await this.api.isAuthenticated();
-        console.log('Sci2Code authentication status:', isAuth);
-        
-        if (!isAuth) {
-          const login = await vscode.window.showInformationMessage(
-            'Please log in to Zotero to use citation features.',
-            'Login', 'Cancel'
+          const install = await vscode.window.showWarningMessage(
+            `Sci2Code extension (${this.extensionId}) is required for citation features. Please ensure it's installed.`,
+            'Show Extensions', 'Cancel'
           );
-          
-          if (login === 'Login') {
-            await vscode.commands.executeCommand('sci2code.login');
+
+          if (install === 'Show Extensions') {
+            await vscode.commands.executeCommand('workbench.extensions.search', 'sci2code');
           }
           return false;
         }
-      } else {
-        console.log('isAuthenticated method not available, skipping auth check');
-      }
 
-      return true;
-      
-    } catch (error) {
-      console.error('Failed to initialize Sci2Code:', error);
-      
-      vscode.window.showErrorMessage(
-        `Failed to initialize Sci2Code: ${error instanceof Error ? error.message : String(error)}`
-      );
-      
-      return false;
+        console.log('Sci2Code extension found, checking activation...');
+
+        if (!extension.isActive) {
+          console.log('Activating Sci2Code extension...');
+          await extension.activate();
+        }
+
+        this.api = extension.exports as Sci2CodeAPI;
+
+        if (!this.api) {
+          console.error('Sci2Code extension exports are undefined');
+          vscode.window.showErrorMessage(
+            'Sci2Code extension did not export an API. Please update the extension.'
+          );
+          return false;
+        }
+
+        console.log('Sci2Code API initialized successfully');
+        console.log('Available API methods:', Object.keys(this.api));
+      } catch (error) {
+        console.error('Failed to initialize Sci2Code:', error);
+
+        vscode.window.showErrorMessage(
+          `Failed to initialize Sci2Code: ${error instanceof Error ? error.message : String(error)}`
+        );
+
+        return false;
+      }
     }
+
+    // Check whether Zotero is configured (optional, don't fail if method doesn't exist)
+    if (typeof this.api.isAuthenticated === 'function') {
+      const isAuth = await this.api.isAuthenticated();
+      console.log('Zotero configured:', isAuth);
+
+      if (!isAuth) {
+        // Previously prompted "Log in to Zotero" and ran a 'sci2code.login'
+        // command that doesn't exist anywhere in this extension — a guaranteed
+        // dead end. Zotero has no "login" concept here, just an API key; route
+        // to the real, working configure command instead.
+        const configure = await vscode.window.showInformationMessage(
+          'Zotero isn\'t configured yet. Configure it now to insert citations from your library.',
+          'Configure', 'Cancel'
+        );
+
+        if (configure === 'Configure') {
+          await vscode.commands.executeCommand('ontocode.configureZotero');
+          // Re-check — the configure command may have succeeded synchronously
+          // (it awaits the credential prompt before returning).
+          const nowAuth = await this.api.isAuthenticated();
+          if (!nowAuth) return false;
+        } else {
+          return false;
+        }
+      }
+    } else {
+      console.log('isAuthenticated method not available, skipping auth check');
+    }
+
+    return true;
   }
 
   async getZoteroLibrary(): Promise<any[]> {
-    if (!this.api) {
-      const initialized = await this.initialize();
-      if (!initialized || !this.api) {
-        return [];
-      }
+    // Always go through initialize() (not gated on `!this.api`) — it re-checks
+    // Zotero configuration every call even when the extension lookup itself is
+    // cached, so declining the configure prompt once doesn't silently suppress
+    // it for the rest of the session (see initialize()'s comment).
+    const initialized = await this.initialize();
+    if (!initialized || !this.api) {
+      return [];
     }
-    
+
     try {
       console.log('Fetching Zotero library...');
       const items = await this.api.getZoteroLibrary();
@@ -131,18 +147,15 @@ class Sci2CodeService {
     } catch (error) {
       console.error('Failed to get Zotero library:', error);
       vscode.window.showErrorMessage(
-        'Failed to load Zotero library. Please check your Sci2Code configuration.'
+        `Failed to load Zotero library: ${error instanceof Error ? error.message : String(error)}`
       );
       return [];
     }
   }
 
   async getCitationMetadata(key: string): Promise<CitationItem | null> {
-    if (!this.api) {
-      await this.initialize();
-    }
-
-    if (!this.api) {
+    const initialized = await this.initialize();
+    if (!initialized || !this.api) {
       return null;
     }
 
@@ -186,17 +199,14 @@ class Sci2CodeService {
     };
   }
 
-  async formatCitationForOntology(key: string, format: 'turtle' | 'rdfxml' = 'turtle'): Promise<string | null> {
-    if (!this.api) {
-      await this.initialize();
-    }
-
-    if (!this.api) {
+  async formatCitationForOntology(key: string, format: 'turtle' | 'rdfxml' = 'turtle', overrideDoi?: string): Promise<string | null> {
+    const initialized = await this.initialize();
+    if (!initialized || !this.api) {
       return null;
     }
 
     try {
-      return await this.api.formatCitationForOntology(key, format);
+      return await this.api.formatCitationForOntology(key, format, overrideDoi);
     } catch (error) {
       console.error('Failed to format citation:', error);
       vscode.window.showErrorMessage(`Failed to format citation: ${error}`);
