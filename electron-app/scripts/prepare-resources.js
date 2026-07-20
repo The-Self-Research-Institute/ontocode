@@ -12,7 +12,10 @@
  *   2. Copy fuseki-server.jar from fuseki-docker/, or download the official
  *      Apache Jena Fuseki release (checksum-verified) if not present — no
  *      Docker required, so this works on a fresh machine
- *   3. Copy mongod binary from data/mongodb/bin/<platform>/
+ *   3. Copy mongod binary from data/mongodb/bin/<platform>/, or (Windows only)
+ *      download the official MongoDB Community Server release (checksum-verified)
+ *      if not present. macOS/Linux still require the manual download — see the
+ *      warning printed below.
  *   4. Bundle a minimal JRE via jlink (preferred) or download Temurin 17 JRE
  *
  * Result layout inside electron-app/resources/backend/:
@@ -48,6 +51,13 @@ const FUSEKI_VERSION = '6.1.0';
 const FUSEKI_SHA512 = '75457f45d14397876a41ed51abe7ae5d2f1e708dfe1315765f858158bc5c6813bc036ec1539ddc4dffd26201f5cc31fadec299ca5c3dc2548b723513ed31d326';
 const FUSEKI_MIRROR_URL = `https://www.apache.org/dyn/mirrors/mirrors.cgi?action=download&filename=jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
 const FUSEKI_ARCHIVE_URL = `https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
+
+// ── MongoDB download (fallback when data/mongodb/bin/win32/mongod.exe is absent) ──
+// Latest 6.0.x as of this writing — matches the mongo:6 image used by docker-compose.
+// Checksum pulled from the official .sha256 file MongoDB publishes alongside the release.
+const MONGODB_VERSION = '6.0.29';
+const MONGODB_WIN32_URL = `https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-${MONGODB_VERSION}.zip`;
+const MONGODB_WIN32_SHA256 = 'abfd03e5e02c962004e0b46d47777cdd3bca767b1a200dcafc2194cc5415cd55';
 
 // ── Minimal modules needed for Spring Boot + Jena Fuseki ────────────────────
 const JLINK_MODULES = [
@@ -195,16 +205,90 @@ async function downloadFuseki(cachedSrc) {
 }
 
 // ── Step 3: MongoDB binary ────────────────────────────────────────────────────
-function copyMongod() {
+async function copyMongod() {
     console.log('\n[3/4] MongoDB binary');
-    ['win32', 'darwin', 'linux'].forEach((platform) => {
+    let anyMissing = false;
+    for (const platform of ['win32', 'darwin', 'linux']) {
         const ext  = platform === 'win32' ? '.exe' : '';
-        const src  = path.join(REPO_ROOT, 'data', 'mongodb', 'bin', platform, `mongod${ext}`);
+        const cachedSrc = path.join(REPO_ROOT, 'data', 'mongodb', 'bin', platform, `mongod${ext}`);
         const dest = path.join(RESOURCES, 'mongodb', platform, `mongod${ext}`);
-        copyIfExists(src, dest, `mongodb/${platform}/mongod${ext}`);
-    });
-    console.log('       Download: https://www.mongodb.com/try/download/community (zip/tgz)');
-    console.log('       Extract mongod[.exe] → data/mongodb/bin/<platform>/');
+        let ok = copyIfExists(cachedSrc, dest, `mongodb/${platform}/mongod${ext}`);
+        if (!ok && platform === 'win32') {
+            console.log(`  → Not found locally — downloading MongoDB Community Server ${MONGODB_VERSION}…`);
+            ok = await downloadMongodWin32(cachedSrc, dest);
+        }
+        if (!ok) anyMissing = true;
+    }
+    if (anyMissing) {
+        console.log('       macOS/Linux still require the manual download:');
+        console.log('       Download: https://www.mongodb.com/try/download/community (zip/tgz)');
+        console.log('       Extract mongod[.exe] → data/mongodb/bin/<platform>/');
+    }
+}
+
+/**
+ * Download the official MongoDB Community Server Windows build (checksum-verified)
+ * so a fresh Windows machine doesn't need a manual download — this was a recurring
+ * blocker: prepare-resources previously required the user to manually fetch and
+ * place mongod.exe before every build. macOS/Linux are left manual (see copyMongod)
+ * since their archive layout/checksums aren't verified here.
+ */
+async function downloadMongodWin32(cachedSrc, dest) {
+    const archivePath = path.join(RESOURCES, `mongodb-windows-x86_64-${MONGODB_VERSION}.zip`);
+    ensureDir(RESOURCES);
+
+    try {
+        await downloadFile(MONGODB_WIN32_URL, archivePath);
+
+        const actualSha256 = crypto.createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
+        if (actualSha256 !== MONGODB_WIN32_SHA256) {
+            throw new Error(
+                `Checksum mismatch for mongodb-windows-x86_64-${MONGODB_VERSION}.zip\n` +
+                `       expected: ${MONGODB_WIN32_SHA256}\n       got:      ${actualSha256}`
+            );
+        }
+        console.log('  ✓  Checksum verified');
+
+        const extractDir = path.join(RESOURCES, `_mongodb-extract-${MONGODB_VERSION}`);
+        fs.rmSync(extractDir, { recursive: true, force: true });
+        ensureDir(extractDir);
+        execSync(
+            `powershell -NoProfile -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${extractDir}' -Force"`,
+            { stdio: 'inherit', timeout: 120_000 },
+        );
+
+        const extractedExe = findFileRecursive(extractDir, 'mongod.exe');
+        if (!extractedExe) throw new Error(`mongod.exe not found anywhere inside the extracted archive`);
+
+        ensureDir(path.dirname(dest));
+        fs.copyFileSync(extractedExe, dest);
+        // Also cache it where copyMongod() checks first, so future runs skip the download.
+        ensureDir(path.dirname(cachedSrc));
+        fs.copyFileSync(extractedExe, cachedSrc);
+        console.log('  ✓  Downloaded and installed mongod.exe');
+
+        fs.rmSync(extractDir, { recursive: true, force: true });
+        fs.rmSync(archivePath, { force: true });
+        return true;
+    } catch (err) {
+        console.error(`  ✗  MongoDB download failed: ${err.message}`);
+        fs.rmSync(archivePath, { force: true });
+        return false;
+    }
+}
+
+/** Recursively search a directory tree for the first file matching `name`. */
+function findFileRecursive(dir, name) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            const found = findFileRecursive(full, name);
+            if (found) return found;
+        } else if (entry.name.toLowerCase() === name.toLowerCase()) {
+            return full;
+        }
+    }
+    return null;
 }
 
 // ── Step 4: JRE (jlink → download fallback) ──────────────────────────────────
@@ -375,13 +459,14 @@ async function main() {
 
     copyOwlEditorJar();
     await copyFusekiJar();
-    copyMongod();
+    await copyMongod();
     await bundleJre();
 
     console.log('\n=== Summary ===');
     const checks = {
         'desktop.jar':       path.join(JARS_DIR, 'desktop.jar'),
         'fuseki-server.jar': path.join(JARS_DIR, 'fuseki-server.jar'),
+        'mongod':            path.join(RESOURCES, 'mongodb', process.platform, `mongod${process.platform === 'win32' ? '.exe' : ''}`),
         'JRE':               path.join(JRE_DIR, 'bin', process.platform === 'win32' ? 'java.exe' : 'java'),
     };
     let allOk = true;
