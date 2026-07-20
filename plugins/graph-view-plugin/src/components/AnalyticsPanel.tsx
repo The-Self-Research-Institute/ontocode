@@ -3,11 +3,11 @@
  * discourse structure meter, AI-summary from local analytics data, and cluster sparklines.
  */
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import {
   BarChart3, GitBranch, Lightbulb, Network, TrendingUp,
   X, Search, Layers, Copy, Zap, ChevronDown, ChevronUp,
-  Clock, MessageSquare, ArrowRight, Hash, EyeOff, Send, Sparkles, Pencil, Plus
+  Clock, MessageSquare, ArrowRight, Hash, EyeOff, Send, Sparkles, Pencil, Plus, RefreshCw
 } from 'lucide-react';
 import type { OntologyNode, OntologyEdge } from '../types';
 import type { GraphAnalytics, StructuralGap, DiscourseStructure } from '../services/GraphAnalyticsService';
@@ -15,9 +15,9 @@ import {
   generateGraphInsights, askGraphQuestion, suggestTopicsForNode,
   getStoredApiKey, setStoredApiKey, hasApiKey,
   getStoredProvider, setStoredProvider, getStoredModel, setStoredModel,
-  getAvailableProviders, getProviderModels,
+  getAvailableProviders, getProviderModels, refreshAvailableModels,
   LlmConfigError, type LlmInsightRequest, type LlmProvider,
-  type SelectedNodeContext, type TopicSuggestion,
+  type SelectedNodeContext, type TopicSuggestion, type KnownModel,
 } from '../services/LlmInsightsService';
 
 type TabId = 'topics' | 'concepts' | 'gaps' | 'trends';
@@ -223,8 +223,58 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
   const [keyDraft, setKeyDraft] = useState<string>('');
   const [keySaved, setKeySaved] = useState<boolean>(hasApiKey());
 
+  // Model list per provider. The hardcoded PROVIDERS table is only ever a placeholder
+  // — shown before a key exists, or if a live fetch fails. Whenever a key is present
+  // we always ask the provider directly (see the auto-fetch effect and onBlur below),
+  // so the list stays current without needing an app update when models ship/retire.
+  const [modelsList, setModelsList] = useState<KnownModel[]>(() => getProviderModels(provider));
+  const [modelsSource, setModelsSource] = useState<'default' | 'live'>('default');
+  const [modelsRefreshing, setModelsRefreshing] = useState(false);
+  const [modelsRefreshError, setModelsRefreshError] = useState<string>('');
+
   const providersList = getAvailableProviders();
-  const modelsList = getProviderModels(provider);
+
+  const handleRefreshModels = useCallback(async (forProvider: LlmProvider) => {
+    const activeKey = keyDraft.trim() || getStoredApiKey();
+    if (!activeKey) {
+      setModelsRefreshError('Add an API key first — the model list is fetched from your key.');
+      return;
+    }
+    setModelsRefreshing(true);
+    setModelsRefreshError('');
+    try {
+      const { models: live, live: isLive } = await refreshAvailableModels(forProvider, activeKey);
+      setModelsList(live);
+      setModelsSource(isLive ? 'live' : 'default');
+      if (!isLive) {
+        setModelsRefreshError('Could not reach the provider — showing default models instead.');
+      } else if (live.length && !live.some(m => m.id === model)) {
+        // Currently-selected model isn't in the fresh list — pick one that is,
+        // otherwise the dropdown would show a model that no longer exists.
+        setModel(live[0].id);
+      }
+    } catch {
+      setModelsRefreshError('Could not refresh the model list. Check your key and connection.');
+    } finally {
+      setModelsRefreshing(false);
+    }
+  }, [keyDraft, model]);
+
+  // Fetch the real model list the moment settings open (if a key is already saved)
+  // and every time the provider is switched — no manual click required.
+  useEffect(() => {
+    if (!showKeyInput) return;
+    const activeKey = keyDraft.trim() || getStoredApiKey();
+    if (activeKey) {
+      handleRefreshModels(provider);
+    } else {
+      setModelsList(getProviderModels(provider));
+      setModelsSource('default');
+    }
+    // Only re-run when settings open/close or the provider changes — not on every
+    // keyDraft keystroke (that's handled by the input's onBlur instead).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showKeyInput, provider]);
 
   const clusters = useClusterInfos(analytics, nodes);
   const maxBetweenness = Math.max(0.001, ...analytics.topConcepts.map(t => t.score));
@@ -617,8 +667,13 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                           key={p.id}
                           type="button"
                           onClick={() => {
-                            setProvider(p.id as LlmProvider);
-                            setModel(getProviderModels(p.id as LlmProvider)[0].id);
+                            const nextProviderId = p.id as LlmProvider;
+                            const nextModels = getProviderModels(nextProviderId);
+                            setProvider(nextProviderId);
+                            setModelsList(nextModels); // instant placeholder; the effect below fetches the real list
+                            setModelsSource('default');
+                            setModelsRefreshError('');
+                            setModel(nextModels[0].id);
                           }}
                           style={{
                             padding: '5px 8px', fontSize: 10, borderRadius: 4,
@@ -635,9 +690,25 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
 
                   {/* Model Selector */}
                   <div>
-                    <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>
-                      Model
-                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 3 }}>
+                      <label style={{ fontSize: 10, color: 'var(--text-secondary)', flex: 1 }}>
+                        Model
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleRefreshModels(provider)}
+                        disabled={modelsRefreshing}
+                        title="Fetch the latest models available for your API key"
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 3, border: 'none', background: 'none',
+                          color: modelsRefreshing ? 'var(--text-tertiary)' : 'var(--accent)',
+                          fontSize: 10, cursor: modelsRefreshing ? 'default' : 'pointer', padding: '1px 2px'
+                        }}
+                      >
+                        <RefreshCw size={9} className={modelsRefreshing ? 'spinning' : undefined} />
+                        {modelsRefreshing ? 'Refreshing…' : 'Refresh'}
+                      </button>
+                    </div>
                     <select
                       value={model}
                       onChange={(e) => setModel(e.target.value)}
@@ -653,6 +724,13 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                         </option>
                       ))}
                     </select>
+                    {modelsRefreshError ? (
+                      <p style={{ fontSize: 10, color: '#ef4444', margin: '3px 0 0' }}>{modelsRefreshError}</p>
+                    ) : (
+                      <p style={{ fontSize: 10, color: modelsSource === 'live' ? '#10b981' : 'var(--text-tertiary)', margin: '3px 0 0' }}>
+                        {modelsSource === 'live' ? '✓ Live list from your API key' : 'Default list — add your API key below to fetch the real one'}
+                      </p>
+                    )}
                   </div>
 
                   {/* API Key Input */}
@@ -664,6 +742,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                       type="password"
                       value={keyDraft}
                       onChange={(e) => setKeyDraft(e.target.value)}
+                      onBlur={() => { if (keyDraft.trim()) handleRefreshModels(provider); }}
                       placeholder={`Paste your ${providersList.find(p => p.id === provider)?.label} API key`}
                       style={{
                         width: '100%', boxSizing: 'border-box', padding: '5px 8px', fontSize: 11,
