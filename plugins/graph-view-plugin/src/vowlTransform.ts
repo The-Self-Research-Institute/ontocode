@@ -685,11 +685,34 @@ export function placeVowlNeighborhoods(
   const cy = height / 2;
   const nodeById = new Map(nodes.map(n => [n.id, n]));
 
+  // Which neighborhood (buildVowlNeighborhoods' property-hub partition) owns each
+  // class. This is the authoritative grouping — a class with its own properties is
+  // its own hub even if it shares a distant subClassOf ancestor with every other
+  // hub (true of any single-rooted taxonomy, e.g. BFO/IAO-based ontologies where
+  // everything ISA owl:Thing's real-class root). Recursing the star placement
+  // purely off subClassOf ancestry — as this function used to — collapses such
+  // ontologies into ONE giant nested tree from that shared root, so property
+  // edges between unrelated branches become long canvas-spanning arcs.
+  const hubOf = new Map<string, string>();
+  for (const nb of neighborhoods) {
+    for (const m of nb.memberIds) hubOf.set(m, nb.hubId);
+  }
+
+  // Local childrenOf: only subClassOf edges that stay INSIDE one neighborhood.
+  // A subClassOf edge crossing from one hub's neighborhood into another's is a
+  // structural (taxonomic-backbone) link between hubs, not a star-recursion edge.
   const childrenOf = new Map<string, string[]>();
   const hasParent = new Set<string>();
+  const structuralHubLinks: Array<[string, string]> = [];
   for (const e of edges) {
     if (e.type !== 'subClassOf') continue;
     if (!isRealClassNode(e.from, nodeById) || !isRealClassNode(e.to, nodeById)) continue;
+    const childHub = hubOf.get(e.from);
+    const parentHub = hubOf.get(e.to);
+    if (childHub && parentHub && childHub !== parentHub) {
+      structuralHubLinks.push([childHub, parentHub]);
+      continue;
+    }
     if (!childrenOf.has(e.to)) childrenOf.set(e.to, []);
     const list = childrenOf.get(e.to)!;
     if (!list.includes(e.from)) list.push(e.from);
@@ -711,7 +734,6 @@ export function placeVowlNeighborhoods(
     }
   }
 
-  let roots = realClassIds.filter(id => !hasParent.has(id));
   const treeWeight = (id: string, seen = new Set<string>()): number => {
     if (seen.has(id)) return 0;
     seen.add(id);
@@ -719,11 +741,6 @@ export function placeVowlNeighborhoods(
     for (const c of childrenOf.get(id) || []) w += treeWeight(c, seen);
     return w;
   };
-  if (roots.length === 0) {
-    roots = [...realClassIds].sort((a, b) => treeWeight(b) - treeWeight(a)).slice(0, 6);
-  } else {
-    roots = [...roots].sort((a, b) => treeWeight(b) - treeWeight(a));
-  }
 
   const placedClasses = new Set<string>();
   const footprints = new Map<string, number>();
@@ -768,127 +785,92 @@ export function placeVowlNeighborhoods(
     }
   };
 
-  // Map every class → root hub
-  const rootOf = new Map<string, string>();
-  for (const root of roots) {
-    const q = [root];
-    while (q.length) {
-      const c = q.shift()!;
-      if (rootOf.has(c)) continue;
-      rootOf.set(c, root);
-      for (const ch of childrenOf.get(c) || []) q.push(ch);
-    }
-  }
-  for (const id of realClassIds) {
-    if (!rootOf.has(id)) rootOf.set(id, id);
-  }
-  const hubIds = [...new Set(rootOf.values())];
+  // One hub per neighborhood (buildVowlNeighborhoods' partition), not per
+  // subclass-tree root — this is what keeps property-rich hubs separate even
+  // when they share a common taxonomic ancestor.
+  const hubIds = [...new Set(
+    neighborhoods.filter(nb => isRealClassNode(nb.hubId, nodeById)).map(nb => nb.hubId)
+  )];
 
-  // Hub adjacency via property links across trees
-  const hubAdj = new Map<string, Set<string>>();
-  for (const h of hubIds) hubAdj.set(h, new Set());
-  for (const [a, nbs] of classAdj) {
-    const ra = rootOf.get(a);
-    if (!ra) continue;
-    for (const b of nbs) {
-      const rb = rootOf.get(b);
-      if (!rb || ra === rb) continue;
-      hubAdj.get(ra)!.add(rb);
-      hubAdj.get(rb)!.add(ra);
-    }
-  }
-
-  // Connected components of hubs (property graph)
-  const components: string[][] = [];
-  const seenHub = new Set<string>();
-  for (const h of [...hubIds].sort((a, b) => treeWeight(b) - treeWeight(a))) {
-    if (seenHub.has(h)) continue;
-    const comp: string[] = [];
-    const q = [h];
-    while (q.length) {
-      const cur = q.shift()!;
-      if (seenHub.has(cur)) continue;
-      seenHub.add(cur);
-      comp.push(cur);
-      for (const nb of hubAdj.get(cur) || []) q.push(nb);
-    }
-    comp.sort((a, b) => treeWeight(b) - treeWeight(a));
-    components.push(comp);
-  }
-
-  // Component radius from capped local pack radii (short stars, not deep balloons)
-  const compRadius = (comp: string[]): number => {
-    if (comp.length === 0) return 140;
-    const nucR = packR.get(comp[0]) ?? 140;
-    if (comp.length === 1) return nucR;
-    const sats = comp.slice(1).map(id => packR.get(id) ?? 120);
-    const ring = balloonRingRadius(sats.map(r => Math.min(r, 160)));
-    return Math.min(nucR + ring * 0.55 + Math.max(...sats) * 0.45, 520);
+  // Metric graph over hubs: property links (tight — VOWL draws these directly)
+  // plus structural subClassOf-backbone links (looser — keeps taxonomically
+  // related hubs in the same neighborhood of the canvas without forcing a
+  // single nested tree). All-pairs Dijkstra + SMACOF stress majorization then
+  // finds a globally consistent embedding instead of the old "first hub at
+  // center, everything else on one circle" heuristic.
+  const idIndex = new Map(hubIds.map((id, i) => [id, i]));
+  const hubAdjIdx = new Map<number, Set<number>>();
+  hubIds.forEach((_, i) => hubAdjIdx.set(i, new Set()));
+  const edgeLen = new Map<string, number>();
+  const addHubEdge = (a: string, b: string, len: number) => {
+    const ia = idIndex.get(a);
+    const ib = idIndex.get(b);
+    if (ia === undefined || ib === undefined || ia === ib) return;
+    const lo = Math.min(ia, ib);
+    const hi = Math.max(ia, ib);
+    const key = `${lo}|${hi}`;
+    const existing = edgeLen.get(key);
+    if (existing === undefined || len < existing) edgeLen.set(key, len);
+    hubAdjIdx.get(ia)!.add(ib);
+    hubAdjIdx.get(ib)!.add(ia);
   };
+  for (const [a, nbs] of classAdj) {
+    const ha = hubOf.get(a);
+    if (!ha) continue;
+    for (const b of nbs) {
+      const hb = hubOf.get(b);
+      if (!hb || ha === hb) continue;
+      const len = (cores.get(ha) ?? 60) + (cores.get(hb) ?? 60) + 60;
+      addHubEdge(ha, hb, len);
+    }
+  }
+  for (const [childHub, parentHub] of structuralHubLinks) {
+    // Every structural link is a direct (single-hop) subClassOf edge between two
+    // hubs — same tightness as an ordinary subclass spoke, not a generic "distant
+    // relative" pad, or a hub with its own properties (e.g. foaf:Person under
+    // foaf:Agent) ends up pushed further from its parent than WebVOWL would.
+    const len = (cores.get(childHub) ?? 60) + (cores.get(parentHub) ?? 60) + SUBCLASS_GAP - 12;
+    addHubEdge(childHub, parentHub, len);
+  }
 
-  // Place components as meta-balloons: densest at center, others on a circle
-  components.sort((a, b) => treeWeight(b[0]) - treeWeight(a[0]));
-  const compCenters: { x: number; y: number }[] = [];
-  const compRs = components.map(compRadius);
+  // Seed on a circle (SMACOF needs a non-degenerate start) sized to hub count.
+  const seedR = 260 + hubIds.length * 18;
+  hubIds.forEach((h, i) => {
+    const angle = (i / Math.max(1, hubIds.length)) * Math.PI * 2;
+    hubCenters.set(h, { x: cx + Math.cos(angle) * seedR, y: cy + Math.sin(angle) * seedR });
+  });
+  const hubDist = hubMetricDistances(hubIds, edgeLen, hubAdjIdx);
+  stressMajorizeDisks(hubIds, hubCenters, hubDist, 150);
 
-  components.forEach((comp, ci) => {
-    let cpos: { x: number; y: number };
-    if (ci === 0) {
-      cpos = { x: cx, y: cy };
-    } else {
-      const angle = -Math.PI / 2 + ((ci - 1) / Math.max(1, components.length - 1)) * Math.PI * 2;
-      const dist = Math.min(compRs[0] + compRs[ci] + HUB_PAD, 420 + ci * 40);
-      cpos = { x: cx + Math.cos(angle) * dist, y: cy + Math.sin(angle) * dist };
-      for (let pass = 0; pass < 24; pass++) {
-        let moved = false;
-        for (let j = 0; j < ci; j++) {
-          const need = Math.min(compRs[ci] + compRs[j] + HUB_PAD, 380);
-          const { ux, uy, dist: d } = safeUnit(cpos.x - compCenters[j].x, cpos.y - compCenters[j].y);
-          if (d >= need) continue;
-          cpos = { x: cpos.x + ux * (need - d), y: cpos.y + uy * (need - d) };
-          moved = true;
-        }
-        if (!moved) break;
+  // Pairwise hub-disk separation — SMACOF minimizes stress, not overlap.
+  for (let pass = 0; pass < 60; pass++) {
+    let moved = false;
+    for (let i = 0; i < hubIds.length; i++) {
+      for (let j = i + 1; j < hubIds.length; j++) {
+        const a = hubCenters.get(hubIds[i])!;
+        const b = hubCenters.get(hubIds[j])!;
+        const need = (cores.get(hubIds[i]) ?? 60) + (cores.get(hubIds[j]) ?? 60) + 20;
+        const { ux, uy, dist } = safeUnit(b.x - a.x, b.y - a.y);
+        if (dist >= need) continue;
+        const push = (need - dist) / 2;
+        hubCenters.set(hubIds[i], { x: a.x - ux * push, y: a.y - uy * push });
+        hubCenters.set(hubIds[j], { x: b.x + ux * push, y: b.y + uy * push });
+        moved = true;
       }
     }
-    compCenters.push(cpos);
+    if (!moved) break;
+  }
 
-    // Nucleus + satellites on a SHORT ring (screenshot #1 left-side stars)
-    const nucleus = comp[0];
-    hubCenters.set(nucleus, { x: cpos.x, y: cpos.y });
-    const sats = comp.slice(1);
-    if (sats.length > 0) {
-      const satRs = sats.map(id => packR.get(id) ?? 120);
-      const nucR = packR.get(nucleus) ?? 140;
-      const ringR = Math.max(
-        nucR + 40 + HUB_PAD * 0.5,
-        balloonRingRadius(satRs.map(r => Math.min(r, 140)))
-      );
-      const cappedRing = Math.min(ringR, 280 + sats.length * 12);
-      sats.forEach((id, i) => {
-        const angle = -Math.PI / 2 + (i / sats.length) * Math.PI * 2;
-        hubCenters.set(id, {
-          x: cpos.x + Math.cos(angle) * cappedRing,
-          y: cpos.y + Math.sin(angle) * cappedRing
-        });
-      });
-    }
-  });
-
-  // Draw each hub as a short-spoke star
+  // Draw each hub as a short-spoke star (subclasses restricted to its own
+  // neighborhood — see childrenOf above — so stars stay short even on deep
+  // single-rooted hierarchies).
   const byDensity = [...hubIds].sort((a, b) => treeWeight(b) - treeWeight(a));
   for (const h of byDensity) {
     const p = hubCenters.get(h);
     if (!p) continue;
-    const comp = components.find(c => c.includes(h));
-    let outward = -Math.PI / 2;
-    if (comp && comp[0] !== h) {
-      const nuc = hubCenters.get(comp[0])!;
-      outward = Math.atan2(p.y - nuc.y, p.x - nuc.x);
-    }
     placeVowlClassStar(
       h, p.x, p.y, childrenOf, edges, nodeById, positions, placedClasses,
-      outward, Math.PI * 2
+      -Math.PI / 2, Math.PI * 2
     );
   }
 
