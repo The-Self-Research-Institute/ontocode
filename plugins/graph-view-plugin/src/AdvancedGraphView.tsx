@@ -627,6 +627,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     vowlPinnedHubIdsRef.current = new Set();
   }, [projectId]);
 
+  // New project → clear the hierarchy navigator too. Its content is now shown
+  // inline in the sidebar by default (not just the opt-in floating popup), so a
+  // stale root node from the previous project would otherwise render immediately
+  // instead of sitting invisibly closed like before.
+  useEffect(() => {
+    setHierarchyRootNode(null);
+    setShowHierarchyDialog(false);
+  }, [projectId]);
+
   // UI State
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
   const selectedNodesRef = useRef(selectedNodes);
@@ -4730,6 +4739,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const original = resolveVowlClone(d);
         setSelectedNodes(new Set([d.id]));
         setSelectedNodeInfo(original);
+        // Focus the inline hierarchy navigator too (sidebar-only — this does not
+        // open the floating popup, see onToggleNavigator/context menu for that).
+        if (original.type === 'class') {
+          setHierarchyRootNode(original);
+        }
       }
     }
 
@@ -6538,6 +6552,80 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     );
   }, [nodeRelationsMap, allNodes, allEdges, expandedNodeIds, selectedNodes, handleExpandParents, handleDialogExpand, startCreateClassAction, startDeleteClassAction, canEdit, classActionLoading]);
 
+  // Shared navigator body — the same content (root node info, tree, action
+  // feedback, footer legend) rendered both inline in the sidebar and inside the
+  // floating "pop out" dialog, so the two never drift apart.
+  const hierarchyNavigatorBody = useMemo(() => {
+    if (!hierarchyRootNode) return null;
+    return (
+      <>
+        {/* Root Node Info */}
+        <div
+          style={{
+            padding: '8px 12px',
+            backgroundColor: 'var(--surface-2, #f9fafb)',
+            borderBottom: '1px solid var(--border, #e5e7eb)'
+          }}
+        >
+          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary, #1f2937)', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {hierarchyRootNode.label}
+          </div>
+          <div style={{ fontSize: '10px', color: 'var(--text-secondary, #9ca3af)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {hierarchyRootNode.id}
+          </div>
+        </div>
+
+        {/* Hierarchy Tree */}
+        <div
+          style={{
+            flex: 1,
+            overflow: 'auto',
+            padding: '8px 10px',
+            backgroundColor: 'var(--surface-2, #fafafa)'
+          }}
+        >
+          <div style={{ backgroundColor: 'var(--surface-1, #ffffff)', borderRadius: '6px', padding: '4px' }}>
+            {renderHierarchyTree(hierarchyRootNode)}
+          </div>
+        </div>
+
+        {classActionFeedback && (
+          <div style={{ padding: '0 16px 12px' }}>
+            <div
+              style={{
+                backgroundColor: classActionFeedback.type === 'success' ? '#ecfdf5' : '#fef2f2',
+                border: `1px solid ${classActionFeedback.type === 'success' ? '#a7f3d0' : '#fecdd3'}`,
+                color: classActionFeedback.type === 'success' ? '#065f46' : '#991b1b',
+                borderRadius: '6px',
+                padding: '8px 10px',
+                fontSize: '12px'
+              }}
+            >
+              {classActionFeedback.message}
+            </div>
+          </div>
+        )}
+
+        {/* Footer legend */}
+        <div
+          style={{
+            padding: '5px 10px',
+            backgroundColor: 'var(--surface-2, #f9fafb)',
+            borderTop: '1px solid var(--border, #e5e7eb)',
+            fontSize: '10px',
+            color: 'var(--text-secondary, #9ca3af)',
+            display: 'flex',
+            gap: '10px',
+            flexWrap: 'wrap'
+          }}
+        >
+          <span>▸ expand/collapse</span>
+          <span><Plus size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> child &nbsp;<GitBranch size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> sibling &nbsp;<Trash2 size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> delete</span>
+        </div>
+      </>
+    );
+  }, [hierarchyRootNode, expandedNodeIds, selectedNodes, classActionFeedback, canEdit, classActionLoading, renderHierarchyTree]);
+
   /**
    * ========================================================================
    * RENDER
@@ -7103,15 +7191,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               if (node) {
                 setSelectedNodes(new Set([node.id]));
                 setSelectedNodeInfo(node);
-                
-                // Open hierarchy navigator for class nodes
+
+                // Focus the hierarchy navigator for class nodes — shows inline in
+                // the sidebar by default; the floating popup is opt-in only (see
+                // onPopOutHierarchyNavigator/onToggleNavigator/context menu).
                 if (node.type === 'class') {
                   setHierarchyRootNode(node);
-                  setIsDialogMinimized(false);
-                  setHierarchyDialogPosition({ x: 20, y: 100 });
-                  setShowHierarchyDialog(true);
                 }
-                
+
                 // Highlight node in graph
                 d3.selectAll('.node')
                   .classed('highlighted', false)
@@ -7122,6 +7209,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 setSelectedNodeInfo(null);
                 d3.selectAll('.node').classed('highlighted', false);
               }
+            }}
+            hierarchyNavigatorContent={hierarchyRootNode ? hierarchyNavigatorBody : null}
+            hierarchyNavigatorLabel={hierarchyRootNode?.label}
+            onCloseHierarchyNavigator={() => setHierarchyRootNode(null)}
+            onPopOutHierarchyNavigator={() => {
+              setIsDialogMinimized(false);
+              setHierarchyDialogPosition({ x: 20, y: 100 });
+              setShowHierarchyDialog(true);
             }}
             onNodeHighlight={(nodeId) => {
               d3.selectAll('.node')
@@ -7318,73 +7413,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             </div>
 
             {/* Dialog Content - Hidden when minimized */}
-            {!isDialogMinimized && (
-              <>
-                {/* Root Node Info */}
-                <div
-                  style={{
-                    padding: '8px 12px',
-                    backgroundColor: 'var(--surface-2, #f9fafb)',
-                    borderBottom: '1px solid var(--border, #e5e7eb)'
-                  }}
-                >
-              <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary, #1f2937)', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {hierarchyRootNode.label}
-              </div>
-              <div style={{ fontSize: '10px', color: 'var(--text-secondary, #9ca3af)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {hierarchyRootNode.id}
-              </div>
-            </div>
-
-            {/* Hierarchy Tree */}
-            <div
-              style={{
-                flex: 1,
-                overflow: 'auto',
-                padding: '8px 10px',
-                backgroundColor: 'var(--surface-2, #fafafa)'
-              }}
-            >
-              <div style={{ backgroundColor: 'var(--surface-1, #ffffff)', borderRadius: '6px', padding: '4px' }}>
-                {renderHierarchyTree(hierarchyRootNode)}
-              </div>
-            </div>
-
-            {classActionFeedback && (
-              <div style={{ padding: '0 16px 12px' }}>
-                <div
-                  style={{
-                    backgroundColor: classActionFeedback.type === 'success' ? '#ecfdf5' : '#fef2f2',
-                    border: `1px solid ${classActionFeedback.type === 'success' ? '#a7f3d0' : '#fecdd3'}`,
-                    color: classActionFeedback.type === 'success' ? '#065f46' : '#991b1b',
-                    borderRadius: '6px',
-                    padding: '8px 10px',
-                    fontSize: '12px'
-                  }}
-                >
-                  {classActionFeedback.message}
-                </div>
-              </div>
-            )}
-
-            {/* Dialog Footer */}
-            <div
-              style={{
-                padding: '5px 10px',
-                backgroundColor: 'var(--surface-2, #f9fafb)',
-                borderTop: '1px solid var(--border, #e5e7eb)',
-                fontSize: '10px',
-                color: 'var(--text-secondary, #9ca3af)',
-                display: 'flex',
-                gap: '10px',
-                flexWrap: 'wrap'
-              }}
-            >
-              <span>▸ expand/collapse</span>
-              <span><Plus size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> child &nbsp;<GitBranch size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> sibling &nbsp;<Trash2 size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> delete</span>
-            </div>
-              </>
-            )}
+            {!isDialogMinimized && hierarchyNavigatorBody}
           </div>
         )}
 
