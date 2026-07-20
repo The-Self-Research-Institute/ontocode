@@ -9,7 +9,9 @@
  *
  * What it does:
  *   1. Copy owl-editor.jar from ontology-editor/target/
- *   2. Copy fuseki-server.jar from fuseki-docker/
+ *   2. Copy fuseki-server.jar from fuseki-docker/, or download the official
+ *      Apache Jena Fuseki release (checksum-verified) if not present — no
+ *      Docker required, so this works on a fresh machine
  *   3. Copy mongod binary from data/mongodb/bin/<platform>/
  *   4. Bundle a minimal JRE via jlink (preferred) or download Temurin 17 JRE
  *
@@ -33,11 +35,19 @@ const { execSync, execFileSync } = require('child_process');
 const https         = require('https');
 const { pipeline }  = require('stream/promises');
 const zlib          = require('zlib');
+const crypto        = require('crypto');
 
 const REPO_ROOT  = path.resolve(__dirname, '..', '..');
 const RESOURCES  = path.resolve(__dirname, '..', 'resources', 'backend');
 const JARS_DIR   = path.join(RESOURCES, 'jars');
 const JRE_DIR    = path.join(RESOURCES, 'jre');
+
+// ── Fuseki download (fallback when fuseki-docker/fuseki-server.jar is absent) ──
+// Same version + checksum pinned in fuseki-docker/Dockerfile — keep in sync.
+const FUSEKI_VERSION = '6.1.0';
+const FUSEKI_SHA512 = '75457f45d14397876a41ed51abe7ae5d2f1e708dfe1315765f858158bc5c6813bc036ec1539ddc4dffd26201f5cc31fadec299ca5c3dc2548b723513ed31d326';
+const FUSEKI_MIRROR_URL = `https://www.apache.org/dyn/mirrors/mirrors.cgi?action=download&filename=jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
+const FUSEKI_ARCHIVE_URL = `https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
 
 // ── Minimal modules needed for Spring Boot + Jena Fuseki ────────────────────
 const JLINK_MODULES = [
@@ -104,18 +114,83 @@ function copyOwlEditorJar() {
 }
 
 // ── Step 2: Fuseki JAR ────────────────────────────────────────────────────────
-function copyFusekiJar() {
+async function copyFusekiJar() {
     console.log('\n[2/4] Fuseki JAR');
-    const ok = copyIfExists(
-        path.join(REPO_ROOT, 'fuseki-docker', 'fuseki-server.jar'),
-        path.join(JARS_DIR, 'fuseki-server.jar'),
-        'fuseki-server.jar',
-    );
+    const cachedSrc = path.join(REPO_ROOT, 'fuseki-docker', 'fuseki-server.jar');
+    const ok = copyIfExists(cachedSrc, path.join(JARS_DIR, 'fuseki-server.jar'), 'fuseki-server.jar');
     if (!ok) {
-        console.log('       Extract from Docker image:');
-        console.log('         docker create jena/fuseki:latest tmp_fuseki');
-        console.log('         docker cp tmp_fuseki:/jena-fuseki/fuseki-server.jar fuseki-docker/');
-        console.log('         docker rm tmp_fuseki');
+        console.log(`  → Not found locally — downloading Apache Jena Fuseki ${FUSEKI_VERSION}…`);
+        await downloadFuseki(cachedSrc);
+    }
+}
+
+/**
+ * Download the official Fuseki binary distribution (no Docker required —
+ * this is what makes prepare-resources work on a machine that only has
+ * Node/npm, e.g. a fresh clone or a machine building the installer). Mirrors
+ * the same version + checksum pinned in fuseki-docker/Dockerfile.
+ */
+async function downloadFuseki(cachedSrc) {
+    const archivePath = path.join(RESOURCES, `apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`);
+    ensureDir(RESOURCES);
+
+    try {
+        // archive.apache.org is a single stable host (verified reachable and fast);
+        // the mirrors.cgi redirect is more convenient bandwidth-wise when it works,
+        // but has been observed to redirect to a mirror that accepts the connection
+        // and then never responds — try the reliable host first, mirror as a bonus
+        // fallback rather than the primary path.
+        try {
+            await downloadFile(FUSEKI_ARCHIVE_URL, archivePath);
+        } catch (archiveErr) {
+            console.warn(`  ⚠  archive.apache.org failed (${archiveErr.message}) — trying mirrors.cgi…`);
+            await downloadFile(FUSEKI_MIRROR_URL, archivePath);
+        }
+
+        const actualSha512 = crypto.createHash('sha512').update(fs.readFileSync(archivePath)).digest('hex');
+        if (actualSha512 !== FUSEKI_SHA512) {
+            throw new Error(
+                `Checksum mismatch for apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz\n` +
+                `       expected: ${FUSEKI_SHA512}\n       got:      ${actualSha512}`
+            );
+        }
+        console.log('  ✓  Checksum verified');
+
+        const extractDir = path.join(RESOURCES, `_fuseki-extract-${FUSEKI_VERSION}`);
+        fs.rmSync(extractDir, { recursive: true, force: true });
+        ensureDir(extractDir);
+        // Windows' bundled tar (bsdtar) needs two things to accept a native path here:
+        //  --force-local — otherwise it reads the drive letter in "E:\..." as a
+        //    "host:path" remote-archive spec ("Cannot connect to E: resolve failed").
+        //  forward slashes — backslashes get mangled by its own path parsing even
+        //    with --force-local ("Cannot open: No such file or directory" on a dir
+        //    that does exist). Both are harmless no-ops on macOS/Linux tar.
+        const tarArchivePath = archivePath.replace(/\\/g, '/');
+        const tarExtractDir = extractDir.replace(/\\/g, '/');
+        execSync(`tar --force-local -xzf "${tarArchivePath}" -C "${tarExtractDir}"`, { stdio: 'inherit', timeout: 120_000 });
+
+        const topLevel = fs.readdirSync(extractDir).find((n) => n.startsWith('apache-jena-fuseki'));
+        if (!topLevel) throw new Error('Extracted archive did not contain an apache-jena-fuseki* directory');
+        const extractedJar = path.join(extractDir, topLevel, 'fuseki-server.jar');
+        if (!fs.existsSync(extractedJar)) throw new Error(`fuseki-server.jar not found inside ${topLevel}`);
+
+        ensureDir(JARS_DIR);
+        fs.copyFileSync(extractedJar, path.join(JARS_DIR, 'fuseki-server.jar'));
+        // Also cache it at the path copyFusekiJar() checks first, so future
+        // runs (and the Docker build, which expects this layout) skip the download.
+        ensureDir(path.dirname(cachedSrc));
+        fs.copyFileSync(extractedJar, cachedSrc);
+        console.log('  ✓  Downloaded and installed fuseki-server.jar');
+
+        fs.rmSync(extractDir, { recursive: true, force: true });
+        fs.rmSync(archivePath, { force: true });
+    } catch (err) {
+        console.error(`  ✗  Fuseki download failed: ${err.message}`);
+        console.error('     Manual fallback — extract from the Docker image:');
+        console.error('       docker create jena/fuseki:latest tmp_fuseki');
+        console.error('       docker cp tmp_fuseki:/jena-fuseki/fuseki-server.jar fuseki-docker/');
+        console.error('       docker rm tmp_fuseki');
+        fs.rmSync(archivePath, { force: true });
     }
 }
 
@@ -217,14 +292,24 @@ async function downloadTemurin() {
     }
 }
 
-function downloadFile(url, dest) {
+// Apache's mirrors.cgi redirect can hand off to a mirror that accepts the
+// connection and then never responds — https.get has no default timeout, so
+// that hangs the whole script forever instead of failing over. 20s covers a
+// slow-but-alive connection; anything stalled longer than that is dead.
+const DOWNLOAD_TIMEOUT_MS = 20_000;
+
+function downloadFile(url, dest, redirectsLeft = 5) {
     return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(dest);
-        function follow(u) {
-            https.get(u, { headers: { 'User-Agent': 'ontocode-build/1.0' } }, (res) => {
+        function follow(u, remaining) {
+            const req = https.get(u, { headers: { 'User-Agent': 'ontocode-build/1.0' } }, (res) => {
                 if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307) {
+                    if (remaining <= 0) {
+                        file.close();
+                        return reject(new Error('Too many redirects'));
+                    }
                     file.close();
-                    return follow(res.headers.location);
+                    return follow(res.headers.location, remaining - 1);
                 }
                 if (res.statusCode !== 200) {
                     file.close();
@@ -242,9 +327,13 @@ function downloadFile(url, dest) {
                 res.pipe(file);
                 file.on('finish', () => { process.stdout.write('\n'); file.close(resolve); });
                 file.on('error', reject);
-            }).on('error', reject);
+            });
+            req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
+                req.destroy(new Error(`Timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s connecting to ${u}`));
+            });
+            req.on('error', reject);
         }
-        follow(url);
+        follow(url, redirectsLeft);
     });
 }
 
@@ -285,7 +374,7 @@ async function main() {
     ensureDir(JARS_DIR);
 
     copyOwlEditorJar();
-    copyFusekiJar();
+    await copyFusekiJar();
     copyMongod();
     await bundleJre();
 
