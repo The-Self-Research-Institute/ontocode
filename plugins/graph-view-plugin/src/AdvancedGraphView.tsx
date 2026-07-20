@@ -4725,11 +4725,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         setSelectedNodes(newSelected);
       } else {
-        // Single click — just select the node; hierarchy navigator opens only via right-click > Edit
+        // Single click — just select the node; navigation to entity details is
+        // deliberately NOT triggered here (right-click > Go to Entity Details).
         const original = resolveVowlClone(d);
         setSelectedNodes(new Set([d.id]));
         setSelectedNodeInfo(original);
-        onNodeClickRef.current?.(original.id);
       }
     }
 
@@ -7539,6 +7539,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               }}
             >
               ℹ️ View Properties
+            </button>
+            <button
+              style={styles.contextMenuItem}
+              onClick={() => {
+                if (contextMenu.nodeId) onNodeClickRef.current?.(contextMenu.nodeId);
+                setContextMenu({ ...contextMenu, visible: false });
+              }}
+            >
+              📄 Go to Entity Details
             </button>
             {allNodes.find(n => n.id === contextMenu.nodeId)?.type === 'class' && (
               <button
