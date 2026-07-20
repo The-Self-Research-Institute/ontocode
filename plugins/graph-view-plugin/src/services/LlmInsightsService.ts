@@ -88,6 +88,10 @@ export interface TopicSuggestion {
 
 export class LlmConfigError extends Error {}
 export class LlmRequestError extends Error {}
+/** The provider returned 404 for this specific model id — distinct from a generic
+ *  failure so callProvider() can retry once against the provider's current default
+ *  instead of just failing (model catalogs get renamed/retired over time). */
+export class LlmModelNotFoundError extends LlmRequestError {}
 
 export function getStoredProvider(): LlmProvider {
   try {
@@ -113,8 +117,136 @@ export function getAvailableProviders(): Array<{ id: LlmProvider; label: string 
   }));
 }
 
-export function getProviderModels(provider: LlmProvider): { id: string; label: string }[] {
+export interface KnownModel {
+  id: string;
+  label: string;
+}
+
+const MODELS_CACHE_STORAGE = 'ontocode_llm_models_cache';
+// Provider catalogs change on their own schedule, not ours — refetch periodically
+// rather than trusting a live list forever, but don't hit the endpoint on every render.
+const MODELS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+interface ModelsCacheEntry {
+  fetchedAt: number;
+  models: KnownModel[];
+}
+type ModelsCache = Partial<Record<LlmProvider, ModelsCacheEntry>>;
+
+function readModelsCache(): ModelsCache {
+  try {
+    const raw = localStorage.getItem(MODELS_CACHE_STORAGE);
+    return raw ? (JSON.parse(raw) as ModelsCache) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeModelsCache(cache: ModelsCache): void {
+  try {
+    localStorage.setItem(MODELS_CACHE_STORAGE, JSON.stringify(cache));
+  } catch {
+    /* storage unavailable — the live list just won't persist across reloads */
+  }
+}
+
+/**
+ * The model list to show/try for a provider: a freshly-fetched live list if one is
+ * cached (see refreshAvailableModels), otherwise the hardcoded baseline in PROVIDERS.
+ * The baseline goes stale as providers ship/retire models — this is what keeps the
+ * dropdown and the 404 fallback chain (see callProvider) current without a rebuild.
+ */
+export function getProviderModels(provider: LlmProvider): KnownModel[] {
+  const entry = readModelsCache()[provider];
+  if (entry && entry.models.length && Date.now() - entry.fetchedAt < MODELS_CACHE_TTL_MS) {
+    return entry.models;
+  }
   return PROVIDERS[provider]?.models ?? [];
+}
+
+async function listGeminiModels(key: string): Promise<KnownModel[]> {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
+  );
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => null);
+  const models = Array.isArray(data?.models) ? data.models : [];
+  return models
+    .filter((m: any) => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+    .map((m: any) => ({
+      id: String(m.name ?? '').replace(/^models\//, ''),
+      label: String(m.displayName ?? m.name ?? '').replace(/^models\//, ''),
+    }))
+    .filter((m: KnownModel) => m.id);
+}
+
+async function listClaudeModels(key: string): Promise<KnownModel[]> {
+  const res = await fetch('https://api.anthropic.com/v1/models', {
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+  });
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => null);
+  const models = Array.isArray(data?.data) ? data.data : [];
+  return models
+    .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.display_name ?? m.id ?? '') }))
+    .filter((m: KnownModel) => m.id);
+}
+
+async function listOpenAIModels(key: string): Promise<KnownModel[]> {
+  const res = await fetch('https://api.openai.com/v1/models', {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => null);
+  const models = Array.isArray(data?.data) ? data.data : [];
+  // The account-wide model list includes embeddings/audio/image/moderation models
+  // that can't answer a chat prompt — keep only chat-capable GPT text models.
+  const NON_CHAT = /audio|embedding|whisper|tts|instruct|realtime|transcribe|search|moderation|davinci|babbage|image|vision-preview$/i;
+  return models
+    .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.id ?? '') }))
+    .filter((m: KnownModel) => m.id && /^gpt-/i.test(m.id) && !NON_CHAT.test(m.id));
+}
+
+async function fetchLiveModels(provider: LlmProvider, key: string): Promise<KnownModel[]> {
+  try {
+    switch (provider) {
+      case 'gemini':
+        return await listGeminiModels(key);
+      case 'claude':
+        return await listClaudeModels(key);
+      case 'openai':
+        return await listOpenAIModels(key);
+      default:
+        return [];
+    }
+  } catch {
+    return []; // network failure — caller keeps whatever list it already had
+  }
+}
+
+export interface RefreshModelsResult {
+  models: KnownModel[];
+  /** True if `models` came fresh from the provider just now — false means the live
+   *  call failed/returned nothing and this is the cached-or-hardcoded fallback. */
+  live: boolean;
+}
+
+/**
+ * Ask the provider directly (using the user's own key) which models are actually
+ * available right now, and cache the result. This is the preferred source of truth
+ * for the model list — the hardcoded PROVIDERS table only exists as a placeholder
+ * before any key has been entered/verified, or if this call itself fails (offline,
+ * rate-limited, etc). Called automatically whenever AI settings are opened or a key
+ * is entered, on manual "Refresh models", and by callProvider() as a last resort
+ * when every known model 404s.
+ */
+export async function refreshAvailableModels(provider: LlmProvider, key: string): Promise<RefreshModelsResult> {
+  const live = await fetchLiveModels(provider, key);
+  if (live.length === 0) return { models: getProviderModels(provider), live: false };
+  const cache = readModelsCache();
+  cache[provider] = { fetchedAt: Date.now(), models: live };
+  writeModelsCache(cache);
+  return { models: live, live: true };
 }
 
 export function getStoredApiKey(): string {
@@ -146,7 +278,9 @@ export function getStoredModel(): string {
     // A previously-stored model id can go stale when a provider retires a model
     // generation (e.g. Gemini shut down the entire 1.0/1.5 line) — fall back to
     // the current default instead of repeating a 404 the user can't self-diagnose.
-    const isKnownModel = stored != null && PROVIDERS[provider].models.some((m) => m.id === stored);
+    // getProviderModels() includes any live-fetched list (see refreshAvailableModels),
+    // so a model we've *confirmed* works for this key isn't wrongly treated as stale.
+    const isKnownModel = stored != null && getProviderModels(provider).some((m) => m.id === stored);
     return isKnownModel ? stored : PROVIDERS[provider].defaultModel;
   } catch {
     return PROVIDERS[DEFAULT_PROVIDER].defaultModel;
@@ -231,6 +365,9 @@ async function callGemini(key: string, model: string, prompt: string, signal?: A
   if (res.status === 400 || res.status === 403) {
     throw new LlmRequestError('Invalid or unauthorized API key. Check your Gemini key.');
   }
+  if (res.status === 404) {
+    throw new LlmModelNotFoundError(`Gemini model "${model}" is not available for this API key or has been retired.`);
+  }
   if (res.status === 429) {
     throw new LlmRequestError('Rate limit reached. Try again shortly.');
   }
@@ -268,6 +405,9 @@ async function callClaude(key: string, model: string, prompt: string, signal?: A
   if (res.status === 401) {
     throw new LlmRequestError('Invalid or unauthorized API key. Check your Claude key.');
   }
+  if (res.status === 404) {
+    throw new LlmModelNotFoundError(`Claude model "${model}" is not available for this API key or has been retired.`);
+  }
   if (res.status === 429) {
     throw new LlmRequestError('Rate limit reached. Try again shortly.');
   }
@@ -302,6 +442,9 @@ async function callOpenAI(key: string, model: string, prompt: string, signal?: A
   if (res.status === 401) {
     throw new LlmRequestError('Invalid or unauthorized API key. Check your OpenAI key.');
   }
+  if (res.status === 404) {
+    throw new LlmModelNotFoundError(`OpenAI model "${model}" is not available for this API key or has been retired.`);
+  }
   if (res.status === 429) {
     throw new LlmRequestError('Rate limit reached. Try again shortly.');
   }
@@ -317,6 +460,25 @@ async function callOpenAI(key: string, model: string, prompt: string, signal?: A
   return text.trim();
 }
 
+async function callModel(
+  provider: LlmProvider,
+  key: string,
+  model: string,
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  switch (provider) {
+    case 'gemini':
+      return callGemini(key, model, prompt, signal);
+    case 'claude':
+      return callClaude(key, model, prompt, signal);
+    case 'openai':
+      return callOpenAI(key, model, prompt, signal);
+    default:
+      throw new LlmRequestError(`Unknown LLM provider: ${provider}`);
+  }
+}
+
 async function callProvider(prompt: string, signal?: AbortSignal): Promise<string> {
   const key = getStoredApiKey();
   if (!key) {
@@ -329,20 +491,60 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
   const model = getStoredModel();
 
   try {
-    switch (provider) {
-      case 'gemini':
-        return await callGemini(key, model, prompt, signal);
-      case 'claude':
-        return await callClaude(key, model, prompt, signal);
-      case 'openai':
-        return await callOpenAI(key, model, prompt, signal);
-      default:
-        throw new LlmRequestError(`Unknown LLM provider: ${provider}`);
-    }
+    return await callModel(provider, key, model, prompt, signal);
   } catch (e) {
-    if (e instanceof LlmRequestError || e instanceof LlmConfigError) throw e;
+    if (!(e instanceof LlmModelNotFoundError)) {
+      if (e instanceof LlmRequestError || e instanceof LlmConfigError) throw e;
+      throw new LlmRequestError(
+        'Could not reach the AI provider. Check your connection and firewall settings.',
+      );
+    }
+
+    // Model catalogs get renamed/retired, or a given API key just doesn't have
+    // access to a particular tier (this has already happened once before — see
+    // getStoredModel() and the Claude temperature comment above). Falling back to
+    // a single fixed "default" isn't enough: the failing model MAY BE the default
+    // (e.g. flash-lite 404ing for this key). So walk every other known model for
+    // this provider until one actually works, instead of guessing once. getProviderModels()
+    // already prefers a live-fetched list over the hardcoded baseline if one is cached.
+    const tried = new Set([model]);
+    const attemptAll = async (ids: string[]): Promise<string | null> => {
+      for (const candidate of ids) {
+        if (tried.has(candidate)) continue;
+        tried.add(candidate);
+        try {
+          const text = await callModel(provider, key, candidate, prompt, signal);
+          setStoredModel(candidate); // remember what actually works for this key
+          return (
+            `_Note: "${model}" isn't available for your API key — switched to ` +
+            `${PROVIDERS[provider].displayName}'s "${candidate}" and saved it as your model. ` +
+            `You can change this any time in AI settings._\n\n${text}`
+          );
+        } catch (candidateError) {
+          if (candidateError instanceof LlmModelNotFoundError) {
+            lastError = candidateError;
+            continue; // this one 404s too — try the next candidate
+          }
+          // A non-404 failure (bad key, rate limit, network) — more model attempts won't help.
+          throw candidateError;
+        }
+      }
+      return null;
+    };
+
+    let lastError: LlmModelNotFoundError = e;
+    const cachedResult = await attemptAll(getProviderModels(provider).map(m => m.id));
+    if (cachedResult) return cachedResult;
+
+    // Every known/cached model 404d — our whole catalog may be stale. Ask the
+    // provider directly, right now, with this key, and try anything new it reports.
+    const { models: liveModels } = await refreshAvailableModels(provider, key);
+    const liveResult = await attemptAll(liveModels.map(m => m.id));
+    if (liveResult) return liveResult;
+
     throw new LlmRequestError(
-      'Could not reach the AI provider. Check your connection and firewall settings.',
+      `${lastError.message} None of ${PROVIDERS[provider].displayName}'s known models worked for this ` +
+      'API key. Double-check the key at the provider\'s console, or try a different provider.',
     );
   }
 }

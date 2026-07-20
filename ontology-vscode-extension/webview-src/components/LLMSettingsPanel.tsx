@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Trash2, Eye, EyeOff, Check, X, Zap } from 'lucide-react';
+import { Save, Trash2, Eye, EyeOff, Check, X, Zap, RefreshCw } from 'lucide-react';
 import {
   getStoredProvider,
   setStoredProvider,
@@ -9,7 +9,9 @@ import {
   setStoredModel,
   getAvailableProviders,
   getProviderModels,
+  refreshAvailableModels,
   LlmProvider,
+  KnownModel,
 } from '../services/LlmInsightsService';
 
 interface LLMSettingsPanelProps {
@@ -24,8 +26,49 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
 
+  // Model list per provider. The hardcoded PROVIDERS table is only ever a placeholder
+  // — shown before a key exists, or if a live fetch fails. Whenever a key is present
+  // we always ask the provider directly (on mount and on blurring the key field),
+  // so the list stays current without needing an app update.
+  const [models, setModels] = useState<KnownModel[]>(() => getProviderModels(provider));
+  const [modelsSource, setModelsSource] = useState<'default' | 'live'>('default');
+  const [modelsRefreshing, setModelsRefreshing] = useState(false);
+
   const providers = getAvailableProviders();
-  const models = getProviderModels(provider);
+
+  const handleRefreshModels = async () => {
+    const activeKey = apiKey.trim();
+    if (!activeKey) {
+      setMessage({ type: 'error', text: 'Enter an API key first — the model list is fetched from your key.' });
+      return;
+    }
+    setModelsRefreshing(true);
+    try {
+      const { models: live, live: isLive } = await refreshAvailableModels(provider, activeKey);
+      setModels(live);
+      setModelsSource(isLive ? 'live' : 'default');
+      if (!isLive) {
+        setMessage({ type: 'error', text: 'Could not reach the provider — showing default models instead.' });
+      } else {
+        if (live.length && !live.some(m => m.id === model)) {
+          setModel(live[0].id);
+        }
+        setMessage({ type: 'success', text: `Found ${live.length} model${live.length === 1 ? '' : 's'} for this key.` });
+      }
+    } catch {
+      setMessage({ type: 'error', text: 'Could not refresh the model list. Check your key and connection.' });
+    } finally {
+      setModelsRefreshing(false);
+      setTimeout(() => setMessage(null), 3000);
+    }
+  };
+
+  // Fetch the real model list automatically: once on mount if a key is already
+  // saved, and again whenever the provider changes while a key is present.
+  useEffect(() => {
+    if (apiKey.trim()) handleRefreshModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
 
   const handleSave = () => {
     if (!apiKey.trim()) {
@@ -117,8 +160,11 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
             <button
               key={p.id}
               onClick={() => {
+                const nextModels = getProviderModels(p.id as LlmProvider);
                 setProvider(p.id as LlmProvider);
-                setModel(getProviderModels(p.id as LlmProvider)[0].id);
+                setModels(nextModels); // instant placeholder; the mount/provider effect fetches the real list
+                setModelsSource('default');
+                setModel(nextModels[0].id);
               }}
               className={`p-3 rounded-lg border-2 transition-all text-center ${
                 provider === p.id
@@ -156,6 +202,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
             type={showKey ? 'text' : 'password'}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
+            onBlur={() => { if (apiKey.trim()) handleRefreshModels(); }}
             placeholder={`Enter your ${providers.find(p => p.id === provider)?.label} API key`}
             className="w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />
@@ -174,9 +221,21 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
 
       {/* Model Selection */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Model
-        </label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-700">
+            Model
+          </label>
+          <button
+            type="button"
+            onClick={handleRefreshModels}
+            disabled={modelsRefreshing}
+            title="Fetch the latest models available for your API key"
+            className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-3 h-3 ${modelsRefreshing ? 'animate-spin' : ''}`} />
+            {modelsRefreshing ? 'Refreshing…' : 'Refresh models'}
+          </button>
+        </div>
         <select
           value={model}
           onChange={(e) => setModel(e.target.value)}
@@ -188,6 +247,9 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
             </option>
           ))}
         </select>
+        <p className={`text-xs mt-1 ${modelsSource === 'live' ? 'text-green-600' : 'text-gray-400'}`}>
+          {modelsSource === 'live' ? '✓ Live list from your API key' : 'Default list — add your API key above to fetch the real one'}
+        </p>
       </div>
 
       {/* Messages */}
