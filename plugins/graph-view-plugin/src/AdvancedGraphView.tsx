@@ -4710,6 +4710,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     function handleNodeClick(event: any, d: D3Node) {
       event.stopPropagation();
+      // The hover tooltip has no mouseout to clear it until the pointer actually
+      // leaves the node — a click doesn't move the pointer, so the tooltip box
+      // was sitting on top of the freshly-highlighted node/edges it just caused.
+      d3.selectAll('.graph-tooltip').remove();
 
       if (event.ctrlKey || event.metaKey) {
         // Multi-select
@@ -4732,6 +4736,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     function handleNodeRightClick(event: any, d: D3Node) {
       event.preventDefault();
       event.stopPropagation();
+      d3.selectAll('.graph-tooltip').remove();
 
       const original = resolveVowlClone(d);
 
