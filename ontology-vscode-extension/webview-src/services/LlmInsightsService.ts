@@ -69,8 +69,29 @@ export interface LlmInsightRequest {
   gaps: Array<{ a: string; b: string; suggestion: string }>;
 }
 
+/** Context describing the node the user currently has selected in the graph. */
+export interface SelectedNodeContext {
+  label: string;
+  type: string;
+  iri?: string;
+  /** Labels of directly connected (visible) nodes. */
+  neighbors: string[];
+  /** Top words of the topic cluster the node belongs to, if known. */
+  clusterTopWords?: string[];
+}
+
+/** One AI-suggested topic related to the selected node. */
+export interface TopicSuggestion {
+  topic: string;
+  reason: string;
+}
+
 export class LlmConfigError extends Error {}
 export class LlmRequestError extends Error {}
+/** The provider returned 404 for this specific model id — distinct from a generic
+ *  failure so callProvider() can retry once against the provider's current default
+ *  instead of just failing (model catalogs get renamed/retired over time). */
+export class LlmModelNotFoundError extends LlmRequestError {}
 
 export function getStoredProvider(): LlmProvider {
   try {
@@ -96,8 +117,136 @@ export function getAvailableProviders(): Array<{ id: LlmProvider; label: string 
   }));
 }
 
-export function getProviderModels(provider: LlmProvider): { id: string; label: string }[] {
+export interface KnownModel {
+  id: string;
+  label: string;
+}
+
+const MODELS_CACHE_STORAGE = 'ontocode_llm_models_cache';
+// Provider catalogs change on their own schedule, not ours — refetch periodically
+// rather than trusting a live list forever, but don't hit the endpoint on every render.
+const MODELS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+interface ModelsCacheEntry {
+  fetchedAt: number;
+  models: KnownModel[];
+}
+type ModelsCache = Partial<Record<LlmProvider, ModelsCacheEntry>>;
+
+function readModelsCache(): ModelsCache {
+  try {
+    const raw = localStorage.getItem(MODELS_CACHE_STORAGE);
+    return raw ? (JSON.parse(raw) as ModelsCache) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeModelsCache(cache: ModelsCache): void {
+  try {
+    localStorage.setItem(MODELS_CACHE_STORAGE, JSON.stringify(cache));
+  } catch {
+    /* storage unavailable — the live list just won't persist across reloads */
+  }
+}
+
+/**
+ * The model list to show/try for a provider: a freshly-fetched live list if one is
+ * cached (see refreshAvailableModels), otherwise the hardcoded baseline in PROVIDERS.
+ * The baseline goes stale as providers ship/retire models — this is what keeps the
+ * dropdown and the 404 fallback chain (see callProvider) current without a rebuild.
+ */
+export function getProviderModels(provider: LlmProvider): KnownModel[] {
+  const entry = readModelsCache()[provider];
+  if (entry && entry.models.length && Date.now() - entry.fetchedAt < MODELS_CACHE_TTL_MS) {
+    return entry.models;
+  }
   return PROVIDERS[provider]?.models ?? [];
+}
+
+async function listGeminiModels(key: string): Promise<KnownModel[]> {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
+  );
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => null);
+  const models = Array.isArray(data?.models) ? data.models : [];
+  return models
+    .filter((m: any) => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+    .map((m: any) => ({
+      id: String(m.name ?? '').replace(/^models\//, ''),
+      label: String(m.displayName ?? m.name ?? '').replace(/^models\//, ''),
+    }))
+    .filter((m: KnownModel) => m.id);
+}
+
+async function listClaudeModels(key: string): Promise<KnownModel[]> {
+  const res = await fetch('https://api.anthropic.com/v1/models', {
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+  });
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => null);
+  const models = Array.isArray(data?.data) ? data.data : [];
+  return models
+    .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.display_name ?? m.id ?? '') }))
+    .filter((m: KnownModel) => m.id);
+}
+
+async function listOpenAIModels(key: string): Promise<KnownModel[]> {
+  const res = await fetch('https://api.openai.com/v1/models', {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => null);
+  const models = Array.isArray(data?.data) ? data.data : [];
+  // The account-wide model list includes embeddings/audio/image/moderation models
+  // that can't answer a chat prompt — keep only chat-capable GPT text models.
+  const NON_CHAT = /audio|embedding|whisper|tts|instruct|realtime|transcribe|search|moderation|davinci|babbage|image|vision-preview$/i;
+  return models
+    .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.id ?? '') }))
+    .filter((m: KnownModel) => m.id && /^gpt-/i.test(m.id) && !NON_CHAT.test(m.id));
+}
+
+async function fetchLiveModels(provider: LlmProvider, key: string): Promise<KnownModel[]> {
+  try {
+    switch (provider) {
+      case 'gemini':
+        return await listGeminiModels(key);
+      case 'claude':
+        return await listClaudeModels(key);
+      case 'openai':
+        return await listOpenAIModels(key);
+      default:
+        return [];
+    }
+  } catch {
+    return []; // network failure — caller keeps whatever list it already had
+  }
+}
+
+export interface RefreshModelsResult {
+  models: KnownModel[];
+  /** True if `models` came fresh from the provider just now — false means the live
+   *  call failed/returned nothing and this is the cached-or-hardcoded fallback. */
+  live: boolean;
+}
+
+/**
+ * Ask the provider directly (using the user's own key) which models are actually
+ * available right now, and cache the result. This is the preferred source of truth
+ * for the model list — the hardcoded PROVIDERS table only exists as a placeholder
+ * before any key has been entered/verified, or if this call itself fails (offline,
+ * rate-limited, etc). Called automatically whenever AI settings are opened or a key
+ * is entered, on manual "Refresh models", and by callProvider() as a last resort
+ * when every known model 404s.
+ */
+export async function refreshAvailableModels(provider: LlmProvider, key: string): Promise<RefreshModelsResult> {
+  const live = await fetchLiveModels(provider, key);
+  if (live.length === 0) return { models: getProviderModels(provider), live: false };
+  const cache = readModelsCache();
+  cache[provider] = { fetchedAt: Date.now(), models: live };
+  writeModelsCache(cache);
+  return { models: live, live: true };
 }
 
 export function getStoredApiKey(): string {
@@ -129,7 +278,9 @@ export function getStoredModel(): string {
     // A previously-stored model id can go stale when a provider retires a model
     // generation (e.g. Gemini shut down the entire 1.0/1.5 line) — fall back to
     // the current default instead of repeating a 404 the user can't self-diagnose.
-    const isKnownModel = stored != null && PROVIDERS[provider].models.some((m) => m.id === stored);
+    // getProviderModels() includes any live-fetched list (see refreshAvailableModels),
+    // so a model we've *confirmed* works for this key isn't wrongly treated as stale.
+    const isKnownModel = stored != null && getProviderModels(provider).some((m) => m.id === stored);
     return isKnownModel ? stored : PROVIDERS[provider].defaultModel;
   } catch {
     return PROVIDERS[DEFAULT_PROVIDER].defaultModel;
@@ -144,7 +295,7 @@ export function setStoredModel(model: string): void {
   }
 }
 
-function buildPrompt(req: LlmInsightRequest): string {
+function buildContextBlock(req: LlmInsightRequest): string {
   const clusters = req.clusters
     .slice(0, 8)
     .map((c, i) => `  ${i + 1}. [${c.size} concepts] ${c.topWords.slice(0, 5).join(', ')}`)
@@ -155,9 +306,6 @@ function buildPrompt(req: LlmInsightRequest): string {
     .join('\n');
 
   return [
-    'You are an ontology engineering assistant. Analyze the following knowledge-graph',
-    'analytics for an OWL ontology and produce concise, actionable insights.',
-    '',
     `Ontology: ${req.ontologyName || 'Untitled'}`,
     `Total concepts: ${req.nodeCount}`,
     `Topic clusters: ${req.clusterCount}`,
@@ -171,6 +319,27 @@ function buildPrompt(req: LlmInsightRequest): string {
     '',
     'Structural gaps (missing bridges):',
     gaps || '  (none)',
+  ].join('\n');
+}
+
+function describeSelectedNode(node: SelectedNodeContext): string {
+  return [
+    `Selected node: "${node.label}" (${node.type}${node.iri ? `, IRI ${node.iri}` : ''})`,
+    `Directly connected concepts: ${node.neighbors.slice(0, 20).join(', ') || '(none visible)'}`,
+    node.clusterTopWords?.length
+      ? `Topic cluster around it: ${node.clusterTopWords.slice(0, 5).join(', ')}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildPrompt(req: LlmInsightRequest): string {
+  return [
+    'You are an ontology engineering assistant. Analyze the following knowledge-graph',
+    'analytics for an OWL ontology and produce concise, actionable insights.',
+    '',
+    buildContextBlock(req),
     '',
     'Respond in markdown with three short sections:',
     '1. **Summary** — 2-3 sentences describing the ontology structure.',
@@ -195,6 +364,9 @@ async function callGemini(key: string, model: string, prompt: string, signal?: A
 
   if (res.status === 400 || res.status === 403) {
     throw new LlmRequestError('Invalid or unauthorized API key. Check your Gemini key.');
+  }
+  if (res.status === 404) {
+    throw new LlmModelNotFoundError(`Gemini model "${model}" is not available for this API key or has been retired.`);
   }
   if (res.status === 429) {
     throw new LlmRequestError('Rate limit reached. Try again shortly.');
@@ -233,6 +405,9 @@ async function callClaude(key: string, model: string, prompt: string, signal?: A
   if (res.status === 401) {
     throw new LlmRequestError('Invalid or unauthorized API key. Check your Claude key.');
   }
+  if (res.status === 404) {
+    throw new LlmModelNotFoundError(`Claude model "${model}" is not available for this API key or has been retired.`);
+  }
   if (res.status === 429) {
     throw new LlmRequestError('Rate limit reached. Try again shortly.');
   }
@@ -267,6 +442,9 @@ async function callOpenAI(key: string, model: string, prompt: string, signal?: A
   if (res.status === 401) {
     throw new LlmRequestError('Invalid or unauthorized API key. Check your OpenAI key.');
   }
+  if (res.status === 404) {
+    throw new LlmModelNotFoundError(`OpenAI model "${model}" is not available for this API key or has been retired.`);
+  }
   if (res.status === 429) {
     throw new LlmRequestError('Rate limit reached. Try again shortly.');
   }
@@ -282,14 +460,26 @@ async function callOpenAI(key: string, model: string, prompt: string, signal?: A
   return text.trim();
 }
 
-/**
- * Generate insights via the user's chosen LLM provider. Returns markdown text.
- * Throws LlmConfigError when no key is set, LlmRequestError on API failure.
- */
-export async function generateGraphInsights(
-  req: LlmInsightRequest,
+async function callModel(
+  provider: LlmProvider,
+  key: string,
+  model: string,
+  prompt: string,
   signal?: AbortSignal,
 ): Promise<string> {
+  switch (provider) {
+    case 'gemini':
+      return callGemini(key, model, prompt, signal);
+    case 'claude':
+      return callClaude(key, model, prompt, signal);
+    case 'openai':
+      return callOpenAI(key, model, prompt, signal);
+    default:
+      throw new LlmRequestError(`Unknown LLM provider: ${provider}`);
+  }
+}
+
+async function callProvider(prompt: string, signal?: AbortSignal): Promise<string> {
   const key = getStoredApiKey();
   if (!key) {
     const provider = getStoredProvider();
@@ -299,23 +489,169 @@ export async function generateGraphInsights(
 
   const provider = getStoredProvider();
   const model = getStoredModel();
-  const prompt = buildPrompt(req);
 
   try {
-    switch (provider) {
-      case 'gemini':
-        return await callGemini(key, model, prompt, signal);
-      case 'claude':
-        return await callClaude(key, model, prompt, signal);
-      case 'openai':
-        return await callOpenAI(key, model, prompt, signal);
-      default:
-        throw new LlmRequestError(`Unknown LLM provider: ${provider}`);
-    }
+    return await callModel(provider, key, model, prompt, signal);
   } catch (e) {
-    if (e instanceof LlmRequestError || e instanceof LlmConfigError) throw e;
+    if (!(e instanceof LlmModelNotFoundError)) {
+      if (e instanceof LlmRequestError || e instanceof LlmConfigError) throw e;
+      throw new LlmRequestError(
+        'Could not reach the AI provider. Check your connection and firewall settings.',
+      );
+    }
+
+    // Model catalogs get renamed/retired, or a given API key just doesn't have
+    // access to a particular tier (this has already happened once before — see
+    // getStoredModel() and the Claude temperature comment above). Falling back to
+    // a single fixed "default" isn't enough: the failing model MAY BE the default
+    // (e.g. flash-lite 404ing for this key). So walk every other known model for
+    // this provider until one actually works, instead of guessing once. getProviderModels()
+    // already prefers a live-fetched list over the hardcoded baseline if one is cached.
+    const tried = new Set([model]);
+    const attemptAll = async (ids: string[]): Promise<string | null> => {
+      for (const candidate of ids) {
+        if (tried.has(candidate)) continue;
+        tried.add(candidate);
+        try {
+          const text = await callModel(provider, key, candidate, prompt, signal);
+          setStoredModel(candidate); // remember what actually works for this key
+          return (
+            `_Note: "${model}" isn't available for your API key — switched to ` +
+            `${PROVIDERS[provider].displayName}'s "${candidate}" and saved it as your model. ` +
+            `You can change this any time in AI settings._\n\n${text}`
+          );
+        } catch (candidateError) {
+          if (candidateError instanceof LlmModelNotFoundError) {
+            lastError = candidateError;
+            continue; // this one 404s too — try the next candidate
+          }
+          // A non-404 failure (bad key, rate limit, network) — more model attempts won't help.
+          throw candidateError;
+        }
+      }
+      return null;
+    };
+
+    let lastError: LlmModelNotFoundError = e;
+    const cachedResult = await attemptAll(getProviderModels(provider).map(m => m.id));
+    if (cachedResult) return cachedResult;
+
+    // Every known/cached model 404d — our whole catalog may be stale. Ask the
+    // provider directly, right now, with this key, and try anything new it reports.
+    const { models: liveModels } = await refreshAvailableModels(provider, key);
+    const liveResult = await attemptAll(liveModels.map(m => m.id));
+    if (liveResult) return liveResult;
+
     throw new LlmRequestError(
-      'Could not reach the AI provider. Check your connection and firewall settings.',
+      `${lastError.message} None of ${PROVIDERS[provider].displayName}'s known models worked for this ` +
+      'API key. Double-check the key at the provider\'s console, or try a different provider.',
     );
   }
+}
+
+/**
+ * Generate insights via the user's chosen LLM provider. Returns markdown text.
+ * Throws LlmConfigError when no key is set, LlmRequestError on API failure.
+ */
+export async function generateGraphInsights(
+  req: LlmInsightRequest,
+  signal?: AbortSignal,
+): Promise<string> {
+  return callProvider(buildPrompt(req), signal);
+}
+
+/**
+ * Answer a free-form user question about the graph, optionally grounded in the
+ * currently selected node. Returns markdown text.
+ */
+export async function askGraphQuestion(
+  question: string,
+  req: LlmInsightRequest,
+  node?: SelectedNodeContext | null,
+  signal?: AbortSignal,
+): Promise<string> {
+  const trimmed = question.trim();
+  if (!trimmed) throw new LlmRequestError('Type a question first.');
+
+  const prompt = [
+    'You are an ontology engineering assistant. Use the knowledge-graph analytics',
+    "below as context and answer the user's question about this OWL ontology.",
+    '',
+    buildContextBlock(req),
+    ...(node ? ['', describeSelectedNode(node)] : []),
+    '',
+    `User question: ${trimmed}`,
+    '',
+    'Answer in concise markdown. Ground statements in the context above; if the context',
+    'is insufficient, say what additional information would be needed. Keep it under 250 words.',
+  ].join('\n');
+
+  return callProvider(prompt, signal);
+}
+
+/**
+ * Suggest related topics for the selected node — subclasses, siblings, related
+ * concepts, or missing links worth modeling next. Returns a parsed list.
+ */
+export async function suggestTopicsForNode(
+  node: SelectedNodeContext,
+  req: LlmInsightRequest,
+  signal?: AbortSignal,
+): Promise<TopicSuggestion[]> {
+  const prompt = [
+    'You are an ontology engineering assistant helping to extend an OWL ontology.',
+    'Based on the selected node and its context, suggest topics to model next:',
+    'subclasses, sibling concepts, related concepts, or missing links.',
+    '',
+    buildContextBlock(req),
+    '',
+    describeSelectedNode(node),
+    '',
+    'Respond with ONLY a JSON array (no prose, no code fences) of 5 to 8 items shaped as:',
+    '[{"topic": "Short Topic Name", "reason": "one line on why it belongs near the selected node"}]',
+    'Topics must be concise noun phrases (max 4 words) and must not duplicate the',
+    'directly connected concepts listed above.',
+  ].join('\n');
+
+  const raw = await callProvider(prompt, signal);
+  const parsed = parseTopicSuggestions(raw);
+  if (!parsed.length) {
+    throw new LlmRequestError('The AI provider returned no usable topic suggestions. Try again.');
+  }
+  return parsed;
+}
+
+function parseTopicSuggestions(raw: string): TopicSuggestion[] {
+  // Providers occasionally wrap the JSON in ```json fences or add a lead-in sentence
+  // despite the instructions — extract the outermost array before parsing.
+  const unfenced = raw.replace(/```(?:json)?/gi, '').trim();
+  const start = unfenced.indexOf('[');
+  const end = unfenced.lastIndexOf(']');
+  if (start !== -1 && end > start) {
+    try {
+      const arr = JSON.parse(unfenced.slice(start, end + 1));
+      if (Array.isArray(arr)) {
+        return arr
+          .map((it: { topic?: unknown; reason?: unknown }) => ({
+            topic: String(it?.topic ?? '').trim(),
+            reason: String(it?.reason ?? '').trim(),
+          }))
+          .filter((it) => it.topic.length > 0 && it.topic.length <= 80)
+          .slice(0, 8);
+      }
+    } catch {
+      /* fall through to line parsing */
+    }
+  }
+  // Fallback: bullet or numbered lines ("- Topic — reason", "1. Topic: reason").
+  return unfenced
+    .split('\n')
+    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = line.match(/^(.{2,80}?)\s*[—–:]\s+(.+)$/);
+      return m ? { topic: m[1].trim(), reason: m[2].trim() } : { topic: line.slice(0, 80), reason: '' };
+    })
+    .filter((it) => it.topic.length > 1)
+    .slice(0, 8);
 }
