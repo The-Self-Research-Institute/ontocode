@@ -627,6 +627,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     vowlPinnedHubIdsRef.current = new Set();
   }, [projectId]);
 
+  // New project → clear the hierarchy navigator too. Its content is now shown
+  // inline in the sidebar by default (not just the opt-in floating popup), so a
+  // stale root node from the previous project would otherwise render immediately
+  // instead of sitting invisibly closed like before.
+  useEffect(() => {
+    setHierarchyRootNode(null);
+    setShowHierarchyDialog(false);
+  }, [projectId]);
+
   // UI State
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
   const selectedNodesRef = useRef(selectedNodes);
@@ -2401,15 +2410,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const cx0 = sx + dx * tAlong + px * side;
           const cy0 = sy + dy * tAlong + py * side;
 
+          // Seeded, not pinned: (cx0, cy0) is a good starting guess (staggered
+          // by spoke so parallel chips don't start exactly on top of each
+          // other), but real charge + rigid half-links now do the separating
+          // at simulation runtime instead of freezing this one-shot geometry.
           const chip: D3Node = {
             id: chipId,
             label: '',
             type: 'class',
             size: chipRadius,
             x: cx0,
-            y: cy0,
-            fx: cx0,
-            fy: cy0
+            y: cy0
           };
           (chip as any).__isChip = true;
           (chip as any).__chipRadius = chipRadius;
@@ -2451,10 +2462,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               a.y = ay - sy;
               b.y = by + sy;
             }
-            a.fx = a.x;
-            a.fy = a.y;
-            b.fx = b.x;
-            b.fy = b.y;
+            // Seed refinement only — no fx/fy pin. Charge + rigid half-links
+            // keep this separation (and correct it further) once ticking starts.
             moved = true;
           }
         }
@@ -2500,16 +2509,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               const sy = (dy === 0 ? 1 : Math.sign(dy)) * overlapY;
               chip.y = (chip.y ?? 0) + sy;
             }
-            chip.fx = chip.x;
-            chip.fy = chip.y;
             movedAny = true;
           }
         }
         if (!movedAny) break;
       }
 
-      // Bake resolved positions back into (along, side) so the tick loop
-      // preserves AABB separation instead of snapping chips back together.
+      // Bake resolved positions back into (along, side) — used as a fallback by
+      // downstream code that still reads __chipAlong/__chipSide directly; the
+      // free chip itself is now driven by the simulation, not this projection.
       chipNodes.forEach(chip => {
         const e = (chip as any).__chipEdge as D3Edge | undefined;
         if (!e) return;
@@ -2554,34 +2562,42 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const simLinks = buildSimLinks();
     const simNodes = chipNodes.length > 0 ? [...d3Nodes, ...chipNodes] : d3Nodes;
     
+    // Border-to-border radius estimate so a half-link's target distance is the
+    // visible gap between node edges, not a center-to-center constant that lets
+    // a big class ellipse (or a long chip label) "eat" its own edge.
+    const nodeRadiusFor = (n: D3Node): number => {
+      const size = n.size || settings.nodeSize || 20;
+      if ((n as any).__isChip) return (n as any).__chipRadius || size;
+      if (n.type === 'datatype' || n.label === 'Literal') return size * 1.8;
+      return size * 1.8; // VOWL class circle (matches computeEdgePath's r*1.8+4 trim)
+    };
+
     // Calculate link distance based on node types and VOWL distance controls
     const linkDistance = (edge: D3Edge): number => {
-      // Half-links to a chip node cover half the edge each
+      // Half-links to a chip node cover half the parent edge each, plus the
+      // actual radii of the two endpoints it spans (WebVOWL's
+      // linkPartDistance = full/2 + domain.actualRadius() + range.actualRadius()).
       const half = (edge as any).__halfOf as D3Edge | undefined;
-      if (half) return linkDistance(half) / 2;
+      if (half) {
+        const s = edge.source as D3Node;
+        const t = edge.target as D3Node;
+        return linkDistance(half) / 2 + nodeRadiusFor(s) + nodeRadiusFor(t);
+      }
       const source = edge.source as D3Node;
       const target = edge.target as D3Node;
-      
+
       // VOWL: short arrows inside a neighborhood (Literals close, subclasses
       // a bit further). Do NOT multiply by 1.85× — that made long overrides.
       if (visualizationType === 'vowl') {
         // Match concentric-ring math (subclassR ≈ propR+95 ≈ 195–240)
         if (edge.type === 'subClassOf') return 200;
         if (edge.type === 'propertyRelation') {
-          const sId = source.id;
-          const tId = target.id;
-          let parallel = 0;
-          for (const other of d3Edges) {
-            if (other.type !== 'propertyRelation') continue;
-            const os = (other.source as D3Node).id;
-            const ot = (other.target as D3Node).id;
-            if ((os === sId && ot === tId) || (os === tId && ot === sId)) parallel += 1;
-          }
-          const multiBoost = parallel > 1 ? 28 + (parallel - 1) * 22 : 0;
-          if (source.type === 'datatype' || target.type === 'datatype') return 100 + multiBoost;
+          // Parallel edges between the same pair no longer need a hand-tuned
+          // boost — free chips with real charge fan them out on their own.
+          if (source.type === 'datatype' || target.type === 'datatype') return 100;
           if (isThingIri(source.id) || isThingIri(target.id) ||
-              source.label === 'Thing' || target.label === 'Thing') return 110 + multiBoost;
-          return 150 + multiBoost;
+              source.label === 'Thing' || target.label === 'Thing') return 110;
+          return 150;
         }
         if (source.type === 'datatype' || target.type === 'datatype') return 100;
         if (edge.type === 'domain' || edge.type === 'range') return 110;
@@ -2616,7 +2632,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Calculate link strength - hierarchy edges are stronger
     const linkStrength = (edge: D3Edge): number => {
       const half = (edge as any).__halfOf as D3Edge | undefined;
-      if (half) return Math.min(1.0, linkStrength(half) * 1.35);
+      if (half) {
+        // Rigid half-links (WebVOWL uses strength 1 for exactly this reason):
+        // a free chip with real charge needs a stiff link on both sides or it
+        // gets flung, not fanned. The chip's own charge (below) does the
+        // separating; the link's job is only to hold it near the edge line.
+        if (visualizationType === 'vowl') return 0.95;
+        return Math.min(1.0, linkStrength(half) * 1.35);
+      }
       if (edge.type === 'subClassOf') {
         return visualizationType === 'vowl' ? 0.12 : 0.85;
       }
@@ -2669,11 +2692,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .force('charge', usePhysics ? d3.forceManyBody()
         .strength(d => {
           const node = d as D3Node;
-          // Chip label nodes repel by their label footprint — long chips keep clear
+          // Chip label nodes repel by their label footprint — long chips keep clear.
+          // Chips are free now (rigid half-links hold them near the edge line —
+          // see linkStrength — so charge alone fans them out instead of flinging
+          // them; that earlier regression came from charge WITHOUT rigid links).
           if ((node as any).__isChip) {
-            // Chips are pinned to mid-edge — no charge (charge was flinging labels
-            // across the canvas and drawing long override curves through other nodes).
-            return 0;
+            const chipR = (node as any).__chipRadius || 20;
+            return -Math.min(260, chipR * 3.2);
           }
           // Seeded+pinned geometry — charge must not stretch the lattice.
           // Tiny residual only for unpinned chips/orphans.
@@ -4587,36 +4612,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             d3Nodes.forEach(project3DNode);
           }
 
-          // Keep VOWL chips on their designed spoke slot (along + side offset).
-          // Do NOT collapse parallel labels back to the same midpoint.
-          if (visualizationType === 'vowl' && chipNodes.length > 0) {
-            chipNodes.forEach(chip => {
-              const e = (chip as any).__chipEdge as D3Edge | undefined;
-              if (!e) return;
-              const s = e.source as D3Node;
-              const t = e.target as D3Node;
-              if (s?.x == null || t?.x == null) return;
-              const along = (chip as any).__chipAlong ?? 0.62;
-              const side = (chip as any).__chipSide ?? 0;
-              const dx = t.x - s.x;
-              const dy = t.y! - s.y!;
-              const len = Math.sqrt(dx * dx + dy * dy) || 1;
-              const px = -dy / len;
-              const py = dx / len;
-              const idealX = s.x + dx * along + px * side;
-              const idealY = s.y! + dy * along + py * side;
-              // Allow mild separation drift, but keep the designed multi-edge fan
-              const ox = (chip.x ?? idealX) - idealX;
-              const oy = (chip.y ?? idealY) - idealY;
-              const sep = Math.hypot(ox, oy);
-              const cap = 90; // AABB may move chips far off the spoke mid-point
-              const scale = sep > cap ? cap / sep : 1;
-              chip.x = idealX + ox * scale;
-              chip.y = idealY + oy * scale;
-              chip.fx = chip.x;
-              chip.fy = chip.y;
-            });
-          }
+          // Chips are free simulation nodes now (real charge + rigid half-links,
+          // see linkStrength/linkDistance below) — no per-tick re-pin to a static
+          // spoke slot. D3's own integrator already updated chip.x/y this tick.
 
           // Hit-area paths are pointer targets, not visuals — they sync on sim/gesture end
           updateEdgePaths(false);
@@ -4721,6 +4719,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     function handleNodeClick(event: any, d: D3Node) {
       event.stopPropagation();
+      // The hover tooltip has no mouseout to clear it until the pointer actually
+      // leaves the node — a click doesn't move the pointer, so the tooltip box
+      // was sitting on top of the freshly-highlighted node/edges it just caused.
+      d3.selectAll('.graph-tooltip').remove();
 
       if (event.ctrlKey || event.metaKey) {
         // Multi-select
@@ -4732,17 +4734,23 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         setSelectedNodes(newSelected);
       } else {
-        // Single click — just select the node; hierarchy navigator opens only via right-click > Edit
+        // Single click — just select the node; navigation to entity details is
+        // deliberately NOT triggered here (right-click > Go to Entity Details).
         const original = resolveVowlClone(d);
         setSelectedNodes(new Set([d.id]));
         setSelectedNodeInfo(original);
-        onNodeClickRef.current?.(original.id);
+        // Focus the inline hierarchy navigator too (sidebar-only — this does not
+        // open the floating popup, see onToggleNavigator/context menu for that).
+        if (original.type === 'class') {
+          setHierarchyRootNode(original);
+        }
       }
     }
 
     function handleNodeRightClick(event: any, d: D3Node) {
       event.preventDefault();
       event.stopPropagation();
+      d3.selectAll('.graph-tooltip').remove();
 
       const original = resolveVowlClone(d);
 
@@ -6544,6 +6552,80 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     );
   }, [nodeRelationsMap, allNodes, allEdges, expandedNodeIds, selectedNodes, handleExpandParents, handleDialogExpand, startCreateClassAction, startDeleteClassAction, canEdit, classActionLoading]);
 
+  // Shared navigator body — the same content (root node info, tree, action
+  // feedback, footer legend) rendered both inline in the sidebar and inside the
+  // floating "pop out" dialog, so the two never drift apart.
+  const hierarchyNavigatorBody = useMemo(() => {
+    if (!hierarchyRootNode) return null;
+    return (
+      <>
+        {/* Root Node Info */}
+        <div
+          style={{
+            padding: '8px 12px',
+            backgroundColor: 'var(--surface-2, #f9fafb)',
+            borderBottom: '1px solid var(--border, #e5e7eb)'
+          }}
+        >
+          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary, #1f2937)', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {hierarchyRootNode.label}
+          </div>
+          <div style={{ fontSize: '10px', color: 'var(--text-secondary, #9ca3af)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {hierarchyRootNode.id}
+          </div>
+        </div>
+
+        {/* Hierarchy Tree */}
+        <div
+          style={{
+            flex: 1,
+            overflow: 'auto',
+            padding: '8px 10px',
+            backgroundColor: 'var(--surface-2, #fafafa)'
+          }}
+        >
+          <div style={{ backgroundColor: 'var(--surface-1, #ffffff)', borderRadius: '6px', padding: '4px' }}>
+            {renderHierarchyTree(hierarchyRootNode)}
+          </div>
+        </div>
+
+        {classActionFeedback && (
+          <div style={{ padding: '0 16px 12px' }}>
+            <div
+              style={{
+                backgroundColor: classActionFeedback.type === 'success' ? '#ecfdf5' : '#fef2f2',
+                border: `1px solid ${classActionFeedback.type === 'success' ? '#a7f3d0' : '#fecdd3'}`,
+                color: classActionFeedback.type === 'success' ? '#065f46' : '#991b1b',
+                borderRadius: '6px',
+                padding: '8px 10px',
+                fontSize: '12px'
+              }}
+            >
+              {classActionFeedback.message}
+            </div>
+          </div>
+        )}
+
+        {/* Footer legend */}
+        <div
+          style={{
+            padding: '5px 10px',
+            backgroundColor: 'var(--surface-2, #f9fafb)',
+            borderTop: '1px solid var(--border, #e5e7eb)',
+            fontSize: '10px',
+            color: 'var(--text-secondary, #9ca3af)',
+            display: 'flex',
+            gap: '10px',
+            flexWrap: 'wrap'
+          }}
+        >
+          <span>▸ expand/collapse</span>
+          <span><Plus size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> child &nbsp;<GitBranch size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> sibling &nbsp;<Trash2 size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> delete</span>
+        </div>
+      </>
+    );
+  }, [hierarchyRootNode, expandedNodeIds, selectedNodes, classActionFeedback, canEdit, classActionLoading, renderHierarchyTree]);
+
   /**
    * ========================================================================
    * RENDER
@@ -7048,6 +7130,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         <AnalyticsPanel
           analytics={graphAnalytics}
           nodes={filteredNodes}
+          edges={filteredEdges}
           selectedNode={selectedNodeInfo}
           colorByCluster={colorByCluster}
           onToggleColorByCluster={setColorByCluster}
@@ -7108,15 +7191,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               if (node) {
                 setSelectedNodes(new Set([node.id]));
                 setSelectedNodeInfo(node);
-                
-                // Open hierarchy navigator for class nodes
+
+                // Focus the hierarchy navigator for class nodes — shows inline in
+                // the sidebar by default; the floating popup is opt-in only (see
+                // onPopOutHierarchyNavigator/onToggleNavigator/context menu).
                 if (node.type === 'class') {
                   setHierarchyRootNode(node);
-                  setIsDialogMinimized(false);
-                  setHierarchyDialogPosition({ x: 20, y: 100 });
-                  setShowHierarchyDialog(true);
                 }
-                
+
                 // Highlight node in graph
                 d3.selectAll('.node')
                   .classed('highlighted', false)
@@ -7127,6 +7209,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 setSelectedNodeInfo(null);
                 d3.selectAll('.node').classed('highlighted', false);
               }
+            }}
+            hierarchyNavigatorContent={hierarchyRootNode ? hierarchyNavigatorBody : null}
+            hierarchyNavigatorLabel={hierarchyRootNode?.label}
+            onCloseHierarchyNavigator={() => setHierarchyRootNode(null)}
+            onPopOutHierarchyNavigator={() => {
+              setIsDialogMinimized(false);
+              setHierarchyDialogPosition({ x: 20, y: 100 });
+              setShowHierarchyDialog(true);
             }}
             onNodeHighlight={(nodeId) => {
               d3.selectAll('.node')
@@ -7323,73 +7413,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             </div>
 
             {/* Dialog Content - Hidden when minimized */}
-            {!isDialogMinimized && (
-              <>
-                {/* Root Node Info */}
-                <div
-                  style={{
-                    padding: '8px 12px',
-                    backgroundColor: 'var(--surface-2, #f9fafb)',
-                    borderBottom: '1px solid var(--border, #e5e7eb)'
-                  }}
-                >
-              <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary, #1f2937)', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {hierarchyRootNode.label}
-              </div>
-              <div style={{ fontSize: '10px', color: 'var(--text-secondary, #9ca3af)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {hierarchyRootNode.id}
-              </div>
-            </div>
-
-            {/* Hierarchy Tree */}
-            <div
-              style={{
-                flex: 1,
-                overflow: 'auto',
-                padding: '8px 10px',
-                backgroundColor: 'var(--surface-2, #fafafa)'
-              }}
-            >
-              <div style={{ backgroundColor: 'var(--surface-1, #ffffff)', borderRadius: '6px', padding: '4px' }}>
-                {renderHierarchyTree(hierarchyRootNode)}
-              </div>
-            </div>
-
-            {classActionFeedback && (
-              <div style={{ padding: '0 16px 12px' }}>
-                <div
-                  style={{
-                    backgroundColor: classActionFeedback.type === 'success' ? '#ecfdf5' : '#fef2f2',
-                    border: `1px solid ${classActionFeedback.type === 'success' ? '#a7f3d0' : '#fecdd3'}`,
-                    color: classActionFeedback.type === 'success' ? '#065f46' : '#991b1b',
-                    borderRadius: '6px',
-                    padding: '8px 10px',
-                    fontSize: '12px'
-                  }}
-                >
-                  {classActionFeedback.message}
-                </div>
-              </div>
-            )}
-
-            {/* Dialog Footer */}
-            <div
-              style={{
-                padding: '5px 10px',
-                backgroundColor: 'var(--surface-2, #f9fafb)',
-                borderTop: '1px solid var(--border, #e5e7eb)',
-                fontSize: '10px',
-                color: 'var(--text-secondary, #9ca3af)',
-                display: 'flex',
-                gap: '10px',
-                flexWrap: 'wrap'
-              }}
-            >
-              <span>▸ expand/collapse</span>
-              <span><Plus size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> child &nbsp;<GitBranch size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> sibling &nbsp;<Trash2 size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> delete</span>
-            </div>
-              </>
-            )}
+            {!isDialogMinimized && hierarchyNavigatorBody}
           </div>
         )}
 
@@ -7544,6 +7568,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               }}
             >
               ℹ️ View Properties
+            </button>
+            <button
+              style={styles.contextMenuItem}
+              onClick={() => {
+                if (contextMenu.nodeId) onNodeClickRef.current?.(contextMenu.nodeId);
+                setContextMenu({ ...contextMenu, visible: false });
+              }}
+            >
+              📄 Go to Entity Details
             </button>
             {allNodes.find(n => n.id === contextMenu.nodeId)?.type === 'class' && (
               <button

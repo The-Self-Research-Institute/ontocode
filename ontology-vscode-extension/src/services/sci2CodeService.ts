@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import { buildZoteroCitationNode } from '../utils/jsonLdCitation';
+
+export type CitationFormat = 'turtle' | 'rdfxml' | 'jsonld';
 
 export interface CitationItem {
   key: string;
@@ -20,7 +23,7 @@ export interface CitationItem {
 interface Sci2CodeAPI {
   getZoteroLibrary(): Promise<any[]>;
   getZoteroItem(key: string): Promise<any | null>;
-  formatCitationForOntology(key: string, format?: 'turtle' | 'rdfxml'): Promise<string>;
+  formatCitationForOntology(key: string, format?: CitationFormat, overrideDoi?: string): Promise<string>;
   getCitationMetadata(key: string): Promise<CitationItem | null>;
   isAuthenticated?(): Promise<boolean>; // Make it optional
 }
@@ -30,99 +33,145 @@ class Sci2CodeService {
   private extensionId = 'self.ontocode-extension'; // Use OntoCode's own extension ID
   private initializationAttempted = false;
 
-  async initialize(): Promise<boolean> {
-    if (this.initializationAttempted && this.api !== null) {
-      return true;
-    }
+  /**
+   * Finds/activates OntoCode's own extension exports and caches them — no
+   * prompts, no side effects, safe to call from passive UI (e.g. the sidebar
+   * status row) that shouldn't pop up a "configure Zotero?" dialog just
+   * because it rendered.
+   */
+  private async ensureApi(): Promise<boolean> {
+    if (!this.api) {
+      this.initializationAttempted = true;
 
-    this.initializationAttempted = true;
+      try {
+        console.log('Looking for Sci2Code extension with ID:', this.extensionId);
 
-    try {
-      console.log('Looking for Sci2Code extension with ID:', this.extensionId);
-      
-      const extension = vscode.extensions.getExtension(this.extensionId);
-      
-      if (!extension) {
-        console.error('Sci2Code extension not found');
-        
-        // List all installed extensions for debugging
-        const allExtensions = vscode.extensions.all
-          .filter(ext => !ext.id.startsWith('vscode.'))
-          .map(ext => ext.id);
-        console.log('Installed extensions:', allExtensions);
-        
-        const install = await vscode.window.showWarningMessage(
-          `Sci2Code extension (${this.extensionId}) is required for citation features. Please ensure it's installed.`,
-          'Show Extensions', 'Cancel'
-        );
-        
-        if (install === 'Show Extensions') {
-          await vscode.commands.executeCommand('workbench.extensions.search', 'sci2code');
-        }
-        return false;
-      }
+        const extension = vscode.extensions.getExtension(this.extensionId);
 
-      console.log('Sci2Code extension found, checking activation...');
-      
-      if (!extension.isActive) {
-        console.log('Activating Sci2Code extension...');
-        await extension.activate();
-      }
+        if (!extension) {
+          console.error('Sci2Code extension not found');
 
-      this.api = extension.exports as Sci2CodeAPI;
-      
-      if (!this.api) {
-        console.error('Sci2Code extension exports are undefined');
-        vscode.window.showErrorMessage(
-          'Sci2Code extension did not export an API. Please update the extension.'
-        );
-        return false;
-      }
+          // List all installed extensions for debugging
+          const allExtensions = vscode.extensions.all
+            .filter(ext => !ext.id.startsWith('vscode.'))
+            .map(ext => ext.id);
+          console.log('Installed extensions:', allExtensions);
 
-      console.log('Sci2Code API initialized successfully');
-      console.log('Available API methods:', Object.keys(this.api));
-      
-      // Check authentication (optional, don't fail if method doesn't exist)
-      if (typeof this.api.isAuthenticated === 'function') {
-        const isAuth = await this.api.isAuthenticated();
-        console.log('Sci2Code authentication status:', isAuth);
-        
-        if (!isAuth) {
-          const login = await vscode.window.showInformationMessage(
-            'Please log in to Zotero to use citation features.',
-            'Login', 'Cancel'
+          const install = await vscode.window.showWarningMessage(
+            `Sci2Code extension (${this.extensionId}) is required for citation features. Please ensure it's installed.`,
+            'Show Extensions', 'Cancel'
           );
-          
-          if (login === 'Login') {
-            await vscode.commands.executeCommand('sci2code.login');
+
+          if (install === 'Show Extensions') {
+            await vscode.commands.executeCommand('workbench.extensions.search', 'sci2code');
           }
           return false;
         }
-      } else {
-        console.log('isAuthenticated method not available, skipping auth check');
-      }
 
-      return true;
-      
+        console.log('Sci2Code extension found, checking activation...');
+
+        if (!extension.isActive) {
+          console.log('Activating Sci2Code extension...');
+          await extension.activate();
+        }
+
+        this.api = extension.exports as Sci2CodeAPI;
+
+        if (!this.api) {
+          console.error('Sci2Code extension exports are undefined');
+          vscode.window.showErrorMessage(
+            'Sci2Code extension did not export an API. Please update the extension.'
+          );
+          return false;
+        }
+
+        console.log('Sci2Code API initialized successfully');
+        console.log('Available API methods:', Object.keys(this.api));
+      } catch (error) {
+        console.error('Failed to initialize Sci2Code:', error);
+
+        vscode.window.showErrorMessage(
+          `Failed to initialize Sci2Code: ${error instanceof Error ? error.message : String(error)}`
+        );
+
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Full init used by the actual insert-citation commands: finds/activates
+   * the API (silent) and, if Zotero isn't configured yet, offers to configure
+   * it right now. Has user-facing side effects — only call this from a flow
+   * the user just explicitly triggered (Insert Citation, Open Citation
+   * Picker), never from passive/background UI.
+   */
+  async initialize(): Promise<boolean> {
+    const ok = await this.ensureApi();
+    if (!ok || !this.api) return false;
+
+    // Check whether Zotero is configured (optional, don't fail if method doesn't exist)
+    if (typeof this.api.isAuthenticated === 'function') {
+      const isAuth = await this.api.isAuthenticated();
+      console.log('Zotero configured:', isAuth);
+
+      if (!isAuth) {
+        // Previously prompted "Log in to Zotero" and ran a 'sci2code.login'
+        // command that doesn't exist anywhere in this extension — a guaranteed
+        // dead end. Zotero has no "login" concept here, just an API key; route
+        // to the real, working configure command instead.
+        const configure = await vscode.window.showInformationMessage(
+          'Zotero isn\'t configured yet. Configure it now to insert citations from your library.',
+          'Configure', 'Cancel'
+        );
+
+        if (configure === 'Configure') {
+          await vscode.commands.executeCommand('ontocode.configureZotero');
+          // Re-check — the configure command may have succeeded synchronously
+          // (it awaits the credential prompt before returning).
+          const nowAuth = await this.api.isAuthenticated();
+          if (!nowAuth) return false;
+        } else {
+          return false;
+        }
+      }
+    } else {
+      console.log('isAuthenticated method not available, skipping auth check');
+    }
+
+    return true;
+  }
+
+  /**
+   * Silent status read for passive UI (sidebar status row) — never prompts.
+   */
+  async getConnectionStatus(): Promise<'connected' | 'not-configured' | 'unavailable'> {
+    const ok = await this.ensureApi();
+    if (!ok || !this.api) return 'unavailable';
+
+    if (typeof this.api.isAuthenticated !== 'function') return 'unavailable';
+
+    try {
+      const isAuth = await this.api.isAuthenticated();
+      return isAuth ? 'connected' : 'not-configured';
     } catch (error) {
-      console.error('Failed to initialize Sci2Code:', error);
-      
-      vscode.window.showErrorMessage(
-        `Failed to initialize Sci2Code: ${error instanceof Error ? error.message : String(error)}`
-      );
-      
-      return false;
+      console.error('Failed to check Zotero connection status:', error);
+      return 'unavailable';
     }
   }
 
   async getZoteroLibrary(): Promise<any[]> {
-    if (!this.api) {
-      const initialized = await this.initialize();
-      if (!initialized || !this.api) {
-        return [];
-      }
+    // Always go through initialize() (not gated on `!this.api`) — it re-checks
+    // Zotero configuration every call even when the extension lookup itself is
+    // cached, so declining the configure prompt once doesn't silently suppress
+    // it for the rest of the session (see initialize()'s comment).
+    const initialized = await this.initialize();
+    if (!initialized || !this.api) {
+      return [];
     }
-    
+
     try {
       console.log('Fetching Zotero library...');
       const items = await this.api.getZoteroLibrary();
@@ -131,18 +180,15 @@ class Sci2CodeService {
     } catch (error) {
       console.error('Failed to get Zotero library:', error);
       vscode.window.showErrorMessage(
-        'Failed to load Zotero library. Please check your Sci2Code configuration.'
+        `Failed to load Zotero library: ${error instanceof Error ? error.message : String(error)}`
       );
       return [];
     }
   }
 
   async getCitationMetadata(key: string): Promise<CitationItem | null> {
-    if (!this.api) {
-      await this.initialize();
-    }
-
-    if (!this.api) {
+    const initialized = await this.initialize();
+    if (!initialized || !this.api) {
       return null;
     }
 
@@ -186,17 +232,14 @@ class Sci2CodeService {
     };
   }
 
-  async formatCitationForOntology(key: string, format: 'turtle' | 'rdfxml' = 'turtle'): Promise<string | null> {
-    if (!this.api) {
-      await this.initialize();
-    }
-
-    if (!this.api) {
+  async formatCitationForOntology(key: string, format: CitationFormat = 'turtle', overrideDoi?: string): Promise<string | null> {
+    const initialized = await this.initialize();
+    if (!initialized || !this.api) {
       return null;
     }
 
     try {
-      return await this.api.formatCitationForOntology(key, format);
+      return await this.api.formatCitationForOntology(key, format, overrideDoi);
     } catch (error) {
       console.error('Failed to format citation:', error);
       vscode.window.showErrorMessage(`Failed to format citation: ${error}`);
@@ -204,11 +247,16 @@ class Sci2CodeService {
     }
   }
 
-  formatManualCitation(item: CitationItem, format: 'turtle' | 'rdfxml' = 'turtle'): string {
+  formatManualCitation(item: CitationItem, format: CitationFormat = 'turtle'): string {
     const key = item.key.replace(/[^a-zA-Z0-9]/g, '');
     const authors = item.creators?.map(c => `${c.firstName} ${c.lastName}`).join(', ') || 'Unknown';
     const year = item.date ? (item.date.match(/\d{4}/)?.[0] || '') : '';
-    
+
+    if (format === 'jsonld') {
+      const node = buildZoteroCitationNode({ key, title: item.title, authors, year, doi: item.doi, url: item.url });
+      return JSON.stringify(node, null, 2);
+    }
+
     if (format === 'turtle') {
       let ttl = `@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n`;
       ttl += `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n`;
@@ -228,26 +276,20 @@ class Sci2CodeService {
       ttl += `    rdfs:comment "Manually added citation" .\n`;
       return ttl;
     } else {
-      // Generate complete RDF/XML document with proper namespace declarations
-      let xml = `<?xml version="1.0"?>\n`;
-      xml += `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n`;
-      xml += `         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n`;
-      xml += `         xmlns:owl="http://www.w3.org/2002/07/owl#"\n`;
-      xml += `         xmlns:dc="http://purl.org/dc/elements/1.1/"\n`;
-      xml += `         xmlns:foaf="http://xmlns.com/foaf/0.1/"\n`;
-      xml += `         xmlns:prov="http://www.w3.org/ns/prov#"\n`;
-      xml += `         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">\n\n`;
-      xml += `    <!-- Manual Citation: ${this.escapeXml(item.title)} -->\n`;
-      xml += `    <owl:NamedIndividual rdf:about="urn:citation:${key}">\n`;
-      xml += `        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
-      xml += `        <dc:title>${this.escapeXml(item.title)}</dc:title>\n`;
-      xml += `        <dc:creator>${this.escapeXml(authors)}</dc:creator>\n`;
-      if (year) xml += `        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
-      if (item.doi) xml += `        <dc:identifier>doi:${this.escapeXml(item.doi)}</dc:identifier>\n`;
-      if (item.url) xml += `        <foaf:homepage rdf:resource="${this.escapeXml(item.url)}"/>\n`;
-      xml += `        <rdfs:comment>Manually added citation</rdfs:comment>\n`;
-      xml += `    </owl:NamedIndividual>\n`;
-      xml += `</rdf:RDF>`;
+      // Bare fragment, not a standalone document — see formatCitationForOntology's
+      // rdfxml comment in extension.ts for why: this gets inserted directly into
+      // an already-open file's existing <rdf:RDF> root, so it must not carry its
+      // own <?xml?>/<rdf:RDF> wrapper.
+      let xml = `<!-- Manual Citation: ${this.escapeXml(item.title)} -->\n`;
+      xml += `<owl:NamedIndividual rdf:about="urn:citation:${key}">\n`;
+      xml += `    <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
+      xml += `    <dc:title>${this.escapeXml(item.title)}</dc:title>\n`;
+      xml += `    <dc:creator>${this.escapeXml(authors)}</dc:creator>\n`;
+      if (year) xml += `    <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
+      if (item.doi) xml += `    <dc:identifier>doi:${this.escapeXml(item.doi)}</dc:identifier>\n`;
+      if (item.url) xml += `    <foaf:homepage rdf:resource="${this.escapeXml(item.url)}"/>\n`;
+      xml += `    <rdfs:comment>Manually added citation</rdfs:comment>\n`;
+      xml += `</owl:NamedIndividual>`;
       return xml;
     }
   }

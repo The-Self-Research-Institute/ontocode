@@ -27,14 +27,12 @@
     "onCommand:ontocode.logout",
     "onCommand:ontocode.insertCitation",
     "onCommand:ontocode.showCollaborationStatus",
+    "onView:ontocode.sidebarView",
     "onLanguage:owl",
     "onUri"
   ],
   "main": "./dist/extension.js",
   "browser": "./dist/web/extension.js",
-  "extensionDependencies": [
-    "SelfResearchInstitute.sci2code"
-  ],
   "contributes": {
     "webviews": [
       {
@@ -43,7 +41,31 @@
         "when": "true"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ontocodeSidebar",
+          "title": "OntoCode",
+          "icon": "images/sidebar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "ontocodeSidebar": [
+        {
+          "id": "ontocode.sidebarView",
+          "name": "OntoCode",
+          "icon": "images/sidebar-icon.svg"
+        }
+      ]
+    },
     "commands": [
+      {
+        "command": "ontocode.refreshSidebar",
+        "title": "OntoCode: Refresh Sidebar",
+        "category": "OntoCode",
+        "icon": "$(refresh)"
+      },
       {
         "command": "ontocode.edit",
         "title": "Edit with OntoCode",
@@ -62,7 +84,8 @@
       {
         "command": "ontocode.insertCitation",
         "title": "Insert Citation",
-        "category": "OntoCode"
+        "category": "OntoCode",
+        "icon": "$(book)"
       },
       {
         "command": "ontocode.showCollaborationStatus",
@@ -104,12 +127,26 @@
       "editor/context": [
         {
           "command": "ontocode.insertCitation",
-          "when": "resourceExtname =~ /\\.(owl|ttl|rdf|n3)$/",
+          "when": "resourceExtname =~ /\\.(owl|ttl|rdf|n3|jsonld)$/",
           "group": "ontocode"
         },
         {
           "command": "ontocode.editLargeFile",
           "when": "resourceFilename =~ /\\.(owl|ttl|rdf)$/i",
+          "group": "navigation"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "ontocode.insertCitation",
+          "when": "resourceExtname =~ /\\.(owl|ttl|rdf|n3|jsonld)$/",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "ontocode.refreshSidebar",
+          "when": "view == ontocode.sidebarView",
           "group": "navigation"
         }
       ]
@@ -119,7 +156,7 @@
         "command": "ontocode.insertCitation",
         "key": "ctrl+shift+c",
         "mac": "cmd+shift+c",
-        "when": "editorTextFocus && resourceExtname =~ /\\.(owl|ttl|rdf|n3)$/"
+        "when": "editorTextFocus && resourceExtname =~ /\\.(owl|ttl|rdf|n3|jsonld)$/"
       }
     ],
     "languages": [
