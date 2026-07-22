@@ -227,12 +227,41 @@ class ZoteroApiService {
     }
 
     /**
-     * Show configuration instructions and prompt for credentials
+     * Entry point for "Configure Citation Library" — branches on whether a key
+     * is already saved so the same command also covers changing the key and
+     * disconnecting, instead of always showing a "not configured" message
+     * that's wrong (and offers nothing useful) once you're already connected.
      */
     async showConfigInstructions(): Promise<void> {
+        if (this.isConfigured()) {
+            const choice = await vscode.window.showInformationMessage(
+                'Citation Library is connected. What would you like to do?',
+                'Change API Key', 'Test Connection', 'Disconnect', 'Open Settings'
+            );
+
+            if (choice === 'Change API Key') {
+                await this.promptForCredentials();
+            } else if (choice === 'Test Connection') {
+                await this.testConnection();
+            } else if (choice === 'Disconnect') {
+                const confirm = await vscode.window.showWarningMessage(
+                    'Disconnect your citation library? You can reconnect anytime.',
+                    { modal: true },
+                    'Disconnect'
+                );
+                if (confirm === 'Disconnect') {
+                    await this.clearConfig();
+                    vscode.window.showInformationMessage('Citation Library disconnected.');
+                }
+            } else if (choice === 'Open Settings') {
+                await vscode.commands.executeCommand('workbench.action.openSettings', 'ontocode.zotero');
+            }
+            return;
+        }
+
         const configure = await vscode.window.showInformationMessage(
-            'Zotero is not configured. Would you like to configure it now?',
-            'Enter Credentials', 'Open Settings', 'Learn More', 'Use Mock Data'
+            'Citation Library is not configured. Would you like to configure it now?',
+            'Enter Credentials', 'Open Settings', 'Learn More'
         );
 
         if (configure === 'Enter Credentials') {
