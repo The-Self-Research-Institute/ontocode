@@ -3,11 +3,11 @@
  * Provides entity selector, filters, statistics, and detailed information
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Search, X, ChevronDown, ChevronRight,
   Square, Circle, Diamond, Hexagon,
-  Layers, GitBranch
+  Layers, GitBranch, ExternalLink
 } from 'lucide-react';
 import { OntologyNode as BaseOntologyNode, OntologyEdge } from '../types';
 import { ClassHierarchyPanel } from './ClassHierarchyPanel';
@@ -72,6 +72,14 @@ interface GraphViewSidebarProps {
   onClearFocus?: () => void;
   // Ontology header metadata (IRI, version, annotations) — optional, read-only display
   ontologyMetadata?: any;
+  // Inline hierarchy navigator — pre-rendered content shown above the Class Tree
+  // panel when a class is focused (see AdvancedGraphView's hierarchyNavigatorBody).
+  // Replaces always-popping-open the floating navigator dialog; that dialog is
+  // now opt-in via onPopOutHierarchyNavigator.
+  hierarchyNavigatorContent?: React.ReactNode;
+  hierarchyNavigatorLabel?: string;
+  onCloseHierarchyNavigator?: () => void;
+  onPopOutHierarchyNavigator?: () => void;
 }
 
 export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
@@ -107,9 +115,27 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   focusedNodeId,
   onFocusNode,
   onClearFocus,
-  ontologyMetadata
+  ontologyMetadata,
+  hierarchyNavigatorContent,
+  hierarchyNavigatorLabel,
+  onCloseHierarchyNavigator,
+  onPopOutHierarchyNavigator
 }) => {
   const [sidebarMode, setSidebarMode] = useState<'entities' | 'hierarchy'>('hierarchy');
+
+  // Auto-switch to the Hierarchy tab when a class is newly focused for the
+  // navigator — onNodeSelect (which drives hierarchyNavigatorContent) is also
+  // wired from the Entities-mode detail panel's "related class" links, so a
+  // user browsing Entities who clicks one would otherwise populate content
+  // they can't see without manually switching tabs.
+  const hadHierarchyContentRef = useRef(false);
+  useEffect(() => {
+    const hasContent = !!hierarchyNavigatorContent;
+    if (hasContent && !hadHierarchyContentRef.current) {
+      setSidebarMode('hierarchy');
+    }
+    hadHierarchyContentRef.current = hasContent;
+  }, [hierarchyNavigatorContent]);
   const [entityTab, setEntityTab] = useState<'classes' | 'objectProperties' | 'datatypeProperties' | 'individuals' | 'annotations' | 'datatypes'>('classes');
   const [searchTerm, setSearchTerm] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(340);
@@ -490,6 +516,81 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               readonly
             />
           </div>
+          {hierarchyNavigatorContent && (
+            <div
+              style={{
+                flexShrink: 0,
+                maxHeight: '45%',
+                overflow: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                borderTop: '1px solid var(--border, #e5e7eb)'
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  background: 'var(--surface-1, #f9fafb)',
+                  color: 'var(--text-secondary, #6b7280)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  flexShrink: 0
+                }}
+              >
+                <span
+                  style={{
+                    flex: 1,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title={hierarchyNavigatorLabel ? `Editing: ${hierarchyNavigatorLabel}` : 'Editing'}
+                >
+                  {hierarchyNavigatorLabel || '…'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onPopOutHierarchyNavigator?.()}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                    padding: '2px 4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    borderRadius: 4,
+                    opacity: 0.7
+                  }}
+                  title="Pop out as floating window"
+                >
+                  <ExternalLink size={12} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCloseHierarchyNavigator?.()}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                    padding: '2px 4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    borderRadius: 4,
+                    opacity: 0.7
+                  }}
+                  title="Close"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+              {hierarchyNavigatorContent}
+            </div>
+          )}
         </div>
       )}
 
