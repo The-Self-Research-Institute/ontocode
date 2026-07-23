@@ -2826,12 +2826,14 @@ export function useDashboardInit(state: DashboardState) {
     async (nodeId: string) => {
       if (!projectId) return [];
       try {
+        // apiClient.get(url, params, config) takes params flat as the 2nd argument —
+        // wrapping it in { params: {...} } here double-nests it, and axios serializes
+        // that as params[classIri]=...&params[direct]=... which Spring can't bind,
+        // so every expand click was silently 400ing.
         const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-subclasses`, {
-          params: {
-            classIri: nodeId,
-            direct: true,
-            reasonerType: selectedReasoner,
-          },
+          classIri: nodeId,
+          direct: true,
+          reasonerType: selectedReasoner,
         });
         const payload = response?.data || response;
         const items = payload?.inferredSubClasses || payload?.data?.inferredSubClasses || [];

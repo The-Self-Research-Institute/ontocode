@@ -46,6 +46,9 @@ public class ReasonerController {
 
     private static final Logger log = LoggerFactory.getLogger(ReasonerController.class);
 
+    // Wall-clock cap for the getAllInferredIndividuals() loop — see comment at its call site.
+    private static final long INFERRED_INDIVIDUALS_BUDGET_MS = 20_000;
+
     @Autowired
     private GridFsTemplate gridfs;
 
@@ -774,9 +777,10 @@ public class ReasonerController {
                 return ResponseEntity.ok(response);
             }
             OWLOntology ontology = loadOntology(projectId);
-            // HERMIT → OPENLLET (binary compat); ELK → OPENLLET (ELK has no property hierarchy support)
-            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") || reasonerType.equalsIgnoreCase("ELK")
-                    ? "OPENLLET" : reasonerType;
+            // ELK has no property hierarchy support — everything else (including HERMIT) is
+            // used as requested so this reuses whatever reasoner is already classified for
+            // this ontology instead of paying for a second, independent classification.
+            String effectiveType = reasonerType.equalsIgnoreCase("ELK") ? "OPENLLET" : reasonerType;
             ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
 
             log.info("========== Object Property Hierarchy Request ==========");
@@ -784,23 +788,41 @@ public class ReasonerController {
             log.info("Ontology loaded - Total axioms: {}", ontology.getAxiomCount());
             log.info("Object properties in signature: {}", ontology.getObjectPropertiesInSignature().size());
 
-            // Ensure classification is done before building property hierarchy
-            log.info("Ensuring classification for project {} with {} (Object Properties)", projectId, type);
-            reasonerService.classify(ontology, type);
-
-            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLObjectProperty topProperty = df.getOWLTopObjectProperty();
 
-            Set<String> visited = new HashSet<>();
-            Map<String, Object> root = null;
-            
-            // ELK does not support property hierarchy inference
-            // Catch UnsupportedOperationException and fall back to asserted properties
+            // Openllet's classify() runs full SAT-based classification, which can take many
+            // minutes on a huge ontology (e.g. FoodOn's 39k+ classes) — unlike class hierarchy,
+            // this endpoint had no timeout at all and could hang the request indefinitely.
+            // Bound it the same way, and fall back to asserted (non-inferred) properties on
+            // timeout — cheap since it's just reading the ontology signature.
+            log.info("Ensuring classification for project {} with {} (Object Properties)", projectId, type);
+            ExecutorService objPropExecutor = Executors.newSingleThreadExecutor();
+            Map<String, Object> root;
             try {
-                root = buildObjectPropertyNode(ontology, reasoner, topProperty, visited);
-            } catch (UnsupportedOperationException e) {
-                log.warn("Reasoner {} does not support object property hierarchy. Falling back to asserted properties.", type.getDisplayName());
+                ReasonerType finalType = type;
+                Future<Map<String, Object>> future = objPropExecutor.submit(() -> {
+                    reasonerService.classify(ontology, finalType);
+                    OWLReasoner reasoner = reasonerService.getReasoner(ontology, finalType);
+                    // ELK does not support property hierarchy inference
+                    // Catch UnsupportedOperationException and fall back to asserted properties
+                    try {
+                        return buildObjectPropertyNode(ontology, reasoner, topProperty, new HashSet<>());
+                    } catch (UnsupportedOperationException e) {
+                        log.warn("Reasoner {} does not support object property hierarchy. Falling back to asserted properties.", finalType.getDisplayName());
+                        return null;
+                    }
+                });
+                root = future.get(HIERARCHY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                objPropExecutor.shutdownNow();
+                log.warn("Object property hierarchy classification timed out after {}s for project {} — "
+                        + "falling back to asserted properties", HIERARCHY_TIMEOUT_SECONDS, projectId);
+                root = null;
+            } finally {
+                objPropExecutor.shutdown();
+            }
+            if (root == null) {
                 root = new HashMap<>();
                 root.put("id", topProperty.getIRI().toString());
                 root.put("label", "owl:topObjectProperty");
@@ -811,9 +833,9 @@ public class ReasonerController {
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> children = (List<Map<String, Object>>) root.get("children");
-            
-            log.info("Inferred object property hierarchy built for project: {}. Root node has {} children. Total visited: {}", 
-                projectId, children.size(), visited.size());
+
+            log.info("Inferred object property hierarchy built for project: {}. Root node has {} children.",
+                projectId, children.size());
             
             // If no inferred properties found, fall back to asserted properties from the ontology
             if (children.isEmpty()) {
@@ -875,23 +897,39 @@ public class ReasonerController {
             log.info("Project ID: {}", projectId);
             log.info("Ontology loaded - Total axioms: {}", ontology.getAxiomCount());
             log.info("Data properties in signature: {}", ontology.getDataPropertiesInSignature().size());
-            // Ensure classification is done before building property hierarchy
-            log.info("Ensuring classification for project {} with {} (Data Properties)", projectId, type);
-            reasonerService.classify(ontology, type);
 
-            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLDataProperty topProperty = df.getOWLTopDataProperty();
 
-            Set<String> visited = new HashSet<>();
-            Map<String, Object> root = null;
-            
-            // ELK does not support property hierarchy inference
-            // Catch UnsupportedOperationException and fall back to asserted properties
+            // Same unbounded-classification risk as object property hierarchy — bound it and
+            // fall back to asserted (non-inferred) properties on timeout.
+            log.info("Ensuring classification for project {} with {} (Data Properties)", projectId, type);
+            ExecutorService dataPropExecutor = Executors.newSingleThreadExecutor();
+            Map<String, Object> root;
             try {
-                root = buildDataPropertyNode(ontology, reasoner, topProperty, visited);
-            } catch (UnsupportedOperationException e) {
-                log.warn("Reasoner {} does not support data property hierarchy. Falling back to asserted properties.", type.getDisplayName());
+                ReasonerType finalType = type;
+                Future<Map<String, Object>> future = dataPropExecutor.submit(() -> {
+                    reasonerService.classify(ontology, finalType);
+                    OWLReasoner reasoner = reasonerService.getReasoner(ontology, finalType);
+                    // ELK does not support property hierarchy inference
+                    // Catch UnsupportedOperationException and fall back to asserted properties
+                    try {
+                        return buildDataPropertyNode(ontology, reasoner, topProperty, new HashSet<>());
+                    } catch (UnsupportedOperationException e) {
+                        log.warn("Reasoner {} does not support data property hierarchy. Falling back to asserted properties.", finalType.getDisplayName());
+                        return null;
+                    }
+                });
+                root = future.get(HIERARCHY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                dataPropExecutor.shutdownNow();
+                log.warn("Data property hierarchy classification timed out after {}s for project {} — "
+                        + "falling back to asserted properties", HIERARCHY_TIMEOUT_SECONDS, projectId);
+                root = null;
+            } finally {
+                dataPropExecutor.shutdown();
+            }
+            if (root == null) {
                 root = new HashMap<>();
                 root.put("id", topProperty.getIRI().toString());
                 root.put("label", "owl:topDataProperty");
@@ -902,9 +940,9 @@ public class ReasonerController {
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> children = (List<Map<String, Object>>) root.get("children");
-            
-            log.info("Inferred data property hierarchy built for project: {}. Root node has {} children. Total visited: {}", 
-                projectId, children.size(), visited.size());
+
+            log.info("Inferred data property hierarchy built for project: {}. Root node has {} children.",
+                projectId, children.size());
             
             // If no inferred properties found, fall back to asserted properties from the ontology
             if (children.isEmpty()) {
@@ -1098,23 +1136,38 @@ public class ReasonerController {
             OWLOntology ontology = loadOntology(projectId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
 
-            List<Map<String, Object>> individualsList = ontology.getIndividualsInSignature().stream()
-                    .filter(OWLNamedIndividual::isNamed)
-                    .map(ind -> {
-                        Set<OWLClass> types = reasonerService.getInferredTypes(ontology, ind, type);
-                        Map<String, Object> map = new HashMap<>();
-                        map.put("id", ind.getIRI().toString());
-                        map.put("label", getLabel(ind, ontology));
-                        map.put("type", "Individual");
-                        map.put("inferredTypes", types.stream()
-                                .map(cls -> Map.of("iri", cls.getIRI().toString(), "label", getLabel(cls, ontology)))
-                                .collect(Collectors.toList()));
-                        return map;
-                    })
-                    .collect(Collectors.toList());
+            // Each getInferredTypes() call costs O(classCount) against HermiT's
+            // InstanceManager — with hundreds of individuals over a large class
+            // hierarchy (e.g. FoodOn's 39k+ classes) that adds up to many minutes
+            // in aggregate even though no single call hangs. Cap the whole loop's
+            // wall-clock time and return whatever was computed so far.
+            long deadline = System.currentTimeMillis() + INFERRED_INDIVIDUALS_BUDGET_MS;
+            boolean truncated = false;
+            List<Map<String, Object>> individualsList = new ArrayList<>();
+            for (OWLNamedIndividual ind : ontology.getIndividualsInSignature()) {
+                if (!ind.isNamed()) continue;
+                if (System.currentTimeMillis() > deadline) {
+                    log.warn("Inferred-individuals computation exceeded {} ms budget with {} of {} individuals "
+                            + "processed for project {} — returning partial results",
+                        INFERRED_INDIVIDUALS_BUDGET_MS, individualsList.size(),
+                        ontology.getIndividualsInSignature().size(), projectId);
+                    truncated = true;
+                    break;
+                }
+                Set<OWLClass> types = reasonerService.getInferredTypes(ontology, ind, type);
+                Map<String, Object> map = new HashMap<>();
+                map.put("id", ind.getIRI().toString());
+                map.put("label", getLabel(ind, ontology));
+                map.put("type", "Individual");
+                map.put("inferredTypes", types.stream()
+                        .map(cls -> Map.of("iri", cls.getIRI().toString(), "label", getLabel(cls, ontology)))
+                        .collect(Collectors.toList()));
+                individualsList.add(map);
+            }
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
+                    "truncated", truncated,
                     "projectId", projectId,
                     "individuals", individualsList
             ));
