@@ -176,8 +176,13 @@ public class ReasonerController {
     }
 
     /**
-     * Submit a hierarchy job to the reasoner-worker and block until completed (max 60s).
+     * Submit a hierarchy job to the reasoner-worker and block until completed (max 25s).
      * Returns the job result on success, or null if the worker is unavailable.
+     *
+     * 25s (not 60s) deliberately leaves headroom under the AWS ALB's ~60s idle
+     * timeout: this wait plus the local fallback's own HIERARCHY_TIMEOUT_SECONDS
+     * must both fit before the ALB kills the connection, or the caller gets a
+     * 504 even though the backend itself never actually hung.
      */
     private Map<String, Object> submitHierarchyJobAndWait(String jobType, String projectId, String reasonerType) {
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
@@ -189,7 +194,7 @@ public class ReasonerController {
             return null;
         }
         String jobId = String.valueOf(submitted.get("jobId"));
-        long deadline = System.currentTimeMillis() + 60_000;
+        long deadline = System.currentTimeMillis() + 25_000;
         while (System.currentTimeMillis() < deadline) {
             try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
             Map<String, Object> job = reasonerWorkerClient.getJob(jobId);
@@ -203,7 +208,8 @@ public class ReasonerController {
                 return null;
             }
         }
-        log.warn("Worker {} job {} timed out after 60s for project {}", jobType, jobId, projectId);
+        log.warn("Worker {} job {} timed out after 25s for project {} — falling back to local reasoning; " +
+                "the worker job itself keeps running unattended (no cancel endpoint exists yet)", jobType, jobId, projectId);
         return null;
     }
 
