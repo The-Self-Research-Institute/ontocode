@@ -1538,6 +1538,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   // for such callbacks.
   const isProjectDraftEditorRoleRef = useRef(isProjectDraftEditorRole);
   useEffect(() => { isProjectDraftEditorRoleRef.current = isProjectDraftEditorRole; }, [isProjectDraftEditorRole]);
+  // Reasoner hierarchy jobs can poll for up to 10 minutes (see pollReasonerJob below) — if
+  // the user switches projects mid-poll, this lets that poll notice and discard its result
+  // instead of applying stale data to whatever project is now showing.
+  const currentProjectIdRef = useRef(projectId);
+  useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
   const isProjectViewerRoleRef = useRef(isProjectViewerRole);
   useEffect(() => { isProjectViewerRoleRef.current = isProjectViewerRole; }, [isProjectViewerRole]);
   const isViewOnlyMember =
@@ -2940,6 +2945,53 @@ const Dashboard: React.FC<DashboardProps> = ({
     return { ...node, id, label, children, hasChildren, isUnsatisfiable };
   }, []);
 
+  // Reasoner hierarchy requests can legitimately take minutes (HermiT/Pellet classification
+  // scales with ontology size and expressivity, not just triple count). The backend now
+  // returns {async:true, jobId} immediately instead of blocking, so this polls job status
+  // client-side — no single HTTP request stays open longer than one status check, which
+  // means it can never lose the race against the ALB's idle timeout the way the old
+  // blocking-wait approach could.
+  const pollReasonerJob = async (
+    targetProjectId: string,
+    jobId: string,
+    { intervalMs = 2500, maxWaitMs = 10 * 60 * 1000 }: { intervalMs?: number; maxWaitMs?: number } = {},
+  ): Promise<any> => {
+    const deadline = Date.now() + maxWaitMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      // User switched projects while this poll was in flight — discard rather than apply
+      // stale data to whatever project is showing now. Reuses the existing "timeout" path
+      // so every caller already handles this the same way it handles a real timeout.
+      if (currentProjectIdRef.current !== targetProjectId) {
+        return { timeout: true, stale: true };
+      }
+      try {
+        const res = await apiClient.get<any>(
+          `/api/ontology/${encodeProjectId(targetProjectId)}/reasoner/jobs/${jobId}`,
+        );
+        const job = res?.data || res;
+        if (job?.status === "COMPLETED") return job;
+        if (job?.status === "FAILED") {
+          return { success: false, error: job?.error || "Reasoning job failed" };
+        }
+        // PENDING/QUEUED/RUNNING — keep polling
+      } catch (error) {
+        console.error("[Dashboard] Failed to poll reasoner job:", error);
+        // Transient network hiccup — keep polling until the deadline rather than giving up.
+      }
+    }
+    return { timeout: true };
+  };
+
+  // Resolves a hierarchy fetch response into a final payload, transparently polling if the
+  // backend handed back an async job instead of an immediate result.
+  const resolveHierarchyPayload = async (targetProjectId: string, payload: any): Promise<any> => {
+    if (payload?.async && payload?.jobId) {
+      return pollReasonerJob(targetProjectId, payload.jobId);
+    }
+    return payload;
+  };
+
   const loadInferredHierarchy = useCallback(async () => {
     if (!projectId) return;
 
@@ -2956,7 +3008,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       const response = await apiClient.get<any>(
         `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=${reasoner}`,
       );
-      return response?.data || response;
+      const payload = response?.data || response;
+      return resolveHierarchyPayload(projectId, payload);
     };
 
     const applyPayload = (payload: any, timedOut = false) => {
@@ -3014,11 +3067,26 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
     try {
-      const res = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-object-property-hierarchy?reasonerType=${effectiveReasoner}`,
-      );
-      const payload = res?.data || res;
+      const fetchPropHierarchy = async (reasoner: string) => {
+        const r = await apiClient.get<any>(
+          `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-object-property-hierarchy?reasonerType=${reasoner}`,
+        );
+        return resolveHierarchyPayload(projectId, r?.data || r);
+      };
+
+      let payload = await fetchPropHierarchy(effectiveReasoner);
       if (payload?.tooLargeForReasoner) { setInferredObjectPropertyHierarchy([]); return; }
+      // Same auto-downgrade the class hierarchy loader does — a job that couldn't finish in
+      // time (or was discarded as stale) retries once with STRUCTURAL, which needs no real
+      // reasoning and is always fast, instead of just giving up empty.
+      if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
+        payload = await fetchPropHierarchy('STRUCTURAL');
+      }
+      if (payload?.timeout || (payload?.success === false)) {
+        console.warn("[Dashboard] Object property hierarchy job did not complete:", payload);
+        setInferredObjectPropertyHierarchy([]);
+        return;
+      }
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
@@ -3033,11 +3101,23 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
     try {
-      const res = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-data-property-hierarchy?reasonerType=${effectiveReasoner}`,
-      );
-      const payload = res?.data || res;
+      const fetchPropHierarchy = async (reasoner: string) => {
+        const r = await apiClient.get<any>(
+          `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-data-property-hierarchy?reasonerType=${reasoner}`,
+        );
+        return resolveHierarchyPayload(projectId, r?.data || r);
+      };
+
+      let payload = await fetchPropHierarchy(effectiveReasoner);
       if (payload?.tooLargeForReasoner) { setInferredDataPropertyHierarchy([]); return; }
+      if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
+        payload = await fetchPropHierarchy('STRUCTURAL');
+      }
+      if (payload?.timeout || (payload?.success === false)) {
+        console.warn("[Dashboard] Data property hierarchy job did not complete:", payload);
+        setInferredDataPropertyHierarchy([]);
+        return;
+      }
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {

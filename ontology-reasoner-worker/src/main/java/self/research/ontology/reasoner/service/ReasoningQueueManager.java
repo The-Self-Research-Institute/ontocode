@@ -78,20 +78,33 @@ public class ReasoningQueueManager {
     }
 
     public synchronized ReasoningJob dequeue() {
-        ReasoningJob next = queue.peekFirst();
-        if (next == null || !concurrencyPolicy.canStartAnother(activeJobs.values(), next)) {
+        // Scan for the first job whose LANE has room, rather than only ever looking at the
+        // front of the queue. Otherwise a heavy job stuck at the front (its lane full) would
+        // block a cheap, fast job queued right behind it even though the fast lane is free —
+        // exactly the head-of-line blocking that let one heavy request starve everyone else.
+        ReasoningJob candidate = findFirstAdmissible();
+        if (candidate == null) {
             return null;
         }
 
-        ReasoningJob job = queue.removeFirst();
-        job.setStatus(ReasoningJob.Status.PROCESSING);
-        job.setStartedAt(Instant.now());
-        job.setQueuePosition(0);
-        activeJobs.put(job.getJobId(), job);
+        queue.remove(candidate);
+        candidate.setStatus(ReasoningJob.Status.PROCESSING);
+        candidate.setStartedAt(Instant.now());
+        candidate.setQueuePosition(0);
+        activeJobs.put(candidate.getJobId(), candidate);
         updateQueuePositions();
-        notifyJob(job);
+        notifyJob(candidate);
         touchActivity();
-        return job;
+        return candidate;
+    }
+
+    private ReasoningJob findFirstAdmissible() {
+        for (ReasoningJob job : queue) {
+            if (concurrencyPolicy.canStartAnother(activeJobs.values(), job)) {
+                return job;
+            }
+        }
+        return null;
     }
 
     public synchronized void markCompleted(ReasoningJob job, Map<String, Object> result, long durationMs) {
@@ -162,8 +175,7 @@ public class ReasoningQueueManager {
     }
 
     public synchronized boolean canProcess() {
-        ReasoningJob next = queue.peekFirst();
-        return next != null && concurrencyPolicy.canStartAnother(activeJobs.values(), next);
+        return findFirstAdmissible() != null;
     }
 
     public synchronized boolean hasQueuedJobs() {
