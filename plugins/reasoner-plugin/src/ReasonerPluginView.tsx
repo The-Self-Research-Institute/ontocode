@@ -71,6 +71,7 @@ interface ReasonerPluginProps {
   inferredClassHierarchy?: any[];
   inferredObjectPropertyHierarchy?: any[];
   inferredDataPropertyHierarchy?: any[];
+  inferredAxioms?: any[];
   onStartReasoner?: () => Promise<void>;
   onStopReasoner?: () => void;
   onSelectReasoner?: (reasoner: string) => void;
@@ -241,6 +242,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   inferredClassHierarchy: dashboardInferredHierarchy,
   inferredObjectPropertyHierarchy: dashboardInferredObjectPropertyHierarchy,
   inferredDataPropertyHierarchy: dashboardInferredDataPropertyHierarchy,
+  inferredAxioms: dashboardInferredAxioms,
   onStartReasoner: dashboardStartReasoner,
   onStopReasoner: dashboardStopReasoner,
   onSelectReasoner: dashboardSelectReasoner,
@@ -368,11 +370,16 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       const response = await authFetch(
         `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/inferred-axioms?reasonerType=${reasonerType}`,
       );
-      if (!response.ok) return;
+      if (!response.ok) {
+        console.warn(`[ReasonerPluginView] inferred-axioms request failed: ${response.status} ${response.statusText}`);
+        return;
+      }
       const data = await response.json();
       if (data.axioms && Array.isArray(data.axioms)) {
         setInferredAxioms(data.axioms);
         setInferredAxiomsTotal(data.totalInferredAxioms || data.axioms.length);
+      } else {
+        console.warn('[ReasonerPluginView] inferred-axioms response missing axioms array:', data);
       }
     } catch (err) {
       console.warn('[ReasonerPluginView] Failed to fetch inferred axioms:', err);
@@ -477,8 +484,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         setEquivalentClasses(result.equivalentClasses || []);
         setUnsatisfiableClasses(result.unsatisfiableClasses || []);
         
-        // Generate explanations for classes
-        generateExplanations(result);
+        // Generate explanations for classes. Guarded: a throw here (e.g. an
+        // unexpected field shape from the async classify/status payload) must
+        // not prevent the inferred-axioms fetch below from running.
+        try {
+          generateExplanations(result);
+        } catch (explainErr) {
+          console.error('[ReasonerPluginView] generateExplanations failed:', explainErr);
+        }
         await fetchInferredAxioms(reasonerType);
       } else if (task === 'realization') {
         // Set consistency from realization result
@@ -723,6 +736,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       : (reasonerResults?.objectPropertyHierarchy || reasonerResults?.objectPropertyHierarchyTree || reasonerResults?.objectProperties || objectPropertyHierarchy || []);
     return ensureTree(source);
   }, [dashboardInferredObjectPropertyHierarchy, reasonerResults, objectPropertyHierarchy]);
+
+  // Dashboard's own startReasoner() flow fetches inferred axioms itself (Start button
+  // always prefers dashboardStartReasoner when provided, so this plugin's own
+  // fetchInferredAxioms below never runs in that mode) — prefer that result when present.
+  const inferredAxiomsToRender = dashboardInferredAxioms && dashboardInferredAxioms.length > 0
+    ? dashboardInferredAxioms
+    : inferredAxioms;
 
   const dataPropertyHierarchyToRender = useMemo(() => {
     const source = dashboardInferredDataPropertyHierarchy && dashboardInferredDataPropertyHierarchy.length > 0
@@ -1519,7 +1539,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 )}
 
                 {activeTab === 'inferredAxioms' && (
-                  inferredAxioms.length > 0 ? (
+                  inferredAxiomsToRender.length > 0 ? (
                     <div className="space-y-3 text-sm">
                       <div className="flex items-center gap-2">
                         <input
@@ -1532,13 +1552,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                           }`}
                         />
                         <span className={`text-xs whitespace-nowrap ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                          {inferredAxiomsTotal > inferredAxioms.length
-                            ? `Showing ${inferredAxioms.length} of ${inferredAxiomsTotal}`
-                            : `${inferredAxioms.length} axioms`}
+                          {inferredAxiomsTotal > inferredAxiomsToRender.length
+                            ? `Showing ${inferredAxiomsToRender.length} of ${inferredAxiomsTotal}`
+                            : `${inferredAxiomsToRender.length} axioms`}
                         </span>
                       </div>
                       <div className="space-y-1">
-                        {inferredAxioms
+                        {inferredAxiomsToRender
                           .filter((ax) => {
                             const q = inferredAxiomsFilter.trim().toLowerCase();
                             if (!q) return true;

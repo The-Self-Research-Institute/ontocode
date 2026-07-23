@@ -2453,6 +2453,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isReasonerRunning, setIsReasonerRunning] = useState(false);
   const [isReasonerSynced, setIsReasonerSynced] = useState(false);
   const [reasonerResults, setReasonerResults] = useState<any>(null);
+  const [inferredAxioms, setInferredAxioms] = useState<any[]>([]);
   const [isReasonerLoading, setIsReasonerLoading] = useState(false);
   const [isConsistencyLoading, setIsConsistencyLoading] = useState(false);
   const [consistencyResult, setConsistencyResult] = useState<any | null>(null);
@@ -3169,6 +3170,21 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.warn("[Dashboard] Realization step failed (non-fatal):", realizeError);
       }
 
+      // Fetch inferred axioms for the Reasoner tab's "Inferred Axioms" view — this
+      // was previously never called from this flow, so that tab stayed permanently
+      // empty regardless of how many times classification succeeded.
+      try {
+        const axiomsResponse = await apiClient.get<any>(
+          `/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/inferred-axioms`,
+          { reasonerType },
+        );
+        const axiomsPayload = axiomsResponse?.data || axiomsResponse;
+        setInferredAxioms(Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : []);
+      } catch (axiomsError) {
+        console.warn("[Dashboard] Inferred axioms fetch failed (non-fatal):", axiomsError);
+        setInferredAxioms([]);
+      }
+
       // After successful classification, load full recursive hierarchies from the main API
       // This ensures we have the full depth across the full hierarchy, not just the bundle's view
       console.log("[Dashboard] Reasoner completed, loading full recursive hierarchies...");
@@ -3197,11 +3213,21 @@ const Dashboard: React.FC<DashboardProps> = ({
         `${selectedReasoner} reasoner completed successfully. View inferred hierarchy in Entities > Classes tab.`,
       );
     } catch (error: any) {
-      console.error("[Dashboard] Reasoner error:", error);
-      notificationService.error(
-        "Classification Failed",
-        error?.response?.data?.error || error?.message || "Classification failed",
-      );
+      // Log the full backend payload (error, errorType, technicalDetail, suggestion)
+      // so it's always in the console even when the notification only has room for
+      // a short message — this is what TSRI-196 asked for: never just "Not Found"
+      // with no way to tell what actually failed.
+      const backendData = error?.response?.data;
+      console.error("[Dashboard] Reasoner error:", {
+        status: error?.response?.status,
+        url: error?.config?.url || error?.request?.responseURL,
+        ...backendData,
+        rawMessage: error?.message,
+      });
+      const friendlyMessage =
+        backendData?.error || error?.message || "Classification failed for an unknown reason.";
+      const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
+      notificationService.error("Classification Failed", `${friendlyMessage}${suggestion}`);
       setIsReasonerRunning(false);
     } finally {
       setIsReasonerLoading(false);
@@ -3304,9 +3330,17 @@ const Dashboard: React.FC<DashboardProps> = ({
         notificationService.success("Consistency Checked", `${selectedReasoner} reports the ontology is consistent`);
       }
     } catch (error: any) {
-      console.error("[Dashboard] Consistency check failed:", error);
-      setConsistencyResult({ error: error?.message || "Consistency check failed" });
-      notificationService.error("Consistency Check Failed", error?.message || "Unable to check ontology consistency");
+      const backendData = error?.response?.data;
+      console.error("[Dashboard] Consistency check failed:", {
+        status: error?.response?.status,
+        ...backendData,
+        rawMessage: error?.message,
+      });
+      const friendlyMessage =
+        backendData?.error || error?.message || "Consistency check failed for an unknown reason.";
+      const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
+      setConsistencyResult({ error: friendlyMessage });
+      notificationService.error("Consistency Check Failed", `${friendlyMessage}${suggestion}`);
     } finally {
       setIsConsistencyLoading(false);
     }
@@ -3329,14 +3363,22 @@ const Dashboard: React.FC<DashboardProps> = ({
       setExplanationState({ open: true, loading: false, data, error: null });
       notificationService.info("Explanation Ready", "Review the inconsistency report.");
     } catch (error: any) {
-      console.error("[Dashboard] Explain inconsistency failed:", error);
+      const backendData = error?.response?.data;
+      console.error("[Dashboard] Explain inconsistency failed:", {
+        status: error?.response?.status,
+        ...backendData,
+        rawMessage: error?.message,
+      });
+      const friendlyMessage =
+        backendData?.error || error?.message || "Failed to explain inconsistency for an unknown reason.";
+      const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
       setExplanationState({
         open: true,
         loading: false,
         data: null,
-        error: error?.message || "Failed to explain inconsistency",
+        error: friendlyMessage,
       });
-      notificationService.error("Explain Inconsistency Failed", error?.message || "Could not compute explanation");
+      notificationService.error("Explain Inconsistency Failed", `${friendlyMessage}${suggestion}`);
     }
   }, [projectId, selectedReasoner]);
 
@@ -7283,12 +7325,14 @@ const Dashboard: React.FC<DashboardProps> = ({
     async (nodeId: string) => {
       if (!projectId) return [];
       try {
+        // apiClient.get(url, params, config) takes params flat as the 2nd argument —
+        // wrapping it in { params: {...} } here double-nests it, and axios serializes
+        // that as params[classIri]=...&params[direct]=... which Spring can't bind,
+        // so every expand click was silently 400ing.
         const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-subclasses`, {
-          params: {
-            classIri: nodeId,
-            direct: true,
-            reasonerType: selectedReasoner,
-          },
+          classIri: nodeId,
+          direct: true,
+          reasonerType: selectedReasoner,
         });
         const payload = response?.data || response;
         const items = payload?.inferredSubClasses || payload?.data?.inferredSubClasses || [];
@@ -14915,6 +14959,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   inferredClassHierarchy={inferredClassHierarchy}
                   inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
                   inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
+                  inferredAxioms={inferredAxioms}
                   onStartReasoner={startReasoner}
                   onStopReasoner={stopReasoner}
                   onSelectReasoner={handleSelectReasoner}

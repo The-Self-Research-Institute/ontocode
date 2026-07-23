@@ -14,7 +14,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Service for ontology reasoning operations.
@@ -37,7 +41,19 @@ public class ReasonerService {
             }
         })
         .build();
-    
+
+    // HermiT's InstanceManager.getTypes() does O(n) LinkedList scans internally,
+    // which blows up to O(n^2) against the class count on large ontologies (e.g.
+    // 39k+ classes) and can run for hours on a single individual. That work isn't
+    // cancellable once started, so we fire it on a daemon thread and abandon it
+    // on timeout rather than block the caller indefinitely.
+    private static final long PER_INDIVIDUAL_TYPE_TIMEOUT_MS = 5_000;
+    private final ExecutorService inferredTypesExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "reasoner-inferred-types-worker");
+        t.setDaemon(true);
+        return t;
+    });
+
     /**
      * Create or get cached reasoner for an ontology
      */
@@ -281,10 +297,22 @@ public class ReasonerService {
      */
     public Set<OWLClass> getInferredTypes(OWLOntology ontology, OWLNamedIndividual individual, ReasonerType type) {
         OWLReasoner reasoner = getReasoner(ontology, type);
-        
+
+        CompletableFuture<NodeSet<OWLClass>> future = CompletableFuture.supplyAsync(
+            () -> reasoner.getTypes(individual, true), inferredTypesExecutor);
         try {
-            NodeSet<OWLClass> types = reasoner.getTypes(individual, false);
+            NodeSet<OWLClass> types = future.get(PER_INDIVIDUAL_TYPE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             return types.getFlattened();
+        } catch (TimeoutException te) {
+            log.warn("Timed out computing inferred types for individual {} ({} classes in signature)",
+                individual.getIRI(), ontology.getClassesInSignature().size());
+            // Protege's pattern (OWLReasonerManagerImpl#killCurrentClassification + its
+            // ReasonerInterruptedException handler): interrupt() so HermiT actually stops
+            // instead of burning CPU in the background, then treat the reasoner as unusable
+            // — dispose it once the abandoned call unwinds, rather than reusing it from cache.
+            reasoner.interrupt();
+            future.whenComplete((result, ex) -> disposeReasoner(ontology, type));
+            return Collections.emptySet();
         } catch (Exception e) {
             log.error("Error getting inferred types", e);
             return Collections.emptySet();

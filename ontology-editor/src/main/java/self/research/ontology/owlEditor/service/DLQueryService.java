@@ -29,6 +29,11 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 /**
@@ -39,6 +44,19 @@ import java.util.stream.Collectors;
 public class DLQueryService {
 
     private static final Logger log = LoggerFactory.getLogger(DLQueryService.class);
+
+    // reasoner.getInstances() walks HermiT's InstanceManager the same way realization
+    // does — O(n) LinkedList scans against the class count internally — so on a large
+    // ontology (e.g. FoodOn's 39k+ classes) it can hang for many minutes even though
+    // "instances" is one of the two query types checked by default in the UI. Bound it
+    // so a DL Query never hangs the request; a small/simple ontology (the common case)
+    // finishes well within this budget.
+    private static final long GET_INSTANCES_TIMEOUT_MS = 10_000;
+    private final ExecutorService dlQueryExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "dl-query-get-instances-worker");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final GridFsTemplate gridfs;
     private final SparqlDatasetService datasetService;
@@ -274,7 +292,20 @@ public class DLQueryService {
 
     private List<Map<String, Object>> getInstances(OWLReasoner reasoner,
             OWLClassExpression expr, OWLOntology ontology, boolean direct) {
-        return reasoner.getInstances(expr, direct).getFlattened().stream()
+        CompletableFuture<Set<OWLNamedIndividual>> future = CompletableFuture.supplyAsync(
+                () -> reasoner.getInstances(expr, direct).getFlattened(), dlQueryExecutor);
+        Set<OWLNamedIndividual> individuals;
+        try {
+            individuals = future.get(GET_INSTANCES_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            log.warn("Timed out computing {} for '{}' ({} classes in signature) — returning empty result",
+                    direct ? "direct instances" : "instances", expr, ontology.getClassesInSignature().size());
+            return Collections.emptyList();
+        } catch (Exception e) {
+            log.error("Error computing instances for {}", expr, e);
+            return Collections.emptyList();
+        }
+        return individuals.stream()
                 .map(ind -> createResultItem("individual", ind.getIRI().toString(), getLabel(ind, ontology)))
                 .collect(Collectors.toList());
     }

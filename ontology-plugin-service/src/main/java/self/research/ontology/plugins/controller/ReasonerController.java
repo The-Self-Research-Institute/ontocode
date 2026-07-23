@@ -205,19 +205,84 @@ public class ReasonerController {
     private ResponseEntity<Map<String, Object>> reasoningFailure(Exception e, String projectId, String action) {
         log.error("Error {} for project {}", action, projectId, e);
         String message = e.getMessage() != null ? e.getMessage() : e.toString();
+        // technicalDetail always carries the real exception class + message + first
+        // in-app stack frame, independent of how "friendly" the top-level error text
+        // is — so the desktop UI can show a "Details" toggle instead of a dead end.
+        String technicalDetail = buildTechnicalDetail(e);
+
         if (e instanceof OntologyNotFoundException) {
             return ResponseEntity.status(404).body(Map.of(
                 "success", false,
                 "error", message,
                 "errorType", "ONTOLOGY_NOT_FOUND",
                 "projectId", projectId,
+                "technicalDetail", technicalDetail,
                 "suggestion", "Please upload an ontology file for this project. Use /api/reasoner/diagnose/" + projectId + " to investigate."
+            ));
+        }
+        if (e instanceof IllegalArgumentException && message != null && message.contains("No enum constant")) {
+            return ResponseEntity.status(400).body(Map.of(
+                "success", false,
+                "error", "Unknown reasoner type in request: " + message,
+                "errorType", "INVALID_REASONER_TYPE",
+                "projectId", projectId,
+                "technicalDetail", technicalDetail,
+                "suggestion", "Select a supported reasoner (HermiT, Openllet/Pellet, ELK, FaCT++, or Structural) and try again."
+            ));
+        }
+        if (e instanceof ClassNotFoundException
+                || e.getCause() instanceof NoClassDefFoundError || e.getCause() instanceof UnsatisfiedLinkError) {
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "error", "A required reasoner component is missing from this installation: " + message,
+                "errorType", "REASONER_DEPENDENCY_MISSING",
+                "projectId", projectId,
+                "technicalDetail", technicalDetail,
+                "suggestion", "This usually means the app was packaged without a required reasoner library. "
+                        + "Try reinstalling the latest OntoCode Desktop build, or switch to a different reasoner "
+                        + "(e.g. Structural) as a workaround."
+            ));
+        }
+        if (e.getClass().getSimpleName().contains("InconsistentOntology")) {
+            return ResponseEntity.status(200).body(Map.of(
+                "success", false,
+                "error", "The ontology is inconsistent, so " + action + " cannot complete.",
+                "errorType", "ONTOLOGY_INCONSISTENT",
+                "projectId", projectId,
+                "technicalDetail", technicalDetail,
+                "suggestion", "Use 'Explain Inconsistency' to find the conflicting axioms, fix them, then retry."
             ));
         }
         return ResponseEntity.status(500).body(Map.of(
             "success", false,
-            "error", message
+            "error", "Unexpected error while " + action + ": " + message,
+            "errorType", "INTERNAL_ERROR",
+            "projectId", projectId,
+            "technicalDetail", technicalDetail
         ));
+    }
+
+    /** Exception class + message + first frame from our own code, for a "Details" panel — not for the headline message. */
+    private String buildTechnicalDetail(Throwable e) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(e.getClass().getName());
+        if (e.getMessage() != null) {
+            sb.append(": ").append(e.getMessage());
+        }
+        for (StackTraceElement frame : e.getStackTrace()) {
+            if (frame.getClassName().startsWith("self.research.ontology")) {
+                sb.append(" (at ").append(frame.getClassName()).append('.').append(frame.getMethodName())
+                        .append(':').append(frame.getLineNumber()).append(')');
+                break;
+            }
+        }
+        if (e.getCause() != null && e.getCause() != e) {
+            sb.append(" — caused by ").append(e.getCause().getClass().getName());
+            if (e.getCause().getMessage() != null) {
+                sb.append(": ").append(e.getCause().getMessage());
+            }
+        }
+        return sb.toString();
     }
 
     private OWLOntology tryLoadOntologyForId(String lookupId) throws Exception {

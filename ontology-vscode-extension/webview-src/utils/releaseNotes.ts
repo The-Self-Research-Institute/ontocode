@@ -23,6 +23,15 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.1.0-beta.15",
+    date: "July 23, 2026",
+    title: "Reasoner Reliability & Clearer Error Messages",
+    highlights: [
+      "TSRI-196: Reasoner — When classification fails, the app now shows a specific, useful error message and a suggested next step (e.g. an ontology-specific problem, a missing component, or an invalid setting) instead of a generic \"Not Found\" message with no explanation.",
+    ],
+    videoUrl: "",
+  },
+  {
     version: "1.1.0-beta.14",
     date: "July 13, 2026",
     title: "Save Reliability · Graph View Overhaul",

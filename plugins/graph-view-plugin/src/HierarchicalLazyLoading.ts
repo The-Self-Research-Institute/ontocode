@@ -371,12 +371,34 @@ export const expandAll = (
   };
 };
 
-/** Ontologies at or below this size open fully expanded (OntoCode default for teaching files). */
-const SMALL_ONTOLOGY_NODE_CAP = 400;
+/**
+ * Ontologies at or below this size open fully expanded (OntoCode default for teaching files).
+ * Kept low (not the ontology-size definition of "small") because full-expand renders every
+ * class/property/individual as VOWL circles on a fixed-size canvas — past a few dozen nodes
+ * that's a dense, illegible "hairball" rather than a readable teaching view. Above this cap,
+ * initialGraphVisibility() shows roots + one level instead, same as the "large ontology" path.
+ */
+const SMALL_ONTOLOGY_NODE_CAP = 40;
 
 /**
- * Initial visibility: class hierarchy roots + one level of children (OntoCode).
- * Avoids rendering the full ontology (individuals, properties, deep branches) on first paint.
+ * Target node count for initialGraphVisibility's first paint. Chosen to sit
+ * comfortably under SMALL_ONTOLOGY_NODE_CAP so the curated view is visibly
+ * lighter than "everything", while still being enough to look populated.
+ */
+const INITIAL_VISIBILITY_NODE_BUDGET = 35;
+
+/**
+ * Initial visibility for ontologies above SMALL_ONTOLOGY_NODE_CAP: breadth-first
+ * expansion from the class hierarchy roots until INITIAL_VISIBILITY_NODE_BUDGET
+ * is reached, instead of a fixed "one level" depth.
+ *
+ * A fixed one-level expansion assumes a bushy hierarchy (several roots, each
+ * with several children) — for a narrow one (a single root/owl:Thing with one
+ * direct child before it branches, common in real ontologies built around one
+ * top concept) it revealed almost nothing (verified against a 82-node test
+ * ontology: 1 root -> 1 child -> only 2 nodes visible). BFS-to-budget instead
+ * keeps expanding deeper for narrow hierarchies and stays shallow for bushy
+ * ones, landing near the same visible node count either way.
  */
 export const initialGraphVisibility = (
   nodes: OntologyNode[],
@@ -391,19 +413,28 @@ export const initialGraphVisibility = (
   const visible = new Set<string>();
   const expanded = new Set<string>();
 
-  const expandOneLevel = (nodeId: string) => {
-    visible.add(nodeId);
-    expanded.add(nodeId);
-    getChildren(nodeId, edges, nodes).forEach(childId => visible.add(childId));
-  };
+  // owl:Thing first (if present) so it — not an unrelated orphan root — gets
+  // priority for the budget when there isn't room to expand everything.
+  const orderedRoots = [
+    ...(classNodes.some(n => n.id === owlThingIri) ? [owlThingIri] : []),
+    ...roots.filter(r => r !== owlThingIri)
+  ];
 
-  if (classNodes.some(n => n.id === owlThingIri)) {
-    expandOneLevel(owlThingIri);
-  }
+  let frontier = orderedRoots.slice();
+  frontier.forEach(id => visible.add(id));
 
-  for (const rootId of roots) {
-    if (rootId === owlThingIri) continue;
-    expandOneLevel(rootId);
+  while (frontier.length > 0 && visible.size < INITIAL_VISIBILITY_NODE_BUDGET) {
+    const nextFrontier: string[] = [];
+    for (const nodeId of frontier) {
+      if (visible.size >= INITIAL_VISIBILITY_NODE_BUDGET) break;
+      expanded.add(nodeId);
+      for (const childId of getChildren(nodeId, edges, nodes)) {
+        if (visible.has(childId) || visible.size >= INITIAL_VISIBILITY_NODE_BUDGET) continue;
+        visible.add(childId);
+        nextFrontier.push(childId);
+      }
+    }
+    frontier = nextFrontier;
   }
 
   if (visible.size === 0 && classNodes.length > 0) {
