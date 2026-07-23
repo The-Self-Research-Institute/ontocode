@@ -18,6 +18,7 @@ import self.research.ontology.owlEditor.model.collaboration.QueueStatusMessage;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.lang.Nullable;
 
 import org.eclipse.rdf4j.query.BindingSet;
@@ -52,6 +53,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -73,8 +75,12 @@ public class ProjectImportService {
     // Prevent concurrent imports for the same project (which cause overlapping progress threads and GraphDB clears)
     private final Map<String, AtomicBoolean> importInProgress = new ConcurrentHashMap<>();
     private final Set<String> importReservations = ConcurrentHashMap.newKeySet();
+    // Lets the stuck-import watchdog actually interrupt the running task, not just flip a
+    // bookkeeping flag — without this, a genuinely stuck import kept its thread and heap
+    // allocated indefinitely even after being marked FAILED and released from the queue.
+    private final Map<String, Future<?>> activeImportFutures = new ConcurrentHashMap<>();
 
-    private final Executor owlParsingExecutor;
+    private final AsyncTaskExecutor owlParsingExecutor;
     private final Executor metadataExecutor;
     private final SparqlDatasetService datasetService;
     private final OntologyIndexService indexService;
@@ -129,7 +135,7 @@ public class ProjectImportService {
                 return t;
             });
 
-    public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
+    public ProjectImportService(@Qualifier("owlParsingExecutor") AsyncTaskExecutor owlParsingExecutor,
                                 @Qualifier("metadataExecutor") Executor metadataExecutor,
                                 SparqlDatasetService datasetService,
                                 OntologyIndexService indexService,
@@ -173,6 +179,18 @@ public class ProjectImportService {
 
                 for (ImportQueueItem item : expired) {
                     String projectId = item.getProjectId();
+
+                    // Actually stop the stuck task instead of just marking it failed — best
+                    // effort (works for blocked I/O like Fuseki/GridFS calls, which is the
+                    // common real stuck case per isRetryableError()'s connection-error list;
+                    // a tight CPU loop with no interruption checks won't stop either way, but
+                    // this is strictly better than never even trying).
+                    Future<?> stuckFuture = activeImportFutures.remove(projectId);
+                    if (stuckFuture != null && !stuckFuture.isDone()) {
+                        boolean cancelled = stuckFuture.cancel(true);
+                        log.warn("[Import] Interrupted stuck import task for {} (cancelled={})", projectId, cancelled);
+                    }
+
                     String filename = metadataService.readStatus(projectId)
                             .map(ProjectStatus::filename)
                             .filter(f -> f != null && !f.isBlank())
@@ -341,17 +359,21 @@ public class ProjectImportService {
             return;
         }
 
-        owlParsingExecutor.execute(() -> {
-            ImportQueueItem item = queueManager.dequeue();
-            if (item == null) {
-                QueueStatusMessage.QueueStats afterDequeueStats = queueManager.getQueueStats();
-                log.debug("[Import] Dequeue returned null (active={}, queued={}, activeProjectIds={})",
-                        afterDequeueStats.getActiveImports(),
-                        afterDequeueStats.getQueuedImports(),
-                        afterDequeueStats.getActiveProjectIds());
-                return; // No items in queue
-            }
+        // Dequeue synchronously on the calling thread (fast, non-blocking, already
+        // synchronized inside queueManager) so the Future returned by submit() below can be
+        // associated with the correct projectId with no race — the watchdog needs that
+        // association to actually cancel a stuck task, not just mark it failed.
+        ImportQueueItem item = queueManager.dequeue();
+        if (item == null) {
+            QueueStatusMessage.QueueStats afterDequeueStats = queueManager.getQueueStats();
+            log.debug("[Import] Dequeue returned null (active={}, queued={}, activeProjectIds={})",
+                    afterDequeueStats.getActiveImports(),
+                    afterDequeueStats.getQueuedImports(),
+                    afterDequeueStats.getActiveProjectIds());
+            return; // No items in queue
+        }
 
+        Future<?> future = owlParsingExecutor.submit(() -> {
             long runId = IMPORT_RUN_SEQUENCE.getAndIncrement();
             long startTime = System.currentTimeMillis();
             log.info("[Import {}|run:{}] Queue worker picked item on thread {}",
@@ -376,6 +398,7 @@ public class ProjectImportService {
                         t.getClass().getSimpleName() + " during OWL parsing — file may be too large or deeply nested",
                         false);
             } finally {
+                activeImportFutures.remove(item.getProjectId());
                 long duration = System.currentTimeMillis() - startTime;
                 log.info("[Import {}|run:{}] Queue worker finished in {} ms. Triggering next dequeue.",
                         item.getProjectId(), runId, duration);
@@ -383,6 +406,7 @@ public class ProjectImportService {
                 processNextInQueue();
             }
         });
+        activeImportFutures.put(item.getProjectId(), future);
     }
 
     /**

@@ -45,13 +45,13 @@ public class DLQueryService {
 
     private static final Logger log = LoggerFactory.getLogger(DLQueryService.class);
 
-    // reasoner.getInstances() walks HermiT's InstanceManager the same way realization
-    // does — O(n) LinkedList scans against the class count internally — so on a large
-    // ontology (e.g. FoodOn's 39k+ classes) it can hang for many minutes even though
-    // "instances" is one of the two query types checked by default in the UI. Bound it
-    // so a DL Query never hangs the request; a small/simple ontology (the common case)
-    // finishes well within this budget.
-    private static final long GET_INSTANCES_TIMEOUT_MS = 10_000;
+    // reasoner.getInstances()/getSubClasses()/getSuperClasses()/getEquivalentClasses() can
+    // all hang for many minutes on a large ontology — "subclasses" and "instances" are the
+    // two query types checked by default in the UI, so this isn't an edge case. Every
+    // reasoner call in this service runs through runBounded() so a DL Query never hangs the
+    // request regardless of which query types were selected; a small/simple ontology (the
+    // common case) finishes well within this budget either way.
+    private static final long REASONER_QUERY_TIMEOUT_MS = 10_000;
     private final ExecutorService dlQueryExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "dl-query-get-instances-worker");
         t.setDaemon(true);
@@ -266,9 +266,31 @@ public class DLQueryService {
         return null;
     }
 
+    /**
+     * Runs a reasoner call on a bounded worker thread and falls back to an empty result on
+     * timeout or error instead of ever letting a DL Query hang the request indefinitely.
+     */
+    private <T> Set<T> runBounded(java.util.function.Supplier<Set<T>> work, String description,
+            OWLClassExpression expr, OWLOntology ontology) {
+        CompletableFuture<Set<T>> future = CompletableFuture.supplyAsync(work, dlQueryExecutor);
+        try {
+            return future.get(REASONER_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            log.warn("Timed out computing {} for '{}' ({} classes in signature) — returning empty result",
+                    description, expr, ontology.getClassesInSignature().size());
+            return Collections.emptySet();
+        } catch (Exception e) {
+            log.error("Error computing {} for {}", description, expr, e);
+            return Collections.emptySet();
+        }
+    }
+
     private List<Map<String, Object>> getSuperClasses(OWLReasoner reasoner,
             OWLClassExpression expr, OWLOntology ontology, boolean direct) {
-        return reasoner.getSuperClasses(expr, direct).getFlattened().stream()
+        Set<OWLClass> classes = runBounded(
+                () -> reasoner.getSuperClasses(expr, direct).getFlattened(),
+                direct ? "direct superclasses" : "superclasses", expr, ontology);
+        return classes.stream()
                 .filter(cls -> !cls.isOWLThing() && !cls.isOWLNothing())
                 .map(cls -> createResultItem("class", cls.getIRI().toString(), getLabel(cls, ontology)))
                 .collect(Collectors.toList());
@@ -276,7 +298,10 @@ public class DLQueryService {
 
     private List<Map<String, Object>> getSubClasses(OWLReasoner reasoner,
             OWLClassExpression expr, OWLOntology ontology, boolean direct) {
-        return reasoner.getSubClasses(expr, direct).getFlattened().stream()
+        Set<OWLClass> classes = runBounded(
+                () -> reasoner.getSubClasses(expr, direct).getFlattened(),
+                direct ? "direct subclasses" : "subclasses", expr, ontology);
+        return classes.stream()
                 .filter(cls -> !cls.isOWLThing() && !cls.isOWLNothing())
                 .map(cls -> createResultItem("class", cls.getIRI().toString(), getLabel(cls, ontology)))
                 .collect(Collectors.toList());
@@ -284,7 +309,10 @@ public class DLQueryService {
 
     private List<Map<String, Object>> getEquivalentClasses(OWLReasoner reasoner,
             OWLClassExpression expr, OWLOntology ontology) {
-        return reasoner.getEquivalentClasses(expr).getEntities().stream()
+        Set<OWLClass> classes = runBounded(
+                () -> reasoner.getEquivalentClasses(expr).getEntities(),
+                "equivalent classes", expr, ontology);
+        return classes.stream()
                 .filter(cls -> !cls.isOWLThing() && !cls.isOWLNothing())
                 .map(cls -> createResultItem("class", cls.getIRI().toString(), getLabel(cls, ontology)))
                 .collect(Collectors.toList());
@@ -292,19 +320,9 @@ public class DLQueryService {
 
     private List<Map<String, Object>> getInstances(OWLReasoner reasoner,
             OWLClassExpression expr, OWLOntology ontology, boolean direct) {
-        CompletableFuture<Set<OWLNamedIndividual>> future = CompletableFuture.supplyAsync(
-                () -> reasoner.getInstances(expr, direct).getFlattened(), dlQueryExecutor);
-        Set<OWLNamedIndividual> individuals;
-        try {
-            individuals = future.get(GET_INSTANCES_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException te) {
-            log.warn("Timed out computing {} for '{}' ({} classes in signature) — returning empty result",
-                    direct ? "direct instances" : "instances", expr, ontology.getClassesInSignature().size());
-            return Collections.emptyList();
-        } catch (Exception e) {
-            log.error("Error computing instances for {}", expr, e);
-            return Collections.emptyList();
-        }
+        Set<OWLNamedIndividual> individuals = runBounded(
+                () -> reasoner.getInstances(expr, direct).getFlattened(),
+                direct ? "direct instances" : "instances", expr, ontology);
         return individuals.stream()
                 .map(ind -> createResultItem("individual", ind.getIRI().toString(), getLabel(ind, ontology)))
                 .collect(Collectors.toList());
