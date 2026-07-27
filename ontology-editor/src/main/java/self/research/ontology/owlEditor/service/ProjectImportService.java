@@ -16,11 +16,13 @@ import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.model.collaboration.ImportStatusMessage;
 import self.research.ontology.owlEditor.model.collaboration.QueueStatusMessage;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
+import self.research.ontology.owlEditor.util.OwlAxiomSparqlWriter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.lang.Nullable;
 
+import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.rio.RDFHandlerException;
@@ -1333,6 +1335,95 @@ public class ProjectImportService {
                 "loaded", new ArrayList<>(loaded),
                 "declaredOnly", new ArrayList<>(declaredOnly),
                 "failed", failed);
+    }
+
+    private static final long MAX_MANUAL_IMPORT_BYTES = 10L * 1024 * 1024; // 10 MB
+    private static final long MAX_MANUAL_IMPORT_TRIPLES = 50_000;
+
+    public enum ImportFetchStatus { LOADED, DECLARED_ONLY, TOO_LARGE, FAILED }
+
+    public record ImportFetchResult(ImportFetchStatus status, String insertTriplesBody, long tripleCount, String detail) {
+        static ImportFetchResult loaded(String insertTriplesBody, long tripleCount) {
+            return new ImportFetchResult(ImportFetchStatus.LOADED, insertTriplesBody, tripleCount, null);
+        }
+        static ImportFetchResult declaredOnly(String detail) {
+            return new ImportFetchResult(ImportFetchStatus.DECLARED_ONLY, null, 0, detail);
+        }
+        static ImportFetchResult tooLarge(String detail) {
+            return new ImportFetchResult(ImportFetchStatus.TOO_LARGE, null, 0, detail);
+        }
+        static ImportFetchResult failed(String detail) {
+            return new ImportFetchResult(ImportFetchStatus.FAILED, null, 0, detail);
+        }
+    }
+
+    /**
+     * Fetches and parses a single owl:imports target for the "add import" dialog — a user
+     * adding one import mid-project, as opposed to the transitive resolution that runs after
+     * a full ontology upload (see {@link #resolveOwlImports}). Read-only: callers decide how
+     * and where (draft vs. public graph) to merge the returned triples.
+     */
+    public ImportFetchResult fetchImportContent(String projectId, String importIri) {
+        Path projectDir = storageManager.projectDir(projectId);
+        Path tempFile = resolveImportToTemp(projectId, importIri, projectDir);
+        if (tempFile == null) {
+            return ImportFetchResult.declaredOnly(
+                    "Could not reach or locate this IRI — the import was declared but its content was not fetched.");
+        }
+
+        try {
+            try {
+                OWLFormatConverter.sanitizeFileOnDisk(tempFile);
+            } catch (Exception sanitizeEx) {
+                log.warn("[Import {}] Sanitization of manual import {} failed: {}",
+                        projectId, importIri, sanitizeEx.getMessage());
+            }
+
+            long sizeBytes = Files.size(tempFile);
+            if (sizeBytes > MAX_MANUAL_IMPORT_BYTES) {
+                log.info("[Import {}] Manual import {} is {} bytes, exceeds {} byte cap — leaving as declaration only",
+                        projectId, importIri, sizeBytes, MAX_MANUAL_IMPORT_BYTES);
+                return ImportFetchResult.tooLarge(String.format(
+                        "This import is %.1f MB — too large to merge automatically. It was declared, but use " +
+                        "\"Import Ontology\" (file upload) to bring in its content.",
+                        sizeBytes / (1024.0 * 1024.0)));
+            }
+
+            RDFFormat format = detectFormat(tempFile);
+            Model model;
+            try (InputStream in = Files.newInputStream(tempFile)) {
+                model = Rio.parse(in, importIri, format);
+            }
+
+            if (model.size() > MAX_MANUAL_IMPORT_TRIPLES) {
+                log.info("[Import {}] Manual import {} has {} triples, exceeds {} triple cap — leaving as declaration only",
+                        projectId, importIri, model.size(), MAX_MANUAL_IMPORT_TRIPLES);
+                return ImportFetchResult.tooLarge(String.format(
+                        "This import has %,d triples — too large to merge automatically. It was declared, but use " +
+                        "\"Import Ontology\" (file upload) to bring in its content.",
+                        model.size()));
+            }
+
+            // Build the INSERT DATA body the same way OwlAxiomSparqlWriter does for axiom edits
+            // (term-by-term, not a raw serializer dump) — that's the pattern already proven
+            // against this store for blank nodes and literal escaping.
+            StringBuilder body = new StringBuilder();
+            for (var statement : model) {
+                body.append(OwlAxiomSparqlWriter.toSparqlTerm(statement.getSubject())).append(" ")
+                        .append(OwlAxiomSparqlWriter.toSparqlTerm(statement.getPredicate())).append(" ")
+                        .append(OwlAxiomSparqlWriter.toSparqlTerm(statement.getObject())).append(" .\n");
+            }
+            log.info("[Import {}] Fetched manual import {}: {} triples", projectId, importIri, model.size());
+            return ImportFetchResult.loaded(body.toString(), model.size());
+        } catch (Exception e) {
+            log.warn("[Import {}] Failed to fetch/parse manual import {}: {}", projectId, importIri, e.getMessage());
+            return ImportFetchResult.failed(e.getMessage() != null ? e.getMessage() : "Unknown error while fetching import");
+        } finally {
+            try {
+                Files.deleteIfExists(tempFile);
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     /** Query the project graph for all {@code owl:imports} object values. */

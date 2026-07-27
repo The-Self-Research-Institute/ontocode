@@ -5095,6 +5095,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleSaveImport = async (iri: string, isEdit: boolean, originalIri: string) => {
     if (!projectId || !iri.trim()) return;
+    let importResolution: { status?: string; tripleCount?: number; reason?: string } | null = null;
     try {
       // Check if it's a URL (http/https/ftp)
       const isUrl = iri.startsWith("http://") || iri.startsWith("https://") || iri.startsWith("ftp://");
@@ -5159,11 +5160,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         console.log("[Dashboard] ⚡ Optimistically added import to UI");
 
-        await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
+        const addImportRes = await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
           importIri: importIriForBackend,
           ...draftBodyFields(),
         });
-        console.log("[Dashboard] ✅ Import IRI saved to backend");
+        importResolution = addImportRes?.resolution ?? null;
+        console.log("[Dashboard] ✅ Import IRI saved to backend, resolution:", importResolution);
       }
 
       // If it's a local file WITH AN ACTUAL PATH (not just a filename), trigger upload to make it available in "My Files"
@@ -5190,10 +5192,28 @@ const Dashboard: React.FC<DashboardProps> = ({
         refreshOntologyImports();
       }, 100);
 
-      notificationService.success(
-        isEdit ? "Import Updated" : "Import Added",
-        isEdit ? "Import updated successfully." : "Import added successfully.",
-      );
+      const verb = isEdit ? "updated" : "added";
+      if (importResolution?.status === "loaded") {
+        notificationService.success(
+          isEdit ? "Import Updated" : "Import Added",
+          `Import ${verb} and merged (${importResolution.tripleCount ?? 0} triples).`,
+        );
+      } else if (importResolution?.status === "tooLarge" || importResolution?.status === "declaredOnly") {
+        notificationService.warning(
+          isEdit ? "Import Updated" : "Import Added",
+          importResolution.reason || `Import ${verb}, but its content could not be fetched automatically.`,
+        );
+      } else if (importResolution?.status === "failed") {
+        notificationService.warning(
+          isEdit ? "Import Updated" : "Import Added",
+          `Import ${verb}, but fetching its content failed: ${importResolution.reason || "unknown error"}.`,
+        );
+      } else {
+        notificationService.success(
+          isEdit ? "Import Updated" : "Import Added",
+          isEdit ? "Import updated successfully." : "Import added successfully.",
+        );
+      }
 
       if (isLocalFile) {
         notificationService.info("File Upload", "Local file reference added to imports.");
