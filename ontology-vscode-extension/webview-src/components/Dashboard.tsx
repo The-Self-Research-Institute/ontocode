@@ -3278,7 +3278,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           `/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/inferred-axioms`,
           { reasonerType },
         );
-        const axiomsPayload = axiomsResponse?.data || axiomsResponse;
+        const rawAxiomsPayload = axiomsResponse?.data || axiomsResponse;
+        // When the reasoner-worker is enabled, this endpoint replies {async:true, jobId}
+        // instead of the axioms directly — reuse the same resolve-or-poll helper the
+        // hierarchy fetch below relies on, rather than treating the queued response as
+        // "no axioms" (which silently emptied this tab even after a successful run).
+        const axiomsPayload = await resolveHierarchyPayload(projectId, rawAxiomsPayload);
         setInferredAxioms(Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : []);
       } catch (axiomsError) {
         console.warn("[Dashboard] Inferred axioms fetch failed (non-fatal):", axiomsError);
