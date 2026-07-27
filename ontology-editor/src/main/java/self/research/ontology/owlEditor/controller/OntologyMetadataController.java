@@ -9,6 +9,8 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.collaboration.EditOperation;
 import self.research.ontology.owlEditor.service.OntologyMetadataService;
+import self.research.ontology.owlEditor.service.OntologyMutationService;
+import self.research.ontology.owlEditor.service.ProjectImportService;
 
 import java.util.Base64;
 import java.util.HashMap;
@@ -27,11 +29,17 @@ public class OntologyMetadataController {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final OntologyMetadataService metadataService;
     private final SimpMessagingTemplate messagingTemplate;
+    private final ProjectImportService projectImportService;
+    private final OntologyMutationService mutationService;
 
     public OntologyMetadataController(OntologyMetadataService metadataService,
-                                      SimpMessagingTemplate messagingTemplate) {
+                                      SimpMessagingTemplate messagingTemplate,
+                                      ProjectImportService projectImportService,
+                                      OntologyMutationService mutationService) {
         this.metadataService = metadataService;
         this.messagingTemplate = messagingTemplate;
+        this.projectImportService = projectImportService;
+        this.mutationService = mutationService;
     }
 
     private void broadcastMetadataChange(String projectId, EditOperation.OperationType opType,
@@ -186,14 +194,55 @@ public class OntologyMetadataController {
             boolean draft = Boolean.parseBoolean(request.get("draft"));
             String userId = request.get("userId");
             metadataService.addOntologyImport(projectId, importIri, draft, userId);
+
+            Map<String, Object> resolution = resolveManualImportContent(projectId, importIri, draft, userId);
+
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_ADDED, importIri, httpRequest);
             }
-            return ResponseEntity.ok(Map.of("success", true));
+            return ResponseEntity.ok(Map.of("success", true, "resolution", resolution));
         } catch (Exception e) {
             log.error("Error adding import", e);
             return ResponseEntity.ok(Map.of("success", false, "error", e.getMessage()));
         }
+    }
+
+    /**
+     * Best-effort: fetch the content behind a manually-declared owl:imports IRI and merge its
+     * triples into the same graph (draft or public) the declaration was just written to. The
+     * owl:imports triple above is added regardless of the outcome here — this only decides
+     * whether the import is "declaration only" or actually resolved.
+     */
+    private Map<String, Object> resolveManualImportContent(String projectId, String importIri, boolean draft, String userId) {
+        Map<String, Object> resolution = new HashMap<>();
+        try {
+            ProjectImportService.ImportFetchResult fetch = projectImportService.fetchImportContent(projectId, importIri);
+            switch (fetch.status()) {
+                case LOADED -> {
+                    String insertSparql = "INSERT DATA {\n" + fetch.insertTriplesBody() + "\n}";
+                    mutationService.applyRawUpdate(projectId, insertSparql, draft, userId);
+                    resolution.put("status", "loaded");
+                    resolution.put("tripleCount", fetch.tripleCount());
+                }
+                case DECLARED_ONLY -> {
+                    resolution.put("status", "declaredOnly");
+                    resolution.put("reason", fetch.detail());
+                }
+                case TOO_LARGE -> {
+                    resolution.put("status", "tooLarge");
+                    resolution.put("reason", fetch.detail());
+                }
+                case FAILED -> {
+                    resolution.put("status", "failed");
+                    resolution.put("reason", fetch.detail());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[Import] Resolving content for manual import {} (project {}) failed: {}", importIri, projectId, e.getMessage());
+            resolution.put("status", "declaredOnly");
+            resolution.put("reason", e.getMessage());
+        }
+        return resolution;
     }
 
     @DeleteMapping("/{projectId}/imports")
