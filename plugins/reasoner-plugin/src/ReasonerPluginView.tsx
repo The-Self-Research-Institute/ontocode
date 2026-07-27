@@ -724,10 +724,19 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   
   // Use inferred hierarchies if available, otherwise fall back to reasoner results
   const classHierarchyToRender = useMemo(() => {
-    const source = dashboardInferredHierarchy && dashboardInferredHierarchy.length > 0 
-      ? dashboardInferredHierarchy 
+    const source = dashboardInferredHierarchy && dashboardInferredHierarchy.length > 0
+      ? dashboardInferredHierarchy
       : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || []);
-    return ensureTree(source);
+    const tree = ensureTree(source);
+    // eslint-disable-next-line no-console
+    console.log('[DIAG-HIERARCHY] ReasonerPluginView.classHierarchyToRender', {
+      dashboardInferredHierarchyLength: Array.isArray(dashboardInferredHierarchy) ? dashboardInferredHierarchy.length : 'not an array/undefined',
+      sourceLength: Array.isArray(source) ? source.length : 'not an array',
+      sourceFirstNodeKeys: Array.isArray(source) && source[0] ? Object.keys(source[0]) : null,
+      sourceFirstNodeChildrenLength: Array.isArray(source) && source[0]?.children ? source[0].children.length : 'no children field',
+      treeLength: tree.length,
+    });
+    return tree;
   }, [dashboardInferredHierarchy, reasonerResults]);
 
   const objectPropertyHierarchyToRender = useMemo(() => {

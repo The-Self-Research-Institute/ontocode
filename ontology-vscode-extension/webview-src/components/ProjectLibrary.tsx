@@ -9,6 +9,7 @@ import {
   MoreVertical,
   Download,
   Trash2,
+  Edit3,
   Clock,
   User,
   Folder,
@@ -29,6 +30,7 @@ import { isDesktop } from "../utils/desktop";
 import { isAppOnline } from "../utils/connectivity";
 import ReportIssueModal from "./ReportIssueModal";
 import { PromptDialog } from "./dashboard-parts/DashboardDialogs";
+import InlineRenameInput from "./InlineRenameInput";
 
 interface ProjectLibraryProps {
   projectId: string;
@@ -160,6 +162,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     fileId: "",
     fileName: "",
   });
+  const [renamingFileId, setRenamingFileId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ show: boolean; message: string; type: "success" | "error" }>({
     show: false,
     message: "",
@@ -922,6 +925,26 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     setDeleteConfirm({ show: false, fileId: "", fileName: "" });
   };
 
+  const confirmRenameFile = async (fileId: string, newName: string) => {
+    setRenamingFileId(null);
+    try {
+      const res: any = await apiClient.patch(`/api/projects/${projectId}/files/${fileId}/rename`, {
+        fileName: newName,
+      });
+      const data = res?.data ?? res;
+      showToast(`Renamed to "${data?.fileName || newName}"`, "success");
+      await loadFiles();
+    } catch (error: any) {
+      console.error("Error renaming file:", error);
+      showToast(error?.response?.data?.error || "Failed to rename file", "error");
+    }
+  };
+
+  const handleRenameFile = (fileId: string) => {
+    setOpenMenuFileId(null);
+    setRenamingFileId(fileId);
+  };
+
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -1215,7 +1238,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               return (
                 <div
                   key={file.id}
-                  onClick={() => !isImporting && !isCheckingGraphDB && !isAnotherFileLoading && handleFileClick(file)}
+                  onClick={() => !isImporting && !isCheckingGraphDB && !isAnotherFileLoading && renamingFileId !== file.id && handleFileClick(file)}
                   className={`relative overflow-hidden bg-white rounded-lg border-2 p-4 transition-all hover:shadow-lg ${
                     isImporting
                       ? isQueued
@@ -1277,6 +1300,16 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
+                                handleRenameFile(file.id);
+                              }}
+                              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-2"
+                            >
+                              <Edit3 size={14} />
+                              Rename
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 handleDeleteFile(file.id, file.name);
                               }}
                               className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2"
@@ -1290,11 +1323,21 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                     )}
                   </div>
 
-                  <h3 className={`font-semibold mb-1 truncate ${
-                    isImporting ? 'text-blue-800' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'
-                  }`} title={file.name}>
-                    {file.name}
-                  </h3>
+                  {renamingFileId === file.id ? (
+                    <div className="mb-1" onClick={(e) => e.stopPropagation()}>
+                      <InlineRenameInput
+                        initialValue={file.name}
+                        onConfirm={(newName) => confirmRenameFile(file.id, newName)}
+                        onCancel={() => setRenamingFileId(null)}
+                      />
+                    </div>
+                  ) : (
+                    <h3 className={`font-semibold mb-1 truncate ${
+                      isImporting ? 'text-blue-800' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'
+                    }`} title={file.name}>
+                      {file.name}
+                    </h3>
+                  )}
 
                   {isImporting && (
                     <div className="mb-2 space-y-1">
@@ -1386,7 +1429,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   return (
                     <tr
                       key={file.id}
-                      onClick={() => !isImporting && !isCheckingGraphDB && !isAnotherFileLoading && handleFileClick(file)}
+                      onClick={() => !isImporting && !isCheckingGraphDB && !isAnotherFileLoading && renamingFileId !== file.id && handleFileClick(file)}
                       className={`transition-colors ${
                         isImporting
                           ? isQueued
@@ -1422,9 +1465,19 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                             }
                           </div>
                           <div>
-                            <span className={`font-medium ${isImporting ? 'text-blue-800' : isCheckingGraphDB ? 'text-purple-700' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'}`}>
-                              {file.name}
-                            </span>
+                            {renamingFileId === file.id ? (
+                              <div onClick={(e) => e.stopPropagation()}>
+                                <InlineRenameInput
+                                  initialValue={file.name}
+                                  onConfirm={(newName) => confirmRenameFile(file.id, newName)}
+                                  onCancel={() => setRenamingFileId(null)}
+                                />
+                              </div>
+                            ) : (
+                              <span className={`font-medium ${isImporting ? 'text-blue-800' : isCheckingGraphDB ? 'text-purple-700' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'}`}>
+                                {file.name}
+                              </span>
+                            )}
                             {isCheckingGraphDB && (
                               <div className="text-xs mt-0.5 text-purple-600">Opening…</div>
                             )}
@@ -1467,15 +1520,26 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                           !isImporting && (userProjectRole === "OWNER" ||
                             userProjectRole === "ADMIN" ||
                             (userProjectRole === "EDITOR" && file.uploadedByUserId === user?.userId)) && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteFile(file.id, file.name);
-                              }}
-                              className="text-red-600 hover:text-red-800"
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                            <div className="flex items-center justify-end gap-3">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRenameFile(file.id);
+                                }}
+                                className="text-gray-500 hover:text-gray-700"
+                              >
+                                <Edit3 size={16} />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteFile(file.id, file.name);
+                                }}
+                                className="text-red-600 hover:text-red-800"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
                           )
                         )}
                       </td>

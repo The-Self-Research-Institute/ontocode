@@ -660,6 +660,13 @@ public class ReasonerController {
                 editorReasonerCache.putHierarchy(cacheKey, new EditorReasonerCacheService.HierarchyCacheEntry(
                         builtHierarchy, (String) result.get("reasonerType")));
                 log.info("Hierarchy built for project {} — {} classes", projectId, result.get("totalClasses"));
+                log.info("[DIAG-HIERARCHY] builtHierarchy.size()={} firstNodeKeys={} firstNodeChildrenSize={}",
+                        builtHierarchy.size(),
+                        builtHierarchy.isEmpty() ? "n/a" : builtHierarchy.get(0).keySet(),
+                        builtHierarchy.isEmpty() ? "n/a"
+                                : (builtHierarchy.get(0).get("children") instanceof List
+                                        ? ((List<?>) builtHierarchy.get(0).get("children")).size()
+                                        : "children not a List: " + builtHierarchy.get(0).get("children")));
 
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,

@@ -1106,19 +1106,26 @@ public class ProjectLoadController {
                     data.put("graphReady", graphReady);
 
                     int topLevel = 0;
+                    // hierarchyReady tracks whether the count below is an authoritative, finished
+                    // answer — NOT whether that count is nonzero. A genuinely empty ontology (e.g.
+                    // a freshly auto-created file with no classes yet) legitimately has topLevel=0
+                    // forever; gating readiness on "topLevel > 0" made such projects spin in the
+                    // loading modal indefinitely even though their hierarchy had fully computed.
+                    boolean hierarchyReady = false;
                     if (desktopHierarchyService != null && owlapiReady) {
                         topLevel = desktopHierarchyService.topLevelClassTotal(projectId);
+                        hierarchyReady = true;
                     } else if (graphReady && ontologyQueryService != null) {
                         try {
                             topLevel = ontologyQueryService.topLevelClassCount(projectId);
+                            hierarchyReady = true;
                         } catch (Exception sparqlEx) {
                             log.debug("[Status] SPARQL top-level count unavailable for {}: {}", projectId, sparqlEx.getMessage());
                         }
                     } else if (hierarchyIndexService != null && hierarchyIndexService.isReady(projectId)) {
                         topLevel = 1;
+                        hierarchyReady = true;
                     }
-
-                    boolean hierarchyReady = topLevel > 0;
                     data.put("topLevelClasses", topLevel);
                     data.put("hierarchyReady", hierarchyReady);
                     data.put("editorReady", hierarchyReady);
