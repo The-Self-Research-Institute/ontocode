@@ -129,7 +129,12 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onCancel}>
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) onCancel();
+      }}
+    >
       <div
         className="w-full mx-4 rounded-lg shadow-xl flex flex-col"
         style={{

@@ -1281,7 +1281,12 @@ const OpenFileDialog = ({
     : allFiles;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) onClose();
+      }}
+    >
       <div
         className="bg-theme-surface rounded-lg shadow-2xl w-full max-w-md mx-4 max-h-[70vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
@@ -18340,7 +18345,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* View-Only / Draft-Required Prompt */}
       {showProPromptType && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]" onClick={() => setShowProPromptType(null)}>
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && e.button === 0) setShowProPromptType(null);
+          }}
+        >
           <div
             className="relative bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
