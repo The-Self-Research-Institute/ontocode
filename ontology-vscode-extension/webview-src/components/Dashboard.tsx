@@ -868,6 +868,15 @@ const TopMenuBar = ({
                             onClick={async (e) => {
                               e.preventDefault();
                               if (!currentProjectId) return;
+                              // Synchronous re-entrancy guard: `disabled={exportingFormat === format}`
+                              // relies on React state, which updates asynchronously — a fast double-click
+                              // (or double-fire from any other source) can invoke this handler twice
+                              // before the disabled attribute actually takes effect. pendingExportRef is
+                              // a plain ref (synchronous), so check it directly instead of trusting render
+                              // timing. On desktop each overlapping call opens its own native Save dialog;
+                              // the first gets orphaned when the second grabs focus, so only the second
+                              // click's file actually saves.
+                              if (pendingExportRef.current) return;
                               // Gate at the master export key first; multi-format
                               // is implied by hasExport on paid tiers but we
                               // keep both keys explicit so future tiers can
@@ -921,6 +930,7 @@ const TopMenuBar = ({
                               } catch (err: any) {
                                 console.error("Export failed:", err);
                                 notificationService.error("Export Failed", err.message || "Could not export ontology");
+                                pendingExportRef.current = null;
                                 setExportingFormat(null);
                               }
                             }}
@@ -1508,6 +1518,7 @@ interface DashboardProps {
   selectedFileId?: string;
   selectedFileName?: string;
   projectId?: string; // Renamed to initialProjectId to avoid naming conflict
+  projectName?: string; // Renamed to initialProjectName — used to name an auto-created first file
 }
 
 const Dashboard: React.FC<DashboardProps> = ({
@@ -1518,6 +1529,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   selectedFileId,
   selectedFileName,
   projectId: initialProjectId,
+  projectName: initialProjectName,
 }) => {
   // #region State
   const { user, logout } = useAuth();
@@ -1538,11 +1550,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   // for such callbacks.
   const isProjectDraftEditorRoleRef = useRef(isProjectDraftEditorRole);
   useEffect(() => { isProjectDraftEditorRoleRef.current = isProjectDraftEditorRole; }, [isProjectDraftEditorRole]);
-  // Reasoner hierarchy jobs can poll for up to 10 minutes (see pollReasonerJob below) — if
-  // the user switches projects mid-poll, this lets that poll notice and discard its result
-  // instead of applying stale data to whatever project is now showing.
-  const currentProjectIdRef = useRef(projectId);
-  useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
   const isProjectViewerRoleRef = useRef(isProjectViewerRole);
   useEffect(() => { isProjectViewerRoleRef.current = isProjectViewerRole; }, [isProjectViewerRole]);
   const isViewOnlyMember =
@@ -1629,13 +1636,19 @@ const Dashboard: React.FC<DashboardProps> = ({
   const countNodes = (nodes: any[]): number => {
     let count = 0;
     for (const node of nodes) {
-      // Don't count owl:Thing or owl:Nothing in the total class count
+      // Don't count owl:Thing/owl:Nothing (class root) or the synthetic owl:top*Property
+      // root nodes (object/data property trees always include one, even with zero real
+      // properties) in the total — none of these represent a real user-defined entity.
       const id = node.id || node.iri;
       if (
         id !== "http://www.w3.org/2002/07/owl#Thing" &&
         id !== "owl:Thing" &&
         id !== "http://www.w3.org/2002/07/owl#Nothing" &&
-        id !== "owl:Nothing"
+        id !== "owl:Nothing" &&
+        id !== "http://www.w3.org/2002/07/owl#topObjectProperty" &&
+        id !== "owl:topObjectProperty" &&
+        id !== "http://www.w3.org/2002/07/owl#topDataProperty" &&
+        id !== "owl:topDataProperty"
       ) {
         count++;
       }
@@ -1681,6 +1694,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || null);
   const prevProjectIdRef = useRef<string | null>(null);
+  // Reasoner hierarchy jobs can poll for up to 10 minutes (see pollReasonerJob below) — if
+  // the user switches projects mid-poll, this lets that poll notice and discard its result
+  // instead of applying stale data to whatever project is now showing.
+  const currentProjectIdRef = useRef(projectId);
+  useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
 
   // Switching ontology files: keep the previous tree visible (dimmed) until new data arrives.
   useEffect(() => {
@@ -2374,6 +2392,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   >("rdfxml");
   const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
+  const [isDownloadingCodeView, setIsDownloadingCodeView] = useState(false);
   // Large-file guard: CodeHighlighter materializes per-line gutter elements and
   // scans the whole document for fold ranges, so past this size the webview
   // freezes. Above the cap we show a read-only preview of the head of the file
@@ -3014,20 +3033,42 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     const applyPayload = (payload: any, timedOut = false) => {
       const hierarchy = payload?.hierarchy || [];
+      // eslint-disable-next-line no-console
+      console.log("[DIAG-HIERARCHY] applyPayload", {
+        timedOut,
+        isArray: Array.isArray(hierarchy),
+        length: Array.isArray(hierarchy) ? hierarchy.length : "n/a",
+        firstNodeKeys: Array.isArray(hierarchy) && hierarchy[0] ? Object.keys(hierarchy[0]) : null,
+        payloadKeys: payload ? Object.keys(payload) : null,
+      });
       if (timedOut || !Array.isArray(hierarchy) || hierarchy.length === 0) {
+        console.log("[DIAG-HIERARCHY] applyPayload -> setting EMPTY hierarchy");
         setInferredClassHierarchy([]);
         return false;
       }
-      setInferredClassHierarchy(applyInstanceCountsToTree(hierarchy.map(normalizeHierarchyNode), classInstanceCounts));
+      const normalized = applyInstanceCountsToTree(hierarchy.map(normalizeHierarchyNode), classInstanceCounts);
+      console.log("[DIAG-HIERARCHY] applyPayload -> setting hierarchy with", normalized.length, "root node(s)");
+      setInferredClassHierarchy(normalized);
       return true;
     };
 
     try {
       const payload = await fetchWithReasoner(effectiveReasoner);
+      // eslint-disable-next-line no-console
+      console.log("[DIAG-HIERARCHY] raw payload from fetchWithReasoner", {
+        effectiveReasoner,
+        keys: payload ? Object.keys(payload) : null,
+        success: payload?.success,
+        inconsistent: payload?.inconsistent,
+        tooLargeForReasoner: payload?.tooLargeForReasoner,
+        timeout: payload?.timeout,
+        hierarchyLength: Array.isArray(payload?.hierarchy) ? payload.hierarchy.length : "not an array",
+      });
 
       // Backend signals the ontology is logically inconsistent — reasoning cannot
       // proceed. Tell the user instead of silently showing an empty tree.
       if (payload?.inconsistent) {
+        console.log("[DIAG-HIERARCHY] branch: inconsistent");
         setInferredClassHierarchy([]);
         showNotification(
           payload?.message ||
@@ -3039,6 +3080,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Backend converted an error into a friendly message with success:false —
       // surface it rather than rendering an empty hierarchy.
       if (payload && payload.success === false && (payload.message || payload.error)) {
+        console.log("[DIAG-HIERARCHY] branch: success===false", payload.message || payload.error);
         setInferredClassHierarchy([]);
         showNotification(payload.message || payload.error, "error");
         return;
@@ -3046,17 +3088,20 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Backend signals ontology is too large — retry with STRUCTURAL (no inference, always fast)
       if (payload?.tooLargeForReasoner && effectiveReasoner !== 'STRUCTURAL') {
+        console.log("[DIAG-HIERARCHY] branch: tooLargeForReasoner -> retrying with STRUCTURAL");
         const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
         applyPayload(fallbackPayload);
       // Backend signals timeout — auto-retry with STRUCTURAL
       } else if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
+        console.log("[DIAG-HIERARCHY] branch: timeout -> retrying with STRUCTURAL");
         const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
         applyPayload(fallbackPayload);
       } else {
+        console.log("[DIAG-HIERARCHY] branch: normal apply");
         applyPayload(payload);
       }
     } catch (error) {
-      console.error("[Dashboard] Failed to load inferred class hierarchy:", error);
+      console.error("[DIAG-HIERARCHY] Failed to load inferred class hierarchy:", error);
       setInferredClassHierarchy([]);
     }
   }, [projectId, metadata, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner, normalizeHierarchyNode]);
@@ -6079,7 +6124,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   // case after a hard time cap. It NEVER blocks legitimate work — it only ever
   // closes a spinner, and the data continues loading via the normal effects.
   useEffect(() => {
-    const open = isInitialLoading || showLoadingChoice;
+    // Must match the modal's own isOpen condition below — isExpectingFileReady alone
+    // (waiting on an IMPORT_COMPLETED WebSocket message that may never arrive) can keep
+    // the modal open even when isInitialLoading/showLoadingChoice are both false, and
+    // this watchdog needs to actually be running in that case to ever unstick it.
+    const open = isInitialLoading || showLoadingChoice || isExpectingFileReady;
+    console.log(
+      `🐕 WATCHDOG effect evaluated — open=${open} (isInitialLoading=${isInitialLoading} showLoadingChoice=${showLoadingChoice} isExpectingFileReady=${isExpectingFileReady}) projectId=${projectId}`,
+    );
     // Only poll status for file-level project IDs (contain '--').
     // Parent-only IDs (e.g. "proj-abc123") return 404 from the status endpoint.
     if (!open || !projectId || !projectId.includes("--")) return;
@@ -6094,6 +6146,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.warn("[Dashboard] Loading watchdog closing modal spinner:", reason);
       setIsInitialLoading(false);
       setShowLoadingChoice(false);
+      // The modal's isOpen also ORs in isExpectingFileReady, which is normally only
+      // cleared by the IMPORT_COMPLETED WebSocket handler — if that message is lost
+      // (dropped connection, reconnect churn), this flag alone keeps the modal open
+      // even after this watchdog resets everything else. Clear it here too so the
+      // watchdog actually closes the modal it exists to unstick.
+      setIsExpectingFileReady(false);
       setLoadingStatusMessage("");
       // Release the in-flight load lock so a previous/stuck load can't make the
       // next open silently skip with "Already loading, skipping duplicate".
@@ -6113,6 +6171,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     const tick = async () => {
       if (cancelled) return;
+      console.log(
+        `🐕 WATCHDOG tick — projectId=${projectId} isInitialLoading=${isInitialLoading} showLoadingChoice=${showLoadingChoice} isExpectingFileReady=${isExpectingFileReady} elapsedMs=${Date.now() - startedAt}`,
+      );
       if (Date.now() - startedAt > HARD_CAP_MS) {
         failAndRedirect(
           isDesktop()
@@ -6133,6 +6194,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         const res = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(projectId)}`);
         const status = res?.data?.status || res?.status;
+        console.log(`🐕 WATCHDOG status response — status=${status} raw=`, res);
         if (status === "ERROR") {
           const errMsg = res?.data?.error || res?.error || "Failed to load ontology. Please check the file and try again.";
           failAndRedirect(errMsg);
@@ -6168,7 +6230,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [isInitialLoading, showLoadingChoice, projectId, showToast]);
+  }, [isInitialLoading, showLoadingChoice, isExpectingFileReady, projectId, showToast]);
 
   useEffect(() => {
     if (!projectId || !showImportClosure) return;
@@ -6256,17 +6318,93 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [initialProjectId]);
 
   // When editor opens with a project but no specific file (e.g. Editor button from Project Library),
-  // pre-fetch project files so the Open File dialog isn't empty.
+  // always create a fresh ontology file named after the project and open it directly — no picker,
+  // no prompt, even if the project already has other files. Name collisions get a numeric suffix.
   useEffect(() => {
-    if (initialProjectId && (!selectedFileId || selectedFileId === "__editor__")) {
-      fetchProjectFiles(initialProjectId);
-    }
+    if (!initialProjectId || (selectedFileId && selectedFileId !== "__editor__")) return;
+    if (autoCreateRanForProjectRef.current === initialProjectId) return;
+    autoCreateRanForProjectRef.current = initialProjectId;
+
+    fetchProjectFiles(initialProjectId).then(async (files) => {
+      const existingNames = new Set(files.map((f) => f.filename.toLowerCase()));
+      const baseSlug =
+        (initialProjectName || "")
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") || "untitled-ontology";
+
+      let fileName = `${baseSlug}.owl`;
+      for (let n = 2; existingNames.has(fileName.toLowerCase()); n++) {
+        fileName = `${baseSlug}-${n}.owl`;
+      }
+
+      const ontologyIRI = `http://example.org/ontologies/${fileName.replace(/\.owl$/, "")}`;
+      const content = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+      const file = new File([content], fileName, { type: "application/rdf+xml" });
+      const formData = new FormData();
+      formData.append("file", file, fileName);
+      formData.append("fileName", fileName);
+      formData.append("fileType", "application/rdf+xml");
+      try {
+        const uploadResult = await apiClient.post<{ fileId?: string; filename?: string }>(
+          `/api/projects/${initialProjectId}/files`,
+          formData,
+          { headers: { "Content-Type": "multipart/form-data" } },
+        );
+        if (uploadResult?.fileId) {
+          handleLoadProjectFile(uploadResult.fileId, uploadResult.filename || fileName);
+        } else {
+          setShowOpenDialog(true);
+        }
+      } catch (error) {
+        console.error("[Dashboard] Failed to auto-create file:", error);
+        setShowOpenDialog(true);
+      } finally {
+        // Only guards against StrictMode's synchronous back-to-back double-invoke (both
+        // firings pass this check before either's async work below has a chance to run) —
+        // clearing it once settled still lets a genuinely later revisit to this same
+        // project create another file, matching "auto create for all, every click."
+        if (autoCreateRanForProjectRef.current === initialProjectId) {
+          autoCreateRanForProjectRef.current = null;
+        }
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialProjectId]);
+
+  // Always-latest ref for `projectId` — lets async fetches (e.g. refreshClassHierarchy)
+  // that were started for a previous project detect a switch and discard their stale
+  // response instead of overwriting the new (just-cleared) project's state.
+  const projectIdRef = useRef(projectId);
+  useEffect(() => {
+    projectIdRef.current = projectId;
+  }, [projectId]);
 
   // Track if a file is currently being loaded to prevent duplicate loads
   const fileLoadingRef = useRef(false);
   const lastLoadedFileRef = useRef<string | null>(null);
+  // Set whenever handleLoadProjectFile triggers an import — signals that the caller
+  // (Editor button, New File dialog) wants to land directly in the editor once this
+  // import completes, even on web, where IMPORT_COMPLETED otherwise routes back to
+  // the project library by default (see the isDesktop() check on that handler).
+  const directEditorLoadRequestedRef = useRef(false);
+  // Guards the Editor-button auto-create effect below against running twice for the
+  // same project — React StrictMode (dev) double-invokes every effect on mount, and
+  // with no guard that meant two independent fetchProjectFiles+create-file sequences
+  // racing each other, each unaware of the other's in-flight upload, so both won their
+  // own "does a file with this name exist yet" check and each created a file.
+  const autoCreateRanForProjectRef = useRef<string | null>(null);
 
   /** Skip hierarchy/cache polls until file-scoped projectId is active (not parent-only). */
   const shouldDeferHierarchyDuringFileOpen = useCallback(() => {
@@ -6282,21 +6420,27 @@ const Dashboard: React.FC<DashboardProps> = ({
   /** Desktop: Fuseki sections deferred until the user opens each Entities tab. */
   const desktopDeferredSectionsLoadedRef = useRef<Set<string>>(new Set());
 
+  // Guards this effect against React StrictMode's dev-mode double-invoke. Deliberately
+  // separate from fileLoadingRef/lastLoadedFileRef below — those are handleLoadProjectFile's
+  // OWN re-entrancy guard, and pre-setting them here (as this effect used to) meant that by
+  // the time handleLoadProjectFile ran, its guard always saw "already in flight" (set by this
+  // very call, moments earlier) and returned immediately without doing any real work — the
+  // upload silently never happened, isInitialLoading stayed true forever, and projectId never
+  // advanced to the file-scoped id. Using our own ref here lets handleLoadProjectFile's guard
+  // do its job for its own intended case (Editor button vs. fileReady WS handler racing).
+  const autoLoadTriggeredForRef = useRef<string | null>(null);
+
   // Auto-load selected file from Project Library (admin flow)
   useEffect(() => {
     if (selectedFileId && selectedFileName && initialProjectId) {
-      // Prevent loading the same file multiple times or loading while another load is in progress
-      if (fileLoadingRef.current || lastLoadedFileRef.current === selectedFileId) {
-        console.log("[Dashboard] Skipping duplicate load for:", selectedFileId);
+      if (autoLoadTriggeredForRef.current === selectedFileId) {
+        console.log("[Dashboard] Skipping duplicate auto-load trigger for:", selectedFileId);
         return;
       }
+      autoLoadTriggeredForRef.current = selectedFileId;
 
       console.log("[Dashboard] Auto-loading selected file:", selectedFileId, selectedFileName);
       console.log("[Dashboard] Parent project for file menu:", initialProjectId);
-
-      // Mark as loading
-      fileLoadingRef.current = true;
-      lastLoadedFileRef.current = selectedFileId;
 
       // Clear any previous file state
       console.log("[Dashboard] 🧹 Cleaning up previous file state...");
@@ -6306,13 +6450,10 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       setHasUserSelectedFile(true); // Mark that file was selected
 
-      // Upload the file to GraphDB first, then it will auto-load
-      handleLoadProjectFile(selectedFileId, selectedFileName).finally(() => {
-        // Reset loading flag after a delay to prevent rapid re-loads
-        setTimeout(() => {
-          fileLoadingRef.current = false;
-        }, 1000);
-      });
+      // Upload the file to GraphDB first, then it will auto-load. handleLoadProjectFile
+      // manages fileLoadingRef/lastLoadedFileRef itself (set on entry, cleared in its own
+      // finally) — this effect no longer touches them.
+      handleLoadProjectFile(selectedFileId, selectedFileName);
     }
 
     // Cleanup when unmounting
@@ -6955,8 +7096,13 @@ const Dashboard: React.FC<DashboardProps> = ({
               console.log("[Dashboard] Cleared pendingImportProjectIdRef");
               setIsExpectingFileReady(false);
 
-              // Webapp: keep user in project library — the card turns green, user clicks to open
-              if (!isDesktop()) {
+              // Webapp: keep user in project library — the card turns green, user clicks to open.
+              // Skip this when the load was requested via handleLoadProjectFile (Editor button,
+              // New File dialog) — that caller already navigated the UI into the editor and set
+              // its loading state expecting this import to finish there, so bouncing back to the
+              // library here would abandon that in-progress editor view (Classes etc. stuck loading
+              // forever, since nothing else would ever clear those flags or fetch the data).
+              if (!isDesktop() && !directEditorLoadRequestedRef.current) {
                 setShowLoadingChoice(false);
                 setBackgroundImportActive(false);
                 setBackgroundImportProgress(undefined);
@@ -6965,6 +7111,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 setTimeout(() => fetchProjects(), 500);
                 break;
               }
+              directEditorLoadRequestedRef.current = false;
 
               // Data loading is handled by the fileReady message (always sent before IMPORT_COMPLETED).
               // Here we only clean up UI state. If fetchData is already in progress, chain cleanup onto it;
@@ -7560,11 +7707,20 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
     classHierarchyRefreshInFlight.current = true;
     lastClassHierarchyRefreshAt.current = now;
+    const requestedProjectId = projectId;
     try {
       const refreshUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
       // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
       const refreshDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}?scope=${hierarchyImportsScope}&userId=${encodeURIComponent(refreshUserId)}${refreshDraftScopeParam}&_t=${now}`);
+
+      // The user may have switched to a different project/file while this request was
+      // in flight — applying this now-stale response would repopulate the tree with the
+      // previous project's classes right after it was correctly cleared for the new one.
+      if (projectIdRef.current !== requestedProjectId) {
+        console.log("[Dashboard] Discarding stale class hierarchy response for", requestedProjectId, "— now viewing", projectIdRef.current);
+        return;
+      }
 
       const hierarchyBuilding =
         topLevelRes?.hierarchyReady === false ||
@@ -9238,6 +9394,17 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      // Re-entrancy guard: a load for this exact file is already in flight. Without this,
+      // a freshly-created file can trigger handleLoadProjectFile twice in quick succession —
+      // once from the caller that just created it, once from the "fileReady" WebSocket handler's
+      // own auto-load (Dashboard.tsx ~6740) — and the two overlapping calls stomp on the shared
+      // pendingImportProjectIdRef, so whichever completion signal arrives second no longer
+      // matches and the loading spinners never clear.
+      if (fileLoadingRef.current && lastLoadedFileRef.current === fileId) {
+        console.log("[Dashboard] Skipping duplicate handleLoadProjectFile call for:", fileId);
+        return;
+      }
+
       // Lightweight, cached (24h) plugin update check piggy-backed on file-open.
       runPluginUpdateCheck();
 
@@ -9334,6 +9501,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         setAnnotationProperties([]);
         setIndividuals([]);
         setDatatypes([]);
+        // applyMetadataResponse's counts (classCount, objectPropertyCount, etc.) fall back to
+        // `prev` whenever the fresh response reports a "0", specifically so a genuine 0 from a
+        // fast/partial metadata call doesn't clobber an already-known nonzero OWLAPI count. But
+        // that means without a reset here, a truly empty new project's real 0 could never win
+        // against the previous project's leftover nonzero counts — clearing metadata makes that
+        // fallback start from nothing instead of the last file's data.
+        setMetadata(null);
         setSelectedItem(null);
         setExpandedNodes(["http://www.w3.org/2002/07/owl#Thing"]);
         setSearchQuery("");
@@ -9349,6 +9523,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setProjectId(ontologyProjectId);
         pendingImportProjectIdRef.current = ontologyProjectId;
         setPendingImportProjectId(ontologyProjectId);
+        directEditorLoadRequestedRef.current = true;
 
         const importResult = await apiClient.post<{
           success: boolean;
@@ -9916,6 +10091,13 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.log("[refreshProperties] Starting property refresh...");
       if (isDesktop()) {
         await waitForDesktopOwlApiReady(projectId);
+      } else {
+        // Every caller here reconciles right after a create/update mutation. The mutation's
+        // own response resolving doesn't guarantee Fuseki's index has caught up yet — fetching
+        // immediately can return the pre-mutation list and silently overwrite the correct
+        // optimistic update with a response that's missing what was just added (it reappears
+        // only once something else triggers another refresh later, e.g. a tab switch).
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
       let propertiesRes = await apiClient.get<any>(withDraftScope(`/api/ontology/properties/${projectId}`));
       if (isOwlApiWarmingResponse(propertiesRes)) {
@@ -10342,10 +10524,27 @@ const Dashboard: React.FC<DashboardProps> = ({
           // Same fallback as handleCreateClass: if parentIri (e.g. owl:Thing when
           // there's no selection) isn't itself a rendered node, append at the root
           // instead of silently dropping the new class from the optimistic update.
+          // owl:Thing shows up under either the long IRI or the short "owl:Thing" form
+          // depending on which code path last built the tree — match both so the
+          // default (no-selection) case reliably nests under the rendered root instead
+          // of silently falling through to a flat top-level append.
+          const isOwlThingId = (id?: string) =>
+            id === "http://www.w3.org/2002/07/owl#Thing" || id === "owl:Thing";
           let inserted = false;
           const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
             return nodes.map((node) => {
-              if (type === "subclass" && node.id === parentIri) {
+              if (
+                type === "subclass" &&
+                (node.id === parentIri || (isOwlThingId(parentIri) && isOwlThingId(node.id)))
+              ) {
+                inserted = true;
+                const children = node.children ? [...node.children, newNode] : [newNode];
+                return { ...node, children, hasChildren: true };
+              }
+              if (type === "sibling" && !parentId && isOwlThingId(node.id)) {
+                // "Add at top level" with nothing selected — parentIri already defaulted to
+                // owl:Thing above; nest under the rendered root the same way "subclass" does,
+                // instead of falling through to a flat append alongside it.
                 inserted = true;
                 const children = node.children ? [...node.children, newNode] : [newNode];
                 return { ...node, children, hasChildren: true };
@@ -10668,9 +10867,16 @@ const Dashboard: React.FC<DashboardProps> = ({
             // from the optimistic update (it was still created on the backend, but
             // wouldn't show up until a full reload).
             let inserted = false;
+            // owl:Thing shows up under either the long IRI or the short "owl:Thing" form
+            // depending on which code path last built the tree.
+            const isOwlThingId = (id?: string) =>
+              id === "http://www.w3.org/2002/07/owl#Thing" || id === "owl:Thing";
             const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
               return nodes.map((node) => {
-                if (type === "subclass" && node.id === selectedItem?.id) {
+                if (
+                  type === "subclass" &&
+                  (node.id === selectedItem?.id || (!selectedItem?.id && isOwlThingId(node.id)))
+                ) {
                   inserted = true;
                   const children = node.children ? [...node.children, newNode] : [newNode];
                   return { ...node, children, hasChildren: true };
@@ -10832,8 +11038,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         markAsUnsaved();
         setMetadata((prev) => (prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev));
-        // Reconcile with backend truth (see comment on the other object-property create path).
-        await refreshProperties();
+        // The optimistic update above already reflects the new property — close the dialog
+        // and notify now instead of making the user wait through the reconcile fetch too.
+        // Reconcile with backend truth in the background (see comment on the other
+        // object-property create path); its own settle delay no longer blocks the UI.
+        void refreshProperties();
         showNotification("Property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topObjectProperty");
@@ -10905,8 +11114,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         markAsUnsaved();
         setMetadata((prev) => (prev ? { ...prev, dataPropertyCount: (prev.dataPropertyCount || 0) + 1 } : prev));
-        // Reconcile with backend truth (see comment on the object-property create paths).
-        await refreshProperties();
+        // The optimistic update above already reflects the new property — close the dialog
+        // and notify now instead of making the user wait through the reconcile fetch too.
+        // Reconcile with backend truth in the background (see comment on the object-property
+        // create paths); its own settle delay no longer blocks the UI.
+        void refreshProperties();
         showNotification("Data property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topDataProperty");
@@ -12040,8 +12252,13 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Download the complete serialized file for the current Code View format —
   // the editing path for documents too large to edit in the browser.
+  //
+  // No visual "in progress" feedback existed here before, so a double-click fired
+  // this twice — on desktop each call opens its own native Save dialog, and the
+  // first one gets orphaned/dismissed when the second grabs focus, leaving only
+  // the second click's file actually saved. Guard against re-entrant calls.
   const downloadFullCodeViewFile = useCallback(() => {
-    if (!projectId) return;
+    if (!projectId || isDownloadingCodeView) return;
     const extByFormat: Record<string, string> = {
       rdfxml: "owl", turtle: "ttl", ntriples: "nt", owlxml: "owlxml",
       manchester: "omn", functional: "ofn", jsonld: "jsonld",
@@ -12050,12 +12267,16 @@ const Dashboard: React.FC<DashboardProps> = ({
     const filename = `${projectId}.${ext}`;
     const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(projectId)}?format=${codeViewFormat}`;
     if (window.vscode) {
+      setIsDownloadingCodeView(true);
       window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId, format: codeViewFormat });
       notificationService.success("Export Started", `Downloading ${filename}`);
+      // No requestId/completion message wired up for this path (unlike the main
+      // toolbar Export button) — fall back to a fixed cooldown before allowing another click.
+      setTimeout(() => setIsDownloadingCodeView(false), 3000);
     } else {
       window.open(url, "_blank");
     }
-  }, [projectId, codeViewFormat]);
+  }, [projectId, codeViewFormat, isDownloadingCodeView]);
 
   // Citation insertion handlers
   const handleCitationSelection = useCallback((citation: any) => {
@@ -14717,7 +14938,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                       </span>
                       <button
                         onClick={downloadFullCodeViewFile}
-                        className="ml-auto px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 flex-shrink-0"
+                        disabled={isDownloadingCodeView}
+                        className="ml-auto px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
                       >
                         Download full file
                       </button>
@@ -14770,7 +14992,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                         />
                         <button
                           onClick={downloadFullCodeViewFile}
-                          className="px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700"
+                          disabled={isDownloadingCodeView}
+                          className="px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           Download full file
                         </button>
@@ -17203,7 +17426,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         externalExpandedNodes={expandedNodes}
         title="Add type"
         onAddClass={handleAddClassInline}
-        onDeleteClass={() => handleDeleteItem()}
+        // This dialog's embedded EntityHierarchy has its own local selection (the class the
+        // user is browsing to pick), separate from whatever class is open in the main editor.
+        // onDeleteItem inside EntityHierarchy always calls this handler with no argument, so
+        // wiring the outer handleDeleteItem() here deleted the class open in the main panel —
+        // not the one selected in this picker. Neither this dialog nor its analogues below
+        // ("Select Class", "Set parent class") have a legitimate use for deleting a class at
+        // all, so this is a safe no-op instead of a mis-scoped delete.
+        onDeleteClass={() => showNotification("To delete a class, select it in the main class tree first.", "info")}
         metadata={metadata}
       />
       {classIndividualSameDiffDialog && (
@@ -18101,9 +18331,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         expandedNodes={expandedNodes}
         onToggleNode={toggleNode}
         onAddClass={(type) => handleAddItem(type)}
+        // onDeleteClass is a no-op in practice here — this dialog's own class trees use a
+        // locally-scoped delete handler (see handleInlineDeleteStart in ClassExpressionDialog),
+        // not this prop. onDeleteProperty below is different: its object/data property trees
+        // DO wire straight to this prop, and EntityHierarchy's delete button always calls it
+        // with no argument — so handleDeleteItem() would delete whatever property is open in
+        // the main editor, not whichever one is selected in this dialog's own property tree.
+        // There's no legitimate "delete a property" use case from within this picker anyway.
         onDeleteClass={() => handleDeleteItem()}
         onAddDataProperty={(type) => handleAddItem(type)}
-        onDeleteProperty={() => handleDeleteItem()}
+        onDeleteProperty={() => showNotification("To delete a property, select it in the main property tree first.", "info")}
         onRefreshClasses={refreshClassHierarchy}
         metadata={metadata}
       />
@@ -18306,7 +18543,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         externalExpandedNodes={expandedNodes}
         title="Select Class"
         onAddClass={handleAddClassInline}
-        onDeleteClass={() => handleDeleteItem()}
+        // See the "Add type" dialog above for why this is a no-op, not handleDeleteItem().
+        onDeleteClass={() => showNotification("To delete a class, select it in the main class tree first.", "info")}
         metadata={metadata}
       />
       <ClassSelectorDialog
@@ -18340,7 +18578,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         externalExpandedNodes={expandedNodes}
         title="Set parent class"
         onAddClass={handleAddClassInline}
-        onDeleteClass={() => handleDeleteItem()}
+        // See the "Add type" dialog above for why this is a no-op, not handleDeleteItem().
+        onDeleteClass={() => showNotification("To delete a class, select it in the main class tree first.", "info")}
         metadata={metadata}
       />
 

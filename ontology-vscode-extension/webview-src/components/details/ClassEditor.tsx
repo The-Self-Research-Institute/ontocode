@@ -287,6 +287,14 @@ const ClassEditor: React.FC<{
   // Get current user for tracking mutations
   const { user } = useAuth();
 
+  // Always-latest ref for `item` — lets the annotations-fetch effect below detect whether
+  // a newer edit (e.g. via the annotation add/edit dialog) landed while its own request was
+  // still in flight, so it doesn't clobber that edit with a now-stale server response.
+  const itemRef = useRef(item);
+  useEffect(() => {
+    itemRef.current = item;
+  });
+
   const [activeTab, setActiveTab] = useState<"annotations" | "usage" | "description">("annotations");
   const [loadingAnnotations, setLoadingAnnotations] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -457,6 +465,7 @@ const ClassEditor: React.FC<{
 
     const runLoad = () => {
     const currentId = item.id;
+    const annotationsAtFetchStart = item.annotations;
     const shortIri = currentId.split(/[#/]/).pop() || currentId;
     console.log(`[perf][ClassEditor] ▶ select "${shortIri}" — annotations only (axioms on Description tab)`);
 
@@ -476,7 +485,15 @@ const ClassEditor: React.FC<{
         if (annData && typeof annData === "object") {
           setClassDetails((prev: any) => ({ ...(prev || {}), ...annData }));
           if (annData.annotations) {
-            onUpdate({ ...item, annotations: annData.annotations } as TreeNode);
+            const latestItem = itemRef.current;
+            // If the item's annotations changed since this fetch started (e.g. the user
+            // added/edited an annotation while this request was still in flight), this
+            // response is now stale — applying it would silently revert that edit.
+            if (latestItem.id === currentId && latestItem.annotations === annotationsAtFetchStart) {
+              onUpdate({ ...latestItem, annotations: annData.annotations } as TreeNode);
+            } else {
+              console.log(`[perf][ClassEditor] Skipping stale annotations response for "${shortIri}" — local annotations changed since fetch started`);
+            }
           }
           console.log(`[perf][ClassEditor] ✓ annotations in ${(performance.now() - t1).toFixed(0)}ms`);
         }
@@ -1895,7 +1912,12 @@ const ClassEditor: React.FC<{
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
-      await ontologyMutationService.deleteIndividual(projectId, individualIri, user?.email || user?.userId, user?.username);
+      // This removes the individual from THIS class's instance list — it must only retract
+      // the "<individualIri> rdf:type <item.id>" assertion, not delete the individual itself.
+      // deleteIndividual() removes every axiom about the individual globally, which silently
+      // erased it from the whole ontology (and every other class it belonged to) instead of
+      // just un-typing it here.
+      await ontologyMutationService.removeClassAssertion(projectId, individualIri, item.id);
       await new Promise((resolve) => setTimeout(resolve, 300));
       await loadInstances();
       if (onRefreshIndividuals) onRefreshIndividuals();
@@ -2423,7 +2445,12 @@ const ClassEditor: React.FC<{
         onDeleteClass={onDeleteClass}
         onAddObjectProperty={onAddObjectProperty}
         onAddDataProperty={onAddDataProperty}
-        onDeleteProperty={onDeleteProperty}
+        // Forwarding the outer onDeleteProperty is wrong here for the same reason onDeleteClass
+        // is wrong for the Disjoint selectors above: this dialog's object/data property trees
+        // have their own local selection, but EntityHierarchy's delete button always calls the
+        // handler with no argument, so the outer handler would delete whatever property is open
+        // in the main editor — not whatever's selected in this picker.
+        onDeleteProperty={() => notificationService.info("Not available", "To delete a property, select it in the main property tree first.")}
         onRefreshClasses={onRefreshClasses}
         metadata={metadata}
       />
@@ -2446,7 +2473,13 @@ const ClassEditor: React.FC<{
         minSelection={1}
         initialSelectedIds={editingDisjointWithTarget ? [editingDisjointWithTarget] : []}
         onAddClass={onAddClassInline}
-        onDeleteClass={onDeleteClass}
+        // Forwarding the outer onDeleteClass here is wrong: this dialog's embedded tree has
+        // its own local selection (whichever class the user is browsing to pick as disjoint),
+        // separate from `item` (the class whose Description tab is actually open). EntityHierarchy's
+        // delete button always calls onDeleteItem with no argument, so the outer handler would
+        // delete `item` — not whatever the user selected in this picker. There's no legitimate
+        // "delete a class" use case from within a disjoint-class picker anyway.
+        onDeleteClass={() => notificationService.info("Not available", "To delete a class, select it in the main class tree first.")}
       />
 
       {/* Disjoint Union Selector */}
@@ -2466,7 +2499,8 @@ const ClassEditor: React.FC<{
         minSelection={2}
         initialSelectedIds={editingDisjointUnionMembers}
         onAddClass={onAddClassInline}
-        onDeleteClass={onDeleteClass}
+        // See the Disjoint With selector above for why this is a no-op, not onDeleteClass.
+        onDeleteClass={() => notificationService.info("Not available", "To delete a class, select it in the main class tree first.")}
       />
 
       {/* Has Key Property Selector */}
@@ -2490,7 +2524,9 @@ const ClassEditor: React.FC<{
         projectId={projectId}
         onAddObjectProperty={onAddObjectProperty}
         onAddDataProperty={onAddDataProperty}
-        onDeleteProperty={onDeleteProperty}
+        // See the ClassExpressionDialog invocation above for why this is a no-op, not
+        // onDeleteProperty — same mis-scoped-delete risk in this picker's property trees.
+        onDeleteProperty={() => notificationService.info("Not available", "To delete a property, select it in the main property tree first.")}
       />
 
       {/* Instances Selector Dialog */}
