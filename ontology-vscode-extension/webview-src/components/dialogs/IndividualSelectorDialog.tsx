@@ -171,7 +171,12 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) onClose();
+      }}
+    >
       <div
         className="bg-white rounded-lg shadow-xl w-full mx-4 flex flex-col"
         style={{ maxWidth: 'min(860px, calc(100vw - 32px))', maxHeight: 'min(80vh, calc(100vh - 32px))', resize: 'both', overflow: 'auto' }}
