@@ -873,9 +873,8 @@ const TopMenuBar = ({
                               // (or double-fire from any other source) can invoke this handler twice
                               // before the disabled attribute actually takes effect. pendingExportRef is
                               // a plain ref (synchronous), so check it directly instead of trusting render
-                              // timing. On desktop each overlapping call opens its own native Save dialog;
-                              // the first gets orphaned when the second grabs focus, so only the second
-                              // click's file actually saves.
+                              // timing. Each overlapping call independently submits its own export job
+                              // and shows its own save dialog at the end.
                               if (pendingExportRef.current) return;
                               // Gate at the master export key first; multi-format
                               // is implied by hasExport on paid tiers but we
@@ -887,7 +886,12 @@ const TopMenuBar = ({
                                 return;
                               }
                               setExportingFormat(format);
-                              const filename = `${currentProjectId}.${ext}`;
+                              // Prefer the ontology's actual file name over the raw project id.
+                              const baseName = (
+                                myFiles.find((f) => f.projectId === currentProjectId)?.filename ||
+                                currentProjectId
+                              ).replace(/\.[^./]+$/, "");
+                              const filename = `${baseName}.${ext}`;
                               const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(currentProjectId)}?format=${format}`;
                               setShowExportFormats(false);
                               setOpenMenu(null);
@@ -5713,16 +5717,30 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
   };
 
-  const refreshSelectedClassIndividualDetails = useCallback(async () => {
+  const refreshSelectedClassIndividualDetails = useCallback(async (afterMutation?: boolean) => {
     if (!projectId || !selectedClassIndividual?.id) {
       setSelectedClassIndividualDetails(null);
       return;
     }
     setSelectedClassIndividualLoading(true);
     try {
-      const response = await apiClient.get<any>(
-        `/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`,
-      );
+      if (afterMutation) {
+        // Same eventual-consistency race as ClassEditor's loadClassDetails(afterMutation) —
+        // the mutation resolving doesn't guarantee Fuseki/OWLAPI has caught up yet, so an
+        // immediate GET here can return pre-mutation data and the panel doesn't show the
+        // edit until the user re-selects this individual.
+        if (isDesktop()) {
+          await waitForDesktopOwlApiReady(projectId);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+      }
+      const detailsUrl = `/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`;
+      let response = await apiClient.get<any>(detailsUrl);
+      if (afterMutation && isOwlApiWarmingResponse(response)) {
+        await waitForDesktopOwlApiReady(projectId);
+        response = await apiClient.get<any>(detailsUrl);
+      }
       const details = response?.data || response;
       if (details) {
         setSelectedClassIndividualDetails({
@@ -5773,7 +5791,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         } else {
           await ontologyMutationService.deleteDifferentIndividual(projectId, selectedClassIndividualDetails.id, targetIri);
         }
-        await refreshSelectedClassIndividualDetails();
+        await refreshSelectedClassIndividualDetails(true);
       } catch (error) {
         console.error("[Dashboard] Failed to remove same/different individual assertion:", error);
         notificationService.error("Remove Failed", "Could not remove same/different individual assertion.");
@@ -16303,7 +16321,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                           if (selectedClassForIndividuals?.id === type) {
                                             await loadClassInstances();
                                           }
-                                          await refreshSelectedClassIndividualDetails();
+                                          await refreshSelectedClassIndividualDetails(true);
                                         } catch (error) {
                                           console.error("[Dashboard] Failed to remove type assertion:", error);
                                           notificationService.error(
@@ -16415,7 +16433,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                             key,
                                             String(value),
                                           );
-                                          await refreshSelectedClassIndividualDetails();
+                                          await refreshSelectedClassIndividualDetails(true);
                                         } catch (error) {
                                           console.error("[Dashboard] Failed to remove annotation:", error);
                                           notificationService.error("Remove Failed", "Could not remove annotation.");
@@ -16515,7 +16533,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                               );
                                             }
                                           }
-                                          await refreshSelectedClassIndividualDetails();
+                                          await refreshSelectedClassIndividualDetails(true);
                                         } catch (error) {
                                           console.error("[Dashboard] Failed to remove property assertion:", error);
                                           notificationService.error(
@@ -17391,7 +17409,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               value,
             );
             markAsUnsaved();
-            await refreshSelectedClassIndividualDetails();
+            await refreshSelectedClassIndividualDetails(true);
           } catch (error) {
             console.error("[Dashboard] Failed to add annotation:", error);
             notificationService.error("Annotation Failed", "Could not add annotation.");
@@ -17410,7 +17428,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             if (selectedClassForIndividuals?.id === node.id) {
               await loadClassInstances();
             }
-            await refreshSelectedClassIndividualDetails();
+            await refreshSelectedClassIndividualDetails(true);
           } catch (error) {
             console.error("[Dashboard] Failed to add type assertion:", error);
             notificationService.error("Type Failed", "Could not add type assertion.");
@@ -17470,7 +17488,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   );
                 }
               }
-              await refreshSelectedClassIndividualDetails();
+              await refreshSelectedClassIndividualDetails(true);
             } catch (error) {
               console.error("[Dashboard] Failed to add same/different individual assertion:", error);
               notificationService.error("Add Failed", "Could not add same/different individual assertion.");
@@ -17515,7 +17533,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 data.targetLabel,
               );
             }
-            await refreshSelectedClassIndividualDetails();
+            await refreshSelectedClassIndividualDetails(true);
           } catch (error) {
             console.error("[Dashboard] Failed to add property assertion:", error);
             notificationService.error("Add Failed", "Could not add property assertion.");

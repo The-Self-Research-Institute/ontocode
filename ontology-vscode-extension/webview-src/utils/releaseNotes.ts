@@ -25,13 +25,12 @@ export const RELEASE_NOTES: ReleaseNote[] = [
   {
     version: "1.1.0-beta.16",
     date: "July 27, 2026",
-    title: "File Rename & Editing Fixes",
+    title: "Rename, Save & Export Reliability",
     highlights: [
-      "Project Library — You can now rename files directly from the library (grid and list views), without needing to re-upload.",
-      "Fixed a bug where removing an individual from a class deleted that individual from the entire ontology instead of just removing it from that class.",
-      "Fixed the editor getting stuck on a loading spinner for ontologies with zero classes.",
-      "Fixed class/individual edits occasionally being reverted by a slow, now-stale server response arriving after a newer local edit.",
-      "The DL Query and SPARQL Query editors got a round of polish: autocomplete no longer lingers after clicking away, sample SPARQL queries now include required prefixes, and switching queries jumps back to the editor tab.",
+      "TSRI-223: SPARQL Query — Fixed a bug causing SPARQL queries to fail.",
+      "TSRI-222: Renaming an entity and dragging to select text in the name field no longer closes the editor and cancels the rename if the drag ends outside the text field.",
+      "TSRI-222: Saving or exporting an ontology as an OWL file no longer opens two consecutive save dialogs for a single action.",
+      "TSRI-222: Added or edited ontology values (axioms, types, annotations) now display immediately after saving, instead of only appearing after selecting a different entity or panel and returning.",
     ],
     videoUrl: "",
   },

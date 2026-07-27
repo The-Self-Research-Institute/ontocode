@@ -8,7 +8,7 @@ import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import { friendlyApiErrorMessage } from '../../utils/apiErrors';
-import { isDesktop } from '../../utils/desktop';
+import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from '../../utils/desktop';
 import { useAuth } from '../../custom-hook/useAuth';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual } from '../../types';
 
@@ -544,7 +544,7 @@ const ClassEditor: React.FC<{
         "ANNOTATION_ADDED", "ANNOTATION_MODIFIED", "ANNOTATION_DELETED",
       ]);
       if (CLASS_CHANGE_TYPES.has(edit.type)) {
-        loadClassDetails();
+        loadClassDetails(undefined, true);
       }
     };
     window.addEventListener("remoteEditReceived", handleRemoteEdit);
@@ -674,7 +674,7 @@ const ClassEditor: React.FC<{
     }
   };
 
-  const loadClassDetails = async (signal?: AbortSignal): Promise<any | null> => {
+  const loadClassDetails = async (signal?: AbortSignal, afterMutation?: boolean): Promise<any | null> => {
     const loadGen = ++detailsLoadGenRef.current;
     setLoadingDetails(true);
     setLoadingDetailsElapsed(0);
@@ -682,17 +682,37 @@ const ClassEditor: React.FC<{
       setLoadingDetailsElapsed((s) => s + 1);
     }, 1000);
     try {
+      if (afterMutation) {
+        // The mutation's own response resolving doesn't guarantee Fuseki's index (or the
+        // desktop OWLAPI in-memory model) has caught up yet — fetching immediately can
+        // return pre-mutation axioms and silently overwrite the edit just applied. Same
+        // race as Dashboard.tsx's refreshProperties(); previously this only self-healed
+        // once the user reselected the entity, since that's what re-runs this fetch.
+        if (isDesktop()) {
+          await waitForDesktopOwlApiReady(projectId);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+      }
       // Pass userId so the backend includes the user's draft graph in SPARQL reads.
       // SparqlQueryContextInterceptor reads it from the request param; buildFromClause
       // then adds FROM <draftGraph> to every execSelect, making draft additions visible.
       const userId = user?.email || user?.userId;
       const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
       // Bust any intermediary cache after mutations so new restrictions appear immediately.
-      const response = await apiClient.get<any>(
+      let response = await apiClient.get<any>(
         `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}&_=${Date.now()}`,
         undefined,
         signal ? { signal } : undefined,
       );
+      if (afterMutation && isOwlApiWarmingResponse(response)) {
+        await waitForDesktopOwlApiReady(projectId);
+        response = await apiClient.get<any>(
+          `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}&_=${Date.now()}`,
+          undefined,
+          signal ? { signal } : undefined,
+        );
+      }
       if (loadGen !== detailsLoadGenRef.current) {
         console.log("[ClassEditor] Discarding stale class details response");
         return null;
@@ -1070,7 +1090,7 @@ const ClassEditor: React.FC<{
           }
         }
 
-        await loadClassDetails();
+        await loadClassDetails(undefined, true);
       } else {
         // ── ADD ──
         await handleAddAxiom(editorType, expressionToSave, restrictionData);
@@ -1310,7 +1330,7 @@ const ClassEditor: React.FC<{
       await new Promise((resolve) => setTimeout(resolve, 800));
       // Reload details to get the updated axioms
       console.log("[ClassEditor] Reloading class details after axiom addition");
-      await loadClassDetails();
+      await loadClassDetails(undefined, true);
       console.log("[ClassEditor] Class details reloaded after axiom addition");
       // Also notify parent to update tree if needed (though axioms usually don't change tree structure unless it's subclassof)
       // onUpdate(item); // We might not need this if we reload details
@@ -1391,7 +1411,7 @@ const ClassEditor: React.FC<{
         }
         // Wait for GraphDB to process the deletion
         await new Promise((resolve) => setTimeout(resolve, 300));
-        await loadClassDetails();
+        await loadClassDetails(undefined, true);
       } else {
         // The id is usually the IRI of the related class
         // Always attempt to delete - the backend will handle validation
@@ -1438,7 +1458,7 @@ const ClassEditor: React.FC<{
         await new Promise((resolve) => setTimeout(resolve, 300));
         // Reload to reflect changes
         console.log("[ClassEditor] Reloading class details after delete");
-        await loadClassDetails();
+        await loadClassDetails(undefined, true);
         console.log("[ClassEditor] loadClassDetails completed");
       }
     } catch (error) {
@@ -1589,7 +1609,7 @@ const ClassEditor: React.FC<{
       // Small delay before reloading
       await new Promise((resolve) => setTimeout(resolve, 300));
       console.log("[ClassEditor] Reloading class details after edit");
-      await loadClassDetails();
+      await loadClassDetails(undefined, true);
       console.log("[ClassEditor] Edit completed successfully");
     } catch (error) {
       console.error("[ClassEditor] Failed to edit axiom:", error);
@@ -1634,7 +1654,7 @@ const ClassEditor: React.FC<{
       // Small delay to allow GraphDB to process the mutations
       await new Promise((resolve) => setTimeout(resolve, 300));
       console.log("[ClassEditor] Reloading class details after adding disjoint with");
-      await loadClassDetails();
+      await loadClassDetails(undefined, true);
       console.log("[ClassEditor] loadClassDetails completed after disjoint with");
     } catch (error) {
       console.error("[ClassEditor] Failed to add disjoint with:", error);
@@ -1729,7 +1749,7 @@ const ClassEditor: React.FC<{
       // Small delay to allow GraphDB to process the mutation
       await new Promise((resolve) => setTimeout(resolve, 300));
       console.log("[ClassEditor] Reloading class details after adding disjoint union");
-      await loadClassDetails();
+      await loadClassDetails(undefined, true);
       console.log("[ClassEditor] loadClassDetails completed after disjoint union");
     } catch (error) {
       console.error("[ClassEditor] Failed to add disjoint union:", error);
@@ -1777,7 +1797,7 @@ const ClassEditor: React.FC<{
       // Small delay to allow GraphDB to process the mutation
       await new Promise((resolve) => setTimeout(resolve, 300));
       console.log("[ClassEditor] Reloading class details after deleting disjoint union");
-      await loadClassDetails();
+      await loadClassDetails(undefined, true);
       console.log("[ClassEditor] loadClassDetails completed after delete disjoint union");
     } catch (error) {
       console.error("[ClassEditor] Failed to delete disjoint union:", error);
@@ -1819,7 +1839,7 @@ const ClassEditor: React.FC<{
       // Small delay to allow GraphDB to process the mutation
       await new Promise((resolve) => setTimeout(resolve, 300));
       console.log("[ClassEditor] Reloading class details after deleting has key");
-      await loadClassDetails();
+      await loadClassDetails(undefined, true);
       console.log("[ClassEditor] loadClassDetails completed after delete has key");
     } catch (error) {
       console.error("[ClassEditor] Failed to delete has key:", error);
@@ -1860,7 +1880,7 @@ const ClassEditor: React.FC<{
       // Small delay to allow GraphDB to process the mutation
       await new Promise((resolve) => setTimeout(resolve, 300));
       console.log("[ClassEditor] Reloading class details after adding has key");
-      await loadClassDetails();
+      await loadClassDetails(undefined, true);
       console.log("[ClassEditor] loadClassDetails completed after has key");
     } catch (error) {
       console.error("[ClassEditor] Failed to add has key:", error);
@@ -1959,7 +1979,7 @@ const ClassEditor: React.FC<{
       // Delete the axiom by its blank node ID
       await ontologyMutationService.deleteAxiom(projectId, axiomId, ancestorIri);
       await new Promise((resolve) => setTimeout(resolve, 500));
-      await loadClassDetails();
+      await loadClassDetails(undefined, true);
     } catch (error) {
       console.error("[ClassEditor] Failed to delete GCA:", error);
       notificationService.error("Delete Failed", `Failed to delete general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -2000,7 +2020,7 @@ const ClassEditor: React.FC<{
       }
 
       await new Promise((resolve) => setTimeout(resolve, 500));
-      await loadClassDetails();
+      await loadClassDetails(undefined, true);
     } catch (error) {
       console.error("[ClassEditor] Failed to save GCA:", error);
       notificationService.error("Save Failed", `Failed to save general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
