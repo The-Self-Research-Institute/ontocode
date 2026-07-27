@@ -364,6 +364,28 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     };
   }, [showReasonerMenu]);
 
+  // Backend endpoints that can be offloaded to the reasoner-worker (consistency,
+  // realization, inferred-axioms — classification has its own dedicated status
+  // endpoint and is polled separately below) reply with 202 + {async, jobId, status}
+  // instead of the result body when the worker is enabled. /api/dl-query/jobs/{jobId}
+  // works as the poll target regardless of which service originally submitted the
+  // job — it falls back to asking the worker directly when it has no local record.
+  const pollWorkerJob = useCallback(async (jobId: string, timeoutMs = 10 * 60 * 1000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const res = await authFetch(`${normalizedApiBaseUrl}/api/dl-query/jobs/${jobId}`);
+      if (!res.ok) {
+        throw new Error(`Poll failed: ${res.statusText}`);
+      }
+      const job = await res.json();
+      const status = String(job?.status || '').toUpperCase();
+      if (status === 'COMPLETED') return job;
+      if (status === 'FAILED') throw new Error(job.error || job.message || 'Reasoning job failed');
+    }
+    throw new Error('Reasoning job timed out');
+  }, [normalizedApiBaseUrl]);
+
   const fetchInferredAxioms = useCallback(async (reasonerType: string) => {
     try {
       const encodedProjectId = encodeURIComponent(projectId);
@@ -374,7 +396,10 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         console.warn(`[ReasonerPluginView] inferred-axioms request failed: ${response.status} ${response.statusText}`);
         return;
       }
-      const data = await response.json();
+      let data = await response.json();
+      if (data.async && (data.jobId || data.taskId)) {
+        data = await pollWorkerJob(data.jobId || data.taskId);
+      }
       if (data.axioms && Array.isArray(data.axioms)) {
         setInferredAxioms(data.axioms);
         setInferredAxiomsTotal(data.totalInferredAxioms || data.axioms.length);
@@ -384,7 +409,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     } catch (err) {
       console.warn('[ReasonerPluginView] Failed to fetch inferred axioms:', err);
     }
-  }, [projectId, normalizedApiBaseUrl]);
+  }, [projectId, normalizedApiBaseUrl, pollWorkerJob]);
 
   // Start reasoning
   const startReasoner = useCallback(async (task: 'consistency' | 'classification' | 'realization') => {
@@ -441,6 +466,16 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
       let result = await response.json();
       console.log('[ReasonerPluginView] Reasoning result:', result);
+
+      // Consistency/realization have no dedicated status endpoint of their own — when
+      // the reasoner-worker is enabled, the initial POST above returns a queued job
+      // (202 + {async, jobId}) instead of the result, so it must be polled generically.
+      // Classification is handled separately below via its own /classify/status
+      // endpoint, which already understands both the worker and non-worker paths.
+      if (result.async && (result.jobId || result.taskId) && task !== 'classification') {
+        setReasonerStatus(`Running ${task}... (queued)`);
+        result = await pollWorkerJob(result.jobId || result.taskId);
+      }
 
       // Handle async classify response (taskId-based polling)
       if (result.taskId && task === 'classification') {
@@ -514,7 +549,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms]);
+  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms, pollWorkerJob]);
 
   // Generate explanations for reasoning results
   const generateExplanations = (classificationResult: any) => {
@@ -728,14 +763,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       ? dashboardInferredHierarchy
       : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || []);
     const tree = ensureTree(source);
-    // eslint-disable-next-line no-console
-    console.log('[DIAG-HIERARCHY] ReasonerPluginView.classHierarchyToRender', {
-      dashboardInferredHierarchyLength: Array.isArray(dashboardInferredHierarchy) ? dashboardInferredHierarchy.length : 'not an array/undefined',
-      sourceLength: Array.isArray(source) ? source.length : 'not an array',
-      sourceFirstNodeKeys: Array.isArray(source) && source[0] ? Object.keys(source[0]) : null,
-      sourceFirstNodeChildrenLength: Array.isArray(source) && source[0]?.children ? source[0].children.length : 'no children field',
-      treeLength: tree.length,
-    });
     return tree;
   }, [dashboardInferredHierarchy, reasonerResults]);
 

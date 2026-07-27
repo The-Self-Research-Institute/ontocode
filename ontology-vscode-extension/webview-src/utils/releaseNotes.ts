@@ -23,6 +23,19 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.1.0-beta.16",
+    date: "July 27, 2026",
+    title: "File Rename & Editing Fixes",
+    highlights: [
+      "Project Library — You can now rename files directly from the library (grid and list views), without needing to re-upload.",
+      "Fixed a bug where removing an individual from a class deleted that individual from the entire ontology instead of just removing it from that class.",
+      "Fixed the editor getting stuck on a loading spinner for ontologies with zero classes.",
+      "Fixed class/individual edits occasionally being reverted by a slow, now-stale server response arriving after a newer local edit.",
+      "The DL Query and SPARQL Query editors got a round of polish: autocomplete no longer lingers after clicking away, sample SPARQL queries now include required prefixes, and switching queries jumps back to the editor tab.",
+    ],
+    videoUrl: "",
+  },
+  {
     version: "1.1.0-beta.15",
     date: "July 23, 2026",
     title: "Reasoner Reliability & Clearer Error Messages",
