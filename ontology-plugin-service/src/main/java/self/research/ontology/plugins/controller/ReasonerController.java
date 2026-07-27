@@ -689,7 +689,7 @@ public class ReasonerController {
     ) {
         try {
             if (workerAvailable()) {
-                return submitToWorker("REASONER_RUN", projectId, reasonerType);
+                return submitToWorker("REASONER_INFERRED_AXIOMS", projectId, reasonerType);
             }
 
             log.info("Getting inferred axioms for project: {} with {}", projectId, reasonerType);
@@ -713,11 +713,11 @@ public class ReasonerController {
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.put("axioms", axiomsList);
-            result.put("totalCount", inferredAxioms.size());
+            result.put("totalInferredAxioms", inferredAxioms.size());
             result.put("durationMs", duration);
-            
+
             return ResponseEntity.ok(result);
-            
+
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "getting inferred axioms");
         }

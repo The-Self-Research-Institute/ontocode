@@ -3033,42 +3033,21 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     const applyPayload = (payload: any, timedOut = false) => {
       const hierarchy = payload?.hierarchy || [];
-      // eslint-disable-next-line no-console
-      console.log("[DIAG-HIERARCHY] applyPayload", {
-        timedOut,
-        isArray: Array.isArray(hierarchy),
-        length: Array.isArray(hierarchy) ? hierarchy.length : "n/a",
-        firstNodeKeys: Array.isArray(hierarchy) && hierarchy[0] ? Object.keys(hierarchy[0]) : null,
-        payloadKeys: payload ? Object.keys(payload) : null,
-      });
       if (timedOut || !Array.isArray(hierarchy) || hierarchy.length === 0) {
-        console.log("[DIAG-HIERARCHY] applyPayload -> setting EMPTY hierarchy");
         setInferredClassHierarchy([]);
         return false;
       }
       const normalized = applyInstanceCountsToTree(hierarchy.map(normalizeHierarchyNode), classInstanceCounts);
-      console.log("[DIAG-HIERARCHY] applyPayload -> setting hierarchy with", normalized.length, "root node(s)");
       setInferredClassHierarchy(normalized);
       return true;
     };
 
     try {
       const payload = await fetchWithReasoner(effectiveReasoner);
-      // eslint-disable-next-line no-console
-      console.log("[DIAG-HIERARCHY] raw payload from fetchWithReasoner", {
-        effectiveReasoner,
-        keys: payload ? Object.keys(payload) : null,
-        success: payload?.success,
-        inconsistent: payload?.inconsistent,
-        tooLargeForReasoner: payload?.tooLargeForReasoner,
-        timeout: payload?.timeout,
-        hierarchyLength: Array.isArray(payload?.hierarchy) ? payload.hierarchy.length : "not an array",
-      });
 
       // Backend signals the ontology is logically inconsistent — reasoning cannot
       // proceed. Tell the user instead of silently showing an empty tree.
       if (payload?.inconsistent) {
-        console.log("[DIAG-HIERARCHY] branch: inconsistent");
         setInferredClassHierarchy([]);
         showNotification(
           payload?.message ||
@@ -3080,7 +3059,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Backend converted an error into a friendly message with success:false —
       // surface it rather than rendering an empty hierarchy.
       if (payload && payload.success === false && (payload.message || payload.error)) {
-        console.log("[DIAG-HIERARCHY] branch: success===false", payload.message || payload.error);
         setInferredClassHierarchy([]);
         showNotification(payload.message || payload.error, "error");
         return;
@@ -3088,20 +3066,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Backend signals ontology is too large — retry with STRUCTURAL (no inference, always fast)
       if (payload?.tooLargeForReasoner && effectiveReasoner !== 'STRUCTURAL') {
-        console.log("[DIAG-HIERARCHY] branch: tooLargeForReasoner -> retrying with STRUCTURAL");
         const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
         applyPayload(fallbackPayload);
       // Backend signals timeout — auto-retry with STRUCTURAL
       } else if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
-        console.log("[DIAG-HIERARCHY] branch: timeout -> retrying with STRUCTURAL");
         const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
         applyPayload(fallbackPayload);
       } else {
-        console.log("[DIAG-HIERARCHY] branch: normal apply");
         applyPayload(payload);
       }
     } catch (error) {
-      console.error("[DIAG-HIERARCHY] Failed to load inferred class hierarchy:", error);
+      console.error("[Dashboard] Failed to load inferred class hierarchy:", error);
       setInferredClassHierarchy([]);
     }
   }, [projectId, metadata, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner, normalizeHierarchyNode]);
@@ -6129,9 +6104,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     // the modal open even when isInitialLoading/showLoadingChoice are both false, and
     // this watchdog needs to actually be running in that case to ever unstick it.
     const open = isInitialLoading || showLoadingChoice || isExpectingFileReady;
-    console.log(
-      `🐕 WATCHDOG effect evaluated — open=${open} (isInitialLoading=${isInitialLoading} showLoadingChoice=${showLoadingChoice} isExpectingFileReady=${isExpectingFileReady}) projectId=${projectId}`,
-    );
     // Only poll status for file-level project IDs (contain '--').
     // Parent-only IDs (e.g. "proj-abc123") return 404 from the status endpoint.
     if (!open || !projectId || !projectId.includes("--")) return;
@@ -6171,9 +6143,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     const tick = async () => {
       if (cancelled) return;
-      console.log(
-        `🐕 WATCHDOG tick — projectId=${projectId} isInitialLoading=${isInitialLoading} showLoadingChoice=${showLoadingChoice} isExpectingFileReady=${isExpectingFileReady} elapsedMs=${Date.now() - startedAt}`,
-      );
       if (Date.now() - startedAt > HARD_CAP_MS) {
         failAndRedirect(
           isDesktop()
@@ -6194,7 +6163,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         const res = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(projectId)}`);
         const status = res?.data?.status || res?.status;
-        console.log(`🐕 WATCHDOG status response — status=${status} raw=`, res);
         if (status === "ERROR") {
           const errMsg = res?.data?.error || res?.error || "Failed to load ontology. Please check the file and try again.";
           failAndRedirect(errMsg);
