@@ -18366,15 +18366,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                     onAddAnnotation={handleAddAnnotation}
                     onEditAnnotation={handleEditAnnotation}
                     onDeleteAnnotation={handleDeleteAnnotation}
-                    onAddDomainClick={() => handleOpenClassSelector("domain")}
-                    onAddRangeClick={() => handleOpenClassSelector("range")}
-                    onAddSubPropertyClick={() => handleOpenPropertySelector("subProperty")}
-                    onAddInverseClick={() => handleOpenPropertySelector("inverse")}
-                    onAddDisjointClick={() => handleOpenPropertySelector("disjoint")}
-                    onAddEquivalentClick={() => handleOpenPropertySelector("equivalent")}
-                    onAddAnnotationDomainClick={() => handleOpenAnnotationDomainDialog()}
-                    onAddAnnotationRangeClick={() => handleOpenAnnotationRangeDialog()}
-                    onAddAnnotationSuperpropertyClick={() => handleOpenAnnotationSuperpropertyDialog()}
+                    onAddDomainClick={(editingItem) => handleOpenClassSelector("domain", editingItem)}
+                    onAddRangeClick={(editingItem) => handleOpenClassSelector("range", editingItem)}
+                    onAddSubPropertyClick={(editingItem) => handleOpenPropertySelector("subProperty", editingItem)}
+                    onAddInverseClick={(editingItem) => handleOpenPropertySelector("inverse", editingItem)}
+                    onAddDisjointClick={(editingItem) => handleOpenPropertySelector("disjoint", editingItem)}
+                    onAddEquivalentClick={(editingItem) => handleOpenPropertySelector("equivalent", editingItem)}
+                    onAddAnnotationDomainClick={(editingItem) => handleOpenAnnotationDomainDialog(editingItem)}
+                    onAddAnnotationRangeClick={(editingItem) => handleOpenAnnotationRangeDialog(editingItem)}
+                    onAddAnnotationSuperpropertyClick={(editingItem) => handleOpenAnnotationSuperpropertyDialog(editingItem)}
                     classHierarchy={classHierarchy}
                     objectProperties={objectProperties}
                     dataProperties={dataProperties}
