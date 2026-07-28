@@ -683,11 +683,12 @@ const ClassEditor: React.FC<{
     }, 1000);
     try {
       if (afterMutation) {
-        // The mutation's own response resolving doesn't guarantee Fuseki's index (or the
-        // desktop OWLAPI in-memory model) has caught up yet — fetching immediately can
-        // return pre-mutation axioms and silently overwrite the edit just applied. Same
-        // race as Dashboard.tsx's refreshProperties(); previously this only self-healed
-        // once the user reselected the entity, since that's what re-runs this fetch.
+        // On web, the mutation's own response resolving doesn't guarantee Fuseki's index has
+        // caught up yet — fetching immediately can return pre-mutation axioms and silently
+        // overwrite the edit just applied. Same race as Dashboard.tsx's refreshProperties().
+        // On desktop this endpoint reads from the OWLAPI in-memory model directly
+        // (desktopHierarchyService.hasOntology), not Fuseki, and that model is patched
+        // synchronously by the same mutation — waitForDesktopOwlApiReady is enough.
         if (isDesktop()) {
           await waitForDesktopOwlApiReady(projectId);
         } else {
