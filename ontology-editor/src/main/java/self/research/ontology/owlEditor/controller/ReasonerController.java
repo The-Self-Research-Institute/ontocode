@@ -65,6 +65,9 @@ public class ReasonerController {
     private EditorReasonerCacheService editorReasonerCache;
 
     @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.ProjectImportService projectImportService;
+
+    @Autowired(required = false)
     private ReasonerWorkerClient reasonerWorkerClient;
 
     @Value("${ontocode.reasoner-worker.enabled:false}")
@@ -88,6 +91,15 @@ public class ReasonerController {
         }
 
         editorReasonerCache.prepareForOntologyLoad(projectId);
+
+        // Cache miss, about to stream from Fuseki below — on desktop, Fuseki sync after a
+        // mutation is deferred (debounced up to 20s+), so force it fresh first. This covers the
+        // gap where the user is already sitting on the Reasoner/DL Query tab and mutates without
+        // switching tabs, so the frontend's ensureDesktopFusekiSync tab-activation gate never
+        // re-fires. No-ops on cloud and when already in sync.
+        if (projectImportService != null) {
+            projectImportService.syncProjectToFuseki(projectId);
+        }
 
         // Guard: reject oversized ontologies before attempting OWL API parsing.
         // Even with streaming export, loading a 2.8M-triple ontology into OWLOntology

@@ -21,15 +21,18 @@ public class AxiomAnnotationService {
     private final SparqlDatasetService datasetService;
     private final AxiomLookupService axiomLookupService;
     private final OntologyMutationService mutationService;
+    private final ProjectImportService importService;
 
     public AxiomAnnotationService(StorageManager storageManager,
                                   SparqlDatasetService datasetService,
                                   AxiomLookupService axiomLookupService,
-                                  @org.springframework.context.annotation.Lazy OntologyMutationService mutationService) {
+                                  @org.springframework.context.annotation.Lazy OntologyMutationService mutationService,
+                                  @org.springframework.context.annotation.Lazy ProjectImportService importService) {
         this.storageManager = storageManager;
         this.datasetService = datasetService;
         this.axiomLookupService = axiomLookupService;
         this.mutationService = mutationService;
+        this.importService = importService;
     }
 
     public List<Map<String, String>> getAnnotations(String projectId, String entityIri,
@@ -185,6 +188,10 @@ public class AxiomAnnotationService {
             return manager.loadOntologyFromOntologyDocument(
                     new org.semanticweb.owlapi.io.StringDocumentSource(rdf), config);
         }
+        // Main-graph read from Fuseki — on desktop, sync after a mutation is deferred (debounced
+        // up to 20s+), so axiom annotations added just before checking this would be missed.
+        // No-ops on cloud and when already in sync.
+        importService.syncProjectToFuseki(projectId);
         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         return manager.loadOntologyFromOntologyDocument(exportPath.toFile());

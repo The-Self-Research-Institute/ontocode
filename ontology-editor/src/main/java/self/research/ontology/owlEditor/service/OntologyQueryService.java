@@ -2184,36 +2184,6 @@ public class OntologyQueryService {
         return imports;
     }
 
-    public List<Map<String, String>> generalClassAxioms(String projectId, int limit) {
-        String query = PREFIXES + """
-            SELECT DISTINCT ?sub ?super ?label WHERE {
-              ?sub rdfs:subClassOf ?super .
-              FILTER(isBlank(?sub))
-              OPTIONAL { ?super rdfs:label ?label }
-            }
-            """;
-        TupleQueryResult rs = datasetService.execSelect(projectId, query);
-        List<Map<String, String>> axioms = new ArrayList<>();
-        int count = 0;
-        while (rs.hasNext() && count < limit) {
-            BindingSet sol = rs.next();
-            Value subVal = sol.getValue("sub");
-            String subExpr = subVal != null ? subVal.stringValue() : "Anonymous class expression";
-            String superIri = resource(sol, "super");
-            String superLabel = sol.hasBinding("label") ? literal(sol, "label") : localName(superIri);
-
-            Map<String, String> axiom = new LinkedHashMap<>();
-            axiom.put("id", subExpr);
-            axiom.put("subExpression", subExpr);
-            axiom.put("superClassIri", superIri);
-            axiom.put("superClassLabel", superLabel);
-            axiom.put("definition", "Anonymous class expression <= " + (superLabel.isBlank() ? superIri : superLabel));
-            axioms.add(axiom);
-            count++;
-        }
-        return axioms;
-    }
-
     @Cacheable(value = "debugInfo", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public Map<String, Object> debugInfo(String projectId) {
         long startTime = System.currentTimeMillis();

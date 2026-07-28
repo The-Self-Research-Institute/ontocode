@@ -62,13 +62,16 @@ public class DLQueryService {
     private final SparqlDatasetService datasetService;
     private final OWLReasonerFactory reasonerFactory;
     private final long maxReasonerTriples;
+    private final ProjectImportService importService;
 
     public DLQueryService(GridFsTemplate gridfs,
                           SparqlDatasetService datasetService,
-                          @Value("${ontocode.reasoner.max-triples:5000000}") long maxReasonerTriples) {
+                          @Value("${ontocode.reasoner.max-triples:5000000}") long maxReasonerTriples,
+                          ProjectImportService importService) {
         this.gridfs = gridfs;
         this.datasetService = datasetService;
         this.maxReasonerTriples = maxReasonerTriples;
+        this.importService = importService;
         OWLReasonerFactory factory = null;
         try {
             factory = openllet.owlapi.OpenlletReasonerFactory.getInstance();
@@ -188,6 +191,10 @@ public class DLQueryService {
     }
 
     private LoadedOntology loadOntology(String projectId) throws Exception {
+        // About to stream from Fuseki below — on desktop, Fuseki sync after a mutation is
+        // deferred (debounced up to 20s+); the frontend's tab-activation gate covers switching
+        // *to* DL Query, but not mutating while already on it. No-ops on cloud/when in sync.
+        importService.syncProjectToFuseki(projectId);
         try {
             long tripleCount = datasetService.getDatasetSize(projectId);
             if (tripleCount > maxReasonerTriples) {
