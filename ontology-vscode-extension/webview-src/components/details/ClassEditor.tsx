@@ -880,7 +880,7 @@ const ClassEditor: React.FC<{
     }
   };
 
-  const loadInstances = async (signal?: AbortSignal) => {
+  const loadInstances = async (signal?: AbortSignal): Promise<any[]> => {
     try {
       const response = await apiClient.get<any>(
         `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(item.id)}`,
@@ -889,11 +889,14 @@ const ClassEditor: React.FC<{
       );
       // Backend returns {success: true, data: [...]} or just the array
       const instances = response?.data?.data || response?.data || response || [];
-      console.log("[ClassEditor] Class instances loaded:", instances.length);
-      setClassInstances(Array.isArray(instances) ? instances : []);
+      const list = Array.isArray(instances) ? instances : [];
+      console.log("[ClassEditor] Class instances loaded:", list.length);
+      setClassInstances(list);
+      return list;
     } catch (error) {
       console.error("Failed to load class instances:", error);
       setClassInstances([]);
+      return [];
     }
   };
 
@@ -1418,6 +1421,11 @@ const ClassEditor: React.FC<{
         // Always attempt to delete - the backend will handle validation
         console.log("[ClassEditor] Deleting simple class axiom:", { type, classIri: ownerIri, targetIri: id });
 
+        // For a complex/anonymous expression (intersection/union/complement, or a restriction
+        // with an anonymous property/filler), `id` is not a resolvable class — it's a synthetic
+        // per-request index (desktop) or a bare Fuseki blank-node string (cloud). Pass along the
+        // definition text this row displayed so the backend can match by that instead.
+        const definitionText = axiom?.definition;
         switch (type) {
           case "EquivalentTo":
             console.log("[ClassEditor] Calling deleteEquivalentClass");
@@ -1427,6 +1435,7 @@ const ClassEditor: React.FC<{
               id,
               user?.email,
               user?.username || user?.email,
+              definitionText,
             );
             break;
           case "SubClassOf":
@@ -1441,6 +1450,7 @@ const ClassEditor: React.FC<{
               id,
               user?.email,
               user?.username || user?.email,
+              definitionText,
             );
             console.log("[ClassEditor] deleteSubClassOf completed");
             break;
@@ -1909,10 +1919,25 @@ const ClassEditor: React.FC<{
         await ontologyMutationService.addIndividual(projectId, name, item.id);
       }
 
-      // Small delay to allow GraphDB to process the mutation
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // Same eventual-consistency race as loadClassDetails(afterMutation) — a GET right after
+      // the mutation resolves can still land on desktop's OWLAPI cache mid-rewarm and return the
+      // pre-mutation instance list. Verify the new instance is actually visible before settling
+      // instead of trusting one fetch after a fixed delay.
       console.log("[ClassEditor] Reloading instances after adding");
-      await loadInstances();
+      for (let attempt = 1; attempt <= 6; attempt++) {
+        if (isDesktop()) {
+          await waitForDesktopOwlApiReady(projectId);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        const list = await loadInstances();
+        if (list.some((inst: any) => (inst?.label || inst?.id || "") === name || inst?.id?.endsWith(`#${name.replace(/\s+/g, "_")}`))) {
+          break;
+        }
+        if (attempt === 6) {
+          console.warn("[ClassEditor] New instance still not visible after retries");
+        }
+      }
 
       // Refresh individuals in parent if callback provided
       if (onRefreshIndividuals) {
@@ -1939,8 +1964,22 @@ const ClassEditor: React.FC<{
       // erased it from the whole ontology (and every other class it belonged to) instead of
       // just un-typing it here.
       await ontologyMutationService.removeClassAssertion(projectId, individualIri, item.id);
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      await loadInstances();
+      // Same eventual-consistency race as handleAddInstance above — verify the retraction is
+      // actually visible before settling instead of trusting one fetch after a fixed delay.
+      for (let attempt = 1; attempt <= 6; attempt++) {
+        if (isDesktop()) {
+          await waitForDesktopOwlApiReady(projectId);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        const list = await loadInstances();
+        if (!list.some((inst: any) => inst?.id === individualIri || inst?.iri === individualIri)) {
+          break;
+        }
+        if (attempt === 6) {
+          console.warn("[ClassEditor] Deleted instance still visible after retries");
+        }
+      }
       if (onRefreshIndividuals) onRefreshIndividuals();
     } catch (error) {
       console.error("[ClassEditor] Failed to delete instance:", error);
@@ -1976,9 +2015,17 @@ const ClassEditor: React.FC<{
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
-      // GCAs are stored as SubClassOf axioms with blank node subjects
-      // Delete the axiom by its blank node ID
-      await ontologyMutationService.deleteAxiom(projectId, axiomId, ancestorIri);
+      // GCAs are stored as SubClassOf axioms with blank node subjects on cloud, but desktop's
+      // OWLAPI model has no such id (separately parsed from the same triples) — the axiomId
+      // there is a synthetic per-request placeholder. Look up the definition text this row
+      // displayed and pass it along so the backend can match by that when the id isn't real.
+      // No explicit ancestorIri means this came from the "General class axioms" section, which
+      // is always scoped to the class currently open.
+      const axiomList = ancestorIri
+        ? classDetails?.anonymousAncestorAxioms
+        : classDetails?.generalClassAxioms;
+      const definition = (axiomList || []).find((a: Axiom) => a.id === axiomId)?.definition;
+      await ontologyMutationService.deleteAxiom(projectId, axiomId, ancestorIri || item.id, definition);
       await new Promise((resolve) => setTimeout(resolve, 500));
       await loadClassDetails(undefined, true);
     } catch (error) {
@@ -1997,7 +2044,8 @@ const ClassEditor: React.FC<{
     isSavingAxiomRef.current = true;
     try {
       if (editingGCAId) {
-        await ontologyMutationService.deleteAxiom(projectId, editingGCAId);
+        const existingDefinition = classDetails?.generalClassAxioms?.find((a: Axiom) => a.id === editingGCAId)?.definition;
+        await ontologyMutationService.deleteAxiom(projectId, editingGCAId, item.id, existingDefinition);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
@@ -2047,14 +2095,30 @@ const ClassEditor: React.FC<{
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
+      const addedIds: string[] = [];
       for (const individual of selectedIndividuals) {
         if (!classInstances.some((i) => i.id === individual.id)) {
           await ontologyMutationService.addClassAssertion(projectId, individual.id, item.id);
+          addedIds.push(individual.id);
         }
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      await loadInstances();
+      // Same eventual-consistency race as handleAddInstance above — verify the newly-added
+      // individuals are actually visible before settling instead of trusting one fetch.
+      for (let attempt = 1; attempt <= 6; attempt++) {
+        if (isDesktop()) {
+          await waitForDesktopOwlApiReady(projectId);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        const list = await loadInstances();
+        if (addedIds.every((id) => list.some((inst: any) => inst?.id === id || inst?.iri === id))) {
+          break;
+        }
+        if (attempt === 6) {
+          console.warn("[ClassEditor] Newly added instances still not fully visible after retries");
+        }
+      }
 
       if (onRefreshIndividuals) onRefreshIndividuals();
     } catch (error) {

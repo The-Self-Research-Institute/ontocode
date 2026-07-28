@@ -1146,7 +1146,13 @@ public class ProjectLoadController {
                                            @RequestParam(defaultValue = "rdfxml") String format) {
         try {
             Path exportPath;
-            
+
+            // On desktop, mutations patch the OWLAPI in-memory model immediately but Fuseki sync
+            // is deferred (debounced up to 20s+) — exportOntology below reads from Fuseki, so
+            // without this, a user who edits then immediately exports gets a file missing their
+            // last edits. syncProjectToFuseki no-ops on cloud and when already in sync.
+            importService.syncProjectToFuseki(projectId);
+
             // Check for cached code view content first (preserves citation line positions)
             Optional<String> cachedContent = storageManager.getCodeViewCache(projectId, format);
             if (cachedContent.isPresent()) {

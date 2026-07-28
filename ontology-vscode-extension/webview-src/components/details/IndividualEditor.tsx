@@ -356,14 +356,17 @@ const IndividualEditor: React.FC<{
         }
       }
       
-      // Update local state
+      // Update local state — use the locals derived from `data` above (propLabel/targetLabel/
+      // isObjProp), not `newAssertion` state, which is still blank at this point (only ever
+      // populated on dialog-close) and was producing rows with no property/target label until
+      // the next refetch replaced them with the backend's resolved values.
       const newAssertionObject: PropertyAssertion = {
           id: `assertion-${Date.now()}`,
           propertyIri: propertyIri,
-          propertyLabel: newAssertion.propertyLabel,
-          [newAssertion.isObjectProperty ? 'targetIri' : 'targetLiteral']: newAssertion.isObjectProperty ? targetIri : newAssertion.targetLabel,
-          [newAssertion.isObjectProperty ? 'targetLabel' : '']: newAssertion.targetLabel,
-          isObjectProperty: newAssertion.isObjectProperty,
+          propertyLabel: propLabel,
+          [isObjProp ? 'targetIri' : 'targetLiteral']: isObjProp ? targetIri : targetLabel,
+          [isObjProp ? 'targetLabel' : '']: targetLabel,
+          isObjectProperty: isObjProp,
           isNegative: isNegativeAssertion,
       };
       onUpdate({ ...item, propertyAssertions: [...(item.propertyAssertions || []), newAssertionObject] });
