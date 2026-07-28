@@ -596,6 +596,33 @@ public class OntologyMutationService {
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> .\n"
                 + "}";
+        } else if (type.equals("updateSubPropertyOf")) {
+            // op.value() = old target IRI, op.target() = new target IRI. Atomic
+            // DELETE{...}WHERE{...} instead of DELETE DATA — see updateSubClassOf.
+            return "DELETE { <" + op.iri() + "> rdfs:subPropertyOf <" + op.value() + "> }\n"
+                + "INSERT { <" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> rdfs:subPropertyOf <" + op.value() + "> }";
+        } else if (type.equals("updatePropertyDomain")) {
+            return "DELETE { <" + op.iri() + "> rdfs:domain <" + op.value() + "> }\n"
+                + "INSERT { <" + op.iri() + "> rdfs:domain <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> rdfs:domain <" + op.value() + "> }";
+        } else if (type.equals("updatePropertyRange")) {
+            return "DELETE { <" + op.iri() + "> rdfs:range <" + op.value() + "> }\n"
+                + "INSERT { <" + op.iri() + "> rdfs:range <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> rdfs:range <" + op.value() + "> }";
+        } else if (type.equals("updateInverseProperty")) {
+            // owl:inverseOf is symmetric — swap both directions atomically.
+            return "DELETE { <" + op.iri() + "> owl:inverseOf <" + op.value() + "> . <" + op.value() + "> owl:inverseOf <" + op.iri() + "> }\n"
+                + "INSERT { <" + op.iri() + "> owl:inverseOf <" + op.target() + "> . <" + op.target() + "> owl:inverseOf <" + op.iri() + "> }\n"
+                + "WHERE { <" + op.iri() + "> owl:inverseOf <" + op.value() + "> }";
+        } else if (type.equals("updateDisjointProperty")) {
+            return "DELETE { <" + op.iri() + "> owl:propertyDisjointWith <" + op.value() + "> }\n"
+                + "INSERT { <" + op.iri() + "> owl:propertyDisjointWith <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> owl:propertyDisjointWith <" + op.value() + "> }";
+        } else if (type.equals("updateEquivalentProperty")) {
+            return "DELETE { <" + op.iri() + "> owl:equivalentProperty <" + op.value() + "> }\n"
+                + "INSERT { <" + op.iri() + "> owl:equivalentProperty <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> owl:equivalentProperty <" + op.value() + "> }";
         } else if (type.equals("addInverseProperty")) {
             // owl:inverseOf is symmetric in OWL — insert both directions so both
             // properties show each other as inverse (keeps inverses bidirectional).
