@@ -11,6 +11,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -47,7 +48,12 @@ public class ReasonerService {
     // 39k+ classes) and can run for hours on a single individual. That work isn't
     // cancellable once started, so we fire it on a daemon thread and abandon it
     // on timeout rather than block the caller indefinitely.
-    private static final long PER_INDIVIDUAL_TYPE_TIMEOUT_MS = 5_000;
+    // Desktop is single-user/single-request, so it can afford a much longer budget
+    // than a shared cloud deployment (see application-desktop.properties overrides).
+    // Same property name/default as plugin-service's ReasonerService — this is a
+    // separate hardcoded copy of the same constant, not read from the same field.
+    @Value("${ontocode.reasoner.per-individual-timeout-ms:5000}")
+    private long PER_INDIVIDUAL_TYPE_TIMEOUT_MS;
     private final ExecutorService inferredTypesExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "reasoner-inferred-types-worker");
         t.setDaemon(true);

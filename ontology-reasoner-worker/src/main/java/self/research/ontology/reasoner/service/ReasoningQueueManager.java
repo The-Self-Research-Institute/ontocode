@@ -74,6 +74,12 @@ public class ReasoningQueueManager {
         touchActivity();
         log.info("[Reasoning] Enqueued {} job {} for project {} (position {})",
                 jobType, job.getJobId(), projectId, job.getQueuePosition());
+        // TEMP DIAGNOSTIC — investigating a reported case where two different job
+        // submissions ended up returning the same jobId to two different callers.
+        // Remove once root-caused. Logs thread + identity hash to catch object reuse.
+        log.info("[DIAG] enqueue: jobId={} jobType={} projectId={} thread={} identityHash={} atMs={}",
+                job.getJobId(), jobType, projectId, Thread.currentThread().getName(),
+                System.identityHashCode(job), System.currentTimeMillis());
         return job;
     }
 
@@ -108,6 +114,8 @@ public class ReasoningQueueManager {
     }
 
     public synchronized void markCompleted(ReasoningJob job, Map<String, Object> result, long durationMs) {
+        log.info("[DIAG] markCompleted: jobId={} jobType={} identityHash={} atMs={}",
+                job.getJobId(), job.getJobType(), System.identityHashCode(job), System.currentTimeMillis());
         activeJobs.remove(job.getJobId());
         job.setStatus(ReasoningJob.Status.COMPLETED);
         job.setCompletedAt(Instant.now());
@@ -133,13 +141,21 @@ public class ReasoningQueueManager {
     public ReasoningJob getJob(String jobId) {
         ReasoningJob active = activeJobs.get(jobId);
         if (active != null) {
+            log.info("[DIAG] getJob: jobId={} source=active jobType={} identityHash={} atMs={}",
+                    jobId, active.getJobType(), System.identityHashCode(active), System.currentTimeMillis());
             return active;
         }
         ReasoningJob queued = queue.stream().filter(j -> jobId.equals(j.getJobId())).findFirst().orElse(null);
         if (queued != null) {
+            log.info("[DIAG] getJob: jobId={} source=queue jobType={} identityHash={} atMs={}",
+                    jobId, queued.getJobType(), System.identityHashCode(queued), System.currentTimeMillis());
             return queued;
         }
-        return resultRetention.get(jobId).orElse(null);
+        ReasoningJob retained = resultRetention.get(jobId).orElse(null);
+        log.info("[DIAG] getJob: jobId={} source=retention jobType={} identityHash={} atMs={}",
+                jobId, retained != null ? retained.getJobType() : "NOT_FOUND",
+                retained != null ? System.identityHashCode(retained) : -1, System.currentTimeMillis());
+        return retained;
     }
 
     public int activeJobCount() {
