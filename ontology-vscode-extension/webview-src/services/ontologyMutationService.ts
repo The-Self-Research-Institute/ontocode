@@ -430,11 +430,12 @@ export const ontologyMutationService = {
   /**
    * Create a new annotation property
    */
-  async createAnnotationProperty(projectId: string, iri: string, label: string, userId?: string, username?: string): Promise<void> {
+  async createAnnotationProperty(projectId: string, iri: string, label: string, parentIri?: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'createAnnotationProperty',
       iri,
-      label
+      label,
+      parent: parentIri
     }], undefined, userId, username);
   },
 

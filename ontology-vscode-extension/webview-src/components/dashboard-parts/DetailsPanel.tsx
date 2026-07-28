@@ -42,6 +42,7 @@ export const DetailsPanel = ({
   dataPropertyHierarchy,
   objectPropertyHierarchy,
   dataProperties,
+  annotationProperties,
   metadata,
   individuals,
   setIndividuals,
@@ -82,6 +83,7 @@ export const DetailsPanel = ({
   dataPropertyHierarchy: TreeNode[];
   objectPropertyHierarchy: TreeNode[];
   dataProperties: Property[];
+  annotationProperties?: AnnotationProperty[];
   metadata?: { ontologyIRI?: string } | null;
   individuals: Individual[];
   setIndividuals: React.Dispatch<React.SetStateAction<Individual[]>>;
@@ -219,6 +221,7 @@ export const DetailsPanel = ({
           onAddRangeClick={onAddAnnotationRangeClick}
           isViewOnly={isViewOnly}
           onViewOnlyAction={onViewOnlyAction}
+          annotationProperties={annotationProperties}
         />
       );
     }

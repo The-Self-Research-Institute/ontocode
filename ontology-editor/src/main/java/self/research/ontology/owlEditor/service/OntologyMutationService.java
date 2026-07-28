@@ -498,10 +498,7 @@ public class OntologyMutationService {
         } else if (type.equals("createDataProperty")) {
             return createPropertySparql(op.iri(), op.label(), op.parent(), "owl:DatatypeProperty");
         } else if (type.equals("createAnnotationProperty")) {
-            return "INSERT DATA {\n"
-                + "<" + op.iri() + "> a owl:AnnotationProperty .\n"
-                + optionalLabel(op.iri(), op.label()) + "\n"
-                + "}";
+            return createPropertySparql(op.iri(), op.label(), op.parent(), "owl:AnnotationProperty");
         } else if (type.equals("deleteObjectProperty")) {
             // Cleanup runs first — see the comment on deleteClass above for why.
             return buildDeleteDanglingExpressionsSparql(op.iri(), "owl:onProperty", PROPERTY_EXPR_ANCHOR_PREDICATES) + ";\n"

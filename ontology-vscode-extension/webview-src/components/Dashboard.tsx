@@ -5725,10 +5725,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     setSelectedClassIndividualLoading(true);
     try {
       if (afterMutation) {
-        // Same eventual-consistency race as ClassEditor's loadClassDetails(afterMutation) —
-        // the mutation resolving doesn't guarantee Fuseki/OWLAPI has caught up yet, so an
-        // immediate GET here can return pre-mutation data and the panel doesn't show the
-        // edit until the user re-selects this individual.
+        // On web, the mutation resolving doesn't guarantee Fuseki's index has caught up yet —
+        // an immediate GET can return pre-mutation data. On desktop this endpoint reads from
+        // the OWLAPI in-memory model directly (owlApiOnlyOrWarming), not Fuseki, and that model
+        // is patched synchronously by the same mutation — waitForDesktopOwlApiReady is enough.
         if (isDesktop()) {
           await waitForDesktopOwlApiReady(projectId);
         } else {
@@ -9668,18 +9668,28 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
   }, []);
 
-  const handleRefreshAnnotationProperties = useCallback(async () => {
-    if (!projectId) return;
-    // On desktop, a mutation can leave the OWLAPI in-memory model briefly evicted/re-warming
-    // (version-mismatch check in ensureFreshForRead) — a plain GET right after create/delete can
-    // land on that transient "warming" response (data: []), which would otherwise wipe the whole
-    // list. Retry instead of trusting the first empty response.
+  // Returns the freshly-fetched list so callers can verify a specific just-applied change
+  // actually shows up (see handleCreateAnnotationProperty / handleAnnotationSuperpropertyConfirm)
+  // instead of trusting a single fetch — desktop's OWLAPI cache has a version-check/evict/rewarm
+  // cycle (OwlApiMutationCoordinator.ensureFreshForRead) that can race with two back-to-back
+  // mutations (create-then-link is two separate requests), so a read moments later can
+  // land mid-rewarm and see the entity without its just-added relationship.
+  const handleRefreshAnnotationProperties = useCallback(async (): Promise<AnnotationProperty[]> => {
+    if (!projectId) return [];
+    if (isDesktop()) {
+      await waitForDesktopOwlApiReady(projectId);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    // On desktop, a mutation can leave the OWLAPI in-memory model briefly evicted/re-warming —
+    // a plain GET right after create/delete can land on that transient "warming" response
+    // (data: []), which would otherwise wipe the whole list. Retry instead of trusting it.
     const res = await getOntologyListWithRetry<any>(
       withDraftScope(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`),
     );
     if (res === null) {
       console.warn("[Dashboard] Annotation properties still warming after retries — keeping current list");
-      return;
+      return [];
     }
     const rawProperties = Array.isArray(res?.data)
       ? res.data
@@ -9689,7 +9699,25 @@ const Dashboard: React.FC<DashboardProps> = ({
     const merged = mergeAnnotationProperties(rawProperties.map(mapAnnotationProperty));
     setAnnotationProperties(merged);
     setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(merged));
+    return merged;
   }, [projectId]);
+
+  // Retry handleRefreshAnnotationProperties until `isVisible` finds the just-applied change in
+  // the fresh list, instead of trusting one fetch right after a mutation — same pattern as
+  // ClassEditor's reloadDetailsUntilRestrictionVisible, for the same class of backend race.
+  const refreshAnnotationPropertiesUntilVisible = useCallback(
+    async (isVisible: (props: AnnotationProperty[]) => boolean, maxAttempts = 6, delayMs = 500) => {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const merged = await handleRefreshAnnotationProperties();
+        if (isVisible(merged)) return;
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+      console.warn("[Dashboard] Annotation property change still not visible after retries");
+    },
+    [handleRefreshAnnotationProperties],
+  );
 
   const handleDialogCreateAnnotationProperty = useCallback(
     async (iri: string, label: string) => {
@@ -9698,6 +9726,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         projectId,
         iri,
         label,
+        undefined,
         user?.email,
         user?.username,
       );
@@ -10917,6 +10946,23 @@ const Dashboard: React.FC<DashboardProps> = ({
           });
           markAsUnsaved();
           setMetadata((prev) => (prev ? { ...prev, classCount: (prev.classCount || 0) + 1 } : prev));
+
+          // Reconcile with the backend the same way handleAddClassInline does — the optimistic
+          // insert above can miss (e.g. parentIri not matching a currently-rendered node) and
+          // silently fall back to a flat top-level append, with nothing here to self-correct it.
+          if (type === "subclass") {
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            setClassHierarchy((prev) => {
+              const clearParentChildren = (nodes: TreeNode[]): TreeNode[] =>
+                nodes.map((n) => {
+                  if (n.id === parentIri) return { ...n, children: [] };
+                  if (n.children) return { ...n, children: clearParentChildren(n.children) };
+                  return n;
+                });
+              return clearParentChildren(prev);
+            });
+            await loadChildren(parentIri);
+          }
         } else if (entitiesTab === "ObjectProperties") {
           // Handle Object Property Creation
           parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
@@ -10991,7 +11037,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create entity. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved, refreshProperties],
+    [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved, refreshProperties, loadChildren],
   );
 
   const handleCreateObjectProperty = useCallback(
@@ -11189,34 +11235,39 @@ const Dashboard: React.FC<DashboardProps> = ({
         const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
         const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
 
-        await ontologyMutationService.createAnnotationProperty(projectId, newIri, name);
-
-        // Bug #45: support sub-annotation-properties. The backend's
-        // createAnnotationProperty mutation doesn't accept a parent IRI, but
-        // the generic addSubPropertyOf does (it just emits
-        // `<child> rdfs:subPropertyOf <parent>`, which is the correct
-        // assertion for annotation properties under OWL 2).
-        if (addPropertyType === "subproperty" && selectedItem?.id) {
-          try {
-            await ontologyMutationService.addSubPropertyOf(projectId, newIri, selectedItem.id);
-          } catch (linkErr) {
-            console.error(
-              "[Dashboard] Created annotation property but failed to link as sub-property:",
-              linkErr,
-            );
-            showNotification(
-              "Annotation property created, but the sub-property relationship could not be saved.",
-              "warning",
-            );
-          }
-        }
+        // Bug #45: support sub-annotation-properties. createAnnotationProperty now takes the
+        // parent directly (matching createObjectProperty/createDataProperty) so the declaration
+        // and the SubAnnotationPropertyOf axiom are patched in the same OWLAPI batch — this used
+        // to be two separate mutation calls, which both doubled round-trips and raced with
+        // desktop's OWLAPI cache version-check/rewarm cycle (a read between the two calls could
+        // land mid-rewarm and see the entity without its relationship yet).
+        const linkedParentIri: string | null =
+          addPropertyType === "subproperty" && selectedItem?.id ? selectedItem.id : null;
+        await ontologyMutationService.createAnnotationProperty(
+          projectId,
+          newIri,
+          name,
+          linkedParentIri || undefined,
+        );
 
         markAsUnsaved();
         setMetadata((prev) =>
           prev ? { ...prev, annotationPropertyCount: (prev.annotationPropertyCount || 0) + 1 } : prev,
         );
-        // Refresh from backend so the new property (with full data) appears in the list
-        await handleRefreshAnnotationProperties();
+        // Refresh from backend so the new property (with full data) appears in the list. When a
+        // subproperty link was just created, verify it's actually visible before settling — two
+        // back-to-back mutations (create, then link) can race with desktop's OWLAPI cache
+        // version-check/rewarm cycle, landing a read mid-rewarm with the entity but not yet its
+        // relationship.
+        if (linkedParentIri) {
+          const parentIri = linkedParentIri;
+          await refreshAnnotationPropertiesUntilVisible((props) =>
+            props.some((p) => p.id === newIri && (p as any).superProperties?.includes(parentIri)),
+          );
+          setExpandedNodes((prev) => (prev.includes(parentIri) ? prev : [...prev, parentIri]));
+        } else {
+          await handleRefreshAnnotationProperties();
+        }
         showNotification("Annotation property created successfully!", "info");
         setAddPropertyDialogOpen(false);
       } catch (error) {
@@ -11224,7 +11275,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         showNotification("Failed to create annotation property. See console for details.", "error");
       }
     },
-    [projectId, metadata, markAsUnsaved, showNotification, addPropertyType, selectedItem, handleRefreshAnnotationProperties],
+    [
+      projectId,
+      metadata,
+      markAsUnsaved,
+      showNotification,
+      addPropertyType,
+      selectedItem,
+      handleRefreshAnnotationProperties,
+      refreshAnnotationPropertiesUntilVisible,
+    ],
   );
 
   const handleAddIndividual = useCallback(
@@ -16894,6 +16954,11 @@ const Dashboard: React.FC<DashboardProps> = ({
             break;
         }
       }
+      // updateItemInState only patches the currently-selected item — reparenting via
+      // subProperty needs objectPropertyHierarchy/dataPropertyHierarchy rebuilt too, or the
+      // property keeps showing at its old spot in the tree (same bug as annotation properties'
+      // handleAnnotationSuperpropertyConfirm above).
+      if (target === "subProperty") await refreshProperties();
     } catch (error) {
       console.error(`Failed to ${editing ? 'replace' : 'add'} ${selectorTarget}`, error);
     } finally {
@@ -16974,6 +17039,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         }
       }
+      if (target === "subProperty") await refreshProperties();
     } catch (error) {
       console.error(`Failed to ${editing ? 'replace' : 'add'} ${target}`, error);
     } finally {
@@ -17061,6 +17127,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, superpropertyIri, user?.email || "anonymous", user?.username || "Anonymous");
         const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
         updateItemInState({ ...selectedItem, superProperties: [...(extendedItem.superProperties || []), superpropertyIri] });
+      }
+      // updateItemInState only patches the currently-selected item (feeds the Description
+      // panel), not the separate annotationPropertyHierarchy tree state — without this, the
+      // property keeps showing at its old position in the tree instead of nesting under its
+      // new superproperty until the whole list happens to reload. Verify the relationship is
+      // actually visible before settling, not just that the refresh resolved — desktop's OWLAPI
+      // cache version-check/rewarm cycle can race with the mutation and land a read mid-rewarm.
+      const entityIri = selectedItem.id;
+      await refreshAnnotationPropertiesUntilVisible((props) =>
+        props.some((p) => p.id === entityIri && (p as any).superProperties?.includes(superpropertyIri)),
+      );
+      if (!editing) {
+        setExpandedNodes((prev) => (prev.includes(superpropertyIri) ? prev : [...prev, superpropertyIri]));
       }
     } catch (error) {
       console.error("Failed to add/replace annotation property superproperty", error);
@@ -18299,6 +18378,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     classHierarchy={classHierarchy}
                     objectProperties={objectProperties}
                     dataProperties={dataProperties}
+                    annotationProperties={annotationProperties}
                     expandedNodes={expandedNodes}
                     onToggleNode={toggleNode}
                     onAddClass={(type) => handleAddItem(type)}
