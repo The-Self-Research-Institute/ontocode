@@ -46,11 +46,33 @@ public class OwlApiAnnotationPropertyQueryService {
     }
 
     private List<String> superProperties(OWLOntology ont, OWLAnnotationProperty prop) {
+         System.out.println("\n========== superProperties() ==========");
+         System.out.println("Property: " + prop.getIRI());
+
+         System.out.println("SUB_ANNOTATION_PROPERTY_OF axiom count: "
+            + ont.getAxiomCount(AxiomType.SUB_ANNOTATION_PROPERTY_OF));
+
         List<String> supers = new ArrayList<>();
         for (OWLSubAnnotationPropertyOfAxiom ax : ont.getAxioms(AxiomType.SUB_ANNOTATION_PROPERTY_OF)) {
+            System.out.println(
+                "[AXIOM] "
+                        + ax.getSubProperty().getIRI()
+                        + " --> "
+                        + ax.getSuperProperty().getIRI());
             if (!ax.getSubProperty().equals(prop)) continue;
+            System.out.println(
+                "[MATCH FOUND] "
+                        + ax.getSubProperty().getIRI()
+                        + " --> "
+                        + ax.getSuperProperty().getIRI());
             supers.add(ax.getSuperProperty().getIRI().toString());
         }
+
+    System.out.println("Returned superProperties: " + supers);
+    System.out.println("=======================================\n");
+    System.err.println(
+    "[TRACE] " + prop.getIRI() + " -> " + supers
+);
         return supers.stream().distinct().collect(Collectors.toList());
     }
 

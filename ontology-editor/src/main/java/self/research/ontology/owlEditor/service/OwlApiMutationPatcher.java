@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.config.FastOpenCondition;
+import org.semanticweb.owlapi.model.parameters.Imports;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -59,7 +60,7 @@ public class OwlApiMutationPatcher {
     public OwlApiMutationPatcher(ProjectOntologyCache ontologyCache) {
         this.ontologyCache = ontologyCache;
     }
-
+    
     public boolean tryPatch(String projectId, List<OntologyMutationService.MutationOp> ops) {
         if (ops == null || ops.isEmpty()) {
             return false;
@@ -293,10 +294,10 @@ public class OwlApiMutationPatcher {
                 yield removePropertyRange(ontology, df, op.iri(), op.target(), toRemove);
             }
             case "addSubPropertyOf" -> {
-                yield addSubPropertyOf(df, op.iri(), op.target(), toAdd);
+                yield addSubPropertyOf(ontology, df, op.iri(), op.target(), toAdd);
             }
             case "deleteSubPropertyOf" -> {
-                yield removeSubPropertyOf(df, op.iri(), op.target(), toRemove);
+                yield removeSubPropertyOf(ontology, df, op.iri(), op.target(), toRemove);
             }
             case "deleteClass" -> {
                 Optional<OWLClass> cls = namedClass(op.iri(), df);
@@ -444,6 +445,10 @@ public class OwlApiMutationPatcher {
         if (op.label() != null && !op.label().isBlank()) {
             toAdd.add(df.getOWLAnnotationAssertionAxiom(
                     df.getRDFSLabel(), prop.getIRI(), df.getOWLLiteral(op.label())));
+        }
+        if (op.parent() != null && !op.parent().isBlank()) {
+            toAdd.add(df.getOWLSubAnnotationPropertyOfAxiom(
+                    prop, df.getOWLAnnotationProperty(IRI.create(op.parent()))));
         }
         return true;
     }
@@ -902,26 +907,53 @@ public class OwlApiMutationPatcher {
         return true;
     }
 
-    private boolean addSubPropertyOf(OWLDataFactory df, String subIri, String superIri, Set<OWLAxiom> toAdd) {
+    private boolean addSubPropertyOf(OWLOntology ontology, OWLDataFactory df, String subIri, String superIri, Set<OWLAxiom> toAdd) {
         if (subIri == null || superIri == null) {
             return false;
+        }
+        IRI sub=IRI.create(subIri);
+        IRI sup=IRI.create(superIri);
+        if(ontology.containsAnnotationPropertyInSignature(sub, Imports.EXCLUDED)){
+           toAdd.add(df.getOWLSubAnnotationPropertyOfAxiom(
+                df.getOWLAnnotationProperty(sub), df.getOWLAnnotationProperty(sup)));
+            return true;
+        }
+        if (ontology.containsDataPropertyInSignature(sub, Imports.EXCLUDED)) {
+            toAdd.add(df.getOWLSubDataPropertyOfAxiom(
+                df.getOWLDataProperty(sub), df.getOWLDataProperty(sup)));
+             return true;
         }
         if (superIri.contains("XMLSchema#") || subIri.contains("XMLSchema#")) {
             return false;
         }
         toAdd.add(df.getOWLSubObjectPropertyOfAxiom(
-                df.getOWLObjectProperty(IRI.create(subIri)),
-                df.getOWLObjectProperty(IRI.create(superIri))));
+                df.getOWLObjectProperty(sub),
+                df.getOWLObjectProperty(sup)));
         return true;
     }
 
-    private boolean removeSubPropertyOf(OWLDataFactory df, String subIri, String superIri, Set<OWLAxiom> toRemove) {
+    private boolean removeSubPropertyOf(OWLOntology ontology, OWLDataFactory df, String subIri, String superIri, Set<OWLAxiom> toRemove) {
         if (subIri == null || superIri == null) {
             return false;
         }
+        IRI sub = IRI.create(subIri);
+        IRI sup = IRI.create(superIri);
+        if (ontology.containsAnnotationPropertyInSignature(sub, Imports.EXCLUDED)) {
+            toRemove.add(df.getOWLSubAnnotationPropertyOfAxiom(
+                df.getOWLAnnotationProperty(sub), df.getOWLAnnotationProperty(sup)));
+            return true;
+        }
+        if (ontology.containsDataPropertyInSignature(sub, Imports.EXCLUDED)) {
+            toRemove.add(df.getOWLSubDataPropertyOfAxiom(
+                df.getOWLDataProperty(sub), df.getOWLDataProperty(sup)));
+            return true;
+        }
+        if (superIri.contains("XMLSchema#") || subIri.contains("XMLSchema#")) {
+            return false;
+        }
         toRemove.add(df.getOWLSubObjectPropertyOfAxiom(
-                df.getOWLObjectProperty(IRI.create(subIri)),
-                df.getOWLObjectProperty(IRI.create(superIri))));
+                df.getOWLObjectProperty(sub),
+                df.getOWLObjectProperty(sup)));
         return true;
     }
 
