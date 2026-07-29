@@ -284,6 +284,18 @@ public class ManchesterExpressionService {
         return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
     }
 
+    // Matches a bare http(s)/urn IRI that isn't already wrapped in <...> — same rule already
+    // applied for SPARQL class expressions in OntologyMutationService.buildClassExpressionSparql.
+    // Manchester syntax requires either a resolvable short name or an angle-bracketed full IRI;
+    // callers that resolve a picked class/property to its full IRI (e.g. the GCA dialog) send a
+    // bare IRI, which the parser otherwise rejects.
+    private static final java.util.regex.Pattern BARE_IRI =
+            java.util.regex.Pattern.compile("(?<!<)\\b(https?://[^\\s()<>]+|urn:[^\\s()<>]+)");
+
+    private String wrapBareIris(String expression) {
+        return BARE_IRI.matcher(expression).replaceAll("<$1>");
+    }
+
     private OWLClassExpression parseClassExpression(OWLOntology ontology, String expression) throws Exception {
         OWLOntologyManager manager = ontology.getOWLOntologyManager();
         ShortFormProvider shortFormProvider = new SimpleShortFormProvider();
@@ -295,7 +307,7 @@ public class ManchesterExpressionService {
         ManchesterOWLSyntaxParser parser = OWLManager.createManchesterParser();
         parser.setOWLEntityChecker(entityChecker);
         parser.setDefaultOntology(ontology);
-        parser.setStringToParse(expression);
+        parser.setStringToParse(wrapBareIris(expression));
         return parser.parseClassExpression();
     }
 
@@ -310,7 +322,7 @@ public class ManchesterExpressionService {
         ManchesterOWLSyntaxParser parser = OWLManager.createManchesterParser();
         parser.setOWLEntityChecker(entityChecker);
         parser.setDefaultOntology(ontology);
-        parser.setStringToParse(expression);
+        parser.setStringToParse(wrapBareIris(expression));
         return parser.parseDataRange();
     }
 }

@@ -2073,6 +2073,7 @@ const ClassEditor: React.FC<{
     } catch (error) {
       console.error("[ClassEditor] Failed to save GCA:", error);
       notificationService.error("Save Failed", `Failed to save general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
+      throw error;
     } finally {
       setIsSavingAxiom(false);
       isSavingAxiomRef.current = false;
@@ -2363,6 +2364,20 @@ const ClassEditor: React.FC<{
                 axioms={classDetails?.anonymousAncestorAxioms || []}
                 onAdd={() => {}}
                 onDelete={(id) => {
+                  // Restrictions asserted directly on this class are mirrored into this section
+                  // (see the backend comment on "Direct anonymous restrictions on this class")
+                  // using the SAME id as classDetails.subClassOfAxioms. Route those through the
+                  // structural-match restriction delete (deleteObjectRestriction/deleteDataRestriction)
+                  // instead of the blank-node-string-match deleteAxiom path below — matching by the
+                  // Fuseki-internal blank node string is fragile and can silently no-op if that
+                  // string doesn't line up with what a later, separate query returns for the same
+                  // node. Only fall back to the string-match path for genuinely inherited ancestors
+                  // (asserted on a superclass, not on this class), which aren't in subClassOfAxioms.
+                  const directRestriction = (classDetails?.subClassOfAxioms || []).find((a: Axiom) => a.id === id);
+                  if (directRestriction) {
+                    handleDeleteAxiom("SubClassOf", id);
+                    return;
+                  }
                   const anc = (classDetails?.anonymousAncestorAxioms || []).find((a: any) => a.id === id);
                   handleDeleteGCA(id, (anc as any)?.ancestorIri);
                 }}
