@@ -323,7 +323,7 @@ const EntityHierarchy = ({
     const isSelected = selectedItem?.id === item.id;
     // An item is a "TreeNode" if it's in the Classes, ObjectProperties, DataProperties, or AnnotationProperties tab.
     // We check 'hasChildren' to know if it's expandable.
-    const isTreeNode = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties';
+    const isTreeNode = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties';
     const hasChildren = 'hasChildren' in item && item.hasChildren;
     const isExpanded = isTreeNode && hasChildren && expandedNodes.includes(item.id);
     const isDragging = draggedItem?.id === item.id;
@@ -531,7 +531,7 @@ const EntityHierarchy = ({
   // Recursive wrapper used by the non-virtualized path: a row plus its expanded
   // descendants. The virtualized path renders flattened rows directly instead.
   const renderItem = (item: SelectableItem, level = 0): React.JSX.Element => {
-    const isTreeNodeTab = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties';
+    const isTreeNodeTab = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties';
     const nodeHasChildren = 'hasChildren' in item && (item as TreeNode).hasChildren;
     const nodeExpanded = isTreeNodeTab && !!nodeHasChildren && expandedNodes.includes(item.id);
     return (
@@ -545,7 +545,7 @@ const EntityHierarchy = ({
   // Flatten the currently-visible tree (respecting expanded state) into a
   // positional list. This is the data the virtualizer slices into a window.
   const flatNodes = useMemo(() => {
-    const isTreeNodeTab = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties';
+    const isTreeNodeTab = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties';
     const out: { item: SelectableItem; level: number }[] = [];
     const walk = (items: SelectableItem[], level: number) => {
       for (const item of items) {

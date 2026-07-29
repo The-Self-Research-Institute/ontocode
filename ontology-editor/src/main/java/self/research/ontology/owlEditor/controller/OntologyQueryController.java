@@ -67,6 +67,9 @@ public class OntologyQueryController {
     private OwlApiDatatypeQueryService owlApiDatatypeQueryService;
 
     @Autowired(required = false) @Nullable
+    private self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyMetadataQueryService owlApiMetadataQueryService;
+
+    @Autowired(required = false) @Nullable
     private EntityUsageIndexService entityUsageIndexService;
 
     @Autowired(required = false) @Nullable
@@ -77,6 +80,9 @@ public class OntologyQueryController {
 
     @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
+
+    @Autowired(required = false) @Nullable
+    private self.research.ontology.owlEditor.service.ProjectImportService projectImportService;
 
     @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.ReasonerClassInstanceMerger reasonerClassInstanceMerger;
@@ -873,8 +879,24 @@ public class OntologyQueryController {
     @GetMapping("/classes/instances/{projectId}")
     public ResponseEntity<?> classInstances(@PathVariable String projectId,
                                            @RequestParam String classIri) {
-        // Always use SPARQL path — OWL API in-memory model is stale after SPARQL mutations.
-        // reasonerClassInstanceMerger adds inferred instances on the SPARQL path too.
+        // On desktop, a mutation patches the OWLAPI in-memory model immediately but Fuseki sync
+        // is deferred (debounced, can take seconds) — the SPARQL path below reads from Fuseki
+        // directly, so it was returning pre-mutation data every time right after adding/removing
+        // an instance. classInstanceCounts (below) already does this correctly; this endpoint
+        // never had the same fast-path wired in.
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (desktopHierarchyService == null) {
+                throw new IllegalStateException("OWLAPI hierarchy service unavailable");
+            }
+            return ResponseEntity.ok(desktopHierarchyService.classInstances(projectId, classIri));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
+
+        // Fallback for when the OWLAPI fast path above isn't available (cloud without fast-open,
+        // or an active per-user draft overlay). reasonerClassInstanceMerger adds inferred
+        // instances on the SPARQL path too.
         String instUserId = SparqlQueryContext.getUserId();
         boolean instHasDraft = instUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, instUserId);
@@ -913,15 +935,6 @@ public class OntologyQueryController {
         } catch (Exception e) {
             return sparqlListFallback(projectId, e);
         }
-    }
-
-    @GetMapping("/ontology/gci/{projectId}")
-    public ResponseEntity<?> generalClassAxioms(@PathVariable String projectId,
-                                                @RequestParam(defaultValue = "200") int limit) {
-        return ResponseEntity.ok(Map.of(
-                "success", true,
-                "data", queryService.generalClassAxioms(projectId, limit)
-        ));
     }
 
     @GetMapping("/{projectId}/individuals/{individualIri}")
@@ -977,6 +990,21 @@ public class OntologyQueryController {
 
     @GetMapping("/{projectId}/schema")
     public ResponseEntity<?> getOntologySchema(@PathVariable String projectId) {
+        Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
+            if (owlApiMetadataQueryService == null) {
+                throw new IllegalStateException("OWLAPI metadata service unavailable");
+            }
+            return ResponseEntity.ok(owlApiMetadataQueryService.schema(projectId));
+        });
+        if (owl.isPresent()) {
+            return owl.get();
+        }
+        // Fallback (no OWLAPI fast path applicable): sync then read via SPARQL. This backs the
+        // SWRL editor's entity picker, which otherwise misses anything created in roughly the
+        // last ~20s on desktop. No-ops on cloud and when already in sync.
+        if (projectImportService != null) {
+            projectImportService.syncProjectToFuseki(projectId);
+        }
         return ResponseEntity.ok(queryService.getOntologySchema(projectId));
     }
 }

@@ -104,7 +104,8 @@ public final class OwlAxiomSparqlWriter {
                 && st.getObject().stringValue().equals("http://www.w3.org/2002/07/owl#Ontology");
     }
 
-    private static String toSparqlTerm(Value value) {
+    /** Renders a single RDF4J term as SPARQL syntax suitable for an INSERT/DELETE DATA block. */
+    public static String toSparqlTerm(Value value) {
         if (value instanceof org.eclipse.rdf4j.model.IRI iri) {
             return "<" + iri.stringValue() + ">";
         }

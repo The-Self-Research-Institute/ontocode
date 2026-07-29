@@ -10,9 +10,15 @@ import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import uk.ac.manchester.cs.jfact.JFactFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 /**
@@ -35,7 +41,29 @@ public class ReasonerService {
     // ConcurrentHashMap: read/written from request threads, the classify
     // executor, and the controller's LRU-eviction path concurrently.
     private final Map<String, OWLReasoner> reasonerCache = new ConcurrentHashMap<>();
-    
+
+    // HermiT's InstanceManager.getTypes() does O(n) LinkedList scans internally,
+    // which blows up to O(n^2) against the class count on large ontologies (e.g.
+    // FoodOn's 39k+ classes) and can run for hours on a single individual. That
+    // work is not cancellable once started, so we fire it on a daemon thread and
+    // abandon it on timeout rather than block the request indefinitely.
+    // Desktop is single-user/single-request, so it can afford a much longer budget
+    // than a shared cloud deployment (see application-desktop.properties overrides).
+    @Value("${ontocode.reasoner.per-individual-timeout-ms:5000}")
+    private long PER_INDIVIDUAL_TYPE_TIMEOUT_MS;
+
+    // Even when no single individual hangs, each getTypes() call still costs
+    // O(classCount) against HermiT's InstanceManager — with hundreds of
+    // individuals over a 39k-class hierarchy that's ~3s/individual, i.e. 20+
+    // minutes in aggregate. Cap the whole loop, not just one call.
+    @Value("${ontocode.reasoner.realization-budget-ms:20000}")
+    private long REALIZATION_TOTAL_BUDGET_MS;
+    private final ExecutorService realizationExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "reasoner-realization-worker");
+        t.setDaemon(true);
+        return t;
+    });
+
     /**
      * Create or get cached reasoner for an ontology
      */
@@ -601,6 +629,52 @@ public class ReasonerService {
     }
 
     /**
+     * Run reasoner.getTypes() on a worker thread and bound how long we wait for it.
+     * On timeout we call reasoner.interrupt() rather than just walking away — same
+     * pattern Protege's OWLReasonerManagerImpl#killCurrentClassification uses to stop
+     * a running HermiT computation. Once interrupted, Protege never reuses that
+     * reasoner (it disposes it in its ReasonerInterruptedException handler), because
+     * its internal tableau state can't be trusted after a mid-flight abort — so we
+     * evict/dispose it from reasonerCache too, once the abandoned call actually unwinds.
+     */
+    private NodeSet<OWLClass> getTypesWithTimeout(OWLReasoner reasoner, OWLNamedIndividual individual)
+            throws TimeoutException {
+        CompletableFuture<NodeSet<OWLClass>> future = CompletableFuture.supplyAsync(
+            () -> reasoner.getTypes(individual, true), realizationExecutor);
+        try {
+            return future.get(PER_INDIVIDUAL_TYPE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            reasoner.interrupt();
+            // Don't dispose synchronously here — the worker thread is still inside
+            // reasoner.getTypes() and may still be touching its internal state.
+            // Evict once that call actually completes/throws instead.
+            future.whenComplete((result, ex) -> evictInterruptedReasoner(reasoner));
+            throw te;
+        } catch (Exception e) {
+            throw new RuntimeException("Error getting types for individual " + individual.getIRI(), e);
+        }
+    }
+
+    /**
+     * Discard a reasoner that was interrupted mid-computation so it can't be handed
+     * out of reasonerCache again; the next getReasoner() call will build a fresh one.
+     */
+    private void evictInterruptedReasoner(OWLReasoner reasoner) {
+        reasonerCache.entrySet().removeIf(entry -> {
+            if (entry.getValue() != reasoner) {
+                return false;
+            }
+            try {
+                reasoner.dispose();
+            } catch (Exception e) {
+                log.warn("Error disposing interrupted reasoner {}", entry.getKey(), e);
+            }
+            log.warn("Evicted reasoner {} after interrupt — will be recreated on next use", entry.getKey());
+            return true;
+        });
+    }
+
+    /**
      * Get realization results including instances for all classes
      */
     public Map<String, Object> getRealizationResults(OWLOntology ontology, ReasonerType type) {
@@ -623,16 +697,45 @@ public class ReasonerService {
             }
             
             List<Map<String, Object>> instances = new ArrayList<>();
-            
+            boolean timedOut = false;
+
             if (!isConsistent) {
                 // For inconsistent ontologies, skip reasoner queries
                 log.warn("Skipping instance type computation for inconsistent ontology");
             } else {
-                // Get all named individuals and their types
+                // Get all named individuals and their types. Direct types only —
+                // ancestor types are already implied by the class hierarchy.
                 try {
+                    long loopDeadline = System.currentTimeMillis() + REALIZATION_TOTAL_BUDGET_MS;
                     for (OWLNamedIndividual individual : ontology.getIndividualsInSignature()) {
-                        NodeSet<OWLClass> types = reasoner.getTypes(individual, false);
-                        
+                        if (System.currentTimeMillis() > loopDeadline) {
+                            // Even when no single call hangs, each getTypes() call still costs
+                            // O(classCount) against HermiT's InstanceManager — with hundreds of
+                            // individuals over a huge class hierarchy (e.g. FoodOn's 39k+
+                            // classes) that adds up to many minutes in aggregate. Cap the whole
+                            // loop's wall-clock time rather than let it run unbounded.
+                            log.warn("Realization results computation exceeded {} ms budget with {} of {} "
+                                    + "individuals processed — returning partial results",
+                                REALIZATION_TOTAL_BUDGET_MS, instances.isEmpty() ? 0 : instances.size(),
+                                ontology.getIndividualsInSignature().size());
+                            timedOut = true;
+                            break;
+                        }
+
+                        NodeSet<OWLClass> types;
+                        try {
+                            types = getTypesWithTimeout(reasoner, individual);
+                        } catch (TimeoutException te) {
+                            // A single individual can still exceed even the per-call timeout on
+                            // a pathological hierarchy; HermiT's work isn't cancellable once
+                            // started, so bail out here too rather than wait on it.
+                            log.warn("Timed out computing types for individual {} ({} classes in signature) — "
+                                    + "returning partial realization results",
+                                individual.getIRI(), ontology.getClassesInSignature().size());
+                            timedOut = true;
+                            break;
+                        }
+
                         for (OWLClass cls : types.getFlattened()) {
                             if (!cls.isOWLThing() && !cls.isOWLNothing()) {
                                 Map<String, Object> instance = new HashMap<>();
@@ -648,14 +751,20 @@ public class ReasonerService {
                     log.error("Error computing instance types, returning empty", e);
                 }
             }
-            
+
             results.put("instances", instances);
             results.put("totalInstances", instances.size());
             results.put("totalIndividuals", ontology.getIndividualsInSignature().size());
-            
-            log.info("Realization results: {} instances computed for {} individuals",
-                instances.size(), ontology.getIndividualsInSignature().size());
-            
+            results.put("timedOut", timedOut);
+            if (timedOut) {
+                results.put("message", "Instance type computation took too long on this ontology's class "
+                        + "hierarchy and was stopped early; results are partial.");
+            }
+
+            log.info("Realization results: {} instances computed for {} individuals{}",
+                instances.size(), ontology.getIndividualsInSignature().size(),
+                timedOut ? " (timed out — partial)" : "");
+
             return results;
             
         } catch (Exception e) {
@@ -719,10 +828,14 @@ public class ReasonerService {
      */
     public Set<OWLClass> getInferredTypes(OWLOntology ontology, OWLNamedIndividual individual, ReasonerType type) {
         OWLReasoner reasoner = getReasoner(ontology, type);
-        
+
         try {
-            NodeSet<OWLClass> types = reasoner.getTypes(individual, false);
+            NodeSet<OWLClass> types = getTypesWithTimeout(reasoner, individual);
             return types.getFlattened();
+        } catch (TimeoutException te) {
+            log.warn("Timed out computing inferred types for individual {} ({} classes in signature)",
+                individual.getIRI(), ontology.getClassesInSignature().size());
+            return Collections.emptySet();
         } catch (Exception e) {
             log.error("Error getting inferred types", e);
             return Collections.emptySet();
@@ -980,8 +1093,17 @@ public class ReasonerService {
             if (disjointClasses.size() >= 2) {
                 // Check if any individuals belong to multiple disjoint classes
                 for (OWLNamedIndividual individual : ontology.getIndividualsInSignature()) {
-                    Set<OWLClass> types = reasoner.getTypes(individual, false).getFlattened();
-                    
+                    Set<OWLClass> types;
+                    try {
+                        types = getTypesWithTimeout(reasoner, individual).getFlattened();
+                    } catch (TimeoutException te) {
+                        // Same HermiT getTypes() blowup as elsewhere in this class — bail out
+                        // of this diagnostic scan rather than hang explain-inconsistency.
+                        log.warn("Timed out computing types for individual {} while scanning disjoint "
+                                + "class violations — stopping scan early", individual.getIRI());
+                        return violations;
+                    }
+
                     List<OWLClass> violatingClasses = disjointClasses.stream()
                         .filter(types::contains)
                         .collect(Collectors.toList());

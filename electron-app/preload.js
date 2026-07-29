@@ -99,45 +99,6 @@ async function waitForExportJob(jobId) {
     }
 }
 
-// Ask for the destination file BEFORE the export job runs. showSaveFilePicker
-// requires transient user activation — a few seconds after the Export click —
-// and a large export job polls for minutes, so requesting the picker after the
-// job finishes throws SecurityError and silently falls back to a full in-memory
-// Blob, which is what breaks large exports. Returns null when the API is
-// unsupported (caller falls back to a Blob download); throws "cancelled" when
-// the user dismissed the dialog.
-async function acquireSaveFileHandleUpfront(filename) {
-    if (!window.showSaveFilePicker) return null;
-    try {
-        return await window.showSaveFilePicker({ suggestedName: filename });
-    } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
-            throw new Error('Export download cancelled.');
-        }
-        console.warn('[Preload] Save dialog unavailable — will download as Blob:', err);
-        return null;
-    }
-}
-
-async function streamResponseToHandle(response, handle) {
-    if (!response.body) return false;
-    const writable = await handle.createWritable();
-    try {
-        const reader = response.body.getReader();
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) await writable.write(value);
-        }
-        await writable.close();
-        return true;
-    } catch (err) {
-        try { await writable.abort(); } catch (_) { /* ignore */ }
-        throw err;
-    }
-}
-
 function triggerBlobDownload(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -149,13 +110,20 @@ function triggerBlobDownload(blob, filename) {
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+// Save location is asked once, here, when the file is actually ready — not upfront.
+// showSaveFilePicker()'s handle looked tempting (stream straight to disk instead of
+// holding the whole export in memory as a Blob), but writing to that handle later
+// requires user activation just as fresh as showing the picker did in the first
+// place, and a large export's submit-then-poll job can run for minutes — long
+// enough that activation expires. Confirmed directly: the write threw
+// "The request is not allowed by the user agent or the platform in the current
+// context", and handle.requestPermission() came back "denied" — the platform will
+// not silently re-grant it, so retrying in code can't fix this. That upfront
+// picker call then left a second, unwanted "choose a file" prompt at the end when
+// the write failed and it fell back to Blob anyway. The Blob download below is the
+// one path proven to work reliably after a long wait — use it as the only path.
 async function exportOntologyViaJob(projectId, format, filename) {
     const safeName = filename || `ontology-export.${format === 'turtle' ? 'ttl' : format === 'ntriples' ? 'nt' : 'owl'}`;
-
-    // Must be first — needs the Export click's transient user activation, which
-    // expires long before a large export job finishes. Cancelling here also
-    // skips submitting the job entirely.
-    const handle = await acquireSaveFileHandleUpfront(safeName);
 
     const jobId = await submitExportJob(projectId, format);
     await waitForExportJob(jobId);
@@ -166,21 +134,6 @@ async function exportOntologyViaJob(projectId, format, filename) {
 
     const response = await fetch(`${DESKTOP_API}/api/ontology/export-async/download/${jobId}`, { headers });
     if (!response.ok) throw new Error(`Export download failed (${response.status}).`);
-
-    if (handle) {
-        try {
-            const streamed = await streamResponseToHandle(response, handle);
-            if (streamed) return;
-        } catch (streamErr) {
-            console.warn('[Preload] Stream-to-disk failed, falling back to Blob:', streamErr);
-            // Body already consumed once streaming started — re-fetch for the Blob fallback.
-            const retry = await fetch(`${DESKTOP_API}/api/ontology/export-async/download/${jobId}`, { headers });
-            if (!retry.ok) throw new Error(`Export download failed (${retry.status}).`);
-            const blob = await retry.blob();
-            triggerBlobDownload(blob, safeName);
-            return;
-        }
-    }
 
     const blob = await response.blob();
     triggerBlobDownload(blob, safeName);
@@ -510,10 +463,9 @@ contextBridge.exposeInMainWorld('vscode', {
             case 'downloadCurrentOntology': {
                 // Submit-then-poll, same as the web browser bridge (exportService.ts) — a
                 // single blocking GET against the old synchronous /export endpoint used to
-                // time out / hang with no feedback on large ontologies. Large results stream
-                // to disk via the File System Access API to avoid holding a huge Blob in
-                // memory. Reports back "downloadOntologyComplete"/"downloadOntologyFailed" so
-                // Dashboard's export button spinner reflects how long this actually took.
+                // time out / hang with no feedback on large ontologies. Reports back
+                // "downloadOntologyComplete"/"downloadOntologyFailed" so Dashboard's export
+                // button spinner reflects how long this actually took.
                 (async () => {
                     const requestId = message.requestId;
                     try {
