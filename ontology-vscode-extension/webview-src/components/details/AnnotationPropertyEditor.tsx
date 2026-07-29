@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Tag, Edit3, Search } from 'lucide-react';
 import { AnnotationsDisplay, MultiSelectSection, CollaboratorPresenceBar } from './common';
 import { IRIEditorDialog } from '../dialogs';
@@ -21,6 +21,9 @@ interface AnnotationPropertyEditorProps {
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
   onNavigate?: (iri: string, type: string) => void;
+  /** Full annotation properties list, used to resolve superproperty IRIs to their
+   * actual rdfs:label instead of showing the bare IRI. */
+  annotationProperties?: AnnotationProperty[];
 }
 
 interface UsageItem {
@@ -189,9 +192,18 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
   isViewOnly = false,
   onViewOnlyAction,
   onNavigate,
+  annotationProperties,
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
+
+  const superpropertyLabelLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    (annotationProperties || []).forEach((prop) => {
+      if (prop.id && prop.label) map.set(prop.id, prop.label);
+    });
+    return map;
+  }, [annotationProperties]);
   
   // Extended annotation property type with optional fields
   const extendedItem = item as AnnotationProperty & {
@@ -381,6 +393,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 onNavigate={onNavigate}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                labelLookup={superpropertyLabelLookup}
               />
             </div>
           </div>

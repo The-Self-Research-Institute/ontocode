@@ -231,7 +231,12 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) onClose();
+      }}
+    >
       <div
         className="relative w-full max-w-xl rounded-lg shadow-xl border"
         style={{

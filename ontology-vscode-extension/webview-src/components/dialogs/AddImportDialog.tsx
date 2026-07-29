@@ -31,7 +31,12 @@ const AddImportDialog: React.FC<AddImportDialogProps> = ({ isOpen, onClose, onAd
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[110]" onClick={onClose}>
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[110]"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) onClose();
+      }}
+    >
       <div className="bg-[#F0F0F0] rounded-lg shadow-2xl w-[500px] flex flex-col overflow-hidden border border-gray-400" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="bg-white px-4 py-2 flex justify-between items-center border-b border-gray-300">

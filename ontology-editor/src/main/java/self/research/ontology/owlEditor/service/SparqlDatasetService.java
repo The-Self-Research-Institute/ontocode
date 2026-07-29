@@ -1002,9 +1002,14 @@ public class SparqlDatasetService {
 
         } catch (Exception e) {
             long totalMs = (System.nanoTime() - totalStart) / 1_000_000;
-            log.error("[GRAPHDB] SELECT failed for project {} after {}ms: {}", projectId, totalMs, e.getMessage());
+            log.error("[GRAPHDB] SELECT failed for project {} after {}ms", projectId, totalMs, e);
             sparqlLog.error("[SPARQL_ERROR] project={} duration={}ms error={}", projectId, totalMs, e.getMessage());
-            throw new RuntimeException("SPARQL query execution failed", e);
+            // Preserve the real cause's message — SparqlQueryController.sparqlFailure() reports
+            // getMessage() from whatever it catches, and a generic wrapper message here (as this
+            // used to be: `new RuntimeException("SPARQL query execution failed", e)`) meant every
+            // failure surfaced to the user as the same unhelpful text regardless of actual cause,
+            // while the real message only ever showed up in this server-side log line.
+            throw new RuntimeException(e.getMessage() != null ? e.getMessage() : "SPARQL query execution failed", e);
         }
     }
 

@@ -22,11 +22,20 @@ const SPARQL_KEYWORDS = [
   'DATA', 'LOAD', 'CLEAR', 'CREATE', 'DROP', 'COPY', 'MOVE', 'ADD'
 ];
 
+// SPARQL has no implicit prefixes — every query must declare each one it uses, or the
+// backend's parser rejects it with "Unresolved prefixed name" even though the editor's
+// own "Ontology Prefixes" panel shows them (that panel is informational display only,
+// not something injected into the query sent to the server).
+const COMMON_PREFIXES = `PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+`;
+
 // Sample queries for new users
 const SAMPLE_QUERIES = [
   {
     name: 'List All Classes',
-    query: `SELECT DISTINCT ?class ?label WHERE {
+    query: `${COMMON_PREFIXES}SELECT DISTINCT ?class ?label WHERE {
   ?class a owl:Class .
   OPTIONAL { ?class rdfs:label ?label }
 }
@@ -35,7 +44,7 @@ LIMIT 100`
   },
   {
     name: 'List All Properties',
-    query: `SELECT DISTINCT ?property ?type ?label WHERE {
+    query: `${COMMON_PREFIXES}SELECT DISTINCT ?property ?type ?label WHERE {
   { ?property a owl:ObjectProperty } UNION
   { ?property a owl:DatatypeProperty } UNION
   { ?property a owl:AnnotationProperty }
@@ -48,7 +57,7 @@ LIMIT 100`
   },
   {
     name: 'List All Individuals',
-    query: `SELECT DISTINCT ?individual ?type ?label WHERE {
+    query: `${COMMON_PREFIXES}SELECT DISTINCT ?individual ?type ?label WHERE {
   ?individual a ?type .
   ?type a owl:Class .
   FILTER(?type != owl:Class && ?type != owl:NamedIndividual)
@@ -65,7 +74,7 @@ LIMIT 100`
   },
   {
     name: 'SubClass Hierarchy',
-    query: `SELECT ?subclass ?superclass ?subLabel ?superLabel WHERE {
+    query: `${COMMON_PREFIXES}SELECT ?subclass ?superclass ?subLabel ?superLabel WHERE {
   ?subclass rdfs:subClassOf ?superclass .
   FILTER(isIRI(?superclass))
   OPTIONAL { ?subclass rdfs:label ?subLabel }
@@ -125,6 +134,10 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setQueryName(query.name);
     setResults(null);
     setError(null);
+    // Switching queries clears results (they belonged to whatever ran before) — jump back
+    // to the editor tab so the user actually sees the newly-loaded query instead of being
+    // left staring at a now-empty results tab with no visible way to run it.
+    setActiveTab('editor');
   };
 
   const handleNewQuery = () => {
@@ -133,6 +146,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setQueryName('New Query');
     setResults(null);
     setError(null);
+    setActiveTab('editor');
   };
 
   const handleLoadSample = (sample: typeof SAMPLE_QUERIES[0]) => {
@@ -141,6 +155,10 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setQueryName(sample.name);
     setResults(null);
     setError(null);
+    // Switching samples clears results (they belonged to whatever ran before) — jump back
+    // to the editor tab so the user actually sees the newly-loaded query instead of being
+    // left staring at a now-empty results tab with no visible way to run it.
+    setActiveTab('editor');
     // Reset dropdown after a brief delay to show the selection
     setTimeout(() => setSelectedSample(''), 300);
   };

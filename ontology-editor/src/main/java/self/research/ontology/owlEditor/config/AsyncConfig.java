@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -19,7 +20,7 @@ public class AsyncConfig implements AsyncConfigurer {
     private static final Logger log = LoggerFactory.getLogger(AsyncConfig.class);
     
     @Bean(name = "owlParsingExecutor")
-    public Executor owlParsingExecutor() {
+    public AsyncTaskExecutor owlParsingExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(4);
         executor.setMaxPoolSize(8);
