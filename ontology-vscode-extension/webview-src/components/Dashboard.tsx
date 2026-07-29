@@ -624,135 +624,134 @@ const TopMenuBar = ({
                       Appearance
                     </button>
                   </div>
-                ) : // : item === "Reasoner" ? (
-                // <div className="py-1">
-                //   <button
-                //     onClick={async () => {
-                //       setOpenMenu(null);
-                //       if (onStartReasoner) await onStartReasoner();
-                //     }}
-                //     className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${
-                //       isReasonerRunning || isReasonerLoading
-                //         ? 'text-gray-400 cursor-not-allowed'
-                //         : 'hover:bg-gray-100'
-                //     }`}
-                //     disabled={isReasonerRunning || isReasonerLoading}
-                //   >
-                //     {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
-                //     Start reasoner
-                //   </button>
-                //   <button
-                //     onClick={() => {
-                //       setOpenMenu(null);
-                //       if (onCheckConsistency) onCheckConsistency();
-                //     }}
-                //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                //     disabled={isReasonerLoading || isConsistencyLoading}
-                //   >
-                //     {isConsistencyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
-                //     Check consistency
-                //   </button>
-                //   <button
-                //     onClick={() => {
-                //       setOpenMenu(null);
-                //       if (onToggleReasonerSync) onToggleReasonerSync();
-                //     }}
-                //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                //   >
-                //     <input type="checkbox" checked={isReasonerSynced} readOnly className="pointer-events-none" />
-                //     Synchronize reasoner
-                //   </button>
-                //   <button
-                //     onClick={() => {
-                //       setOpenMenu(null);
-                //       if (onStopReasoner) onStopReasoner();
-                //     }}
-                //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
-                //     disabled={!isReasonerRunning}
-                //   >
-                //     Stop reasoner
-                //   </button>
-                //   <button
-                //     onClick={() => {
-                //       setOpenMenu(null);
-                //       if (onExplainInconsistency) onExplainInconsistency();
-                //     }}
-                //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                //     disabled={isReasonerLoading}
-                //   >
-                //     Explain inconsistent ontology
-                //   </button>
-                //   <div className="border-t border-gray-200 my-1"></div>
-                //   <button
-                //     onClick={() => {
-                //       // Configure reasoner preferences
-                //       setOpenMenu(null);
-                //       if (onOpenReasonerSettings) onOpenReasonerSettings();
-                //     }}
-                //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
-                //   >
-                //     Configure...
-                //   </button>
-                //   <div className="border-t border-gray-200 my-1"></div>
-                //   <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
-                //   <button
-                //     onClick={() => {
-                //       setOpenMenu(null);
-                //       if (onSelectReasoner) onSelectReasoner('HermiT');
-                //     }}
-                //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
-                //       selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
-                //     }`}
-                //   >
-                //     {selectedReasoner === 'HermiT' ? '• ' : '  '}HermiT 1.4.5.519
-                //   </button>
-                //   <button
-                //     onClick={() => {
-                //       setOpenMenu(null);
-                //       if (onSelectReasoner) onSelectReasoner('ELK');
-                //     }}
-                //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
-                //       selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
-                //     }`}
-                //   >
-                //     {selectedReasoner === 'ELK' ? '• ' : '  '}ELK 0.4.3
-                //   </button>
-                //   <button
-                //     onClick={() => {
-                //       setOpenMenu(null);
-                //       if (onSelectReasoner) onSelectReasoner('Pellet');
-                //     }}
-                //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                //       selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
-                //     }`}
-                //   >
-                //     {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
-                //   </button>
-                //   <button
-                //     onClick={() => {
-                //       setOpenMenu(null);
-                //       if (onSelectReasoner) onSelectReasoner('Openllet');
-                //     }}
-                //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                //       selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
-                //     }`}
-                //   >
-                //     {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
-                //   </button>
-                //   <button
-                //     onClick={() => {
-                //       setOpenMenu(null);
-                //       if (onSelectReasoner) onSelectReasoner('Structural');
-                //     }}
-                //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                //       selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
-                //     }`}
-                //   >
-                //     {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
-                //   </button>
-                // </div>
-                // )
-                item === "Help" ? (
+                ) : item === "Reasoner" ? (
+                  <div className="py-1">
+                    <button
+                      onClick={async () => {
+                        setOpenMenu(null);
+                        if (onStartReasoner) await onStartReasoner();
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${
+                        isReasonerRunning || isReasonerLoading
+                          ? 'text-gray-400 cursor-not-allowed'
+                          : 'hover:bg-gray-100'
+                      }`}
+                      disabled={isReasonerRunning || isReasonerLoading}
+                    >
+                      {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                      Start reasoner
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onCheckConsistency) onCheckConsistency();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      disabled={isReasonerLoading || isConsistencyLoading}
+                    >
+                      {isConsistencyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                      Check consistency
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onToggleReasonerSync) onToggleReasonerSync();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                    >
+                      <input type="checkbox" checked={isReasonerSynced} readOnly className="pointer-events-none" />
+                      Synchronize reasoner
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onStopReasoner) onStopReasoner();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                      disabled={!isReasonerRunning}
+                    >
+                      Stop reasoner
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onExplainInconsistency) onExplainInconsistency();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      disabled={isReasonerLoading}
+                    >
+                      Explain inconsistent ontology
+                    </button>
+                    <div className="border-t border-gray-200 my-1"></div>
+                    <button
+                      onClick={() => {
+                        // Configure reasoner preferences
+                        setOpenMenu(null);
+                        if (onOpenReasonerSettings) onOpenReasonerSettings();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                    >
+                      Configure...
+                    </button>
+                    <div className="border-t border-gray-200 my-1"></div>
+                    <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onSelectReasoner) onSelectReasoner('HermiT');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
+                        selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                    >
+                      {selectedReasoner === 'HermiT' ? '• ' : '  '}HermiT 1.4.5.519
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onSelectReasoner) onSelectReasoner('ELK');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
+                        selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                    >
+                      {selectedReasoner === 'ELK' ? '• ' : '  '}ELK 0.4.3
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onSelectReasoner) onSelectReasoner('Pellet');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                        selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                    >
+                      {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onSelectReasoner) onSelectReasoner('Openllet');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                        selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                    >
+                      {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onSelectReasoner) onSelectReasoner('Structural');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                        selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                    >
+                      {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
+                    </button>
+                  </div>
+                ) : item === "Help" ? (
                   <div className="py-1">
                     {localStorage.getItem("deploymentType") !== "self-hosted" && (
                       <button
