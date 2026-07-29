@@ -48,6 +48,7 @@ public class ReasoningJobExecutor {
             case REASONER_CLASSIFY -> executeClassify(job);
             case REASONER_REALIZE -> executeRealize(job);
             case REASONER_RUN -> executeFullRun(job);
+            case REASONER_INFERRED_AXIOMS -> executeInferredAxioms(job);
         };
     }
 
@@ -273,6 +274,77 @@ public class ReasoningJobExecutor {
             result.put("message", "Reasoning completed successfully");
             return result;
         }
+    }
+
+    /**
+     * Same contract as the synchronous /reasoner/{projectId}/inferred-axioms endpoint
+     * (ReasonerService.getInferredAxioms + ReasonerController.formatAxiom in
+     * ontology-plugin-service) — kept in parity so callers get identical field names
+     * regardless of whether the worker or the request thread computed the result.
+     */
+    private Map<String, Object> executeInferredAxioms(ReasoningJob job) throws Exception {
+        ReasonerType type = parseReasonerType(job.getReasonerType());
+        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
+            OWLOntology ontology = session.ontology();
+            OWLReasoner reasoner = session.reasoner();
+            ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
+
+            if (!reasoner.isConsistent()) {
+                return analyzeInconsistency(ontology);
+            }
+
+            long start = System.currentTimeMillis();
+            precomputeHierarchy(reasoner, effective);
+            reasoner.precomputeInferences(org.semanticweb.owlapi.reasoner.InferenceType.CLASS_ASSERTIONS);
+
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            Set<OWLAxiom> inferredAxioms = new LinkedHashSet<>();
+            for (OWLClass owlClass : ontology.getClassesInSignature()) {
+                if (owlClass.isOWLThing() || owlClass.isOWLNothing()) {
+                    continue;
+                }
+                for (OWLClass superClass : reasoner.getSuperClasses(owlClass, false).getFlattened()) {
+                    if (!superClass.isOWLThing()) {
+                        inferredAxioms.add(df.getOWLSubClassOfAxiom(owlClass, superClass));
+                    }
+                }
+                for (OWLNamedIndividual individual : reasoner.getInstances(owlClass, false).getFlattened()) {
+                    inferredAxioms.add(df.getOWLClassAssertionAxiom(owlClass, individual));
+                }
+            }
+            long duration = System.currentTimeMillis() - start;
+
+            List<Map<String, String>> axiomsList = inferredAxioms.stream()
+                    .limit(100)
+                    .map(axiom -> Map.of(
+                            "axiomType", axiom.getAxiomType().getName(),
+                            "axiom", axiom.toString(),
+                            "readable", formatAxiom(axiom, ontology)
+                    ))
+                    .collect(Collectors.toList());
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("reasonerType", effective.getDisplayName());
+            result.put("durationMs", duration);
+            result.put("totalInferredAxioms", inferredAxioms.size());
+            result.put("axioms", axiomsList);
+            result.put("message", axiomsList.size() < inferredAxioms.size()
+                    ? "Showing first 100 of " + inferredAxioms.size() + " inferred axioms"
+                    : "Showing all " + inferredAxioms.size() + " inferred axioms");
+            if (session.downgradedWarning() != null) {
+                result.put("downgradedWarning", session.downgradedWarning());
+            }
+            return result;
+        }
+    }
+
+    private String formatAxiom(OWLAxiom axiom, OWLOntology ontology) {
+        String axiomString = axiom.toString();
+        for (OWLEntity entity : axiom.getSignature()) {
+            axiomString = axiomString.replace(entity.getIRI().toString(), label(entity, ontology));
+        }
+        return axiomString;
     }
 
     private void precomputeHierarchy(OWLReasoner reasoner, ReasonerType type) {

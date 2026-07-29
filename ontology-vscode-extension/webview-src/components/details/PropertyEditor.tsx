@@ -178,6 +178,30 @@ const PropertyEditor: React.FC<{
     const [isChainDialogOpen, setIsChainDialogOpen] = useState(false);
     const [inferredDetails, setInferredDetails] = useState<any>(null);
     const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
+    const [classLabelLookup, setClassLabelLookup] = useState<Map<string, string>>(new Map());
+
+    // Domain (and object-property Range) items are class IRIs — resolve them to labels for
+    // display, same as AnnotationPropertyEditor does for super-property IRIs. Without this,
+    // MultiSelectItem's fallback (getDisplayName) shows the raw IRI's last path segment.
+    useEffect(() => {
+        if (!projectId) return;
+        let alive = true;
+        (async () => {
+            try {
+                const resp = await apiClient.get<any>(`/api/ontology/classes/all/${projectId}?limit=5000`);
+                if (!alive) return;
+                const classes: any[] = resp?.data?.classes ?? resp?.data ?? resp?.classes ?? (Array.isArray(resp) ? resp : []);
+                const lookup = new Map<string, string>();
+                for (const c of classes) {
+                    if (c?.id && c?.label) lookup.set(c.id, c.label);
+                }
+                setClassLabelLookup(lookup);
+            } catch (error) {
+                console.warn('[PropertyEditor] Failed to load class label lookup:', error);
+            }
+        })();
+        return () => { alive = false; };
+    }, [projectId]);
 
     useEffect(() => {
         // Always reset previous entity's inferred details immediately so we
@@ -566,6 +590,7 @@ const PropertyEditor: React.FC<{
                             onNavigate={onNavigate}
                             projectId={projectId}
                             parentEntityIri={item.id}
+                            labelLookup={classLabelLookup}
                         />
                         )}
 
@@ -582,6 +607,7 @@ const PropertyEditor: React.FC<{
                             onNavigate={onNavigate}
                             projectId={projectId}
                             parentEntityIri={item.id}
+                            labelLookup={isObjectProperty ? classLabelLookup : undefined}
                         />
                         )}
 

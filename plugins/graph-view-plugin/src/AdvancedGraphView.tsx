@@ -2087,7 +2087,27 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (isThingNode) {
           baseSize = Math.max(10, Math.round(settings.nodeSize * 0.72));
         } else if (node.type === 'class') {
-          baseSize = Math.round(settings.nodeSize * 1.15);
+          // Real VOWL convention: the circle grows to fit the label, not the
+          // other way around — the previous flat multiplier left the text-fit
+          // budget (below) at ~6 characters, truncating "Elevation" to "Ele..".
+          // Grow to comfortably fit up to ~13 characters of the real label;
+          // longer names still truncate gracefully since the text callback
+          // derives its own budget from this same size. Capped (not degree-
+          // based) deliberately — see the comment above this block explaining
+          // why unbounded hub-degree sizing was reverted. The 13-char/2.5x
+          // caps (down from an initial 16/3x) were retuned after verifying in
+          // the graph-view-plugin test harness: vowlTransform.ts's packing
+          // spacing (CLASS_NODE_R) is a single flat constant approximating
+          // "typical" class-circle radius, so keeping less size variance
+          // across nodes matters more than maximizing any one label's fit.
+          const charWidthPx = vowlOptions.labelFontSize * (7 / 11);
+          const avgScale = (vowlOptions.nodeWidthScale + vowlOptions.nodeHeightScale) / 2;
+          const visibleChars = Math.min((node.label || '').length, 13);
+          const desiredDiameter = visibleChars * charWidthPx + 8;
+          const fittedSize = desiredDiameter / (2.7 * avgScale);
+          const minSize = Math.round(settings.nodeSize * 1.15);
+          const maxSize = Math.round(settings.nodeSize * 2.5);
+          baseSize = Math.max(minSize, Math.min(Math.round(fittedSize), maxSize));
         } else if (node.type === 'datatype') {
           baseSize = Math.round(settings.nodeSize * 1.05);
         } else if (node.type === 'individual') {
@@ -4072,6 +4092,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // inside semantically-shaped nodes) follows VOWL label conventions.
     const labelHalo = effectiveDark ? '#1b1e2b' : '#ffffff';
     node.append('text')
+      .attr('class', 'node-label-text')
+      .attr('data-base-font-size', d => {
+        // Stashed so the zoom handler can counter-scale against zoom-out
+        // without recomputing the whole per-type font-size formula on every
+        // zoom tick — VOWL mode only (see the zoom handler below); other
+        // modes already handle legibility differently (ontograph hides
+        // labels below a zoom threshold instead).
+        if (visualizationType !== 'vowl') return null;
+        return d.type === 'setOperator' ? 16 : Math.min(11, vowlOptions.labelFontSize);
+      })
       .attr('paint-order', 'stroke')
       .attr('stroke', visualizationType === 'vowl' ? 'none' : labelHalo)
       .attr('stroke-width', visualizationType === 'vowl' ? 0 : 3)
@@ -4369,7 +4399,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const absSin = Math.abs(inDy / inDist);
           tr = Math.min((w / 2) / Math.max(absCos, 1e-6), (h / 2) / Math.max(absSin, 1e-6)) + 2;
         } else {
-          tr = tr * 1.8 + 4;
+          // Matches the actual rendered VOWL class circle radius (size * 1.35 *
+          // avgScale, see the node.type === 'class' shape-drawing code) — this
+          // used to assume 1.8x, well past the true ~1.35x boundary, so the
+          // arrowhead stopped short in empty space instead of touching the circle.
+          const avgScale = (vowlOptions.nodeWidthScale + vowlOptions.nodeHeightScale) / 2;
+          tr = tr * 1.35 * avgScale + 4;
         }
         const tx = targetPoint.x - (inDx / inDist) * tr;
         const ty = targetPoint.y - (inDy / inDist) * tr;
@@ -4397,8 +4432,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const absSin = Math.abs(dy / dist);
           r = Math.min((w / 2) / absCos, (h / 2) / absSin) + 2;
         } else {
-          // Circle boundary for VOWL classes (1.8x radius)
-          r = r * 1.8 + 4;
+          // Matches the actual rendered VOWL class circle radius (size * 1.35 *
+          // avgScale, see the node.type === 'class' shape-drawing code) — this
+          // used to assume 1.8x, well past the true ~1.35x boundary, so the
+          // arrowhead stopped short in empty space instead of touching the circle.
+          const avgScale = (vowlOptions.nodeWidthScale + vowlOptions.nodeHeightScale) / 2;
+          r = r * 1.35 * avgScale + 4;
         }
       } else if (visualizationType === 'ontograph') {
         // Rounded rectangle boundary for OntoGraph (approx 7.5x by 2.0x)
@@ -4827,6 +4866,35 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         g.attr('transform', event.transform);
         currentTransformRef.current = event.transform;
         // Avoid React re-render on every pan frame — update zoom label on gesture end only
+
+        // VOWL labels otherwise shrink with everything else on zoom-out (the
+        // whole graph sits in one transformed group). Two failure modes,
+        // verified in the test harness at 35 visible nodes:
+        //  - Naively counter-scaling to a fixed legible size at ANY zoom: once
+        //    "Fit to screen" needs k below ~0.4-0.5 to show every node (which
+        //    it does for 30+ nodes), the circles themselves shrink smaller
+        //    than the now-fixed-size text, so labels overflow their circles
+        //    and collide with neighbors — readable in isolation, messy as a
+        //    whole.
+        //  - Not counter-scaling at all: text shrinks to the ~3px illegible
+        //    mush this whole fix was for.
+        // So: counter-scale to stay pinned at the base size between 1:1 and
+        // HIDE_LABEL_ZOOM_THRESHOLD (labels still fit their now similarly-
+        // shrunk-but-not-tiny circles there); below that, hide labels
+        // entirely for a clean structure-only view — same idea as
+        // ontograph's existing showLabels zoom cutoff, just not shared code
+        // since the two modes' text rendering is a fully separate branch.
+        if (visualizationType === 'vowl') {
+          const k = event.transform.k;
+          const HIDE_LABEL_ZOOM_THRESHOLD = 0.5;
+          const labelSelection = g.selectAll<SVGTextElement, unknown>('text.node-label-text');
+          labelSelection.style('display', k < HIDE_LABEL_ZOOM_THRESHOLD ? 'none' : 'inline');
+          labelSelection.attr('font-size', function () {
+            const base = parseFloat(this.getAttribute('data-base-font-size') || '');
+            if (!base) return null;
+            return k <= 1 ? base / k : base;
+          });
+        }
       })
       .on('end', (event) => {
         setZoomLevel(event.transform.k);
@@ -5263,34 +5331,97 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * HIERARCHICAL NAVIGATION HANDLERS
    * ========================================================================
    */
-  const handleToggleExpansion = useCallback((nodeId: string) => {
+  // The initial graph load caps out at maxNodes (5000) and only ships a subset of
+  // edges, so a node's backend-computed `hasChildren: true` can outlive its actual
+  // children being present in allNodes/allEdges — the arrow shows but expand finds
+  // nothing locally. Fetch the missing subclasses on demand in that case, using the
+  // STRUCTURAL (asserted-only) reasoner so this stays fast regardless of ontology size.
+  const fetchMissingChildren = useCallback(async (nodeId: string): Promise<{ nodes: OntologyNode[]; edges: OntologyEdge[] }> => {
+    const apiBaseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL;
+    const authToken = localStorage.getItem('authToken');
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-subclasses`
+        + `?classIri=${encodeURIComponent(nodeId)}&direct=true&reasonerType=STRUCTURAL`,
+        { headers: authHeaders(authToken) }
+      );
+      if (!response.ok) {
+        console.warn(`[Lazy Expand] inferred-subclasses request failed (${response.status}) for`, nodeId);
+        return { nodes: [], edges: [] };
+      }
+      const payload = await response.json();
+      const subClasses: Array<{ iri: string; label?: string; hasChildren?: boolean }> = payload?.inferredSubClasses || [];
+      const existingIds = new Set(allNodes.map(n => n.id));
+      const newNodes: OntologyNode[] = [];
+      const newEdges: OntologyEdge[] = [];
+      for (const sc of subClasses) {
+        if (existingIds.has(sc.iri)) continue;
+        newNodes.push({
+          id: sc.iri,
+          label: sc.label || sc.iri,
+          type: 'class',
+          namespace: extractNamespace(sc.iri) || undefined
+        } as OntologyNode);
+        newEdges.push({
+          id: `edge-lazy-${sc.iri}`,
+          from: sc.iri,
+          to: nodeId,
+          label: 'subClassOf',
+          type: 'subClassOf' as const
+        });
+      }
+      return { nodes: newNodes, edges: newEdges };
+    } catch (error) {
+      console.error('[Lazy Expand] Failed to fetch children for', nodeId, error);
+      return { nodes: [], edges: [] };
+    }
+  }, [projectId, allNodes]);
+
+  const handleToggleExpansion = useCallback(async (nodeId: string) => {
     const nodeBefore = allNodes.find(n => n.id === nodeId);
     console.log(`[UI] User clicked to toggle expansion for: ${nodeBefore?.label || nodeId}`);
     console.log(`[UI] Current state - Visible: ${visibleNodeIds.size}, Expanded: ${expandedNodeIds.size}`);
+
+    let effectiveNodes = allNodes;
+    let effectiveEdges = allEdges;
+
+    const isExpanding = !expandedNodeIds.has(nodeId);
+    if (isExpanding
+        && hasChildren(nodeId, allEdges, allNodes)
+        && getChildren(nodeId, allEdges, allNodes).length === 0) {
+      console.log(`[Lazy Expand] ${nodeBefore?.label || nodeId} has children per backend but none loaded locally — fetching on demand`);
+      const { nodes: fetchedNodes, edges: fetchedEdges } = await fetchMissingChildren(nodeId);
+      if (fetchedNodes.length > 0) {
+        effectiveNodes = [...allNodes, ...fetchedNodes];
+        effectiveEdges = [...allEdges, ...fetchedEdges];
+        setAllNodes(effectiveNodes);
+        setAllEdges(effectiveEdges);
+      }
+    }
 
     updateHierarchyState(prev => {
       const { newExpandedIds, newVisibleIds, action } = toggleExpansion(
         nodeId,
         prev.expanded,
         prev.visible,
-        allEdges,
-        allNodes
+        effectiveEdges,
+        effectiveNodes
       );
 
       console.log(`[UI] Action: ${action}`);
       console.log(`[UI] New state - Visible: ${newVisibleIds.size}, Expanded: ${newExpandedIds.size}`);
       console.log(`[UI] Newly visible nodes: ${Array.from(newVisibleIds)
         .filter(id => !prev.visible.has(id))
-        .map(id => allNodes.find(n => n.id === id)?.label || id)
+        .map(id => effectiveNodes.find(n => n.id === id)?.label || id)
         .join(', ')}`);
-      console.log(`[User Action] ${action} node:`, allNodes.find(n => n.id === nodeId)?.label);
+      console.log(`[User Action] ${action} node:`, effectiveNodes.find(n => n.id === nodeId)?.label);
 
       return {
         visible: newVisibleIds,
         expanded: newExpandedIds
       };
     });
-  }, [allNodes, allEdges, expandedNodeIds, visibleNodeIds, updateHierarchyState]);
+  }, [allNodes, allEdges, expandedNodeIds, visibleNodeIds, updateHierarchyState, fetchMissingChildren]);
 
   const handleExpandParents = useCallback((nodeId: string) => {
     const node = allNodes.find(n => n.id === nodeId);

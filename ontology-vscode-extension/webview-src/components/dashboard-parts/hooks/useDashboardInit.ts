@@ -6,6 +6,7 @@ import ontologyMutationService from "../../../services/ontologyMutationService";
 import { draftTrackingService } from "../../../services/draftTrackingService";
 import { notificationService } from "../../../services/notificationService";
 import { importStageLabel, sanitizeImportMessage } from "../../../utils/importStatusText";
+import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from "../../../utils/desktop";
 import { syncService } from "../../../services/syncService";
 import { pluginLoader } from "../../../services/pluginLoader";
 import type { DashboardState } from "./useDashboardState";
@@ -1708,16 +1709,28 @@ export function useDashboardInit(state: DashboardState) {
     loadClassInstances();
   }, [loadClassInstances]);
 
-  const refreshSelectedClassIndividualDetails = useCallback(async () => {
+  const refreshSelectedClassIndividualDetails = useCallback(async (afterMutation) => {
     if (!projectId || !selectedClassIndividual?.id) {
       setSelectedClassIndividualDetails(null);
       return;
     }
     setSelectedClassIndividualLoading(true);
     try {
-      const response = await apiClient.get<any>(
-        `/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`,
-      );
+      if (afterMutation) {
+        // Same eventual-consistency race as ClassEditor's loadClassDetails(afterMutation) —
+        // the mutation resolving doesn't guarantee Fuseki/OWLAPI has caught up yet.
+        if (isDesktop()) {
+          await waitForDesktopOwlApiReady(projectId);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+      }
+      const detailsUrl = `/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`;
+      let response = await apiClient.get<any>(detailsUrl);
+      if (afterMutation && isOwlApiWarmingResponse(response)) {
+        await waitForDesktopOwlApiReady(projectId);
+        response = await apiClient.get<any>(detailsUrl);
+      }
       const details = response?.data || response;
       if (details) {
         setSelectedClassIndividualDetails({
@@ -2826,12 +2839,14 @@ export function useDashboardInit(state: DashboardState) {
     async (nodeId: string) => {
       if (!projectId) return [];
       try {
+        // apiClient.get(url, params, config) takes params flat as the 2nd argument —
+        // wrapping it in { params: {...} } here double-nests it, and axios serializes
+        // that as params[classIri]=...&params[direct]=... which Spring can't bind,
+        // so every expand click was silently 400ing.
         const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-subclasses`, {
-          params: {
-            classIri: nodeId,
-            direct: true,
-            reasonerType: selectedReasoner,
-          },
+          classIri: nodeId,
+          direct: true,
+          reasonerType: selectedReasoner,
         });
         const payload = response?.data || response;
         const items = payload?.inferredSubClasses || payload?.data?.inferredSubClasses || [];

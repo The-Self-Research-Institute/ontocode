@@ -2248,6 +2248,7 @@ const AppContent = () => {
         selectedFileId={selectedFileId || undefined}
         selectedFileName={selectedFileName || undefined}
         projectId={selectedProjectId || undefined}
+        projectName={selectedProjectName || undefined}
       />
     );
   } else {

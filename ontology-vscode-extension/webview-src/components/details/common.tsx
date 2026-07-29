@@ -1080,7 +1080,10 @@ export const MultiSelectItem: React.FC<{
   onNavigate?: (iri: string, type: string) => void;
   projectId?: string;
   parentEntityIri?: string;
-}> = ({ item, onDelete, onEdit, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate, projectId, parentEntityIri }) => {
+  /** IRI -> rdfs:label, so relation lists show the referenced entity's actual name
+   * instead of its bare ID/IRI (e.g. "example of usage" instead of "IAO_0000112"). */
+  labelLookup?: Map<string, string>;
+}> = ({ item, onDelete, onEdit, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate, projectId, parentEntityIri, labelLookup }) => {
     const [showExplanation, setShowExplanation] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [showAnnotations, setShowAnnotations] = useState(false);
@@ -1180,11 +1183,18 @@ export const MultiSelectItem: React.FC<{
         } else if (iri.includes('owl#')) {
             return 'owl:' + iri.split('#').pop();
         }
-        // Default: just get the local name
-        return iri.split('#').pop() || iri;
+        // Default: local name after the last '#'. Many real-world IRIs (OBO/PURL style,
+        // e.g. http://purl.obolibrary.org/obo/IAO_0000112) have no '#' at all — falling
+        // through to iri.split('#').pop() on those returns the entire IRI unchanged, which
+        // is the raw-IRI-instead-of-a-name bug. Fall back to the last '/' segment first.
+        if (iri.includes('#')) {
+            return iri.split('#').pop() || iri;
+        }
+        const trimmed = iri.replace(/\/+$/, '');
+        return trimmed.split('/').pop() || iri;
     };
     
-    const displayName = getDisplayName(propertyIri);
+    const displayName = labelLookup?.get(propertyIri) || getDisplayName(propertyIri);
     
     // Detect entity type from themeColor if not provided
     // blue = objectProperty, green = dataProperty, yellow/orange = class, purple = individual
@@ -1568,7 +1578,8 @@ export const MultiSelectSection: React.FC<{
     onEdit?: (item: string) => void;
     projectId?: string;
     parentEntityIri?: string;
-}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate, onEdit, projectId, parentEntityIri }) => {
+    labelLookup?: Map<string, string>;
+}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate, onEdit, projectId, parentEntityIri, labelLookup }) => {
     const [isSelected, setIsSelected] = useState(false);
     
     // Clean minimal theme colors - subtle and professional
@@ -1645,10 +1656,10 @@ export const MultiSelectSection: React.FC<{
              {/* Content area */}
              <div className="border border-t-0 rounded-b-sm overflow-hidden" style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border, #e5e7eb)' }}>
                  {items && items.length > 0 ? (
-                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } return onDelete(i); }} onEdit={isViewOnly ? undefined : itemEditHandler} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} />)
+                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } return onDelete(i); }} onEdit={isViewOnly ? undefined : itemEditHandler} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} labelLookup={labelLookup} />)
                  ) : null}
                  {inferredItems && inferredItems.length > 0 ? (
-                    inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} />)
+                    inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} labelLookup={labelLookup} />)
                  ) : null}
                  {(!items || items.length === 0) && (!inferredItems || inferredItems.length === 0) && (
                     <div className="p-2 text-xs text-gray-400 italic">

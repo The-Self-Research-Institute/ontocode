@@ -71,6 +71,7 @@ interface ReasonerPluginProps {
   inferredClassHierarchy?: any[];
   inferredObjectPropertyHierarchy?: any[];
   inferredDataPropertyHierarchy?: any[];
+  inferredAxioms?: any[];
   onStartReasoner?: () => Promise<void>;
   onStopReasoner?: () => void;
   onSelectReasoner?: (reasoner: string) => void;
@@ -241,6 +242,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   inferredClassHierarchy: dashboardInferredHierarchy,
   inferredObjectPropertyHierarchy: dashboardInferredObjectPropertyHierarchy,
   inferredDataPropertyHierarchy: dashboardInferredDataPropertyHierarchy,
+  inferredAxioms: dashboardInferredAxioms,
   onStartReasoner: dashboardStartReasoner,
   onStopReasoner: dashboardStopReasoner,
   onSelectReasoner: dashboardSelectReasoner,
@@ -362,22 +364,52 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     };
   }, [showReasonerMenu]);
 
+  // Backend endpoints that can be offloaded to the reasoner-worker (consistency,
+  // realization, inferred-axioms — classification has its own dedicated status
+  // endpoint and is polled separately below) reply with 202 + {async, jobId, status}
+  // instead of the result body when the worker is enabled. /api/dl-query/jobs/{jobId}
+  // works as the poll target regardless of which service originally submitted the
+  // job — it falls back to asking the worker directly when it has no local record.
+  const pollWorkerJob = useCallback(async (jobId: string, timeoutMs = 10 * 60 * 1000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const res = await authFetch(`${normalizedApiBaseUrl}/api/dl-query/jobs/${jobId}`);
+      if (!res.ok) {
+        throw new Error(`Poll failed: ${res.statusText}`);
+      }
+      const job = await res.json();
+      const status = String(job?.status || '').toUpperCase();
+      if (status === 'COMPLETED') return job;
+      if (status === 'FAILED') throw new Error(job.error || job.message || 'Reasoning job failed');
+    }
+    throw new Error('Reasoning job timed out');
+  }, [normalizedApiBaseUrl]);
+
   const fetchInferredAxioms = useCallback(async (reasonerType: string) => {
     try {
       const encodedProjectId = encodeURIComponent(projectId);
       const response = await authFetch(
         `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/inferred-axioms?reasonerType=${reasonerType}`,
       );
-      if (!response.ok) return;
-      const data = await response.json();
+      if (!response.ok) {
+        console.warn(`[ReasonerPluginView] inferred-axioms request failed: ${response.status} ${response.statusText}`);
+        return;
+      }
+      let data = await response.json();
+      if (data.async && (data.jobId || data.taskId)) {
+        data = await pollWorkerJob(data.jobId || data.taskId);
+      }
       if (data.axioms && Array.isArray(data.axioms)) {
         setInferredAxioms(data.axioms);
         setInferredAxiomsTotal(data.totalInferredAxioms || data.axioms.length);
+      } else {
+        console.warn('[ReasonerPluginView] inferred-axioms response missing axioms array:', data);
       }
     } catch (err) {
       console.warn('[ReasonerPluginView] Failed to fetch inferred axioms:', err);
     }
-  }, [projectId, normalizedApiBaseUrl]);
+  }, [projectId, normalizedApiBaseUrl, pollWorkerJob]);
 
   // Start reasoning
   const startReasoner = useCallback(async (task: 'consistency' | 'classification' | 'realization') => {
@@ -435,6 +467,16 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       let result = await response.json();
       console.log('[ReasonerPluginView] Reasoning result:', result);
 
+      // Consistency/realization have no dedicated status endpoint of their own — when
+      // the reasoner-worker is enabled, the initial POST above returns a queued job
+      // (202 + {async, jobId}) instead of the result, so it must be polled generically.
+      // Classification is handled separately below via its own /classify/status
+      // endpoint, which already understands both the worker and non-worker paths.
+      if (result.async && (result.jobId || result.taskId) && task !== 'classification') {
+        setReasonerStatus(`Running ${task}... (queued)`);
+        result = await pollWorkerJob(result.jobId || result.taskId);
+      }
+
       // Handle async classify response (taskId-based polling)
       if (result.taskId && task === 'classification') {
         const taskId = result.taskId;
@@ -477,8 +519,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         setEquivalentClasses(result.equivalentClasses || []);
         setUnsatisfiableClasses(result.unsatisfiableClasses || []);
         
-        // Generate explanations for classes
-        generateExplanations(result);
+        // Generate explanations for classes. Guarded: a throw here (e.g. an
+        // unexpected field shape from the async classify/status payload) must
+        // not prevent the inferred-axioms fetch below from running.
+        try {
+          generateExplanations(result);
+        } catch (explainErr) {
+          console.error('[ReasonerPluginView] generateExplanations failed:', explainErr);
+        }
         await fetchInferredAxioms(reasonerType);
       } else if (task === 'realization') {
         // Set consistency from realization result
@@ -501,7 +549,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms]);
+  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms, pollWorkerJob]);
 
   // Generate explanations for reasoning results
   const generateExplanations = (classificationResult: any) => {
@@ -711,10 +759,11 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   
   // Use inferred hierarchies if available, otherwise fall back to reasoner results
   const classHierarchyToRender = useMemo(() => {
-    const source = dashboardInferredHierarchy && dashboardInferredHierarchy.length > 0 
-      ? dashboardInferredHierarchy 
+    const source = dashboardInferredHierarchy && dashboardInferredHierarchy.length > 0
+      ? dashboardInferredHierarchy
       : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || []);
-    return ensureTree(source);
+    const tree = ensureTree(source);
+    return tree;
   }, [dashboardInferredHierarchy, reasonerResults]);
 
   const objectPropertyHierarchyToRender = useMemo(() => {
@@ -723,6 +772,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       : (reasonerResults?.objectPropertyHierarchy || reasonerResults?.objectPropertyHierarchyTree || reasonerResults?.objectProperties || objectPropertyHierarchy || []);
     return ensureTree(source);
   }, [dashboardInferredObjectPropertyHierarchy, reasonerResults, objectPropertyHierarchy]);
+
+  // Dashboard's own startReasoner() flow fetches inferred axioms itself (Start button
+  // always prefers dashboardStartReasoner when provided, so this plugin's own
+  // fetchInferredAxioms below never runs in that mode) — prefer that result when present.
+  const inferredAxiomsToRender = dashboardInferredAxioms && dashboardInferredAxioms.length > 0
+    ? dashboardInferredAxioms
+    : inferredAxioms;
 
   const dataPropertyHierarchyToRender = useMemo(() => {
     const source = dashboardInferredDataPropertyHierarchy && dashboardInferredDataPropertyHierarchy.length > 0
@@ -1519,7 +1575,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 )}
 
                 {activeTab === 'inferredAxioms' && (
-                  inferredAxioms.length > 0 ? (
+                  inferredAxiomsToRender.length > 0 ? (
                     <div className="space-y-3 text-sm">
                       <div className="flex items-center gap-2">
                         <input
@@ -1532,13 +1588,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                           }`}
                         />
                         <span className={`text-xs whitespace-nowrap ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                          {inferredAxiomsTotal > inferredAxioms.length
-                            ? `Showing ${inferredAxioms.length} of ${inferredAxiomsTotal}`
-                            : `${inferredAxioms.length} axioms`}
+                          {inferredAxiomsTotal > inferredAxiomsToRender.length
+                            ? `Showing ${inferredAxiomsToRender.length} of ${inferredAxiomsTotal}`
+                            : `${inferredAxiomsToRender.length} axioms`}
                         </span>
                       </div>
                       <div className="space-y-1">
-                        {inferredAxioms
+                        {inferredAxiomsToRender
                           .filter((ax) => {
                             const q = inferredAxiomsFilter.trim().toLowerCase();
                             if (!q) return true;

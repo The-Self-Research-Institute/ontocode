@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.lang.Nullable;
@@ -26,15 +27,18 @@ public class OwlApiMutationCoordinator {
     private final ProjectMetadataService metadataService;
     private final OwlApiMutationPatcher patcher;
     private final DesktopOntologyLoader desktopOntologyLoader;
+    private final boolean desktopMode;
 
     public OwlApiMutationCoordinator(ProjectOntologyCache ontologyCache,
                                      ProjectMetadataService metadataService,
                                      OwlApiMutationPatcher patcher,
-                                     @Lazy DesktopOntologyLoader desktopOntologyLoader) {
+                                     @Lazy DesktopOntologyLoader desktopOntologyLoader,
+                                     @Value("${ontocode.desktop.mode:false}") boolean desktopMode) {
         this.ontologyCache = ontologyCache;
         this.metadataService = metadataService;
         this.patcher = patcher;
         this.desktopOntologyLoader = desktopOntologyLoader;
+        this.desktopMode = desktopMode;
     }
 
     /**
@@ -58,8 +62,20 @@ public class OwlApiMutationCoordinator {
 
     /**
      * Before serving from the OWLAPI fast path, evict if another writer bumped the version.
+     *
+     * No-op on desktop: this process is the only writer there (single user, single cache),
+     * and every write already goes through afterMutation() above, which patches the cache
+     * in-place or proactively evicts+rewarms right when a non-patchable write happens — there
+     * is no other-instance scenario for a read to reactively catch here. Checking anyway reads
+     * MongoDB's version and the cache's version as two separate, non-atomic steps; if a read
+     * lands between them it can see a spurious mismatch and evict a cache entry that was
+     * actually already correct, sending the next read to whatever is mid-rewarm.
+     * Cloud/web IS multi-instance, so this check stays load-bearing there.
      */
     public void ensureFreshForRead(String projectId) {
+        if (desktopMode) {
+            return;
+        }
         if (!ontologyCache.has(projectId)) {
             return;
         }

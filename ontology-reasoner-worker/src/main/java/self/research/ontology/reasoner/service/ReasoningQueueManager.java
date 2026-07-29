@@ -74,27 +74,48 @@ public class ReasoningQueueManager {
         touchActivity();
         log.info("[Reasoning] Enqueued {} job {} for project {} (position {})",
                 jobType, job.getJobId(), projectId, job.getQueuePosition());
+        // TEMP DIAGNOSTIC — investigating a reported case where two different job
+        // submissions ended up returning the same jobId to two different callers.
+        // Remove once root-caused. Logs thread + identity hash to catch object reuse.
+        log.info("[DIAG] enqueue: jobId={} jobType={} projectId={} thread={} identityHash={} atMs={}",
+                job.getJobId(), jobType, projectId, Thread.currentThread().getName(),
+                System.identityHashCode(job), System.currentTimeMillis());
         return job;
     }
 
     public synchronized ReasoningJob dequeue() {
-        ReasoningJob next = queue.peekFirst();
-        if (next == null || !concurrencyPolicy.canStartAnother(activeJobs.values(), next)) {
+        // Scan for the first job whose LANE has room, rather than only ever looking at the
+        // front of the queue. Otherwise a heavy job stuck at the front (its lane full) would
+        // block a cheap, fast job queued right behind it even though the fast lane is free —
+        // exactly the head-of-line blocking that let one heavy request starve everyone else.
+        ReasoningJob candidate = findFirstAdmissible();
+        if (candidate == null) {
             return null;
         }
 
-        ReasoningJob job = queue.removeFirst();
-        job.setStatus(ReasoningJob.Status.PROCESSING);
-        job.setStartedAt(Instant.now());
-        job.setQueuePosition(0);
-        activeJobs.put(job.getJobId(), job);
+        queue.remove(candidate);
+        candidate.setStatus(ReasoningJob.Status.PROCESSING);
+        candidate.setStartedAt(Instant.now());
+        candidate.setQueuePosition(0);
+        activeJobs.put(candidate.getJobId(), candidate);
         updateQueuePositions();
-        notifyJob(job);
+        notifyJob(candidate);
         touchActivity();
-        return job;
+        return candidate;
+    }
+
+    private ReasoningJob findFirstAdmissible() {
+        for (ReasoningJob job : queue) {
+            if (concurrencyPolicy.canStartAnother(activeJobs.values(), job)) {
+                return job;
+            }
+        }
+        return null;
     }
 
     public synchronized void markCompleted(ReasoningJob job, Map<String, Object> result, long durationMs) {
+        log.info("[DIAG] markCompleted: jobId={} jobType={} identityHash={} atMs={}",
+                job.getJobId(), job.getJobType(), System.identityHashCode(job), System.currentTimeMillis());
         activeJobs.remove(job.getJobId());
         job.setStatus(ReasoningJob.Status.COMPLETED);
         job.setCompletedAt(Instant.now());
@@ -120,13 +141,21 @@ public class ReasoningQueueManager {
     public ReasoningJob getJob(String jobId) {
         ReasoningJob active = activeJobs.get(jobId);
         if (active != null) {
+            log.info("[DIAG] getJob: jobId={} source=active jobType={} identityHash={} atMs={}",
+                    jobId, active.getJobType(), System.identityHashCode(active), System.currentTimeMillis());
             return active;
         }
         ReasoningJob queued = queue.stream().filter(j -> jobId.equals(j.getJobId())).findFirst().orElse(null);
         if (queued != null) {
+            log.info("[DIAG] getJob: jobId={} source=queue jobType={} identityHash={} atMs={}",
+                    jobId, queued.getJobType(), System.identityHashCode(queued), System.currentTimeMillis());
             return queued;
         }
-        return resultRetention.get(jobId).orElse(null);
+        ReasoningJob retained = resultRetention.get(jobId).orElse(null);
+        log.info("[DIAG] getJob: jobId={} source=retention jobType={} identityHash={} atMs={}",
+                jobId, retained != null ? retained.getJobType() : "NOT_FOUND",
+                retained != null ? System.identityHashCode(retained) : -1, System.currentTimeMillis());
+        return retained;
     }
 
     public int activeJobCount() {
@@ -162,8 +191,7 @@ public class ReasoningQueueManager {
     }
 
     public synchronized boolean canProcess() {
-        ReasoningJob next = queue.peekFirst();
-        return next != null && concurrencyPolicy.canStartAnother(activeJobs.values(), next);
+        return findFirstAdmissible() != null;
     }
 
     public synchronized boolean hasQueuedJobs() {

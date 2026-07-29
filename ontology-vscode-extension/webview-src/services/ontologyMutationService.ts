@@ -246,11 +246,14 @@ export const ontologyMutationService = {
    * Delete SubClassOf axiom (applied immediately, not as draft)
    */
   async deleteSubClassOf(projectId: string, classIri: string, superClassIri: string,
-                         userId?: string, username?: string): Promise<void> {
+                         userId?: string, username?: string, definition?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteSubClassOf',
       iri: classIri,
-      target: superClassIri
+      target: superClassIri,
+      // Only meaningful when superClassIri isn't a real class (a complex/anonymous superclass
+      // expression's row id) — lets the backend match by the same text shown in the UI instead.
+      ...(definition ? { value: definition } : {})
     }], undefined, userId, username); // Apply immediately with user info
   },
 
@@ -283,11 +286,14 @@ export const ontologyMutationService = {
    * Delete EquivalentClass axiom (applied immediately, not as draft)
    */
   async deleteEquivalentClass(projectId: string, classIri: string, equivalentClassIri: string,
-                              userId?: string, username?: string): Promise<void> {
+                              userId?: string, username?: string, definition?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteEquivalentClass',
       iri: classIri,
-      target: equivalentClassIri
+      target: equivalentClassIri,
+      // Only meaningful when equivalentClassIri isn't a real class (a complex/anonymous
+      // expression's row id) — lets the backend match by the same text shown in the UI instead.
+      ...(definition ? { value: definition } : {})
     }], undefined, userId, username); // Apply immediately with user info
   },
 
@@ -430,11 +436,12 @@ export const ontologyMutationService = {
   /**
    * Create a new annotation property
    */
-  async createAnnotationProperty(projectId: string, iri: string, label: string, userId?: string, username?: string): Promise<void> {
+  async createAnnotationProperty(projectId: string, iri: string, label: string, parentIri?: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'createAnnotationProperty',
       iri,
-      label
+      label,
+      parent: parentIri
     }], undefined, userId, username);
   },
 
@@ -1136,11 +1143,15 @@ export const ontologyMutationService = {
    * Delete an axiom by its ID (blank node ID for anonymous axioms)
    * Used for deleting General Class Axioms, restrictions, etc.
    */
-  async deleteAxiom(projectId: string, axiomId: string, ancestorIri?: string): Promise<void> {
+  async deleteAxiom(projectId: string, axiomId: string, ancestorIri?: string, definition?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteAxiom',
       iri: axiomId,
-      ...(ancestorIri ? { ancestorIri } : {})
+      ...(ancestorIri ? { ancestorIri } : {}),
+      // GCI's axiomId is a real Fuseki blank-node id on the SPARQL path, but desktop's OWLAPI
+      // model has no such id (separately parsed) — definition lets the backend match by the
+      // same text the UI showed for this row instead.
+      ...(definition ? { value: definition } : {})
     }], undefined);
   },
 
@@ -1151,7 +1162,7 @@ export const ontologyMutationService = {
   async addObjectRestriction(
     projectId: string,
     classIri: string,
-    axiomType: 'EquivalentTo' | 'SubClassOf',
+    axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value',
     fillerClassIri: string,
@@ -1177,7 +1188,7 @@ export const ontologyMutationService = {
   async addDataRestriction(
     projectId: string,
     classIri: string,
-    axiomType: 'EquivalentTo' | 'SubClassOf',
+    axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly',
     datatypeIri: string,

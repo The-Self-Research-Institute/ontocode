@@ -1,7 +1,7 @@
 {
   "name": "@ontocode/sparql-query-plugin",
   "displayName": "SPARQL Query Editor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Full-featured SPARQL query editor with syntax highlighting, query management, CSV export, and live results",
   "author": "OntoCode Team",
   "license": "MIT",
