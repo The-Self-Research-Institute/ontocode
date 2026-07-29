@@ -1162,7 +1162,7 @@ export const ontologyMutationService = {
   async addObjectRestriction(
     projectId: string,
     classIri: string,
-    axiomType: 'EquivalentTo' | 'SubClassOf',
+    axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value',
     fillerClassIri: string,
@@ -1188,7 +1188,7 @@ export const ontologyMutationService = {
   async addDataRestriction(
     projectId: string,
     classIri: string,
-    axiomType: 'EquivalentTo' | 'SubClassOf',
+    axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith',
     propertyIri: string,
     restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly',
     datatypeIri: string,

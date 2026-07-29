@@ -449,10 +449,11 @@ public class OntologyMutationService {
                     + "WHERE { <" + op.iri() + "> rdfs:subClassOf ?target .\n"
                     + "  FILTER(isBlank(?target) && str(?target) = \"" + op.target() + "\") }";
             } else {
-                // For named IRIs, use DELETE DATA
-                return "DELETE DATA {\n"
-                    + "<" + op.iri() + "> rdfs:subClassOf <" + op.target() + "> .\n"
-                    + "}";
+                // Pattern-match delete, not DELETE DATA — DELETE DATA silently no-ops
+                // on any non-exact triple match, which made this axiom effectively
+                // undeletable in practice with no error surfaced anywhere.
+                return "DELETE { <" + op.iri() + "> rdfs:subClassOf <" + op.target() + "> }\n"
+                    + "WHERE { <" + op.iri() + "> rdfs:subClassOf <" + op.target() + "> }";
             }
         } else if (type.equals("updateSubClassOf")) {
             // Update operation: replace old target with new target
@@ -472,10 +473,9 @@ public class OntologyMutationService {
                     + "WHERE { <" + op.iri() + "> owl:equivalentClass ?target .\n"
                     + "  FILTER(isBlank(?target) && str(?target) = \"" + op.target() + "\") }";
             } else {
-                // For named IRIs, use DELETE DATA
-                return "DELETE DATA {\n"
-                    + "<" + op.iri() + "> owl:equivalentClass <" + op.target() + "> .\n"
-                    + "}";
+                // Pattern-match delete, not DELETE DATA — see deleteSubClassOf.
+                return "DELETE { <" + op.iri() + "> owl:equivalentClass <" + op.target() + "> }\n"
+                    + "WHERE { <" + op.iri() + "> owl:equivalentClass <" + op.target() + "> }";
             }
         } else if (type.equals("updateEquivalentClass")) {
             // Update operation: replace old target with new target
@@ -495,10 +495,9 @@ public class OntologyMutationService {
                     + "WHERE { <" + op.iri() + "> owl:disjointWith ?target .\n"
                     + "  FILTER(isBlank(?target) && str(?target) = \"" + op.target() + "\") }";
             } else {
-                // For named IRIs, use DELETE DATA
-                return "DELETE DATA {\n"
-                    + "<" + op.iri() + "> owl:disjointWith <" + op.target() + "> .\n"
-                    + "}";
+                // Pattern-match delete, not DELETE DATA — see deleteSubClassOf.
+                return "DELETE { <" + op.iri() + "> owl:disjointWith <" + op.target() + "> }\n"
+                    + "WHERE { <" + op.iri() + "> owl:disjointWith <" + op.target() + "> }";
             }
         } else if (type.equals("updateDisjointWith")) {
             // Update operation: replace old target with new target
@@ -553,9 +552,9 @@ public class OntologyMutationService {
             if (op.target() != null && op.target().contains("|||")) {
                 return buildDeletePropertyRestrictionSparql(op.iri(), "rdfs:domain", op.target());
             }
-            return "DELETE DATA {\n"
-                + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
-                + "}";
+            // Pattern-match delete, not DELETE DATA — see deleteSubClassOf.
+            return "DELETE { <" + op.iri() + "> rdfs:domain <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> rdfs:domain <" + op.target() + "> }";
         } else if (type.equals("addPropertyRange")) {
             if (op.restrictionType() != null) {
                 // Range is a restriction
@@ -581,9 +580,9 @@ public class OntologyMutationService {
             if (op.target() != null && op.target().contains("[")) {
                 return buildDeleteDatatypeRestrictionSparql(op.iri(), "rdfs:range");
             }
-            return "DELETE DATA {\n"
-                + "<" + op.iri() + "> rdfs:range <" + op.target() + "> .\n"
-                + "}";
+            // Pattern-match delete, not DELETE DATA — see deleteSubClassOf.
+            return "DELETE { <" + op.iri() + "> rdfs:range <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> rdfs:range <" + op.target() + "> }";
         } else if (type.equals("addDatatypeDefinition")) {
             return buildDatatypeDefinitionSparql(op.iri(), op.value());
         } else if (type.equals("deleteDatatypeDefinition")) {
@@ -593,9 +592,9 @@ public class OntologyMutationService {
                 + "<" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> .\n"
                 + "}";
         } else if (type.equals("deleteSubPropertyOf")) {
-            return "DELETE DATA {\n"
-                + "<" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> .\n"
-                + "}";
+            // Pattern-match delete, not DELETE DATA — see deleteSubClassOf.
+            return "DELETE { <" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> }";
         } else if (type.equals("updateSubPropertyOf")) {
             // op.value() = old target IRI, op.target() = new target IRI. Atomic
             // DELETE{...}WHERE{...} instead of DELETE DATA — see updateSubClassOf.
@@ -631,34 +630,33 @@ public class OntologyMutationService {
                 + "<" + op.target() + "> owl:inverseOf <" + op.iri() + "> .\n"
                 + "}";
         } else if (type.equals("deleteInverseProperty")) {
-            return "DELETE DATA {\n"
-                + "<" + op.iri() + "> owl:inverseOf <" + op.target() + "> .\n"
-                + "<" + op.target() + "> owl:inverseOf <" + op.iri() + "> .\n"
-                + "}";
+            // Pattern-match delete, not DELETE DATA — see deleteSubClassOf.
+            return "DELETE { <" + op.iri() + "> owl:inverseOf <" + op.target() + "> . <" + op.target() + "> owl:inverseOf <" + op.iri() + "> }\n"
+                + "WHERE { <" + op.iri() + "> owl:inverseOf <" + op.target() + "> }";
         } else if (type.equals("addDisjointProperty")) {
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> owl:propertyDisjointWith <" + op.target() + "> .\n"
                 + "}";
         } else if (type.equals("deleteDisjointProperty")) {
-            return "DELETE DATA {\n"
-                + "<" + op.iri() + "> owl:propertyDisjointWith <" + op.target() + "> .\n"
-                + "}";
+            // Pattern-match delete, not DELETE DATA — see deleteSubClassOf.
+            return "DELETE { <" + op.iri() + "> owl:propertyDisjointWith <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> owl:propertyDisjointWith <" + op.target() + "> }";
         } else if (type.equals("addEquivalentProperty")) {
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> owl:equivalentProperty <" + op.target() + "> .\n"
                 + "}";
         } else if (type.equals("deleteEquivalentProperty")) {
-            return "DELETE DATA {\n"
-                + "<" + op.iri() + "> owl:equivalentProperty <" + op.target() + "> .\n"
-                + "}";
+            // Pattern-match delete, not DELETE DATA — see deleteSubClassOf.
+            return "DELETE { <" + op.iri() + "> owl:equivalentProperty <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> owl:equivalentProperty <" + op.target() + "> }";
         } else if (type.equals("addCharacteristic")) {
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> a <" + op.target() + "> .\n"
                 + "}";
         } else if (type.equals("deleteCharacteristic")) {
-            return "DELETE DATA {\n"
-                + "<" + op.iri() + "> a <" + op.target() + "> .\n"
-                + "}";
+            // Pattern-match delete, not DELETE DATA — see deleteSubClassOf.
+            return "DELETE { <" + op.iri() + "> a <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> a <" + op.target() + "> }";
         } else if (type.equals("addAxiom")) {
             // Back-compat/generic axiom support used by some UI components.
             // We only support a small set of axiom "kinds" that can be expressed as direct RDF triples.
