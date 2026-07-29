@@ -1938,18 +1938,29 @@ public class OntologyMutationService {
             log.warn("[MUTATION] deleteAxiom requires a blank node ID");
             return "";
         }
-        // RDF4J BNode.stringValue() returns the bare internal ID (e.g. "b0"), so
-        // SPARQL STR(?bnode) also returns "b0" — not "_:b0". Strip the "_:" prefix.
-        String rawId = blankNodeId.startsWith("_:") ? blankNodeId.substring(2) : blankNodeId;
-        String escapedRawId = rawId.replace("\\", "\\\\").replace("\"", "\\\"");
+        boolean hasAncestor = ancestorIri != null && !ancestorIri.isBlank();
+        String anchorTriple = hasAncestor ? "  <" + ancestorIri + "> rdfs:subClassOf ?axiom .\n" : "";
 
-        // If we know the subject class, anchor the query on that triple and delete it too.
-        String subClassOfDelete = ancestorIri != null && !ancestorIri.isBlank()
-                ? "  <" + ancestorIri + "> rdfs:subClassOf ?axiom .\n"
-                : "";
-        String subClassOfWhere = ancestorIri != null && !ancestorIri.isBlank()
-                ? "  <" + ancestorIri + "> rdfs:subClassOf ?axiom .\n"
-                : "";
+        String matchFilter;
+        if (hasAncestor) {
+            // Blank node labels in a SPARQL result set are only guaranteed valid for that one
+            // query execution (SPARQL protocol) — NOT stable across separate HTTP requests,
+            // even against the same unchanged store. The id captured when classDetails listed
+            // this axiom will almost never still match STR(?axiom) by the time a later, separate
+            // delete request runs (this is why deleting an inherited anonymous ancestor axiom
+            // was silently failing). Since we know which class asserts it, the anchor triple
+            // above finds the blank node directly — no previously-observed label needed.
+            // Trade-off: if that class has more than one distinct anonymous superclass
+            // expression (rare), this deletes all of them, not just the one clicked.
+            matchFilter = "  FILTER(isBlank(?axiom))\n";
+        } else {
+            // No ancestor to anchor on — fall back to matching by the previously-observed label.
+            // RDF4J BNode.stringValue() returns the bare internal ID (e.g. "b0"), so SPARQL
+            // STR(?bnode) also returns "b0" — not "_:b0". Strip the "_:" prefix.
+            String rawId = blankNodeId.startsWith("_:") ? blankNodeId.substring(2) : blankNodeId;
+            String escapedRawId = rawId.replace("\\", "\\\\").replace("\"", "\\\"");
+            matchFilter = "  FILTER(isBlank(?axiom) && STR(?axiom) = \"" + escapedRawId + "\")\n";
+        }
 
         String sparql = """
             DELETE {
@@ -1958,15 +1969,14 @@ public class OntologyMutationService {
               ?listNode rdf:rest ?rest .
             }
             WHERE {
-              FILTER(isBlank(?axiom) && STR(?axiom) = "%s")
-            %s  ?axiom ?p ?o .
+            %s%s  ?axiom ?p ?o .
               OPTIONAL {
                 ?axiom (owl:intersectionOf|owl:unionOf|owl:oneOf|rdf:first|rdf:rest)* ?listNode .
                 ?listNode rdf:first ?first .
                 ?listNode rdf:rest ?rest .
               }
             }
-            """.formatted(subClassOfDelete, escapedRawId, subClassOfWhere);
+            """.formatted(anchorTriple, anchorTriple, matchFilter);
         log.info("[MUTATION] deleteAxiom SPARQL for blank node {} (ancestorIri={}): {}", blankNodeId, ancestorIri, sparql);
         return sparql;
     }
