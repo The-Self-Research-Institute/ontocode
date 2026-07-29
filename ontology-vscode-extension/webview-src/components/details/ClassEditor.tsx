@@ -1347,7 +1347,7 @@ const ClassEditor: React.FC<{
     }
   };
 
-  const handleDeleteAxiom = async (type: AxiomType, id: string, classIriOverride?: string) => {
+  const handleDeleteAxiom = async (type: AxiomType, id: string, classIriOverride?: string, axiomOverride?: Axiom) => {
     if (isSavingAxiomRef.current) return;
     const ownerIri = classIriOverride || item.id;
     console.log("[ClassEditor] handleDeleteAxiom called:", { type, id, classIri: ownerIri });
@@ -1361,7 +1361,9 @@ const ClassEditor: React.FC<{
         SubClassOf: classDetails?.subClassOfAxioms || item.subClassOfAxioms,
         DisjointWith: classDetails?.disjointClassesAxioms || item.disjointClassesAxioms,
       };
-      const axiom = axiomArrays[type]?.find((a) => a.id === id);
+      // axiomOverride lets a caller pass an axiom that isn't in ownerIri's own lists — e.g. a
+      // restriction inherited from an ancestor class, found in anonymousAncestorAxioms instead.
+      const axiom = axiomOverride || axiomArrays[type]?.find((a) => a.id === id);
       console.log("[ClassEditor] Found axiom:", axiom);
 
       // Check if this is a restriction (isRestriction can be boolean or string "true")
@@ -2364,21 +2366,25 @@ const ClassEditor: React.FC<{
                 axioms={classDetails?.anonymousAncestorAxioms || []}
                 onAdd={() => {}}
                 onDelete={(id) => {
-                  // Restrictions asserted directly on this class are mirrored into this section
-                  // (see the backend comment on "Direct anonymous restrictions on this class")
-                  // using the SAME id as classDetails.subClassOfAxioms. Route those through the
-                  // structural-match restriction delete (deleteObjectRestriction/deleteDataRestriction)
-                  // instead of the blank-node-string-match deleteAxiom path below — matching by the
-                  // Fuseki-internal blank node string is fragile and can silently no-op if that
-                  // string doesn't line up with what a later, separate query returns for the same
-                  // node. Only fall back to the string-match path for genuinely inherited ancestors
-                  // (asserted on a superclass, not on this class), which aren't in subClassOfAxioms.
-                  const directRestriction = (classDetails?.subClassOfAxioms || []).find((a: Axiom) => a.id === id);
-                  if (directRestriction) {
-                    handleDeleteAxiom("SubClassOf", id);
+                  // The backend now resolves structural details (propertyIri/restrictionType/
+                  // fillerIri/cardinality) for every restriction-shaped entry in this section —
+                  // whether it's asserted directly on this class or inherited from an ancestor —
+                  // in one query, so we never need to re-identify a blank node by its Fuseki-
+                  // internal label in a later, separate request (that label isn't guaranteed to
+                  // still match, which is what made this silently no-op before). Route any
+                  // restriction-shaped entry through the structural-match delete, passing the
+                  // axiom's OWN ancestorIri as the owner (correct for both direct and inherited
+                  // cases) and the axiom object itself (it may not be in this class's own
+                  // subClassOfAxioms when inherited). Only true non-restriction anonymous
+                  // expressions (a class's direct superclass being a plain intersection/union,
+                  // not wrapped in a proper GCI) still fall back to the blank-node-match delete.
+                  const anc = (classDetails?.anonymousAncestorAxioms || []).find((a: any) => a.id === id);
+                  const isRestriction = anc && (anc.isRestriction === true || (anc as any).isRestriction === "true")
+                      && (anc as any).propertyIri && (anc as any).restrictionType && (anc as any).fillerIri;
+                  if (isRestriction) {
+                    handleDeleteAxiom("SubClassOf", id, (anc as any).ancestorIri, anc as Axiom);
                     return;
                   }
-                  const anc = (classDetails?.anonymousAncestorAxioms || []).find((a: any) => a.id === id);
                   handleDeleteGCA(id, (anc as any)?.ancestorIri);
                 }}
                 onEditClick={(axiom) => {

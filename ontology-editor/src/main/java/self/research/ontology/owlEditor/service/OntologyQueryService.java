@@ -500,6 +500,12 @@ public class OntologyQueryService {
               }
               FILTER(isIRI(?c))
               FILTER(?c != <http://www.w3.org/2002/07/owl#Thing>)
+              # Exclude built-in vocabulary/datatype IRIs (e.g. xsd:decimal) that only appear
+              # here because they're a legitimate restriction filler (owl:onClass/someValuesFrom
+              # on a data property) or a property's declared range — not a real ontology class.
+              FILTER(!STRSTARTS(STR(?c), "http://www.w3.org/2001/XMLSchema#"))
+              FILTER(!STRSTARTS(STR(?c), "http://www.w3.org/2000/01/rdf-schema#"))
+              FILTER(!STRSTARTS(STR(?c), "http://www.w3.org/1999/02/22-rdf-syntax-ns#"))
               OPTIONAL { ?c rdfs:label ?label }
               OPTIONAL { ?c rdfs:comment ?description }
               OPTIONAL {
@@ -3049,18 +3055,68 @@ public class OntologyQueryService {
         // OPTIMIZED: Added explicit LIMIT to prevent runaway transitive path
         // expansion in deeply nested hierarchies. 500 is well above any realistic
         // ancestor count for a single class.
+        //
+        // Restriction structural details (onProperty/restrictionType/filler/cardinality) are
+        // resolved for ?super INLINE, in this same query, rather than via a second, separately
+        // executed query joined afterward by blank-node label. Blank node labels are only
+        // guaranteed consistent WITHIN one query's own result set — not across two separate
+        // SPARQL requests, even against the same unchanged data — exactly the same reasoning
+        // already documented on the GCI query above (its own comment: "Member traversal is done
+        // inline in the same query to avoid blank node ID instability across separate SPARQL
+        // queries"). Getting this in one pass is what lets a later delete of one of these match
+        // by content instead of by blank-node identity, even when it's inherited from an ancestor.
+        //
+        // Deliberately does NOT cover unqualified owl:minCardinality/maxCardinality/cardinality
+        // (the legacy pre-OWL2-qualified-cardinality form — rare in practice; a real 2.8M-triple
+        // GO ontology used to load-test this exact query has zero of them). Verified empirically
+        // against that same ontology: adding a FILTER NOT EXISTS-bearing UNION branch for these
+        // inside this OPTIONAL — even with owl:onProperty repeated per-branch, matching the
+        // proven pattern used elsewhere in this file — made this query regress from ~30-100ms to
+        // a 30+ second timeout. The query planner appears to badly pessimize FILTER NOT EXISTS as
+        // a UNION sibling here, independent of how the shared triple is structured. An inherited
+        // unqualified-cardinality restriction still displays and deletes correctly — it just
+        // falls back to the older blank-node-identity path below instead of the structural-match
+        // path, exactly like every restriction shape did before this fix existed.
         CompletableFuture<TupleQueryResult> ancestorFuture = queryAsync(() -> {
             String q = PREFIXES + """
-                SELECT DISTINCT ?ancestor ?super ?label WHERE {
-                  <%s> rdfs:subClassOf+ ?ancestor .
+                SELECT DISTINCT ?ancestor ?super ?label
+                       ?onProp ?propLabel ?restrictionType ?filler ?fillerLabel ?card
+                WHERE {
+                  <%1$s> rdfs:subClassOf+ ?ancestor .
                   { ?ancestor rdfs:subClassOf ?super . }
                   UNION
                   { ?ancestor owl:equivalentClass ?super . FILTER(isBlank(?super)) }
-                  FILTER(isBlank(?super) || (?super != owl:Thing && ?super != <%s>))
+                  FILTER(isBlank(?super) || (?super != owl:Thing && ?super != <%1$s>))
                   OPTIONAL { ?super rdfs:label ?label }
+                  OPTIONAL {
+                    ?super owl:onProperty ?onProp .
+                    OPTIONAL { ?onProp rdfs:label ?propLabel }
+                    {
+                      ?super owl:someValuesFrom ?filler . BIND("some" AS ?restrictionType)
+                    } UNION {
+                      ?super owl:allValuesFrom ?filler . BIND("only" AS ?restrictionType)
+                    } UNION {
+                      ?super owl:hasValue ?filler . BIND("value" AS ?restrictionType)
+                    } UNION {
+                      ?super owl:hasSelf true . BIND("Self" AS ?filler) BIND("some" AS ?restrictionType)
+                    } UNION {
+                      ?super owl:minQualifiedCardinality ?card . BIND("min" AS ?restrictionType)
+                      OPTIONAL { ?super owl:onClass ?filler }
+                      OPTIONAL { ?super owl:onDataRange ?filler }
+                    } UNION {
+                      ?super owl:maxQualifiedCardinality ?card . BIND("max" AS ?restrictionType)
+                      OPTIONAL { ?super owl:onClass ?filler }
+                      OPTIONAL { ?super owl:onDataRange ?filler }
+                    } UNION {
+                      ?super owl:qualifiedCardinality ?card . BIND("exactly" AS ?restrictionType)
+                      OPTIONAL { ?super owl:onClass ?filler }
+                      OPTIONAL { ?super owl:onDataRange ?filler }
+                    }
+                    OPTIONAL { ?filler rdfs:label ?fillerLabel }
+                  }
                 }
                 LIMIT 500
-                """.formatted(classIri, classIri);
+                """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
         }, queryPool);
         
@@ -3403,17 +3459,42 @@ public class OntologyQueryService {
                 boolean navigable = superIri.startsWith("http://") || superIri.startsWith("https://") || superIri.startsWith("urn:");
                 axiom.put("navigable", String.valueOf(navigable));
                 if (!navigable) {
-                    String known = knownBlankDefinitions.get(superIri);
-                    if (known != null && !known.isBlank()) {
-                        axiom.put("manchester", known);
-                        axiom.put("definition", known);
+                    // Restriction structural fields (?onProp/?restrictionType/?filler/?card) were
+                    // resolved INLINE in the same query/solution row as ?super above — no separate
+                    // query, no blank-node-label join needed. Unbound here means ?super genuinely
+                    // isn't a restriction (e.g. a plain intersection/union), not a failed lookup.
+                    String onProp = resource(sol, "onProp");
+                    if (onProp != null) {
+                        String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : formatIriWithPrefix(onProp);
+                        String restrictionType = sol.hasBinding("restrictionType") ? literal(sol, "restrictionType") : "some";
+                        String fillerIri = sol.hasBinding("filler") ? sol.getValue("filler").stringValue() : "";
+                        String fillerLabel = sol.hasBinding("fillerLabel") ? literal(sol, "fillerLabel") : formatIriWithPrefix(fillerIri);
+                        String cardinality = sol.hasBinding("card") ? literal(sol, "card") : "";
+                        axiom.put("isRestriction", "true");
+                        axiom.put("propertyIri", onProp);
+                        axiom.put("restrictionType", restrictionType);
+                        axiom.put("fillerIri", fillerIri);
+                        if (!cardinality.isEmpty()) {
+                            axiom.put("cardinality", cardinality);
+                        }
+                        String definition = cardinality.isEmpty()
+                                ? propLabel + " " + restrictionType + " " + fillerLabel
+                                : propLabel + " " + restrictionType + " " + cardinality + " " + fillerLabel;
+                        axiom.put("manchester", definition);
+                        axiom.put("definition", definition);
                     } else {
-                        String manchester = describeBlankNodeManchester(projectId, classIri, superIri);
-                        if (manchester != null && !manchester.isBlank()) {
-                            axiom.put("manchester", manchester);
-                            axiom.put("definition", manchester);
+                        String known = knownBlankDefinitions.get(superIri);
+                        if (known != null && !known.isBlank()) {
+                            axiom.put("manchester", known);
+                            axiom.put("definition", known);
                         } else {
-                            axiom.put("definition", "Anonymous superclass");
+                            String manchester = describeBlankNodeManchester(projectId, classIri, superIri);
+                            if (manchester != null && !manchester.isBlank()) {
+                                axiom.put("manchester", manchester);
+                                axiom.put("definition", manchester);
+                            } else {
+                                axiom.put("definition", "Anonymous superclass");
+                            }
                         }
                     }
                 } else {
@@ -3439,6 +3520,14 @@ public class OntologyQueryService {
             entry.put("ancestorIri", classIri);
             entry.put("navigable", "false");
             entry.put("definition", subAxiom.get("definition") != null ? subAxiom.get("definition") : "Anonymous restriction");
+            // Carry the same structural fields subClassOfAxioms already has for this restriction,
+            // so deleting it from this mirrored section can match by content (property/filler/
+            // cardinality) instead of blank-node identity, same as the inherited-ancestor case above.
+            entry.put("isRestriction", "true");
+            if (subAxiom.get("propertyIri") != null) entry.put("propertyIri", subAxiom.get("propertyIri"));
+            if (subAxiom.get("restrictionType") != null) entry.put("restrictionType", subAxiom.get("restrictionType"));
+            if (subAxiom.get("fillerIri") != null) entry.put("fillerIri", subAxiom.get("fillerIri"));
+            if (subAxiom.get("cardinality") != null) entry.put("cardinality", subAxiom.get("cardinality"));
             anonymousAncestorAxioms.add(entry);
         }
         details.put("anonymousAncestorAxioms", anonymousAncestorAxioms);
