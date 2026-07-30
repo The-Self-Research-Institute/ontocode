@@ -38,6 +38,7 @@ public class OntologyExportJobService {
 
     private final Executor owlParsingExecutor;
     private final StorageManager storageManager;
+    private final ProjectImportService importService;
 
     private final Map<String, ExportJob> jobs = new ConcurrentHashMap<>();
     // Dedup key (projectId + "::" + format) -> jobId, so a double-click or a second tab/window
@@ -47,9 +48,11 @@ public class OntologyExportJobService {
     private final Map<String, String> activeJobByKey = new ConcurrentHashMap<>();
 
     public OntologyExportJobService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
-                                     StorageManager storageManager) {
+                                     StorageManager storageManager,
+                                     ProjectImportService importService) {
         this.owlParsingExecutor = owlParsingExecutor;
         this.storageManager = storageManager;
+        this.importService = importService;
     }
 
     public ExportJob submit(String projectId, String format) {
@@ -100,6 +103,9 @@ public class OntologyExportJobService {
 
         try {
             Path exportPath;
+            // Same desktop deferred-Fuseki-sync staleness as the synchronous /export endpoint —
+            // see ProjectLoadController.export(). No-ops on cloud and when already in sync.
+            importService.syncProjectToFuseki(job.getProjectId());
             Optional<String> cachedContent = storageManager.getCodeViewCache(job.getProjectId(), job.getFormat());
             if (cachedContent.isPresent()) {
                 log.info("[Export] Job {} using cached code view content (project {}, format {})",

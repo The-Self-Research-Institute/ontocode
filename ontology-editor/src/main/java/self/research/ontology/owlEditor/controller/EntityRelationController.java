@@ -84,11 +84,17 @@ public class EntityRelationController {
         boolean isDelete = "delete".equals(req.operation());
         boolean isAdd    = "add".equals(req.operation());
 
-        // Simple IRI→IRI edit on class axioms: use atomic DELETE+INSERT+WHERE
+        // Simple IRI→IRI edit on a class axiom or property relation: use atomic
+        // DELETE{...}WHERE{...} instead of separate DELETE DATA + INSERT DATA ops.
+        // DELETE DATA only removes an EXACT ground-triple match and silently no-ops
+        // if it doesn't — leaving the old value stuck alongside the newly-inserted
+        // one (invisible until a fresh read, e.g. switching tabs, bypasses the
+        // optimistic frontend state). DELETE{...}WHERE{...} matches structurally
+        // instead, so it can't silently miss.
         if (isEdit
                 && req.oldTargetIri() != null && req.targetIri() != null
                 && req.oldRestrictionData() == null && req.restrictionData() == null
-                && isClassAxiomRelation(req.relationshipType())) {
+                && hasAtomicUpdateOp(req.relationshipType())) {
             ops.add(buildAtomicUpdateOp(req));
             return ops;
         }
@@ -102,12 +108,24 @@ public class EntityRelationController {
         return "subClassOf".equals(rel) || "equivalentClass".equals(rel) || "disjointWith".equals(rel);
     }
 
-    /** Atomic DELETE+INSERT+WHERE for simple IRI class-axiom edits. */
+    private boolean hasAtomicUpdateOp(String rel) {
+        return isClassAxiomRelation(rel)
+                || "subProperty".equals(rel) || "domain".equals(rel) || "range".equals(rel)
+                || "inverse".equals(rel) || "disjoint".equals(rel) || "equivalent".equals(rel);
+    }
+
+    /** Atomic DELETE+INSERT+WHERE for simple IRI class-axiom / property-relation edits. */
     private MutationOp buildAtomicUpdateOp(RelationRequest req) {
         String type = switch (req.relationshipType()) {
             case "subClassOf"      -> "updateSubClassOf";
             case "equivalentClass" -> "updateEquivalentClass";
             case "disjointWith"    -> "updateDisjointWith";
+            case "subProperty"     -> "updateSubPropertyOf";
+            case "domain"          -> "updatePropertyDomain";
+            case "range"           -> "updatePropertyRange";
+            case "inverse"         -> "updateInverseProperty";
+            case "disjoint"        -> "updateDisjointProperty";
+            case "equivalent"      -> "updateEquivalentProperty";
             default -> throw new IllegalArgumentException("No atomic update op for: " + req.relationshipType());
         };
         // Convention in OntologyMutationService: value = old IRI, target = new IRI

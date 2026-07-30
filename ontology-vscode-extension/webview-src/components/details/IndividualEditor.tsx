@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Loader2, Search } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection, CollaboratorPresenceBar } from './common';
 import type { Individual, Property, PropertyAssertion, TreeNode } from '../../types';
@@ -161,6 +161,14 @@ const IndividualEditor: React.FC<{
   const [deletingTypeIri, setDeletingTypeIri] = useState<string | null>(null);
   const [inferredTypes, setInferredTypes] = useState<Array<{ iri: string; label: string }>>([]);
 
+  // Always-latest ref for `item` — lets the details-fetch effect below detect whether a
+  // newer edit (e.g. via the annotation add/edit dialog) landed while its own request was
+  // still in flight, so it doesn't clobber that edit with a now-stale server response.
+  const itemRef = useRef(item);
+  useEffect(() => {
+    itemRef.current = item;
+  });
+
   const loadIndividualDetails = async () => {
     if (!projectId || !item.id) return;
     setIsLoading(true);
@@ -216,6 +224,7 @@ const IndividualEditor: React.FC<{
 
     let alive = true;
     const currentId = item.id;
+    const itemAtFetchStart = item;
     setIsLoading(true);
 
     // Watchdog: avoid the spinner getting stuck if backend hangs.
@@ -230,6 +239,15 @@ const IndividualEditor: React.FC<{
         if (!alive || currentId !== item.id) return;
 
         const details = response?.data || response;
+
+        // If a newer edit (e.g. via the annotation add/edit dialog) landed locally while
+        // this request was still in flight, this response is now stale — applying it would
+        // silently revert that edit until the user reselects the individual.
+        const latestItem = itemRef.current;
+        if (latestItem.id !== currentId || latestItem !== itemAtFetchStart) {
+          console.log(`[IndividualEditor] Skipping stale details response for "${currentId}" — local item changed since fetch started`);
+          return;
+        }
 
         if (details) {
           const updatedItem: Individual = {
@@ -338,14 +356,17 @@ const IndividualEditor: React.FC<{
         }
       }
       
-      // Update local state
+      // Update local state — use the locals derived from `data` above (propLabel/targetLabel/
+      // isObjProp), not `newAssertion` state, which is still blank at this point (only ever
+      // populated on dialog-close) and was producing rows with no property/target label until
+      // the next refetch replaced them with the backend's resolved values.
       const newAssertionObject: PropertyAssertion = {
           id: `assertion-${Date.now()}`,
           propertyIri: propertyIri,
-          propertyLabel: newAssertion.propertyLabel,
-          [newAssertion.isObjectProperty ? 'targetIri' : 'targetLiteral']: newAssertion.isObjectProperty ? targetIri : newAssertion.targetLabel,
-          [newAssertion.isObjectProperty ? 'targetLabel' : '']: newAssertion.targetLabel,
-          isObjectProperty: newAssertion.isObjectProperty,
+          propertyLabel: propLabel,
+          [isObjProp ? 'targetIri' : 'targetLiteral']: isObjProp ? targetIri : targetLabel,
+          [isObjProp ? 'targetLabel' : '']: targetLabel,
+          isObjectProperty: isObjProp,
           isNegative: isNegativeAssertion,
       };
       onUpdate({ ...item, propertyAssertions: [...(item.propertyAssertions || []), newAssertionObject] });

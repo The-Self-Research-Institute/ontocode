@@ -817,7 +817,53 @@ public class ProjectService {
         project.setUpdatedAt(LocalDateTime.now());
         return projectRepository.save(project);
     }
-    
+
+    /**
+     * Rename a file in a project. Keeps the original extension regardless of what's
+     * submitted — the extension drives format detection elsewhere (content-type,
+     * parsing), so only the base name is actually renamable.
+     */
+    public Project renameFile(String projectId, String userId, String fileId, String newFileName) {
+        Project project = getProjectById(projectId, userId);
+
+        if (!hasEditPermission(project, userId)) {
+            throw new SecurityException("You don't have permission to rename files in this project");
+        }
+
+        Project.ProjectMember member = project.getMember(userId);
+        Project.FileMetadataInfo fileInfo = project.getFile(fileId);
+        if (fileInfo == null) {
+            throw new IllegalArgumentException("File not found");
+        }
+        if (member != null && "EDITOR".equals(member.getRole()) && !project.getOwnerId().equals(userId)) {
+            if (fileInfo.getUploadedBy() != null && !fileInfo.getUploadedBy().equals(userId)) {
+                throw new SecurityException("Editors can only rename files they uploaded");
+            }
+        }
+
+        String trimmed = newFileName == null ? "" : newFileName.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("File name cannot be empty");
+        }
+
+        String currentName = fileInfo.getFileName();
+        String extension = currentName != null && currentName.contains(".")
+                ? currentName.substring(currentName.lastIndexOf('.'))
+                : "";
+        String requestedBase = trimmed.contains(".") ? trimmed.substring(0, trimmed.lastIndexOf('.')) : trimmed;
+        String finalName = requestedBase + extension;
+
+        boolean collides = project.getActiveFiles().stream()
+                .anyMatch(f -> !f.getFileId().equals(fileId) && finalName.equalsIgnoreCase(f.getFileName()));
+        if (collides) {
+            throw new IllegalArgumentException("A file named \"" + finalName + "\" already exists in this project");
+        }
+
+        fileInfo.setFileName(finalName);
+        project.setUpdatedAt(LocalDateTime.now());
+        return projectRepository.save(project);
+    }
+
     /**
      * Restore a soft deleted file in a project
      */
