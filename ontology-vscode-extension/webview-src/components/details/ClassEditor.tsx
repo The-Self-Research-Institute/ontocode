@@ -1984,13 +1984,13 @@ const ClassEditor: React.FC<{
       }
       if (onRefreshIndividuals) onRefreshIndividuals();
     } catch (error) {
-      console.error("[ClassEditor] Failed to delete instance:", error);
-      notificationService.error("Delete Failed", `Failed to delete instance: ${error instanceof Error ? error.message : "Unknown error"}`);
+      console.error("[ClassEditor] Failed to remove class assertion:", error);
+      notificationService.error("Remove Failed", `Failed to remove instance from class: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsSavingAxiom(false);
       isSavingAxiomRef.current = false;
     }
-  };
+};
 
   const handleEditInstance = (instanceId: string) => {
     console.log("[ClassEditor] handleEditInstance called:", { instanceId, classIri: item.id });
