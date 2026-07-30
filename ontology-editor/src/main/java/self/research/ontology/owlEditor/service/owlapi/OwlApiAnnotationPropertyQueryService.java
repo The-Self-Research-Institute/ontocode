@@ -39,6 +39,7 @@ public class OwlApiAnnotationPropertyQueryService {
             dto.setDescription(getComment(ont, prop.getIRI()));
             dto.setSuperProperties(superProperties(ont, prop));
             dto.setAnnotations(collectAnnotations(ont, prop.getIRI()));
+            dto.setRanges(annotationRangeIris(ont, prop));
             all.add(dto);
         });
         all.sort(Comparator.comparing(AnnotationPropertyDto::getLabel, String.CASE_INSENSITIVE_ORDER));
@@ -68,12 +69,15 @@ public class OwlApiAnnotationPropertyQueryService {
             supers.add(ax.getSuperProperty().getIRI().toString());
         }
 
-    System.out.println("Returned superProperties: " + supers);
-    System.out.println("=======================================\n");
-    System.err.println(
-    "[TRACE] " + prop.getIRI() + " -> " + supers
-);
-        return supers.stream().distinct().collect(Collectors.toList());
+            System.out.println("Returned superProperties: " + supers);
+            return supers.stream().distinct().collect(Collectors.toList());
+    }
+
+    private List<String> annotationRangeIris(OWLOntology ont, OWLAnnotationProperty prop) {
+        return ont.annotationPropertyRangeAxioms(prop)
+            .map(ax -> ax.getRange().toString())
+            .distinct()
+            .collect(Collectors.toList());
     }
 
     private List<Map<String, String>> buildUsage(OWLOntology ont, String propertyIri) {

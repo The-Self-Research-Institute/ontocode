@@ -28,17 +28,20 @@ public class OwlApiMutationCoordinator {
     private final ProjectMetadataService metadataService;
     private final OwlApiMutationPatcher patcher;
     private final DesktopOntologyLoader desktopOntologyLoader;
+    private final SparqlDatasetService datasetService;
     private final boolean desktopMode;
 
     public OwlApiMutationCoordinator(ProjectOntologyCache ontologyCache,
                                      ProjectMetadataService metadataService,
                                      OwlApiMutationPatcher patcher,
                                      @Lazy DesktopOntologyLoader desktopOntologyLoader,
+                                     SparqlDatasetService datasetService,
                                      @Value("${ontocode.desktop.mode:false}") boolean desktopMode) {
         this.ontologyCache = ontologyCache;
         this.metadataService = metadataService;
         this.patcher = patcher;
         this.desktopOntologyLoader = desktopOntologyLoader;
+        this.datasetService = datasetService;
         this.desktopMode = desktopMode;
     }
 
