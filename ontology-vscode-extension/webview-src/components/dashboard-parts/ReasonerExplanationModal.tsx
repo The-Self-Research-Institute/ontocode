@@ -111,6 +111,14 @@ export const ReasonerExplanationModal = ({
                                         Classes: {(violation.disjointClasses as string[]).join(", ")}
                                       </div>
                                     )}
+                                    {Array.isArray(violation.typeDerivations) &&
+                                      violation.typeDerivations
+                                        .filter((d: any) => d.via)
+                                        .map((d: any, di: number) => (
+                                          <div key={di} className="text-gray-500 italic">
+                                            {d.class} — inherited via {d.via}
+                                          </div>
+                                        ))}
                                     {violation.individualIri && (
                                       <div className="text-gray-500">{violation.individualIri}</div>
                                     )}
