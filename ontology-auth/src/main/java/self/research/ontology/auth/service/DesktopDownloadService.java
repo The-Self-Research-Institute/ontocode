@@ -30,6 +30,9 @@ public class DesktopDownloadService {
     private static final Logger log = LoggerFactory.getLogger(DesktopDownloadService.class);
     public static final String BUCKET = "desktop-installers";
     private static final String WINDOWS_PLATFORM = "windows-x64";
+    private static final String[] KNOWN_PLATFORMS = {
+        WINDOWS_PLATFORM, "linux-x64", "linux-deb", "mac-arm64",
+    };
 
     @Value("${ontocode.downloads.tracking-salt:ontocode-download-tracking}")
     private String trackingSalt;
@@ -52,21 +55,24 @@ public class DesktopDownloadService {
 
     public Map<String, Object> buildPublicInfo() {
         Map<String, Object> latest = new LinkedHashMap<>();
-        GridFSFile win = findInstaller(WINDOWS_PLATFORM);
-        if (win != null) {
-            Document meta = win.getMetadata();
+        java.util.List<String> availablePlatforms = new java.util.ArrayList<>();
+        for (String platform : KNOWN_PLATFORMS) {
+            GridFSFile file = findInstaller(platform);
+            if (file == null) continue;
+            Document meta = file.getMetadata();
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("version", metaString(meta, "version", "1.0.0"));
-            entry.put("filename", win.getFilename());
-            entry.put("size", win.getLength());
+            entry.put("filename", file.getFilename());
+            entry.put("size", file.getLength());
             entry.put("releaseNotes", metaString(meta, "releaseNotes", ""));
             entry.put("publishedAt", metaString(meta, "publishedAt", ""));
-            entry.put("downloadUrl", "/api/downloads/" + WINDOWS_PLATFORM);
-            latest.put(WINDOWS_PLATFORM, entry);
+            entry.put("downloadUrl", "/api/downloads/" + platform);
+            latest.put(platform, entry);
+            availablePlatforms.add(platform);
         }
 
         Map<String, Object> requirements = new LinkedHashMap<>();
-        requirements.put("os", "Windows 10 or later (64-bit x64 or ARM64)");
+        requirements.put("os", "Windows 10+, Ubuntu 20.04+ (or equivalent), macOS 12+");
         requirements.put("ram", "8 GB minimum · 16 GB recommended");
         requirements.put("disk", "2 GB free disk space for app and local data");
         requirements.put("display", "1280×720 minimum resolution");
@@ -76,7 +82,7 @@ public class DesktopDownloadService {
         return Map.of(
             "latest", latest,
             "systemRequirements", requirements,
-            "supportedPlatforms", new String[] { WINDOWS_PLATFORM }
+            "supportedPlatforms", availablePlatforms.toArray(new String[0])
         );
     }
 
