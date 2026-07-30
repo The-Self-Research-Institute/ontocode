@@ -230,6 +230,7 @@ const TopMenuBar = ({
   onCheckConsistency,
   onExplainInconsistency,
   onOpenReasonerSettings,
+  onClearReasonerCache,
   isConsistencyLoading,
   onGoToProjectDashboard,
   onGoToWorkspace,
@@ -286,6 +287,7 @@ const TopMenuBar = ({
   onCheckConsistency?: () => void;
   onExplainInconsistency?: () => void;
   onOpenReasonerSettings?: () => void;
+  onClearReasonerCache?: () => void;
   isConsistencyLoading?: boolean;
   onGoToProjectDashboard?: () => void;
   onGoToWorkspace?: () => void;
@@ -692,6 +694,17 @@ const TopMenuBar = ({
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
                     >
                       Configure...
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onClearReasonerCache) onClearReasonerCache();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-red-50 text-red-600 flex items-center gap-2"
+                      title="Discard the in-memory ontology/reasoner cache so the next run reloads fresh"
+                    >
+                      <Trash2 size={12} />
+                      Clear reasoner cache
                     </button>
                     <div className="border-t border-gray-200 my-1"></div>
                     <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
@@ -3494,6 +3507,37 @@ const Dashboard: React.FC<DashboardProps> = ({
       notificationService.error("Explain Inconsistency Failed", `${friendlyMessage}${suggestion}`);
     }
   }, [projectId, selectedReasoner]);
+
+  const clearReasonerCache = useCallback(async () => {
+    // Uses the in-app toast (collaboration.addNotification) rather than
+    // notificationService directly — outside VS Code, notificationService
+    // prefers a browser OS-level notification whenever permission is already
+    // granted, which is easy to miss for a quick confirmation like this. The
+    // toast queue always renders on-screen immediately regardless of that.
+    const userId = user?.userId || user?.email || "system";
+    try {
+      await apiClient.post(`/plugin-service/api/reasoner/clear-cache`, {});
+      collaboration.addNotification({
+        type: "success",
+        message: "Reasoner cache cleared — the next run reloads the ontology fresh.",
+        userId,
+        username: "",
+        userColor: "#22c55e",
+        timestamp: Date.now(),
+      });
+    } catch (error: any) {
+      const friendlyMessage =
+        error?.response?.data?.error || error?.message || "Failed to clear the reasoner cache.";
+      collaboration.addNotification({
+        type: "error",
+        message: `Clear cache failed: ${friendlyMessage}`,
+        userId,
+        username: "",
+        userColor: "#ef4444",
+        timestamp: Date.now(),
+      });
+    }
+  }, [user, collaboration]);
 
   const setCurrentHierarchyViewMode = (mode: "asserted" | "inferred") => {
     setHierarchyViewModes((prev) => ({ ...prev, [entitiesTab]: mode }));
@@ -18067,6 +18111,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onCheckConsistency={checkConsistency}
           onExplainInconsistency={explainInconsistency}
           onOpenReasonerSettings={() => setIsReasonerSettingsOpen(true)}
+          onClearReasonerCache={clearReasonerCache}
           isConsistencyLoading={isConsistencyLoading}
           onGoToProjectDashboard={onGoToProjectDashboard}
           onGoToWorkspace={onGoToWorkspace}
