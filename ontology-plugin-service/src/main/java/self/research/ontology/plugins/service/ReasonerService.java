@@ -1054,9 +1054,9 @@ public class ReasonerService {
             return violations;
         }
 
-        Map<OWLNamedIndividual, Set<OWLClass>> typesByIndividual = new HashMap<>();
+        Map<OWLNamedIndividual, Map<OWLClass, OWLClass>> provenanceByIndividual = new HashMap<>();
         for (OWLNamedIndividual individual : ontology.getIndividualsInSignature()) {
-            typesByIndividual.put(individual, getAssertedTypesClosure(ontology, individual));
+            provenanceByIndividual.put(individual, getAssertedTypesClosureWithProvenance(ontology, individual));
         }
 
         for (OWLDisjointClassesAxiom axiom : disjointAxioms) {
@@ -1068,9 +1068,10 @@ public class ReasonerService {
                 continue;
             }
 
-            for (Map.Entry<OWLNamedIndividual, Set<OWLClass>> entry : typesByIndividual.entrySet()) {
+            for (Map.Entry<OWLNamedIndividual, Map<OWLClass, OWLClass>> entry : provenanceByIndividual.entrySet()) {
+                Map<OWLClass, OWLClass> cameFrom = entry.getValue();
                 List<OWLClass> violatingClasses = disjointClasses.stream()
-                    .filter(entry.getValue()::contains)
+                    .filter(cameFrom::containsKey)
                     .collect(Collectors.toList());
 
                 if (violatingClasses.size() > 1) {
@@ -1079,6 +1080,19 @@ public class ReasonerService {
                     violation.put("individualIri", entry.getKey().getIRI().toString());
                     violation.put("disjointClasses", violatingClasses.stream()
                         .map(c -> getLabel(c, ontology))
+                        .collect(Collectors.toList()));
+                    // Per-class derivation: null "via" means the type was asserted
+                    // directly; otherwise the chain explains the inheritance path
+                    // (e.g. "VegetarianPizza ⊑ Pizza") the way Protégé's own
+                    // alternate justifications do — without enumerating every
+                    // redundant proof the way Protégé's "8 explanations" view does.
+                    violation.put("typeDerivations", violatingClasses.stream()
+                        .map(c -> {
+                            Map<String, Object> derivation = new HashMap<>();
+                            derivation.put("class", getLabel(c, ontology));
+                            derivation.put("via", buildDerivationChain(c, cameFrom, ontology));
+                            return derivation;
+                        })
                         .collect(Collectors.toList()));
                     violations.add(violation);
 
@@ -1101,13 +1115,32 @@ public class ReasonerService {
      * disjoint-violation case walks the same asserted type + SubClassOf chain).
      */
     private Set<OWLClass> getAssertedTypesClosure(OWLOntology ontology, OWLNamedIndividual individual) {
-        Set<OWLClass> types = new HashSet<>();
+        return getAssertedTypesClosureWithProvenance(ontology, individual).keySet();
+    }
+
+    /**
+     * Same closure as {@link #getAssertedTypesClosure}, but also returns a BFS
+     * parent-pointer map so callers can explain *how* a type was reached — e.g.
+     * Pizza2 is typed VegetarianPizza directly, and Pizza only via VegetarianPizza
+     * SubClassOf Pizza. A type mapped to {@code null} was asserted directly on the
+     * individual; a type mapped to another class was reached through that class.
+     * First-writer-wins (BFS visits direct assertions before their superclasses),
+     * so a type that is both directly asserted and reachable by inheritance is
+     * reported as direct — the simpler explanation, matching Protégé's own
+     * preference for its least-involved justification.
+     */
+    private Map<OWLClass, OWLClass> getAssertedTypesClosureWithProvenance(OWLOntology ontology, OWLNamedIndividual individual) {
+        Map<OWLClass, OWLClass> cameFrom = new LinkedHashMap<>();
         Deque<OWLClass> frontier = new ArrayDeque<>();
 
         for (OWLClassAssertionAxiom ax : ontology.getClassAssertionAxioms(individual)) {
             OWLClassExpression ce = ax.getClassExpression();
-            if (!ce.isAnonymous() && types.add(ce.asOWLClass())) {
-                frontier.push(ce.asOWLClass());
+            if (!ce.isAnonymous()) {
+                OWLClass cls = ce.asOWLClass();
+                if (!cameFrom.containsKey(cls)) {
+                    cameFrom.put(cls, null);
+                    frontier.push(cls);
+                }
             }
         }
 
@@ -1116,21 +1149,48 @@ public class ReasonerService {
 
             for (OWLSubClassOfAxiom ax : ontology.getSubClassAxiomsForSubClass(current)) {
                 OWLClassExpression sup = ax.getSuperClass();
-                if (!sup.isAnonymous() && types.add(sup.asOWLClass())) {
-                    frontier.push(sup.asOWLClass());
+                if (!sup.isAnonymous()) {
+                    OWLClass supCls = sup.asOWLClass();
+                    if (!cameFrom.containsKey(supCls)) {
+                        cameFrom.put(supCls, current);
+                        frontier.push(supCls);
+                    }
                 }
             }
 
             for (OWLEquivalentClassesAxiom ax : ontology.getEquivalentClassesAxioms(current)) {
                 for (OWLClassExpression member : ax.getClassExpressions()) {
-                    if (!member.isAnonymous() && types.add(member.asOWLClass())) {
-                        frontier.push(member.asOWLClass());
+                    if (!member.isAnonymous()) {
+                        OWLClass memberCls = member.asOWLClass();
+                        if (!cameFrom.containsKey(memberCls)) {
+                            cameFrom.put(memberCls, current);
+                            frontier.push(memberCls);
+                        }
                     }
                 }
             }
         }
 
-        return types;
+        return cameFrom;
+    }
+
+    /**
+     * Human-readable derivation chain for a type reached via inheritance, e.g.
+     * "VegetarianPizza ⊑ Pizza". Returns null when the type was asserted directly
+     * on the individual — there's no chain to explain, and the UI should just show
+     * the class with no extra note.
+     */
+    private String buildDerivationChain(OWLClass cls, Map<OWLClass, OWLClass> cameFrom, OWLOntology ontology) {
+        if (cameFrom.get(cls) == null) {
+            return null;
+        }
+        List<String> chain = new ArrayList<>();
+        OWLClass current = cls;
+        while (current != null) {
+            chain.add(0, getLabel(current, ontology));
+            current = cameFrom.get(current);
+        }
+        return String.join(" ⊑ ", chain);
     }
     
     /**
