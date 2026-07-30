@@ -982,6 +982,7 @@ public class OntologyMutationService {
             && !parent.contains("topDataProperty")
             && !parent.equals("http://www.w3.org/2002/07/owl#topObjectProperty")
             && !parent.equals("http://www.w3.org/2002/07/owl#topDataProperty");
+           
         
         log.info("[MUTATION]   hasRealParent: {}", hasRealParent);
         

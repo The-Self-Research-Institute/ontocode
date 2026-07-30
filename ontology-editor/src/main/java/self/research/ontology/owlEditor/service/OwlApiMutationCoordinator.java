@@ -11,6 +11,7 @@ import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.config.FastOpenCondition;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Keeps the OWLAPI in-memory model in sync with Fuseki after mutations.
@@ -27,17 +28,20 @@ public class OwlApiMutationCoordinator {
     private final ProjectMetadataService metadataService;
     private final OwlApiMutationPatcher patcher;
     private final DesktopOntologyLoader desktopOntologyLoader;
+    private final SparqlDatasetService datasetService;
     private final boolean desktopMode;
 
     public OwlApiMutationCoordinator(ProjectOntologyCache ontologyCache,
                                      ProjectMetadataService metadataService,
                                      OwlApiMutationPatcher patcher,
                                      @Lazy DesktopOntologyLoader desktopOntologyLoader,
+                                     SparqlDatasetService datasetService,
                                      @Value("${ontocode.desktop.mode:false}") boolean desktopMode) {
         this.ontologyCache = ontologyCache;
         this.metadataService = metadataService;
         this.patcher = patcher;
         this.desktopOntologyLoader = desktopOntologyLoader;
+        this.datasetService = datasetService;
         this.desktopMode = desktopMode;
     }
 
@@ -56,8 +60,18 @@ public class OwlApiMutationCoordinator {
             if (structuredOps != null) {
                 log.info("[OwlApiCoord] Evicted OWLAPI cache for project {} (non-patchable ops)", projectId);
             }
-            desktopOntologyLoader.scheduleRewarm(projectId);
+            boolean desktopOwlApiFirst = desktopOntologyLoader != null && desktopOntologyLoader.isOwlApiFirst();
+            if (!desktopOwlApiFirst) {
+             // Only mark dirty when Fuseki is the source of truth (web/cloud).
+             // On desktop OWLAPI-first, the in-memory model is newer than Fuseki
+              // (sync is deferred) — re-exporting from Fuseki here would regress it.
+              datasetService.markProjectDirty(projectId);
+            }
+            Map<String, Object> warm = desktopOntologyLoader.warmProject(projectId, 5_000);
+            if (!Boolean.TRUE.equals(warm.get("ready"))) {
+                log.warn("[OwlApiCoord] Rewarm after mutation not ready in time for {}: {}", projectId, warm);
         }
+    }
     }
 
     /**
@@ -88,11 +102,14 @@ public class OwlApiMutationCoordinator {
             return;
         }
         long cachedVersion = ontologyCache.getCachedVersion(projectId);
+         log.info("[TRACE] project={}, mongoVersion={}, cachedVersion={}",
+        projectId, mongoVersion, cachedVersion);
         if (cachedVersion >= 0 && mongoVersion > cachedVersion) {
+            log.info("[TRACE] Evicting ontology cache for {}", projectId);
             log.info("[OwlApiCoord] Version mismatch for project {} (mongo={}, cached={}) — evicting OWLAPI cache",
                     projectId, mongoVersion, cachedVersion);
             ontologyCache.evict(projectId);
-            desktopOntologyLoader.scheduleRewarm(projectId);
+            desktopOntologyLoader.warmProject(projectId, 5_000);
         }
     }
 }

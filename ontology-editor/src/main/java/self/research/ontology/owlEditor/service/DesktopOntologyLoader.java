@@ -108,6 +108,10 @@ public class DesktopOntologyLoader {
         return autoWarm;
     }
 
+    public boolean isOwlApiFirst() {
+        return owlApiFirst;
+    }
+
     /**
      * At startup, kick off OWLAPI loading for the most recently accessed projects
      * (up to 3) so the first project the user opens is already warm — .

@@ -7682,9 +7682,11 @@ const Dashboard: React.FC<DashboardProps> = ({
           setDataPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
           break;
         case "AnnotationProperties":
-          setAnnotationProperties((prev) =>
-            prev.map((p) => (p.id === updatedItem.id ? (updatedItem as AnnotationProperty) : p)),
-          );
+          setAnnotationProperties((prev) => {
+            const updated = prev.map((p) => (p.id === updatedItem.id ? (updatedItem as AnnotationProperty) : p));
+            setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(updated));
+            return updated;
+          });
           break;
         case "Individuals":
           setIndividuals((prev) => prev.map((i) => (i.id === updatedItem.id ? (updatedItem as Individual) : i)));
@@ -9695,7 +9697,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       : Array.isArray(res?.annotationProperties)
         ? res.annotationProperties
         : [];
+    console.log(
+  "[TRACE] Full rawProperties:",
+  rawProperties
+);
     const merged = mergeAnnotationProperties(rawProperties.map(mapAnnotationProperty));
+    console.log("[TRACE] merged properties:", merged.map(p => ({ id: p.id, superProperties: (p as any).superProperties })));
     setAnnotationProperties(merged);
     setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(merged));
     return merged;
@@ -11233,6 +11240,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
         const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
         const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const parentIri = addPropertyType === "subproperty" ? selectedItem?.id : undefined;
 
         // Bug #45: support sub-annotation-properties. createAnnotationProperty now takes the
         // parent directly (matching createObjectProperty/createDataProperty) so the declaration

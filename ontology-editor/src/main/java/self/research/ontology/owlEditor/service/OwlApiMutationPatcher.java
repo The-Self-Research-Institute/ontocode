@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.config.FastOpenCondition;
+import org.semanticweb.owlapi.model.parameters.Imports;
 import self.research.ontology.owlEditor.service.owlapi.OwlApiQuerySupport;
 
 import java.util.ArrayList;
@@ -61,7 +62,7 @@ public class OwlApiMutationPatcher {
     public OwlApiMutationPatcher(ProjectOntologyCache ontologyCache) {
         this.ontologyCache = ontologyCache;
     }
-
+    
     public boolean tryPatch(String projectId, List<OntologyMutationService.MutationOp> ops) {
         if (ops == null || ops.isEmpty()) {
             return false;
@@ -908,6 +909,11 @@ public class OwlApiMutationPatcher {
             return false;
         }
         IRI propIri = IRI.create(propertyIri);
+        if (ontology.containsAnnotationPropertyInSignature(propIri, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED)) {
+            String resolved = rangeIri.startsWith("xsd:") ? "http://www.w3.org/2001/XMLSchema#" + rangeIri.substring(4) : rangeIri;
+            toAdd.add(df.getOWLAnnotationPropertyRangeAxiom(df.getOWLAnnotationProperty(propIri), IRI.create(resolved)));
+            return true;
+        }
         if (ontology.containsDataPropertyInSignature(propIri, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED)
                 || rangeIri.contains("XMLSchema#") || rangeIri.startsWith("xsd:")) {
             String resolved = rangeIri.startsWith("xsd:") ? "http://www.w3.org/2001/XMLSchema#" + rangeIri.substring(4) : rangeIri;

@@ -39,6 +39,7 @@ public class OwlApiAnnotationPropertyQueryService {
             dto.setDescription(getComment(ont, prop.getIRI()));
             dto.setSuperProperties(superProperties(ont, prop));
             dto.setAnnotations(collectAnnotations(ont, prop.getIRI()));
+            dto.setRanges(annotationRangeIris(ont, prop));
             all.add(dto);
         });
         all.sort(Comparator.comparing(AnnotationPropertyDto::getLabel, String.CASE_INSENSITIVE_ORDER));
@@ -46,12 +47,37 @@ public class OwlApiAnnotationPropertyQueryService {
     }
 
     private List<String> superProperties(OWLOntology ont, OWLAnnotationProperty prop) {
+         System.out.println("\n========== superProperties() ==========");
+         System.out.println("Property: " + prop.getIRI());
+
+         System.out.println("SUB_ANNOTATION_PROPERTY_OF axiom count: "
+            + ont.getAxiomCount(AxiomType.SUB_ANNOTATION_PROPERTY_OF));
+
         List<String> supers = new ArrayList<>();
         for (OWLSubAnnotationPropertyOfAxiom ax : ont.getAxioms(AxiomType.SUB_ANNOTATION_PROPERTY_OF)) {
+            System.out.println(
+                "[AXIOM] "
+                        + ax.getSubProperty().getIRI()
+                        + " --> "
+                        + ax.getSuperProperty().getIRI());
             if (!ax.getSubProperty().equals(prop)) continue;
+            System.out.println(
+                "[MATCH FOUND] "
+                        + ax.getSubProperty().getIRI()
+                        + " --> "
+                        + ax.getSuperProperty().getIRI());
             supers.add(ax.getSuperProperty().getIRI().toString());
         }
-        return supers.stream().distinct().collect(Collectors.toList());
+
+            System.out.println("Returned superProperties: " + supers);
+            return supers.stream().distinct().collect(Collectors.toList());
+    }
+
+    private List<String> annotationRangeIris(OWLOntology ont, OWLAnnotationProperty prop) {
+        return ont.annotationPropertyRangeAxioms(prop)
+            .map(ax -> ax.getRange().toString())
+            .distinct()
+            .collect(Collectors.toList());
     }
 
     private List<Map<String, String>> buildUsage(OWLOntology ont, String propertyIri) {
