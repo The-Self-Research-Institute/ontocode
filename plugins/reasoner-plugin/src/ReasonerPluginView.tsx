@@ -1706,6 +1706,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                                     <span className="font-medium">{v.individual}</span> is asserted as{' '}
                                     <span className="font-medium">{(v.disjointClasses || []).join(' AND ')}</span>,
                                     which are declared disjoint.
+                                    {Array.isArray(v.typeDerivations) &&
+                                      v.typeDerivations
+                                        .filter((d: any) => d.via)
+                                        .map((d: any, di: number) => (
+                                          <div key={di} className="opacity-70 italic mt-0.5">
+                                            {d.class} — inherited via {d.via}
+                                          </div>
+                                        ))}
                                   </>
                                 ) : v.property ? (
                                   <>
