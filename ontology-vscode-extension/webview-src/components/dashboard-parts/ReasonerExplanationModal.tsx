@@ -99,17 +99,22 @@ export const ReasonerExplanationModal = ({
                       {cause.violations && Array.isArray(cause.violations) && (
                         <div className="text-[11px] text-gray-700 space-y-1">
                           {cause.violations.map((violation: any, i: number) => {
-                            const isPropertyViolation = violation.property || violation.propertyIri;
+                            const isPropertyViolation = !!(violation.property || violation.propertyIri);
+                            const isDisjointViolation = !isPropertyViolation && !!violation.individual;
                             return (
                               <div key={i} className="bg-white border rounded px-2 py-1">
-                                {violation.individual && <div className="font-semibold">{violation.individual}</div>}
-                                {violation.disjointClasses && (
-                                  <div className="text-gray-600">
-                                    Classes: {(violation.disjointClasses as string[]).join(", ")}
-                                  </div>
-                                )}
-                                {violation.individualIri && (
-                                  <div className="text-gray-500">{violation.individualIri}</div>
+                                {isDisjointViolation && (
+                                  <>
+                                    <div className="font-semibold">{violation.individual}</div>
+                                    {violation.disjointClasses && (
+                                      <div className="text-gray-600">
+                                        Classes: {(violation.disjointClasses as string[]).join(", ")}
+                                      </div>
+                                    )}
+                                    {violation.individualIri && (
+                                      <div className="text-gray-500">{violation.individualIri}</div>
+                                    )}
+                                  </>
                                 )}
                                 {isPropertyViolation && (
                                   <div className="space-y-1">
@@ -119,13 +124,19 @@ export const ReasonerExplanationModal = ({
                                     {violation.propertyIri && (
                                       <div className="text-gray-500">{violation.propertyIri}</div>
                                     )}
-                                    <div className="text-gray-600">
-                                      Domain constraints: {violation.hasDomainConstraints ? "present" : "none"}; Range
-                                      constraints: {violation.hasRangeConstraints ? "present" : "none"}
-                                    </div>
+                                    {violation.individual && (
+                                      <div className="text-gray-600">
+                                        <span className="font-medium">{violation.individual}</span> is the{" "}
+                                        {violation.constraintKind} of this property, which requires type{" "}
+                                        <span className="font-medium">{violation.requiredClass}</span> — but it's
+                                        already asserted as{" "}
+                                        <span className="font-medium">{violation.conflictingClass}</span>, which is
+                                        declared disjoint with {violation.requiredClass}.
+                                      </div>
+                                    )}
                                   </div>
                                 )}
-                                {!violation.individual && !isPropertyViolation && (
+                                {!isDisjointViolation && !isPropertyViolation && (
                                   <pre className="text-[10px] text-gray-600 overflow-x-auto">
                                     {JSON.stringify(violation, null, 2)}
                                   </pre>

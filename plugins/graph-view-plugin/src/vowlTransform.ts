@@ -206,7 +206,14 @@ const isRealClassNode = (id: string, nodeById: Map<string, OntologyNode>): boole
 const PROP_RING_BASE = 78;
 const PROP_MIN_CHORD = 72;
 const SUBCLASS_GAP = 52;
-const CLASS_NODE_R = 28;
+// Was 28 — too small since AdvancedGraphView's VOWL class circles now grow to
+// fit their label (see the node.type === 'class' sizing block there) instead
+// of staying a flat small size; 40 approximates the resulting average radius
+// for a typical ~12-char class name so packing spacing doesn't undersize and
+// let neighboring circles overlap. Still a single constant approximating
+// variable per-node radii — a full fix would thread the actual computed
+// radius through estimateClassFootprint/estimateClassCoreRadius instead.
+const CLASS_NODE_R = 40;
 const HUB_PAD = 48;
 const LITERAL_BOX_HALF = 42; // half-width of yellow datatype box
 
@@ -814,13 +821,43 @@ export function placeVowlNeighborhoods(
     hubAdjIdx.get(ia)!.add(ib);
     hubAdjIdx.get(ib)!.add(ia);
   };
+  // How many distinct property connections exist between each hub pair —
+  // previously every pair got the same target length regardless of this
+  // (six shared properties between two hubs collapsed to one generic-length
+  // edge via addHubEdge's min-dedup, identical to a single shared property).
+  // Shrink the target distance for denser pairs so they land visibly closer
+  // instead of "connected" at the same arbitrary distance as everything else.
+  // classAdj is symmetric (each edge added from both sides), so this counts
+  // roughly double the true property count — harmless here since only the
+  // relative shrink factor between pairs matters, not its absolute value.
+  const hubPairCount = new Map<string, number>();
   for (const [a, nbs] of classAdj) {
     const ha = hubOf.get(a);
     if (!ha) continue;
     for (const b of nbs) {
       const hb = hubOf.get(b);
       if (!hb || ha === hb) continue;
-      const len = (cores.get(ha) ?? 60) + (cores.get(hb) ?? 60) + 60;
+      const lo = ha < hb ? ha : hb;
+      const hi = ha < hb ? hb : ha;
+      const key = `${lo}|${hi}`;
+      hubPairCount.set(key, (hubPairCount.get(key) ?? 0) + 1);
+    }
+  }
+  for (const [a, nbs] of classAdj) {
+    const ha = hubOf.get(a);
+    if (!ha) continue;
+    for (const b of nbs) {
+      const hb = hubOf.get(b);
+      if (!hb || ha === hb) continue;
+      const lo = ha < hb ? ha : hb;
+      const hi = ha < hb ? hb : ha;
+      const count = hubPairCount.get(`${lo}|${hi}`) ?? 1;
+      const shrink = 1 / Math.sqrt(Math.max(1, count));
+      const baseLen = (cores.get(ha) ?? 60) + (cores.get(hb) ?? 60) + 60;
+      // Floor at 45% of the base length — dense pairs pull close, but the
+      // later disk-repulsion pass (below) still has room to undo any actual
+      // overlap this would otherwise force.
+      const len = Math.max(baseLen * 0.45, baseLen * shrink);
       addHubEdge(ha, hb, len);
     }
   }
@@ -859,6 +896,51 @@ export function placeVowlNeighborhoods(
       }
     }
     if (!moved) break;
+  }
+
+  // Hubs with ZERO connection to any other hub (no shared properties, no
+  // subclass link) still went through the SMACOF solve above like everything
+  // else — with no real edge to target, their distance to every other hub
+  // defaulted to hubMetricDistances' generic "far" fallback, which pulls them
+  // into a compromise position near the main mass rather than genuinely
+  // isolated the way real WebVOWL places disconnected classes (small circles
+  // floating alone in clearly empty space, unrelated to the main cluster's
+  // shape). Override their SMACOF position with a dedicated peripheral spot
+  // instead, same idea as the domainless-Thing fringe placement below.
+  const isolatedHubIdx = hubIds
+    .map((_, i) => i)
+    .filter(i => (hubAdjIdx.get(i)?.size ?? 0) === 0);
+  if (isolatedHubIdx.length > 0) {
+    const connectedCenters = hubIds
+      .map((h, i) => ({ h, i, p: hubCenters.get(h) }))
+      .filter(({ i, p }) => p && !isolatedHubIdx.includes(i));
+    const minX = connectedCenters.length ? Math.min(...connectedCenters.map(c => c.p!.x)) : cx;
+    const maxX = connectedCenters.length ? Math.max(...connectedCenters.map(c => c.p!.x)) : cx;
+    const minY = connectedCenters.length ? Math.min(...connectedCenters.map(c => c.p!.y)) : cy;
+    const maxY = connectedCenters.length ? Math.max(...connectedCenters.map(c => c.p!.y)) : cy;
+    const massCx = (minX + maxX) / 2;
+    const massCy = (minY + maxY) / 2;
+    const massR = Math.max(200, Math.hypot(maxX - minX, maxY - minY) / 2);
+
+    isolatedHubIdx.forEach((idx, i) => {
+      const angle = (i / Math.max(1, isolatedHubIdx.length)) * Math.PI * 2 + 0.4;
+      let ox = massCx + Math.cos(angle) * (massR + 220);
+      let oy = massCy + Math.sin(angle) * (massR + 220);
+      for (let pass = 0; pass < 12; pass++) {
+        let moved = false;
+        hubCenters.forEach((p, h2) => {
+          if (h2 === hubIds[idx]) return;
+          const { ux, uy, dist } = safeUnit(ox - p.x, oy - p.y);
+          const need = (cores.get(hubIds[idx]) ?? 60) + (cores.get(h2) ?? 60) + 80;
+          if (dist >= need) return;
+          ox += ux * (need - dist) * 0.6;
+          oy += uy * (need - dist) * 0.6;
+          moved = true;
+        });
+        if (!moved) break;
+      }
+      hubCenters.set(hubIds[idx], { x: ox, y: oy });
+    });
   }
 
   // Draw each hub as a short-spoke star (subclasses restricted to its own

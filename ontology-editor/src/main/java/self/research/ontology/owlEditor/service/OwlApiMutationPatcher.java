@@ -1,12 +1,14 @@
 package self.research.ontology.owlEditor.service;
 
 import org.semanticweb.owlapi.model.*;
+import org.semanticweb.owlapi.model.parameters.Imports;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.config.FastOpenCondition;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiQuerySupport;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -27,7 +29,7 @@ public class OwlApiMutationPatcher {
 
     private static final Set<String> PATCHABLE_TYPES = Set.of(
             "createClass",
-            "addSubClassOf", "deleteSubClassOf", "updateSubClassOf",
+            "addSubClassOf", "deleteSubClassOf", "updateSubClassOf", "deleteAxiom",
             "addEquivalentClass", "deleteEquivalentClass", "updateEquivalentClass",
             "addDisjointWith", "deleteDisjointWith", "updateDisjointWith",
             "addAnnotation", "deleteAnnotation", "updateAnnotation", "updateClassLabel",
@@ -123,10 +125,41 @@ public class OwlApiMutationPatcher {
             case "deleteSubClassOf" -> {
                 Optional<OWLClass> sub = namedClass(op.iri(), df);
                 if (sub.isEmpty() || op.target() == null) yield false;
-                if (op.target().startsWith("_:")) yield false;
                 Optional<OWLClass> sup = namedClass(op.target(), df);
-                if (sup.isEmpty()) yield false;
-                toRemove.add(df.getOWLSubClassOfAxiom(sub.get(), sup.get()));
+                if (sup.isPresent() && ontology.containsClassInSignature(sup.get().getIRI(), Imports.INCLUDED)) {
+                    toRemove.add(df.getOWLSubClassOfAxiom(sub.get(), sup.get()));
+                    yield true;
+                }
+                // op.target() isn't a declared class — desktop has no stable id for the complex/
+                // anonymous superclass expression this row actually represents (its "id" is
+                // either a synthetic per-request index or a bare Fuseki blank-node string that
+                // means nothing in this separately-parsed in-memory model). Match by the same
+                // Manchester text the UI showed for this row instead.
+                Optional<OWLSubClassOfAxiom> match = findAnonymousSubClassOfAxiom(ontology, sub.get(), op.value());
+                if (match.isEmpty()) yield false;
+                toRemove.add(match.get());
+                yield true;
+            }
+            case "deleteAxiom" -> {
+                // Covers two distinct shapes the frontend both route through this same generic
+                // op (see ClassEditor.tsx's handleDeleteGCA, shared by the "General class axioms"
+                // and "SubClass Of (Anonymous Ancestor)" sections):
+                //  - GCI: anonymous-SUBJECT SubClassOf, ancestorIri = the superclass.
+                //  - Anonymous ancestor: named-subject (ancestorIri) SubClassOf anonymous
+                //    superclass — same shape as the main "Sub Class Of" table's complex entries.
+                // Neither has a stable id on desktop (separately-parsed in-memory model), so
+                // match by the definition text rendered for this row instead.
+                if (op.ancestorIri() == null) yield false;
+                Optional<OWLClass> anchor = namedClass(op.ancestorIri(), df);
+                if (anchor.isEmpty()) yield false;
+                Optional<OWLSubClassOfAxiom> gci = findGciAxiom(ontology, anchor.get(), op.value());
+                if (gci.isPresent()) {
+                    toRemove.add(gci.get());
+                    yield true;
+                }
+                Optional<OWLSubClassOfAxiom> ancestor = findAnonymousSubClassOfAxiom(ontology, anchor.get(), op.value());
+                if (ancestor.isEmpty()) yield false;
+                toRemove.add(ancestor.get());
                 yield true;
             }
             case "updateSubClassOf" -> {
@@ -147,10 +180,17 @@ public class OwlApiMutationPatcher {
             }
             case "deleteEquivalentClass" -> {
                 Optional<OWLClass> a = namedClass(op.iri(), df);
-                if (a.isEmpty() || op.target() == null || op.target().startsWith("_:")) yield false;
+                if (a.isEmpty() || op.target() == null) yield false;
                 Optional<OWLClass> b = namedClass(op.target(), df);
-                if (b.isEmpty()) yield false;
-                toRemove.add(df.getOWLEquivalentClassesAxiom(a.get(), b.get()));
+                if (b.isPresent() && ontology.containsClassInSignature(b.get().getIRI(), Imports.INCLUDED)) {
+                    toRemove.add(df.getOWLEquivalentClassesAxiom(a.get(), b.get()));
+                    yield true;
+                }
+                // Same reasoning as deleteSubClassOf: op.target() isn't a declared class, so this
+                // is a complex/anonymous equivalent-class expression — match by definition text.
+                Optional<OWLEquivalentClassesAxiom> match = findAnonymousEquivalentClassAxiom(ontology, a.get(), op.value());
+                if (match.isEmpty()) yield false;
+                toRemove.add(match.get());
                 yield true;
             }
             case "updateEquivalentClass" -> {
@@ -293,10 +333,10 @@ public class OwlApiMutationPatcher {
                 yield removePropertyRange(ontology, df, op.iri(), op.target(), toRemove);
             }
             case "addSubPropertyOf" -> {
-                yield addSubPropertyOf(df, op.iri(), op.target(), toAdd);
+                yield addSubPropertyOf(ontology, df, op.iri(), op.target(), toAdd);
             }
             case "deleteSubPropertyOf" -> {
-                yield removeSubPropertyOf(df, op.iri(), op.target(), toRemove);
+                yield removeSubPropertyOf(ontology, df, op.iri(), op.target(), toRemove);
             }
             case "deleteClass" -> {
                 Optional<OWLClass> cls = namedClass(op.iri(), df);
@@ -444,6 +484,9 @@ public class OwlApiMutationPatcher {
         if (op.label() != null && !op.label().isBlank()) {
             toAdd.add(df.getOWLAnnotationAssertionAxiom(
                     df.getRDFSLabel(), prop.getIRI(), df.getOWLLiteral(op.label())));
+        }
+        if (hasRealPropertyParent(op.parent())) {
+            toAdd.add(df.getOWLSubAnnotationPropertyOfAxiom(prop, df.getOWLAnnotationProperty(IRI.create(op.parent()))));
         }
         return true;
     }
@@ -902,26 +945,42 @@ public class OwlApiMutationPatcher {
         return true;
     }
 
-    private boolean addSubPropertyOf(OWLDataFactory df, String subIri, String superIri, Set<OWLAxiom> toAdd) {
+    private boolean addSubPropertyOf(OWLOntology ontology, OWLDataFactory df, String subIri, String superIri, Set<OWLAxiom> toAdd) {
         if (subIri == null || superIri == null) {
             return false;
         }
         if (superIri.contains("XMLSchema#") || subIri.contains("XMLSchema#")) {
             return false;
         }
-        toAdd.add(df.getOWLSubObjectPropertyOfAxiom(
-                df.getOWLObjectProperty(IRI.create(subIri)),
-                df.getOWLObjectProperty(IRI.create(superIri))));
+        IRI sub = IRI.create(subIri);
+        IRI sup = IRI.create(superIri);
+        if (ontology.containsAnnotationPropertyInSignature(sub, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED)) {
+            toAdd.add(df.getOWLSubAnnotationPropertyOfAxiom(df.getOWLAnnotationProperty(sub), df.getOWLAnnotationProperty(sup)));
+            return true;
+        }
+        if (ontology.containsDataPropertyInSignature(sub, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED)) {
+            toAdd.add(df.getOWLSubDataPropertyOfAxiom(df.getOWLDataProperty(sub), df.getOWLDataProperty(sup)));
+            return true;
+        }
+        toAdd.add(df.getOWLSubObjectPropertyOfAxiom(df.getOWLObjectProperty(sub), df.getOWLObjectProperty(sup)));
         return true;
     }
 
-    private boolean removeSubPropertyOf(OWLDataFactory df, String subIri, String superIri, Set<OWLAxiom> toRemove) {
+    private boolean removeSubPropertyOf(OWLOntology ontology, OWLDataFactory df, String subIri, String superIri, Set<OWLAxiom> toRemove) {
         if (subIri == null || superIri == null) {
             return false;
         }
-        toRemove.add(df.getOWLSubObjectPropertyOfAxiom(
-                df.getOWLObjectProperty(IRI.create(subIri)),
-                df.getOWLObjectProperty(IRI.create(superIri))));
+        IRI sub = IRI.create(subIri);
+        IRI sup = IRI.create(superIri);
+        if (ontology.containsAnnotationPropertyInSignature(sub, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED)) {
+            toRemove.add(df.getOWLSubAnnotationPropertyOfAxiom(df.getOWLAnnotationProperty(sub), df.getOWLAnnotationProperty(sup)));
+            return true;
+        }
+        if (ontology.containsDataPropertyInSignature(sub, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED)) {
+            toRemove.add(df.getOWLSubDataPropertyOfAxiom(df.getOWLDataProperty(sub), df.getOWLDataProperty(sup)));
+            return true;
+        }
+        toRemove.add(df.getOWLSubObjectPropertyOfAxiom(df.getOWLObjectProperty(sub), df.getOWLObjectProperty(sup)));
         return true;
     }
 
@@ -932,8 +991,78 @@ public class OwlApiMutationPatcher {
         return Optional.of(df.getOWLClass(IRI.create(iri)));
     }
 
+    /**
+     * Finds the SubClassOf axiom for {@code anchor}'s complex/anonymous superclass whose
+     * Manchester rendering matches {@code definition} — the same text {@code DesktopHierarchyService}
+     * rendered for this row via {@code classExpressionToAxiomMap}'s fallback id path.
+     */
+    private Optional<OWLSubClassOfAxiom> findAnonymousSubClassOfAxiom(OWLOntology ont, OWLClass anchor, String definition) {
+        if (definition == null || definition.isBlank()) {
+            return Optional.empty();
+        }
+        return ont.subClassAxiomsForSubClass(anchor)
+                .filter(ax -> ax.getSuperClass().isAnonymous())
+                .filter(ax -> definition.equals(OwlApiQuerySupport.classExpressionToManchester(ont, ax.getSuperClass())))
+                .findFirst();
+    }
+
+    /**
+     * Finds the EquivalentClasses axiom containing a complex/anonymous expression for
+     * {@code anchor} whose Manchester rendering matches {@code definition}.
+     */
+    private Optional<OWLEquivalentClassesAxiom> findAnonymousEquivalentClassAxiom(OWLOntology ont, OWLClass anchor, String definition) {
+        if (definition == null || definition.isBlank()) {
+            return Optional.empty();
+        }
+        return ont.equivalentClassesAxioms(anchor)
+                .filter(ax -> ax.classExpressions().anyMatch(ce -> !ce.equals(anchor) && ce.isAnonymous()
+                        && definition.equals(OwlApiQuerySupport.classExpressionToManchester(ont, ce))))
+                .findFirst();
+    }
+
+    /**
+     * Finds the General Class Axiom (anonymous-subject SubClassOf involving {@code anchor} as
+     * superclass, or nested inside a complex expression that does) whose rendering matches
+     * {@code definition} — the exact "subExpr SubClassOf anchorLabel" text
+     * {@code DesktopHierarchyService.supplementClassDetails} rendered for the GCI row.
+     */
+    private Optional<OWLSubClassOfAxiom> findGciAxiom(OWLOntology ont, OWLClass anchor, String definition) {
+        if (definition == null || definition.isBlank()) {
+            return Optional.empty();
+        }
+        String anchorLabel = OwlApiQuerySupport.getLabel(ont, anchor.getIRI());
+        for (OWLSubClassOfAxiom ax : ont.getAxioms(AxiomType.SUBCLASS_OF)) {
+            OWLClassExpression sub = ax.getSubClass();
+            if (!sub.isAnonymous()) {
+                continue;
+            }
+            if (!ax.getSuperClass().equals(anchor) && !OwlApiQuerySupport.expressionReferencesClass(sub, anchor)) {
+                continue;
+            }
+            String rendered = OwlApiQuerySupport.classExpressionToManchester(ont, sub) + " SubClassOf " + anchorLabel;
+            if (definition.equals(rendered)) {
+                return Optional.of(ax);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * "xsd:string" (short form) is the frontend's default placeholder for "no explicit datatype",
+     * not a real IRI — {@code IRI.create("xsd:string")} would create a bogus IRI literally equal
+     * to that string instead of resolving the xsd: prefix, so a literal built with it would never
+     * equal the plain-literal (df.getOWLLiteral(value)) that OWLAPI actually produces by default
+     * for untyped strings. That mismatch breaks removal-by-equality in updateAnnotation: the old
+     * literal is never found, so the delete silently no-ops while the add still runs, leaving two
+     * annotation values. Mirrors OntologyMetadataService#formatLiteral's same guard on the SPARQL
+     * side.
+     */
+    private boolean isDefaultStringDatatype(String datatype) {
+        return datatype.equals("xsd:string") || datatype.endsWith("#string");
+    }
+
     private OWLLiteral dataLiteral(OWLDataFactory df, String value, String lang, String datatype) {
-        if (datatype != null && !datatype.isBlank()) {
+        if (datatype != null && !datatype.isBlank() && !isDefaultStringDatatype(datatype)) {
             return df.getOWLLiteral(value, df.getOWLDatatype(IRI.create(datatype)));
         }
         if (lang != null && !lang.isBlank()) {
@@ -943,7 +1072,7 @@ public class OwlApiMutationPatcher {
     }
 
     private OWLAnnotationValue literalValue(OWLDataFactory df, String value, String lang, String datatype) {
-        if (datatype != null && !datatype.isBlank()) {
+        if (datatype != null && !datatype.isBlank() && !isDefaultStringDatatype(datatype)) {
             return df.getOWLLiteral(value, df.getOWLDatatype(IRI.create(datatype)));
         }
         if (lang != null && !lang.isBlank()) {

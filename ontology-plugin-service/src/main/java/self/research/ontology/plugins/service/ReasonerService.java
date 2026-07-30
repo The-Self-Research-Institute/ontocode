@@ -10,9 +10,15 @@ import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import uk.ac.manchester.cs.jfact.JFactFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 /**
@@ -35,7 +41,29 @@ public class ReasonerService {
     // ConcurrentHashMap: read/written from request threads, the classify
     // executor, and the controller's LRU-eviction path concurrently.
     private final Map<String, OWLReasoner> reasonerCache = new ConcurrentHashMap<>();
-    
+
+    // HermiT's InstanceManager.getTypes() does O(n) LinkedList scans internally,
+    // which blows up to O(n^2) against the class count on large ontologies (e.g.
+    // FoodOn's 39k+ classes) and can run for hours on a single individual. That
+    // work is not cancellable once started, so we fire it on a daemon thread and
+    // abandon it on timeout rather than block the request indefinitely.
+    // Desktop is single-user/single-request, so it can afford a much longer budget
+    // than a shared cloud deployment (see application-desktop.properties overrides).
+    @Value("${ontocode.reasoner.per-individual-timeout-ms:5000}")
+    private long PER_INDIVIDUAL_TYPE_TIMEOUT_MS;
+
+    // Even when no single individual hangs, each getTypes() call still costs
+    // O(classCount) against HermiT's InstanceManager — with hundreds of
+    // individuals over a 39k-class hierarchy that's ~3s/individual, i.e. 20+
+    // minutes in aggregate. Cap the whole loop, not just one call.
+    @Value("${ontocode.reasoner.realization-budget-ms:20000}")
+    private long REALIZATION_TOTAL_BUDGET_MS;
+    private final ExecutorService realizationExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "reasoner-realization-worker");
+        t.setDaemon(true);
+        return t;
+    });
+
     /**
      * Create or get cached reasoner for an ontology
      */
@@ -601,6 +629,52 @@ public class ReasonerService {
     }
 
     /**
+     * Run reasoner.getTypes() on a worker thread and bound how long we wait for it.
+     * On timeout we call reasoner.interrupt() rather than just walking away — same
+     * pattern Protege's OWLReasonerManagerImpl#killCurrentClassification uses to stop
+     * a running HermiT computation. Once interrupted, Protege never reuses that
+     * reasoner (it disposes it in its ReasonerInterruptedException handler), because
+     * its internal tableau state can't be trusted after a mid-flight abort — so we
+     * evict/dispose it from reasonerCache too, once the abandoned call actually unwinds.
+     */
+    private NodeSet<OWLClass> getTypesWithTimeout(OWLReasoner reasoner, OWLNamedIndividual individual)
+            throws TimeoutException {
+        CompletableFuture<NodeSet<OWLClass>> future = CompletableFuture.supplyAsync(
+            () -> reasoner.getTypes(individual, true), realizationExecutor);
+        try {
+            return future.get(PER_INDIVIDUAL_TYPE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            reasoner.interrupt();
+            // Don't dispose synchronously here — the worker thread is still inside
+            // reasoner.getTypes() and may still be touching its internal state.
+            // Evict once that call actually completes/throws instead.
+            future.whenComplete((result, ex) -> evictInterruptedReasoner(reasoner));
+            throw te;
+        } catch (Exception e) {
+            throw new RuntimeException("Error getting types for individual " + individual.getIRI(), e);
+        }
+    }
+
+    /**
+     * Discard a reasoner that was interrupted mid-computation so it can't be handed
+     * out of reasonerCache again; the next getReasoner() call will build a fresh one.
+     */
+    private void evictInterruptedReasoner(OWLReasoner reasoner) {
+        reasonerCache.entrySet().removeIf(entry -> {
+            if (entry.getValue() != reasoner) {
+                return false;
+            }
+            try {
+                reasoner.dispose();
+            } catch (Exception e) {
+                log.warn("Error disposing interrupted reasoner {}", entry.getKey(), e);
+            }
+            log.warn("Evicted reasoner {} after interrupt — will be recreated on next use", entry.getKey());
+            return true;
+        });
+    }
+
+    /**
      * Get realization results including instances for all classes
      */
     public Map<String, Object> getRealizationResults(OWLOntology ontology, ReasonerType type) {
@@ -623,16 +697,45 @@ public class ReasonerService {
             }
             
             List<Map<String, Object>> instances = new ArrayList<>();
-            
+            boolean timedOut = false;
+
             if (!isConsistent) {
                 // For inconsistent ontologies, skip reasoner queries
                 log.warn("Skipping instance type computation for inconsistent ontology");
             } else {
-                // Get all named individuals and their types
+                // Get all named individuals and their types. Direct types only —
+                // ancestor types are already implied by the class hierarchy.
                 try {
+                    long loopDeadline = System.currentTimeMillis() + REALIZATION_TOTAL_BUDGET_MS;
                     for (OWLNamedIndividual individual : ontology.getIndividualsInSignature()) {
-                        NodeSet<OWLClass> types = reasoner.getTypes(individual, false);
-                        
+                        if (System.currentTimeMillis() > loopDeadline) {
+                            // Even when no single call hangs, each getTypes() call still costs
+                            // O(classCount) against HermiT's InstanceManager — with hundreds of
+                            // individuals over a huge class hierarchy (e.g. FoodOn's 39k+
+                            // classes) that adds up to many minutes in aggregate. Cap the whole
+                            // loop's wall-clock time rather than let it run unbounded.
+                            log.warn("Realization results computation exceeded {} ms budget with {} of {} "
+                                    + "individuals processed — returning partial results",
+                                REALIZATION_TOTAL_BUDGET_MS, instances.isEmpty() ? 0 : instances.size(),
+                                ontology.getIndividualsInSignature().size());
+                            timedOut = true;
+                            break;
+                        }
+
+                        NodeSet<OWLClass> types;
+                        try {
+                            types = getTypesWithTimeout(reasoner, individual);
+                        } catch (TimeoutException te) {
+                            // A single individual can still exceed even the per-call timeout on
+                            // a pathological hierarchy; HermiT's work isn't cancellable once
+                            // started, so bail out here too rather than wait on it.
+                            log.warn("Timed out computing types for individual {} ({} classes in signature) — "
+                                    + "returning partial realization results",
+                                individual.getIRI(), ontology.getClassesInSignature().size());
+                            timedOut = true;
+                            break;
+                        }
+
                         for (OWLClass cls : types.getFlattened()) {
                             if (!cls.isOWLThing() && !cls.isOWLNothing()) {
                                 Map<String, Object> instance = new HashMap<>();
@@ -648,14 +751,20 @@ public class ReasonerService {
                     log.error("Error computing instance types, returning empty", e);
                 }
             }
-            
+
             results.put("instances", instances);
             results.put("totalInstances", instances.size());
             results.put("totalIndividuals", ontology.getIndividualsInSignature().size());
-            
-            log.info("Realization results: {} instances computed for {} individuals",
-                instances.size(), ontology.getIndividualsInSignature().size());
-            
+            results.put("timedOut", timedOut);
+            if (timedOut) {
+                results.put("message", "Instance type computation took too long on this ontology's class "
+                        + "hierarchy and was stopped early; results are partial.");
+            }
+
+            log.info("Realization results: {} instances computed for {} individuals{}",
+                instances.size(), ontology.getIndividualsInSignature().size(),
+                timedOut ? " (timed out — partial)" : "");
+
             return results;
             
         } catch (Exception e) {
@@ -719,10 +828,14 @@ public class ReasonerService {
      */
     public Set<OWLClass> getInferredTypes(OWLOntology ontology, OWLNamedIndividual individual, ReasonerType type) {
         OWLReasoner reasoner = getReasoner(ontology, type);
-        
+
         try {
-            NodeSet<OWLClass> types = reasoner.getTypes(individual, false);
+            NodeSet<OWLClass> types = getTypesWithTimeout(reasoner, individual);
             return types.getFlattened();
+        } catch (TimeoutException te) {
+            log.warn("Timed out computing inferred types for individual {} ({} classes in signature)",
+                individual.getIRI(), ontology.getClassesInSignature().size());
+            return Collections.emptySet();
         } catch (Exception e) {
             log.error("Error getting inferred types", e);
             return Collections.emptySet();
@@ -844,41 +957,26 @@ public class ReasonerService {
             
             log.info("Analyzing inconsistency causes");
             List<Map<String, Object>> causes = new ArrayList<>();
-            
-            // 1. Check for unsatisfiable classes
-            try {
-                Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
-                Set<OWLClass> unsatisfiable = new HashSet<>(bottomNode.getEntities());
-                unsatisfiable.remove(DATA_FACTORY.getOWLNothing());
-                
-                if (!unsatisfiable.isEmpty()) {
-                    Map<String, Object> cause = new HashMap<>();
-                    cause.put("type", "UNSATISFIABLE_CLASSES");
-                    cause.put("severity", "ERROR");
-                    cause.put("title", "Found " + unsatisfiable.size() + " Unsatisfiable Class(es)");
-                    cause.put("description", "These classes have contradictory axioms that make them equivalent to owl:Nothing");
-                    
-                    List<Map<String, String>> classList = unsatisfiable.stream()
-                        .limit(10) // Limit to avoid huge lists
-                        .map(cls -> {
-                            Map<String, String> classInfo = new HashMap<>();
-                            classInfo.put("iri", cls.getIRI().toString());
-                            classInfo.put("label", getLabel(cls, ontology));
-                            classInfo.put("reason", analyzeUnsatisfiableClass(cls, ontology, reasoner));
-                            return classInfo;
-                        })
-                        .collect(Collectors.toList());
-                    
-                    cause.put("classes", classList);
-                    causes.add(cause);
-                }
-            } catch (Exception e) {
-                log.error("Error analyzing unsatisfiable classes", e);
-            }
-            
+
+            // 1. Global-inconsistency note. reasoner.getUnsatisfiableClasses() throws
+            // InconsistentOntologyException whenever the ontology is inconsistent — the
+            // only state this method ever runs in (see the early return above) — so it
+            // can never enumerate a meaningful subset here. That's expected under OWL
+            // semantics anyway: with no models, every class is vacuously equivalent to
+            // owl:Nothing. Surface that as context instead of a broken "unsatisfiable
+            // classes" list; the concrete causes below are what's actually actionable.
+            Map<String, Object> globalNote = new HashMap<>();
+            globalNote.put("type", "GLOBAL_INCONSISTENCY");
+            globalNote.put("severity", "INFO");
+            globalNote.put("title", "Every Class Is Vacuously Unsatisfiable");
+            globalNote.put("description", "The ontology as a whole has no valid models, so every class is "
+                + "technically equivalent to owl:Nothing. The specific causes below identify which asserted "
+                + "axioms are actually responsible.");
+            causes.add(globalNote);
+
             // 2. Check for disjoint class violations
             try {
-                List<Map<String, Object>> disjointViolations = findDisjointClassViolations(ontology, reasoner);
+                List<Map<String, Object>> disjointViolations = findDisjointClassViolations(ontology);
                 if (!disjointViolations.isEmpty()) {
                     Map<String, Object> cause = new HashMap<>();
                     cause.put("type", "DISJOINT_VIOLATIONS");
@@ -898,9 +996,11 @@ public class ReasonerService {
                 if (!propertyViolations.isEmpty()) {
                     Map<String, Object> cause = new HashMap<>();
                     cause.put("type", "PROPERTY_VIOLATIONS");
-                    cause.put("severity", "WARNING");
-                    cause.put("title", "Potential Property Constraint Violations");
-                    cause.put("description", "Found property assertions that may violate domain/range constraints");
+                    cause.put("severity", "ERROR");
+                    cause.put("title", "Property Domain/Range Conflicts");
+                    cause.put("description", "A property assertion entails a type for one of its endpoints "
+                        + "(via ObjectPropertyDomain/Range) that is declared disjoint with a type the individual "
+                        + "already has asserted");
                     cause.put("violations", propertyViolations);
                     causes.add(cause);
                 }
@@ -913,7 +1013,7 @@ public class ReasonerService {
             recommendations.put("type", "RECOMMENDATIONS");
             recommendations.put("title", "How to Fix");
             List<String> tips = new ArrayList<>();
-            tips.add("Review axioms for the unsatisfiable classes listed above");
+            tips.add("Review the disjoint/property violations listed above");
             tips.add("Check for conflicting disjointness declarations");
             tips.add("Examine cardinality restrictions (min/max constraints)");
             tips.add("Verify property domain and range definitions");
@@ -923,7 +1023,7 @@ public class ReasonerService {
             
             explanation.put("causes", causes);
             explanation.put("totalIssues", causes.stream()
-                .filter(c -> !"RECOMMENDATIONS".equals(c.get("type")))
+                .filter(c -> !"RECOMMENDATIONS".equals(c.get("type")) && !"GLOBAL_INCONSISTENCY".equals(c.get("type")))
                 .count());
             
             return explanation;
@@ -936,109 +1036,268 @@ public class ReasonerService {
     }
     
     /**
-     * Analyze why a specific class is unsatisfiable
+     * Find disjoint class violations.
+     *
+     * Types are computed syntactically — asserted ClassAssertion axioms closed over
+     * asserted SubClassOf/EquivalentClasses edges — rather than via reasoner.getTypes().
+     * The reasoner throws InconsistentOntologyException for any post-classification
+     * query once the ontology is inconsistent, which is the only state this method is
+     * ever called in (verified against HermiT: getTypes() and getUnsatisfiableClasses()
+     * both refuse to run and the violations were silently dropped as a result).
      */
-    private String analyzeUnsatisfiableClass(OWLClass cls, OWLOntology ontology, OWLReasoner reasoner) {
-        StringBuilder reason = new StringBuilder();
-        
-        // Check for conflicting restrictions
-        Set<OWLSubClassOfAxiom> subClassAxioms = ontology.getSubClassAxiomsForSubClass(cls);
-        if (!subClassAxioms.isEmpty()) {
-            reason.append("Has ").append(subClassAxioms.size()).append(" subclass axiom(s). ");
-        }
-        
-        // Check for equivalent class axioms
-        Set<OWLEquivalentClassesAxiom> equivalentAxioms = ontology.getEquivalentClassesAxioms(cls);
-        if (!equivalentAxioms.isEmpty()) {
-            reason.append("Has equivalent class definitions. ");
-        }
-        
-        // Check for disjoint declarations
-        Set<OWLDisjointClassesAxiom> disjointAxioms = ontology.getDisjointClassesAxioms(cls);
-        if (!disjointAxioms.isEmpty()) {
-            reason.append("Part of disjoint class declarations. ");
-        }
-        
-        if (reason.length() == 0) {
-            reason.append("Check class axioms and restrictions");
-        }
-        
-        return reason.toString().trim();
-    }
-    
-    /**
-     * Find disjoint class violations
-     */
-    private List<Map<String, Object>> findDisjointClassViolations(OWLOntology ontology, OWLReasoner reasoner) {
+    private List<Map<String, Object>> findDisjointClassViolations(OWLOntology ontology) {
         List<Map<String, Object>> violations = new ArrayList<>();
-        
-        for (OWLDisjointClassesAxiom axiom : ontology.getAxioms(AxiomType.DISJOINT_CLASSES)) {
+
+        List<OWLDisjointClassesAxiom> disjointAxioms =
+            new ArrayList<>(ontology.getAxioms(AxiomType.DISJOINT_CLASSES));
+        if (disjointAxioms.isEmpty()) {
+            return violations;
+        }
+
+        Map<OWLNamedIndividual, Map<OWLClass, OWLClass>> provenanceByIndividual = new HashMap<>();
+        for (OWLNamedIndividual individual : ontology.getIndividualsInSignature()) {
+            provenanceByIndividual.put(individual, getAssertedTypesClosureWithProvenance(ontology, individual));
+        }
+
+        for (OWLDisjointClassesAxiom axiom : disjointAxioms) {
             List<OWLClass> disjointClasses = axiom.getClassesInSignature().stream()
                 .filter(c -> !c.isAnonymous())
                 .collect(Collectors.toList());
-            
-            if (disjointClasses.size() >= 2) {
-                // Check if any individuals belong to multiple disjoint classes
-                for (OWLNamedIndividual individual : ontology.getIndividualsInSignature()) {
-                    Set<OWLClass> types = reasoner.getTypes(individual, false).getFlattened();
-                    
-                    List<OWLClass> violatingClasses = disjointClasses.stream()
-                        .filter(types::contains)
-                        .collect(Collectors.toList());
-                    
-                    if (violatingClasses.size() > 1) {
-                        Map<String, Object> violation = new HashMap<>();
-                        violation.put("individual", getLabel(individual, ontology));
-                        violation.put("individualIri", individual.getIRI().toString());
-                        violation.put("disjointClasses", violatingClasses.stream()
-                            .map(c -> getLabel(c, ontology))
-                            .collect(Collectors.toList()));
-                        violations.add(violation);
-                        
-                        if (violations.size() >= 5) break; // Limit results
+
+            if (disjointClasses.size() < 2) {
+                continue;
+            }
+
+            for (Map.Entry<OWLNamedIndividual, Map<OWLClass, OWLClass>> entry : provenanceByIndividual.entrySet()) {
+                Map<OWLClass, OWLClass> cameFrom = entry.getValue();
+                List<OWLClass> violatingClasses = disjointClasses.stream()
+                    .filter(cameFrom::containsKey)
+                    .collect(Collectors.toList());
+
+                if (violatingClasses.size() > 1) {
+                    Map<String, Object> violation = new HashMap<>();
+                    violation.put("individual", getLabel(entry.getKey(), ontology));
+                    violation.put("individualIri", entry.getKey().getIRI().toString());
+                    violation.put("disjointClasses", violatingClasses.stream()
+                        .map(c -> getLabel(c, ontology))
+                        .collect(Collectors.toList()));
+                    // Per-class derivation: null "via" means the type was asserted
+                    // directly; otherwise the chain explains the inheritance path
+                    // (e.g. "VegetarianPizza ⊑ Pizza") the way Protégé's own
+                    // alternate justifications do — without enumerating every
+                    // redundant proof the way Protégé's "8 explanations" view does.
+                    violation.put("typeDerivations", violatingClasses.stream()
+                        .map(c -> {
+                            Map<String, Object> derivation = new HashMap<>();
+                            derivation.put("class", getLabel(c, ontology));
+                            derivation.put("via", buildDerivationChain(c, cameFrom, ontology));
+                            return derivation;
+                        })
+                        .collect(Collectors.toList()));
+                    violations.add(violation);
+
+                    if (violations.size() >= 5) {
+                        return violations; // Limit results
                     }
                 }
             }
-            
-            if (violations.size() >= 5) break;
         }
-        
+
         return violations;
+    }
+
+    /**
+     * Asserted types for an individual, closed over asserted SubClassOf and
+     * EquivalentClasses edges between named classes. Purely syntactic (no reasoner
+     * call), so it stays usable even when the ontology is inconsistent. Anonymous
+     * class expressions (restrictions, etc.) are not expanded — this mirrors what a
+     * laconic justification would show (Protégé's own explanation for a simple
+     * disjoint-violation case walks the same asserted type + SubClassOf chain).
+     */
+    private Set<OWLClass> getAssertedTypesClosure(OWLOntology ontology, OWLNamedIndividual individual) {
+        return getAssertedTypesClosureWithProvenance(ontology, individual).keySet();
+    }
+
+    /**
+     * Same closure as {@link #getAssertedTypesClosure}, but also returns a BFS
+     * parent-pointer map so callers can explain *how* a type was reached — e.g.
+     * Pizza2 is typed VegetarianPizza directly, and Pizza only via VegetarianPizza
+     * SubClassOf Pizza. A type mapped to {@code null} was asserted directly on the
+     * individual; a type mapped to another class was reached through that class.
+     * First-writer-wins (BFS visits direct assertions before their superclasses),
+     * so a type that is both directly asserted and reachable by inheritance is
+     * reported as direct — the simpler explanation, matching Protégé's own
+     * preference for its least-involved justification.
+     */
+    private Map<OWLClass, OWLClass> getAssertedTypesClosureWithProvenance(OWLOntology ontology, OWLNamedIndividual individual) {
+        Map<OWLClass, OWLClass> cameFrom = new LinkedHashMap<>();
+        Deque<OWLClass> frontier = new ArrayDeque<>();
+
+        for (OWLClassAssertionAxiom ax : ontology.getClassAssertionAxioms(individual)) {
+            OWLClassExpression ce = ax.getClassExpression();
+            if (!ce.isAnonymous()) {
+                OWLClass cls = ce.asOWLClass();
+                if (!cameFrom.containsKey(cls)) {
+                    cameFrom.put(cls, null);
+                    frontier.push(cls);
+                }
+            }
+        }
+
+        while (!frontier.isEmpty()) {
+            OWLClass current = frontier.pop();
+
+            for (OWLSubClassOfAxiom ax : ontology.getSubClassAxiomsForSubClass(current)) {
+                OWLClassExpression sup = ax.getSuperClass();
+                if (!sup.isAnonymous()) {
+                    OWLClass supCls = sup.asOWLClass();
+                    if (!cameFrom.containsKey(supCls)) {
+                        cameFrom.put(supCls, current);
+                        frontier.push(supCls);
+                    }
+                }
+            }
+
+            for (OWLEquivalentClassesAxiom ax : ontology.getEquivalentClassesAxioms(current)) {
+                for (OWLClassExpression member : ax.getClassExpressions()) {
+                    if (!member.isAnonymous()) {
+                        OWLClass memberCls = member.asOWLClass();
+                        if (!cameFrom.containsKey(memberCls)) {
+                            cameFrom.put(memberCls, current);
+                            frontier.push(memberCls);
+                        }
+                    }
+                }
+            }
+        }
+
+        return cameFrom;
+    }
+
+    /**
+     * Human-readable derivation chain for a type reached via inheritance, e.g.
+     * "VegetarianPizza ⊑ Pizza". Returns null when the type was asserted directly
+     * on the individual — there's no chain to explain, and the UI should just show
+     * the class with no extra note.
+     */
+    private String buildDerivationChain(OWLClass cls, Map<OWLClass, OWLClass> cameFrom, OWLOntology ontology) {
+        if (cameFrom.get(cls) == null) {
+            return null;
+        }
+        List<String> chain = new ArrayList<>();
+        OWLClass current = cls;
+        while (current != null) {
+            chain.add(0, getLabel(current, ontology));
+            current = cameFrom.get(current);
+        }
+        return String.join(" ⊑ ", chain);
     }
     
     /**
-     * Find property constraint violations
+     * Find property domain/range violations.
+     *
+     * A domain/range axiom only actually contradicts something when the entailed type
+     * it implies is disjoint with a type the endpoint individual already has asserted —
+     * merely having a domain/range axiom defined proves nothing on its own (that was the
+     * previous, always-true heuristic here: it flagged every constrained property whether
+     * or not any assertion of it existed). Purely syntactic — reuses the same asserted-type
+     * closure as findDisjointClassViolations — so, like that method, it stays usable when
+     * the ontology is inconsistent.
      */
     private List<Map<String, Object>> findPropertyViolations(OWLOntology ontology) {
         List<Map<String, Object>> violations = new ArrayList<>();
-        
-        // Check object property assertions against domains/ranges
+
         for (OWLObjectProperty prop : ontology.getObjectPropertiesInSignature()) {
             Set<OWLClass> domains = ontology.getObjectPropertyDomainAxioms(prop).stream()
                 .map(OWLObjectPropertyDomainAxiom::getDomain)
                 .filter(d -> !d.isAnonymous())
                 .map(OWLClassExpression::asOWLClass)
                 .collect(Collectors.toSet());
-            
+
             Set<OWLClass> ranges = ontology.getObjectPropertyRangeAxioms(prop).stream()
                 .map(OWLObjectPropertyRangeAxiom::getRange)
                 .filter(r -> !r.isAnonymous())
                 .map(OWLClassExpression::asOWLClass)
                 .collect(Collectors.toSet());
-            
-            if (!domains.isEmpty() || !ranges.isEmpty()) {
-                Map<String, Object> propInfo = new HashMap<>();
-                propInfo.put("property", getLabel(prop, ontology));
-                propInfo.put("propertyIri", prop.getIRI().toString());
-                propInfo.put("hasDomainConstraints", !domains.isEmpty());
-                propInfo.put("hasRangeConstraints", !ranges.isEmpty());
-                violations.add(propInfo);
-                
-                if (violations.size() >= 5) break;
+
+            if (domains.isEmpty() && ranges.isEmpty()) {
+                continue;
+            }
+
+            for (OWLObjectPropertyAssertionAxiom assertion : ontology.getAxioms(AxiomType.OBJECT_PROPERTY_ASSERTION)) {
+                if (assertion.getProperty().isAnonymous() || !assertion.getProperty().asOWLObjectProperty().equals(prop)) {
+                    continue;
+                }
+                if (assertion.getSubject().isAnonymous() || assertion.getObject().isAnonymous()) {
+                    continue; // Anonymous individuals aren't reachable via getAssertedTypesClosure.
+                }
+                OWLNamedIndividual subject = assertion.getSubject().asOWLNamedIndividual();
+                OWLNamedIndividual object = assertion.getObject().asOWLNamedIndividual();
+
+                if (!domains.isEmpty()) {
+                    Set<OWLClass> subjectTypes = getAssertedTypesClosure(ontology, subject);
+                    for (OWLClass domain : domains) {
+                        OWLClass conflict = findDisjointConflict(ontology, subjectTypes, domain);
+                        if (conflict != null) {
+                            violations.add(buildPropertyViolation(
+                                prop, "domain", subject, domain, conflict, ontology));
+                            if (violations.size() >= 5) {
+                                return violations;
+                            }
+                        }
+                    }
+                }
+
+                if (!ranges.isEmpty()) {
+                    Set<OWLClass> objectTypes = getAssertedTypesClosure(ontology, object);
+                    for (OWLClass range : ranges) {
+                        OWLClass conflict = findDisjointConflict(ontology, objectTypes, range);
+                        if (conflict != null) {
+                            violations.add(buildPropertyViolation(
+                                prop, "range", object, range, conflict, ontology));
+                            if (violations.size() >= 5) {
+                                return violations;
+                            }
+                        }
+                    }
+                }
             }
         }
-        
+
         return violations;
+    }
+
+    /**
+     * Returns the asserted type in {@code assertedTypes} that is declared disjoint with
+     * {@code required}, or null if {@code required} is already satisfied (present or no
+     * conflict found). Sound but conservative: only a direct DisjointClasses co-membership
+     * counts, so this never reports a violation the assertions don't actually force.
+     */
+    private OWLClass findDisjointConflict(OWLOntology ontology, Set<OWLClass> assertedTypes, OWLClass required) {
+        if (assertedTypes.contains(required)) {
+            return null;
+        }
+        for (OWLDisjointClassesAxiom axiom : ontology.getDisjointClassesAxioms(required)) {
+            for (OWLClass other : axiom.getClassesInSignature()) {
+                if (!other.equals(required) && assertedTypes.contains(other)) {
+                    return other;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Map<String, Object> buildPropertyViolation(OWLObjectProperty prop, String constraintKind,
+            OWLNamedIndividual individual, OWLClass required, OWLClass conflict, OWLOntology ontology) {
+        Map<String, Object> violation = new HashMap<>();
+        violation.put("property", getLabel(prop, ontology));
+        violation.put("propertyIri", prop.getIRI().toString());
+        violation.put("constraintKind", constraintKind);
+        violation.put("individual", getLabel(individual, ontology));
+        violation.put("individualIri", individual.getIRI().toString());
+        violation.put("requiredClass", getLabel(required, ontology));
+        violation.put("conflictingClass", getLabel(conflict, ontology));
+        return violation;
     }
     
     /**
