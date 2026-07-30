@@ -1731,6 +1731,16 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                           </ul>
                         )}
 
+                        {Array.isArray(cause.axioms) && cause.axioms.length > 0 && (
+                          <ul className="space-y-1">
+                            {cause.axioms.map((axiom: string, i: number) => (
+                              <li key={i} className="text-xs font-mono opacity-90">
+                                {axiom}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
                         {Array.isArray(cause.tips) && cause.tips.length > 0 && (
                           <ul className="list-disc list-inside space-y-1 text-xs opacity-80">
                             {cause.tips.map((tip: string, i: number) => (
