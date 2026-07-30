@@ -307,6 +307,25 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const isRunning = dashboardIsRunning ?? localIsRunning;
   const isLoading = dashboardIsLoading ?? localIsLoading;
   const reasonerResults = dashboardReasonerResults || localReasonerResults;
+
+  // Derived values for the UI. Placed here (rather than down with the rest of
+  // the render-derived values) so fetchInconsistencyExplanation, defined below,
+  // can close over isOntologyInconsistent without a TS "used before declaration"
+  // error — useCallback only invokes the closure later, once these are assigned,
+  // but TS's control-flow analysis doesn't reason about that deferral.
+  const displayStats = reasonerResults?.stats || stats || null;
+  const unsatList = reasonerResults?.unsatisfiableClasses || [];
+  const equivalentGroups = reasonerResults?.equivalentClasses || [];
+  const consistencyData = dashboardConsistencyResult || null;
+  const consistencyUnsat = consistencyData?.unsatisfiableClasses || [];
+  const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
+  const consistentFlag = (displayStats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
+  const unsatRaw = displayStats?.unsatisfiableClassesRaw;
+  const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1 || !!(
+    (displayStats && ((displayStats.unsatisfiableClasses ?? 0) > 0 || displayStats.isConsistent === false)) ||
+    combinedUnsat.length > 0
+  );
+
   const tooltipRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const classRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -609,8 +628,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
   // Fetch detailed inconsistency explanation
   const fetchInconsistencyExplanation = useCallback(async () => {
-    if (isConsistent !== false) return;
+    // Uses the same isOntologyInconsistent flag the Explain button's `disabled`
+    // prop checks (rather than the narrower `isConsistent` state, which some
+    // code paths — e.g. a classify response with isConsistent === undefined —
+    // never update) so this guard can't diverge from what the user can click.
+    if (!isOntologyInconsistent) return;
 
+    setInconsistencyExplanation(null);
     setLocalIsRunning(true);
     try {
       const reasonerMap: Record<string, string> = {
@@ -644,7 +668,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, selectedReasoner, isConsistent, resolvedApiBaseUrl]);
+  }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl]);
 
   // Handle class hover
   const handleClassHover = (classIri: string, event: React.MouseEvent) => {
@@ -743,20 +767,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
   const styles = getStyles(isDark);
 
-  // Derived values for the UI
-  const displayStats = reasonerResults?.stats || stats || null;
-  const unsatList = reasonerResults?.unsatisfiableClasses || [];
-  const equivalentGroups = reasonerResults?.equivalentClasses || [];
-  const consistencyData = dashboardConsistencyResult || null;
-  const consistencyUnsat = consistencyData?.unsatisfiableClasses || [];
-  const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
-  const consistentFlag = (displayStats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
-  const unsatRaw = displayStats?.unsatisfiableClassesRaw;
-  const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1 || !!(
-    (displayStats && ((displayStats.unsatisfiableClasses ?? 0) > 0 || displayStats.isConsistent === false)) ||
-    combinedUnsat.length > 0
-  );
-  
   // Use inferred hierarchies if available, otherwise fall back to reasoner results
   const classHierarchyToRender = useMemo(() => {
     const source = dashboardInferredHierarchy && dashboardInferredHierarchy.length > 0
@@ -1278,13 +1288,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 Select a reasoner from the dropdown menu above.
               </p>
             </div>
-            {consistencyData && (
+            {(consistencyData || displayStats) && (
               <div className={`mt-4 px-4 py-2 rounded-md text-sm border ${
-                (consistencyData.consistent === false || consistencyData.isConsistent === false)
+                isOntologyInconsistent
                   ? (isDark ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-red-50 border-red-200 text-red-700')
                   : (isDark ? 'bg-green-900/20 border-green-800 text-green-400' : 'bg-green-50 border-green-200 text-green-700')
               }`}>
-                {(consistencyData.consistent === false || consistencyData.isConsistent === false)
+                {isOntologyInconsistent
                   ? '⚠ Ontology is inconsistent'
                   : '✓ Ontology is consistent'}
               </div>
@@ -1401,7 +1411,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                       ⚠ Unsatisfiable Classes ({combinedUnsat.length})
                     </div>
                     <button
-                      onClick={() => setShowExplainDialog(true)}
+                      onClick={() => { setShowExplainDialog(true); fetchInconsistencyExplanation(); }}
                       className="text-[10px] px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700"
                       disabled={isLoading}
                     >
@@ -1462,7 +1472,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
               <div className={`px-4 py-3 border-t mt-auto ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-gray-50'}`}>
                 <div className="space-y-2">
                   <button
-                    onClick={() => setShowExplainDialog(true)}
+                    onClick={() => { setShowExplainDialog(true); fetchInconsistencyExplanation(); }}
                     disabled={!isOntologyInconsistent || isLoading}
                     className={`w-full px-3 py-2 text-xs font-medium border rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
                       isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600 text-gray-200' : 'bg-white border-gray-300 hover:bg-gray-50 text-gray-700'
@@ -1655,10 +1665,78 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     <div className="font-bold mb-1">Ontology is Inconsistent</div>
                     <div className="text-sm">The reasoner has detected logical contradictions in the ontology.</div>
                   </div>
-                  {/* Add more detailed explanation logic here if available */}
-                  <div className="text-sm opacity-80">
-                    Detailed explanation for inconsistency is being computed...
-                  </div>
+
+                  {isRunning && !inconsistencyExplanation ? (
+                    <div className="text-sm opacity-80 flex items-center gap-2">
+                      <RefreshCw size={14} className="animate-spin" />
+                      Computing explanation...
+                    </div>
+                  ) : inconsistencyExplanation?.causes?.length ? (
+                    inconsistencyExplanation.causes.map((cause: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-md border text-sm ${
+                          cause.severity === 'ERROR'
+                            ? (isDark ? 'bg-red-900/10 border-red-900/50' : 'bg-red-50 border-red-200')
+                            : cause.severity === 'INFO'
+                              ? (isDark ? 'bg-blue-900/10 border-blue-900/50' : 'bg-blue-50 border-blue-200')
+                              : (isDark ? 'bg-yellow-900/10 border-yellow-900/50' : 'bg-yellow-50 border-yellow-200')
+                        }`}
+                      >
+                        <div className="font-semibold mb-1">{cause.title}</div>
+                        {cause.description && <div className="opacity-80 mb-2">{cause.description}</div>}
+
+                        {Array.isArray(cause.classes) && cause.classes.length > 0 && (
+                          <ul className="space-y-1">
+                            {cause.classes.map((cls: any, i: number) => (
+                              <li key={i} className="text-xs">
+                                <span className="font-medium">{cls.label}</span>
+                                {cls.reason && <span className="opacity-70"> — {cls.reason}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {Array.isArray(cause.violations) && cause.violations.length > 0 && (
+                          <ul className="space-y-1">
+                            {cause.violations.map((v: any, i: number) => (
+                              <li key={i} className="text-xs">
+                                {v.individual ? (
+                                  <>
+                                    <span className="font-medium">{v.individual}</span> is asserted as{' '}
+                                    <span className="font-medium">{(v.disjointClasses || []).join(' AND ')}</span>,
+                                    which are declared disjoint.
+                                  </>
+                                ) : v.property ? (
+                                  <>
+                                    <span className="font-medium">{v.individual}</span> is the {v.constraintKind}{' '}
+                                    of <span className="font-medium">{v.property}</span>, which requires type{' '}
+                                    <span className="font-medium">{v.requiredClass}</span> — but it's already
+                                    asserted as <span className="font-medium">{v.conflictingClass}</span>, which is
+                                    declared disjoint with {v.requiredClass}.
+                                  </>
+                                ) : (
+                                  JSON.stringify(v)
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {Array.isArray(cause.tips) && cause.tips.length > 0 && (
+                          <ul className="list-disc list-inside space-y-1 text-xs opacity-80">
+                            {cause.tips.map((tip: string, i: number) => (
+                              <li key={i}>{tip}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm opacity-80">
+                      No further detail available for this inconsistency.
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-8 text-gray-500 italic">
