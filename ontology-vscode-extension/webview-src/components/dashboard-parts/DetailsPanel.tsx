@@ -152,9 +152,16 @@ export const DetailsPanel = ({
             setIndividuals((prev) => [...prev, newIndividual]);
             markAsUnsaved();
           }}
+          
           onDeleteIndividual={async (id: string) => {
-            await ontologyMutationService.deleteIndividual(projectId || "", id);
-            setIndividuals((prev) => prev.filter((ind) => ind.id !== id));
+            await ontologyMutationService.removeClassAssertion(projectId || "", id, selectedItem.id);
+            setIndividuals((prev) =>
+              prev.map((ind) =>
+                ind.id === id
+                  ? { ...ind, types: (ind.types || []).filter((t) => t !== selectedItem.id) }
+                  : ind,
+              ),
+            );
             markAsUnsaved();
           }}
           onRefreshIndividuals={() => {
