@@ -9,7 +9,7 @@ import type { TreeNode, Property } from '../../types';
 // Structured data for object/data restrictions
 export interface RestrictionData {
   type: 'objectRestriction' | 'dataRestriction';
-  axiomType: 'EquivalentTo' | 'SubClassOf';
+  axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
   propertyIri: string;
   restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value';
   fillerIri: string; // Class IRI for object restrictions, datatype IRI for data restrictions
@@ -29,8 +29,8 @@ interface ClassExpressionDialogProps {
   initialTab?: 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
   /** Restrict which tabs are shown. If not specified, all tabs are shown. */
   allowedTabs?: TabType[];
-  /** Parent axiom type — EquivalentTo vs SubClassOf for restriction creators. */
-  axiomType?: 'EquivalentTo' | 'SubClassOf';
+  /** Parent axiom type — EquivalentTo vs SubClassOf vs DisjointWith for restriction creators. */
+  axiomType?: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
   initialRestrictionData?: {
     propertyIri?: string;
     restrictionType?: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value';
@@ -62,9 +62,9 @@ interface ClassExpressionDialogProps {
 export type TabType = 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
 
 /**
- * ClassExpressionDialog - Protégé desktop-style class expression builder
+ * ClassExpressionDialog -  desktop-style class expression builder
  *
- * Matches Protégé desktop UI with:
+ * Matches desktop UI with:
  * - EntityHierarchy for all tree views (classes, properties)
  * - Asserted/Inferred toggles
  * - Compact two-panel layouts for restrictions

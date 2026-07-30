@@ -42,7 +42,13 @@ public class ReasonerWorkerClient {
                     HttpMethod.POST,
                     new HttpEntity<>(body, headers()),
                     Map.class);
-            return response.getBody() != null ? response.getBody() : Map.of("success", false);
+            Map<String, Object> result = response.getBody() != null ? response.getBody() : Map.of("success", false);
+            // TEMP DIAGNOSTIC — investigating a reported job-id mixup between concurrent
+            // reasoner operations. Remove once root-caused.
+            org.slf4j.LoggerFactory.getLogger(ReasonerWorkerClient.class).info(
+                    "[DIAG] submit: sentJobType={} projectId={} receivedJobId={} receivedJobType={} atMs={}",
+                    jobType, projectId, result.get("jobId"), result.get("jobType"), System.currentTimeMillis());
+            return result;
         } catch (Exception e) {
             return Map.of("success", false, "error", ReasoningFriendlyErrors.forUser(e.getMessage()));
         }
@@ -55,7 +61,13 @@ public class ReasonerWorkerClient {
                     HttpMethod.GET,
                     new HttpEntity<>(headers()),
                     Map.class);
-            return response.getBody();
+            Map<String, Object> result = response.getBody();
+            // TEMP DIAGNOSTIC — see submit() above. Remove once root-caused.
+            org.slf4j.LoggerFactory.getLogger(ReasonerWorkerClient.class).info(
+                    "[DIAG] getJob: requestedJobId={} receivedJobType={} receivedStatus={} atMs={}",
+                    jobId, result != null ? result.get("jobType") : "NULL_BODY",
+                    result != null ? result.get("status") : "NULL_BODY", System.currentTimeMillis());
+            return result;
         } catch (Exception e) {
             return Map.of("success", false, "error", ReasoningFriendlyErrors.forUser(e.getMessage()));
         }

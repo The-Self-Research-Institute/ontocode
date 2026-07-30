@@ -1,7 +1,7 @@
 /**
  * VOWL Notation Service - Integrated into Graph View
  * Transforms ontology data into VOWL-compliant visual representation
- * Merges WebVOWL VOWL notation with Graph View capabilities
+ * Merges VOWL notation with Graph View capabilities
  */
 
 import type {
@@ -250,27 +250,27 @@ export class VOWLNotationService {
   }
 
   /**
-   * Get VOWL node color based on type (WebVOWL standard colors)
+   * Get VOWL node color based on type (VOWL standard colors)
    * These colors MUST match the actual rendering in AdvancedGraphView.tsx
    * @param nodeType The type of the node
    * @param isDark Whether dark mode is active
    */
   getVOWLNodeColor(nodeType: string, isDark: boolean = false): string {
-    // Light mode — classic WebVOWL (matches HTML harness)
+    // Light mode — VOWL (medium blue + yellow datatype; white labels on classes)
     const lightColorMap: Record<string, string> = {
-      'owl:Class': '#acd5f2',
-      'owl:NamedIndividual': '#dcd5f7',
-      'owl:ObjectProperty': '#acd5f2',
+      'owl:Class': '#69c',
+      'owl:NamedIndividual': '#cfc',
+      'owl:ObjectProperty': '#69c',
       'owl:DatatypeProperty': '#ffffcc',
       'owl:AnnotationProperty': '#e8d5f2',
-      'rdfs:Datatype': '#f5d76e',
+      'rdfs:Datatype': '#fc3',
       'owl:Thing': '#ffffff',
-      'rdfs:Literal': '#f5d76e',
-      'class': '#acd5f2',
-      'datatype': '#f5d76e',
-      'individual': '#dcd5f7',
-      'property': '#acd5f2',
-      'objectProperty': '#acd5f2',
+      'rdfs:Literal': '#fc3',
+      'class': '#69c',
+      'datatype': '#fc3',
+      'individual': '#cfc',
+      'property': '#69c',
+      'objectProperty': '#69c',
       'dataProperty': '#ffffcc',
       'annotation': '#e8d5f2',
     };
@@ -295,11 +295,11 @@ export class VOWLNotationService {
     };
     
     const colorMap = isDark ? darkColorMap : lightColorMap;
-    return colorMap[nodeType] || (isDark ? '#6b92c4' : '#acd5f2');
+    return colorMap[nodeType] || (isDark ? '#6b92c4' : '#69c');
   }
 
   /**
-   * Get VOWL edge stroke style based on type and attributes (WebVOWL standard)
+   * Get VOWL edge stroke style based on type and attributes (VOWL standard)
    */
   getVOWLEdgeStyle(edgeType: string, attributes?: Record<string, any>): {
     stroke: string;

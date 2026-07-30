@@ -65,12 +65,14 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
   // Filter individuals - show all available individuals
   useEffect(() => {
     let filtered = individuals;
-    
-    // Exclude specified individuals (those already having this class type)
-    if (excludeIndividualIds.length > 0) {
-      filtered = filtered.filter(ind => !excludeIndividualIds.includes(ind.id));
-    }
-    
+
+    // excludeIndividualIds (already instances of this class) used to be filtered out here
+    // entirely — when every existing individual already had this type, the list showed
+    // "No individuals available", which reads as "there are no individuals in this ontology"
+    // rather than "everything that exists is already added". They're kept in the list now
+    // (see render below, where they're shown disabled with an "Already added" badge) so that
+    // distinction is visible instead of hidden.
+
     // Filter by search query
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -169,7 +171,12 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) onClose();
+      }}
+    >
       <div
         className="bg-white rounded-lg shadow-xl w-full mx-4 flex flex-col"
         style={{ maxWidth: 'min(860px, calc(100vw - 32px))', maxHeight: 'min(80vh, calc(100vh - 32px))', resize: 'both', overflow: 'auto' }}
@@ -315,28 +322,36 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
               <div className="divide-y divide-gray-100">
                 {filteredIndividuals.map(individual => {
                   const isSelected = selectedIndividuals.some(i => i.id === individual.id);
+                  const isAlreadyAdded = excludeIndividualIds.includes(individual.id);
                   return (
                     <div
                       key={individual.id}
-                      onClick={() => handleIndividualSelect(individual)}
-                      className={`group flex items-center justify-between px-2 py-1.5 cursor-pointer hover:bg-slate-100 transition-colors ${
-                        isSelected ? 'bg-blue-200' : ''
+                      onClick={() => !isAlreadyAdded && handleIndividualSelect(individual)}
+                      className={`group flex items-center justify-between px-2 py-1.5 transition-colors ${
+                        isAlreadyAdded
+                          ? 'cursor-not-allowed opacity-60'
+                          : `cursor-pointer hover:bg-slate-100 ${isSelected ? 'bg-blue-200' : ''}`
                       }`}
                     >
                       <div className="flex items-center gap-2">
                         {/* Diamond-shaped icon like in EntityHierarchy */}
                         <div className={`w-4 h-4 rotate-45 rounded-sm border flex items-center justify-center flex-shrink-0 ${
-                          isSelected ? 'bg-purple-600 border-purple-600' : 'bg-purple-400 border-purple-600'
+                          isAlreadyAdded
+                            ? 'bg-gray-300 border-gray-400'
+                            : isSelected ? 'bg-purple-600 border-purple-600' : 'bg-purple-400 border-purple-600'
                         }`}>
                           <User size={10} className="text-white -rotate-45" />
                         </div>
-                        <span className="text-sm text-gray-800">{individual.label}</span>
+                        <span className={`text-sm ${isAlreadyAdded ? 'text-gray-500' : 'text-gray-800'}`}>{individual.label}</span>
                       </div>
                       <div className="flex items-center gap-1">
-                        {isSelected && (
+                        {isAlreadyAdded && (
+                          <span className="text-xs text-gray-400 font-medium mr-2">Already added</span>
+                        )}
+                        {isSelected && !isAlreadyAdded && (
                           <span className="text-xs text-purple-600 font-medium mr-2">✓</span>
                         )}
-                        {onDeleteIndividual && (
+                        {onDeleteIndividual && !isAlreadyAdded && (
                           <button
                             onClick={(e) => handleDeleteClick(e, individual)}
                             className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all"
@@ -356,9 +371,18 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
 
         <div className="p-4 border-t bg-gray-50 flex justify-between items-center">
           <div className="text-xs text-gray-500">
-            {filteredIndividuals.length} individual{filteredIndividuals.length !== 1 ? 's' : ''} available
-            {minSelection > 1 
-              ? ` • Select at least ${minSelection}` 
+            {(() => {
+              const availableCount = filteredIndividuals.filter(ind => !excludeIndividualIds.includes(ind.id)).length;
+              const alreadyAddedCount = filteredIndividuals.length - availableCount;
+              return (
+                <>
+                  {availableCount} individual{availableCount !== 1 ? 's' : ''} available
+                  {alreadyAddedCount > 0 ? ` (${alreadyAddedCount} already added)` : ''}
+                </>
+              );
+            })()}
+            {minSelection > 1
+              ? ` • Select at least ${minSelection}`
               : ''}
           </div>
           <div className="flex gap-2">

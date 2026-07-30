@@ -23,6 +23,27 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.1.0-beta.16",
+    date: "July 27, 2026",
+    title: "Rename, Save & Export Reliability",
+    highlights: [
+      "TSRI-223: SPARQL Query — Fixed a bug causing SPARQL queries to fail.",
+      "TSRI-222: Renaming an entity and dragging to select text in the name field no longer closes the editor and cancels the rename if the drag ends outside the text field.",
+      "TSRI-222: Saving or exporting an ontology as an OWL file no longer opens two consecutive save dialogs for a single action.",
+      "TSRI-222: Added or edited ontology values (axioms, types, annotations) now display immediately after saving, instead of only appearing after selecting a different entity or panel and returning.",
+    ],
+    videoUrl: "",
+  },
+  {
+    version: "1.1.0-beta.15",
+    date: "July 23, 2026",
+    title: "Reasoner Reliability & Clearer Error Messages",
+    highlights: [
+      "TSRI-196: Reasoner — When classification fails, the app now shows a specific, useful error message and a suggested next step (e.g. an ontology-specific problem, a missing component, or an invalid setting) instead of a generic \"Not Found\" message with no explanation.",
+    ],
+    videoUrl: "",
+  },
+  {
     version: "1.1.0-beta.14",
     date: "July 13, 2026",
     title: "Save Reliability · Graph View Overhaul",
@@ -45,7 +66,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     version: "1.1.0-beta.12",
     date: "June 25, 2026",
     highlights: [
-      "TSRI-166: Graph View — Fixed stale cache showing the wrong ontology after switching projects. Also added Obsidian-style local graph view — click Local in the toolbar to see the neighbourhood of the selected node in place of the main canvas.",
+      "TSRI-166: Graph View — Fixed stale cache showing the wrong ontology after switching projects. Also added local graph view — click Local in the toolbar to see the neighbourhood of the selected node in place of the main canvas.",
       "Submit Issue — Fixed network error when submitting issue reports or feature requests from the desktop app.",
     ],
     videoUrl: "",

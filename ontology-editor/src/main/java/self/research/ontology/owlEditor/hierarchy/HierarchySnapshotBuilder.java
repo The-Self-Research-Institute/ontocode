@@ -11,10 +11,10 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Protégé-parity asserted class hierarchy (structural reasoner for top-level,
+ * asserted class hierarchy (structural reasoner for top-level,
  * explicit subClassOf axioms for children). Shared by desktop warm path and cloud snapshots.
  *
- * <p>The {@code importsScope} parameter mirrors Protégé's View menu:
+ * <p>The {@code importsScope} parameter controls imported ontology visibility:
  * <ul>
  *   <li>{@link Imports#EXCLUDED} — "Show only the active ontology" (default)</li>
  *   <li>{@link Imports#INCLUDED} — "Show the imports closure of the active ontology"</li>
@@ -33,6 +33,7 @@ public class HierarchySnapshotBuilder {
                 .getSubClasses(df.getOWLThing(), true)
                 .entities()
                 .filter(c -> !c.isOWLNothing() && !c.isAnonymous())
+                .filter(c -> !isBuiltInOrPlaceholder(c))
                 .filter(c -> importsScope == Imports.INCLUDED || isInActiveOntology(ont, c))
                 .filter(c -> !hasNamedSuperclassViaReasoner(reasoner, df, c))
                 .count();
@@ -50,6 +51,7 @@ public class HierarchySnapshotBuilder {
                 .getSubClasses(df.getOWLThing(), true)
                 .entities()
                 .filter(c -> !c.isOWLNothing() && !c.isAnonymous())
+                .filter(c -> !isBuiltInOrPlaceholder(c))
                 .filter(c -> importsScope == Imports.INCLUDED || isInActiveOntology(ont, c))
                 .filter(c -> !hasNamedSuperclassViaReasoner(reasoner, df, c))
                 .sorted(Comparator.comparing(c -> getLabel(ont, c, importsScope).toLowerCase(Locale.ROOT)))
@@ -60,7 +62,7 @@ public class HierarchySnapshotBuilder {
     }
 
     /**
-     * Fast-open path: asserted hierarchy roots (Protégé parity without reasoner precompute).
+     * Fast-open path: asserted hierarchy roots (without reasoner precompute).
      * A named class is top-level when it has no asserted named superclass other than owl:Thing.
      */
     public int countTopLevelAsserted(OWLOntology ont) {
@@ -94,7 +96,7 @@ public class HierarchySnapshotBuilder {
     public List<OntologyDto.TreeNode> buildAllClasses(OWLOntology ont, int limit, Imports importsScope) {
         List<OntologyDto.TreeNode> result = new ArrayList<>();
         for (OWLClass cls : ont.getClassesInSignature(importsScope)) {
-            if (cls.isBuiltIn() || cls.isOWLNothing() || cls.isOWLThing()) {
+            if (cls.isBuiltIn() || cls.isOWLNothing() || cls.isOWLThing() || isBuiltInOrPlaceholder(cls)) {
                 continue;
             }
             OntologyDto.TreeNode node = new OntologyDto.TreeNode();
@@ -226,7 +228,7 @@ public class HierarchySnapshotBuilder {
     private Set<OWLClass> assertedTopLevelCandidates(OWLOntology ont, Imports importsScope) {
         Set<OWLClass> roots = new LinkedHashSet<>();
         for (OWLClass cls : ont.getClassesInSignature(importsScope)) {
-            if (cls.isBuiltIn() || cls.isOWLNothing()) {
+            if (cls.isBuiltIn() || cls.isOWLNothing() || isBuiltInOrPlaceholder(cls)) {
                 continue;
             }
             if (structuralNamedParents(ont, cls, importsScope).isEmpty()) {
@@ -256,7 +258,7 @@ public class HierarchySnapshotBuilder {
     }
 
     /**
-     * Precomputes direct children for every named class parent (Protégé asserted hierarchy).
+     * Precomputes direct children for every named class parent .
      */
     public Map<String, List<OntologyDto.TreeNode>> buildChildrenIndex(OWLOntology ont, OWLReasoner reasoner) {
         Map<OWLClass, Set<OWLClass>> childrenIndex = assertedChildrenIndex(ont, Imports.EXCLUDED);
@@ -274,7 +276,7 @@ public class HierarchySnapshotBuilder {
     }
 
     /**
-     * One-pass parent -&gt; children index over the WHOLE ontology (Protégé asserted semantics:
+     * One-pass parent -&gt; children index over the WHOLE ontology (asserted semantics:
      * direct subClassOf plus equivalentClass/intersectionOf-derived membership, same as
      * {@link #structuralNamedParents} inverted). Building this once per request and reusing it
      * for every rendered node is O(totalClasses) total instead of O(totalClasses) PER rendered
@@ -284,7 +286,7 @@ public class HierarchySnapshotBuilder {
     private Map<OWLClass, Set<OWLClass>> assertedChildrenIndex(OWLOntology ont, Imports importsScope) {
         Map<OWLClass, Set<OWLClass>> index = new HashMap<>();
         for (OWLClass cls : ont.getClassesInSignature(importsScope)) {
-            if (cls.isBuiltIn() || cls.isOWLNothing()) {
+            if (cls.isBuiltIn() || cls.isOWLNothing() || isBuiltInOrPlaceholder(cls)) {
                 continue;
             }
             for (OWLClass parent : structuralNamedParents(ont, cls, importsScope)) {
@@ -297,6 +299,24 @@ public class HierarchySnapshotBuilder {
     /** Returns true when the class is declared in the active (non-imported) ontology. */
     private boolean isInActiveOntology(OWLOntology ont, OWLClass cls) {
         return ont.containsClassInSignature(cls.getIRI(), Imports.EXCLUDED);
+    }
+
+    /**
+     * True for built-in datatype IRIs (e.g. xsd:decimal) and OWLAPI's own internal placeholder
+     * namespace ({@code http://org.semanticweb.owlapi/error#ErrorN}). OWLAPI's RDF parser
+     * (OWLRDFConsumer) is syntax-driven, not OWL2-validated — it can declare a datatype as an
+     * OWLClass when it's referenced somewhere a class is structurally expected (e.g. owl:onClass
+     * pointing at xsd:decimal instead of the OWL2-correct owl:onDataRange), and it synthesizes
+     * ErrorN placeholder entities for RDF fragments it can't translate into a valid axiom (e.g. a
+     * dangling rdf:first/rdf:rest list left over from a partial delete). {@code OWLClass.isBuiltIn()}
+     * only ever returns true for owl:Thing/owl:Nothing, so it doesn't catch either case.
+     */
+    private static boolean isBuiltInOrPlaceholder(OWLClass c) {
+        String iri = c.getIRI().toString();
+        return iri.startsWith("http://www.w3.org/2001/XMLSchema#")
+                || iri.startsWith("http://www.w3.org/2000/01/rdf-schema#")
+                || iri.startsWith("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
+                || iri.startsWith("http://org.semanticweb.owlapi/error#");
     }
 
     /**

@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Records Protégé-style open timings for desktop benchmarking (file size, parse ms, total ms).
+ * Records open timings for desktop benchmarking (file size, parse ms, total ms).
  */
 @Service
 @ConditionalOnProperty(name = "ontocode.desktop.mode", havingValue = "true")

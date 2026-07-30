@@ -52,7 +52,12 @@ const EditEntityIRIDialog: React.FC<EditEntityIRIDialogProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]" onClick={onClose}>
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) onClose();
+      }}
+    >
       <div
         className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4"
         onClick={(e) => e.stopPropagation()}
@@ -67,7 +72,7 @@ const EditEntityIRIDialog: React.FC<EditEntityIRIDialogProps> = ({
         </div>
         <div className="p-4 space-y-3">
           <p className="text-xs text-gray-600">
-            Protégé-style rename: updates this entity&apos;s IRI in every axiom that references it.
+            rename: updates this entity&apos;s IRI in every axiom that references it.
           </p>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Current IRI</label>

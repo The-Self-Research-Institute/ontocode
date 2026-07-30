@@ -18,7 +18,7 @@ export interface HierarchicalLayoutOptions {
   orientation?: 'vertical' | 'horizontal';
   /**
    * For multi-parent (DAG) hierarchies, repeat the child under each parent.
-   * Default true (matches Protege OntoGraf behavior).
+   * Default true (matches OntoCode hierarchy behavior).
    * Set false to assign the child to a single canonical parent (first asserted).
    */
   duplicateMultiParent?: boolean;

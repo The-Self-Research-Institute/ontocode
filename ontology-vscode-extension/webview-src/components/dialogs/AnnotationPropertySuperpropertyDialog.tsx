@@ -3,9 +3,9 @@ import { X, Search, ChevronDown, ChevronRight, Tag, Plus, Trash2 } from 'lucide-
 import type { TreeNode, AnnotationProperty } from '../../types';
 
 /**
- * AnnotationPropertySuperpropertyDialog - Protégé-style dialog for selecting annotation property superproperties
+ * AnnotationPropertySuperpropertyDialog - dialog for selecting annotation property superproperties
  * 
- * Based on Protégé's OWLSubAnnotationPropertyFrameSection which uses OWLAnnotationPropertyEditor
+ * Based on 's OWLSubAnnotationPropertyFrameSection which uses OWLAnnotationPropertyEditor
  * - Lists annotation properties in a hierarchy
  * - Allows selecting one or more annotation properties as superproperties
  * - Toolbar with Add subproperty, Add sibling property, Delete property buttons
@@ -182,7 +182,7 @@ const AnnotationPropertySuperpropertyDialog: React.FC<AnnotationPropertySuperpro
               <span className="w-5 flex-shrink-0" />
             )}
 
-            {/* Annotation Property Icon (orange tag like Protégé) */}
+            {/* Annotation Property Icon (orange tag ) */}
             <Tag size={12} className={`flex-shrink-0 ${
               isSelected ? 'text-orange-300' : 'text-orange-500'
             }`} />
@@ -213,7 +213,12 @@ const AnnotationPropertySuperpropertyDialog: React.FC<AnnotationPropertySuperpro
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={handleClose}>
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) handleClose();
+      }}
+    >
       <div 
         className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 flex flex-col" 
         style={{ height: '500px', maxHeight: '85vh' }}
@@ -233,7 +238,7 @@ const AnnotationPropertySuperpropertyDialog: React.FC<AnnotationPropertySuperpro
           </button>
         </div>
 
-        {/* Toolbar - Protégé style: Add subproperty, Add sibling, Delete, Filter dropdown */}
+        {/* Toolbar: Add subproperty, Add sibling, Delete, Filter dropdown */}
         {showToolbar && (
           <div className="flex items-center gap-1 px-2 py-1.5 border-b bg-gray-50">
             {/* Add Subproperty Button */}
@@ -293,7 +298,7 @@ const AnnotationPropertySuperpropertyDialog: React.FC<AnnotationPropertySuperpro
           </div>
         )}
 
-        {/* Tabs - Protégé style */}
+        {/* Tabs */}
         <div className="flex border-b border-gray-200 bg-gray-50">
           <button
             onClick={() => setActiveTab('select-property')}

@@ -1,6 +1,6 @@
 {
   "name": "ontocode-desktop",
-  "version": "1.1.0-beta.14",
+  "version": "1.1.0-beta.16",
   "description": "OntoCode Ontology Editor – Desktop (Electron + bundled backend)",
   "homepage": "https://ontocode.selfresearch.org",
   "author": "OntoCode",
@@ -11,14 +11,14 @@
     "start:dev:win": "set ELECTRON_IS_DEV=1 && electron .",
     "build-web": "cd ../ontology-vscode-extension/webview-src && npm run build:electron",
     "prepare-resources": "node scripts/prepare-resources.js",
-    "dist": "npm run build-web && electron-builder",
-    "dist:win": "npm run build-web && electron-builder --win",
-    "dist:mac": "npm run build-web && electron-builder --mac",
-    "dist:linux": "npm run build-web && electron-builder --linux",
-    "dist:win:dev": "npm run build-web && electron-builder --win -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/win",
-    "dist:mac:dev": "npm run build-web && electron-builder --mac -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/mac",
-    "dist:linux:dev": "npm run build-web && electron-builder --linux -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/linux",
-    "pack": "electron-builder --dir"
+    "dist": "npm run prepare-resources && npm run build-web && electron-builder",
+    "dist:win": "npm run prepare-resources && npm run build-web && electron-builder --win",
+    "dist:mac": "npm run prepare-resources && npm run build-web && electron-builder --mac",
+    "dist:linux": "npm run prepare-resources && npm run build-web && electron-builder --linux",
+    "dist:win:dev": "npm run prepare-resources && npm run build-web && electron-builder --win -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/win",
+    "dist:mac:dev": "npm run prepare-resources && npm run build-web && electron-builder --mac -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/mac",
+    "dist:linux:dev": "npm run prepare-resources && npm run build-web && electron-builder --linux -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/linux",
+    "pack": "npm run prepare-resources && electron-builder --dir"
   },
   "keywords": [
     "ontology",

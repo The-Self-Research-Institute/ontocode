@@ -1,15 +1,14 @@
 /**
  * DL Query Panel - Enhanced Description Logic Query Interface
  * 
- * Based on Protege's DL Query Tab functionality:
+ * DL Query panel:
  * - Manchester OWL Syntax for class expressions
  * - Query for subclasses, superclasses, equivalent classes, instances
  * - Syntax highlighting and auto-completion hints
  * - Example queries for common patterns
  * 
  * References:
- * - https://protegewiki.stanford.edu/wiki/DLQueryTab
- * - https://oboacademy.github.io/obook/tutorial/basic-dl-query/
+  * - https://oboacademy.github.io/obook/tutorial/basic-dl-query/
  */
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
@@ -288,7 +287,7 @@ const generateExampleQueries = (
   return result;
 };
 
-// Query type options (matching Protege's checkboxes)
+// Query type options
 const QUERY_TYPES = [
   { id: 'directSuperclasses', label: 'Direct superclasses', icon: ArrowUp, description: 'Immediate parent classes' },
   { id: 'superclasses', label: 'Superclasses', icon: ArrowUp, description: 'All ancestor classes' },
@@ -340,6 +339,11 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [classTreeSearch, setClassTreeSearch] = useState('');
   const [expandedClassNodes, setExpandedClassNodes] = useState<string[]>(['http://www.w3.org/2002/07/owl#Thing']);
+  // Suggestions are otherwise purely derived from `query` (see useMemo below), so with no
+  // notion of "closed" they'd stay visible — as an absolutely-positioned overlay — even once
+  // the user has clicked away to Execute and is looking at Results underneath. Gating on
+  // focus closes them the moment the textarea isn't the active element.
+  const [isQueryInputFocused, setIsQueryInputFocused] = useState(false);
 
   // Autocomplete suggestions based on current input
   const suggestions = useMemo(() => {
@@ -705,6 +709,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
             <textarea
               value={query}
               onChange={e => setQuery(e.target.value)}
+              onFocus={() => setIsQueryInputFocused(true)}
+              onBlur={() => setIsQueryInputFocused(false)}
               placeholder="Enter Manchester OWL class expression...&#10;Examples: Person, hasChild some Man, Pizza and hasTopping some MozzarellaTopping"
               className="w-full h-24 border border-gray-200 rounded-lg p-3 font-mono text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none bg-white text-black"
               onKeyDown={e => {
@@ -714,9 +720,11 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                 }
               }}
             />
-            
-            {/* Auto-completion Suggestions */}
-            {suggestions.length > 0 && (
+
+            {/* Auto-completion Suggestions — only while the input is actually focused, so this
+                overlay never lingers over the Action Buttons / Results once the user clicks
+                away (e.g. to Execute and read the results it produced). */}
+            {isQueryInputFocused && suggestions.length > 0 && (
               <div className="absolute top-full left-3 right-3 mt-1 bg-white border border-purple-200 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
                 <div className="p-2 border-b border-gray-100 bg-purple-50">
                   <p className="text-xs font-semibold text-purple-700 flex items-center gap-1">
@@ -728,6 +736,11 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                   {suggestions.map((suggestion, idx) => (
                     <button
                       key={idx}
+                      // Selecting a suggestion via click blurs the textarea before the click
+                      // handler below would run — preventDefault on mousedown keeps focus on
+                      // the textarea so the click actually lands instead of the dropdown
+                      // closing itself out from under the cursor.
+                      onMouseDown={e => e.preventDefault()}
                       onClick={() => {
                         // Replace last word with suggestion
                         const words = query.split(/\s+/);

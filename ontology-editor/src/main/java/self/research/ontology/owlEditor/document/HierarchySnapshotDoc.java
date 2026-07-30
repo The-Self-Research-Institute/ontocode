@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Precomputed Protégé-parity class hierarchy (OWLAPI structural reasoner), served to cloud web UI.
+ * Precomputed class hierarchy (OWLAPI structural reasoner), served to cloud web UI.
  */
 @Document(collection = "hierarchy_snapshots")
 public class HierarchySnapshotDoc {

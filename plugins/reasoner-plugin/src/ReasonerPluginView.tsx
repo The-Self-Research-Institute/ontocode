@@ -1,6 +1,6 @@
 /**
- * Protégé-Style Reasoner Plugin
- * Complete implementation matching desktop Protégé reasoner functionality
+ * OWL Reasoner Plugin
+ * OWL reasoner UI for consistency checking, classification, and inference
  * Includes explanation tooltips, class hierarchy view, and full reasoning features
  */
 
@@ -71,6 +71,7 @@ interface ReasonerPluginProps {
   inferredClassHierarchy?: any[];
   inferredObjectPropertyHierarchy?: any[];
   inferredDataPropertyHierarchy?: any[];
+  inferredAxioms?: any[];
   onStartReasoner?: () => Promise<void>;
   onStopReasoner?: () => void;
   onSelectReasoner?: (reasoner: string) => void;
@@ -230,7 +231,7 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
   );
 };
 
-export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
+export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   projectId,
   apiBaseUrl = '',
   selectedReasoner: dashboardSelectedReasoner,
@@ -241,6 +242,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   inferredClassHierarchy: dashboardInferredHierarchy,
   inferredObjectPropertyHierarchy: dashboardInferredObjectPropertyHierarchy,
   inferredDataPropertyHierarchy: dashboardInferredDataPropertyHierarchy,
+  inferredAxioms: dashboardInferredAxioms,
   onStartReasoner: dashboardStartReasoner,
   onStopReasoner: dashboardStopReasoner,
   onSelectReasoner: dashboardSelectReasoner,
@@ -256,7 +258,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   
   // Ensure the API base URL doesn't end with a slash
   const normalizedApiBaseUrl = resolvedApiBaseUrl.replace(/\/$/, '');
-  // console.log('[ProtegeReasonerPlugin] Using API base URL:', normalizedApiBaseUrl);
+  // console.log('[ReasonerPluginView] Using API base URL:', normalizedApiBaseUrl);
   
   // Use Dashboard state if provided, otherwise use local state
   const usingDashboardState = !!dashboardStartReasoner;
@@ -305,6 +307,25 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   const isRunning = dashboardIsRunning ?? localIsRunning;
   const isLoading = dashboardIsLoading ?? localIsLoading;
   const reasonerResults = dashboardReasonerResults || localReasonerResults;
+
+  // Derived values for the UI. Placed here (rather than down with the rest of
+  // the render-derived values) so fetchInconsistencyExplanation, defined below,
+  // can close over isOntologyInconsistent without a TS "used before declaration"
+  // error — useCallback only invokes the closure later, once these are assigned,
+  // but TS's control-flow analysis doesn't reason about that deferral.
+  const displayStats = reasonerResults?.stats || stats || null;
+  const unsatList = reasonerResults?.unsatisfiableClasses || [];
+  const equivalentGroups = reasonerResults?.equivalentClasses || [];
+  const consistencyData = dashboardConsistencyResult || null;
+  const consistencyUnsat = consistencyData?.unsatisfiableClasses || [];
+  const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
+  const consistentFlag = (displayStats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
+  const unsatRaw = displayStats?.unsatisfiableClassesRaw;
+  const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1 || !!(
+    (displayStats && ((displayStats.unsatisfiableClasses ?? 0) > 0 || displayStats.isConsistent === false)) ||
+    combinedUnsat.length > 0
+  );
+
   const tooltipRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const classRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -362,22 +383,52 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     };
   }, [showReasonerMenu]);
 
+  // Backend endpoints that can be offloaded to the reasoner-worker (consistency,
+  // realization, inferred-axioms — classification has its own dedicated status
+  // endpoint and is polled separately below) reply with 202 + {async, jobId, status}
+  // instead of the result body when the worker is enabled. /api/dl-query/jobs/{jobId}
+  // works as the poll target regardless of which service originally submitted the
+  // job — it falls back to asking the worker directly when it has no local record.
+  const pollWorkerJob = useCallback(async (jobId: string, timeoutMs = 10 * 60 * 1000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const res = await authFetch(`${normalizedApiBaseUrl}/api/dl-query/jobs/${jobId}`);
+      if (!res.ok) {
+        throw new Error(`Poll failed: ${res.statusText}`);
+      }
+      const job = await res.json();
+      const status = String(job?.status || '').toUpperCase();
+      if (status === 'COMPLETED') return job;
+      if (status === 'FAILED') throw new Error(job.error || job.message || 'Reasoning job failed');
+    }
+    throw new Error('Reasoning job timed out');
+  }, [normalizedApiBaseUrl]);
+
   const fetchInferredAxioms = useCallback(async (reasonerType: string) => {
     try {
       const encodedProjectId = encodeURIComponent(projectId);
       const response = await authFetch(
         `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/inferred-axioms?reasonerType=${reasonerType}`,
       );
-      if (!response.ok) return;
-      const data = await response.json();
+      if (!response.ok) {
+        console.warn(`[ReasonerPluginView] inferred-axioms request failed: ${response.status} ${response.statusText}`);
+        return;
+      }
+      let data = await response.json();
+      if (data.async && (data.jobId || data.taskId)) {
+        data = await pollWorkerJob(data.jobId || data.taskId);
+      }
       if (data.axioms && Array.isArray(data.axioms)) {
         setInferredAxioms(data.axioms);
         setInferredAxiomsTotal(data.totalInferredAxioms || data.axioms.length);
+      } else {
+        console.warn('[ReasonerPluginView] inferred-axioms response missing axioms array:', data);
       }
     } catch (err) {
-      console.warn('[ProtegeReasonerPlugin] Failed to fetch inferred axioms:', err);
+      console.warn('[ReasonerPluginView] Failed to fetch inferred axioms:', err);
     }
-  }, [projectId, normalizedApiBaseUrl]);
+  }, [projectId, normalizedApiBaseUrl, pollWorkerJob]);
 
   // Start reasoning
   const startReasoner = useCallback(async (task: 'consistency' | 'classification' | 'realization') => {
@@ -410,7 +461,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       };
       const reasonerType = reasonerMap[selectedReasoner.toLowerCase()] || 'HERMIT';
 
-      console.log('[ProtegeReasonerPlugin] Starting reasoner:', {
+      console.log('[ReasonerPluginView] Starting reasoner:', {
         task,
         reasonerType,
         endpoint: `${normalizedApiBaseUrl}${endpoint}`,
@@ -424,16 +475,26 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         body: JSON.stringify({ reasonerType })
       });
 
-      console.log('[ProtegeReasonerPlugin] Response status:', response.status);
+      console.log('[ReasonerPluginView] Response status:', response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('[ProtegeReasonerPlugin] Error response:', errorText);
+        console.error('[ReasonerPluginView] Error response:', errorText);
         throw new Error(`Reasoning failed: ${response.statusText}. ${errorText}`);
       }
 
       let result = await response.json();
-      console.log('[ProtegeReasonerPlugin] Reasoning result:', result);
+      console.log('[ReasonerPluginView] Reasoning result:', result);
+
+      // Consistency/realization have no dedicated status endpoint of their own — when
+      // the reasoner-worker is enabled, the initial POST above returns a queued job
+      // (202 + {async, jobId}) instead of the result, so it must be polled generically.
+      // Classification is handled separately below via its own /classify/status
+      // endpoint, which already understands both the worker and non-worker paths.
+      if (result.async && (result.jobId || result.taskId) && task !== 'classification') {
+        setReasonerStatus(`Running ${task}... (queued)`);
+        result = await pollWorkerJob(result.jobId || result.taskId);
+      }
 
       // Handle async classify response (taskId-based polling)
       if (result.taskId && task === 'classification') {
@@ -477,8 +538,14 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         setEquivalentClasses(result.equivalentClasses || []);
         setUnsatisfiableClasses(result.unsatisfiableClasses || []);
         
-        // Generate explanations for classes
-        generateExplanations(result);
+        // Generate explanations for classes. Guarded: a throw here (e.g. an
+        // unexpected field shape from the async classify/status payload) must
+        // not prevent the inferred-axioms fetch below from running.
+        try {
+          generateExplanations(result);
+        } catch (explainErr) {
+          console.error('[ReasonerPluginView] generateExplanations failed:', explainErr);
+        }
         await fetchInferredAxioms(reasonerType);
       } else if (task === 'realization') {
         // Set consistency from realization result
@@ -496,12 +563,12 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
       setReasonerStatus(`${task} completed successfully`);
     } catch (error) {
-      console.error('[ProtegeReasonerPlugin] Reasoning error:', error);
+      console.error('[ReasonerPluginView] Reasoning error:', error);
       setReasonerStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms]);
+  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms, pollWorkerJob]);
 
   // Generate explanations for reasoning results
   const generateExplanations = (classificationResult: any) => {
@@ -561,8 +628,13 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
   // Fetch detailed inconsistency explanation
   const fetchInconsistencyExplanation = useCallback(async () => {
-    if (isConsistent !== false) return;
+    // Uses the same isOntologyInconsistent flag the Explain button's `disabled`
+    // prop checks (rather than the narrower `isConsistent` state, which some
+    // code paths — e.g. a classify response with isConsistent === undefined —
+    // never update) so this guard can't diverge from what the user can click.
+    if (!isOntologyInconsistent) return;
 
+    setInconsistencyExplanation(null);
     setLocalIsRunning(true);
     try {
       const reasonerMap: Record<string, string> = {
@@ -596,7 +668,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, selectedReasoner, isConsistent, resolvedApiBaseUrl]);
+  }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl]);
 
   // Handle class hover
   const handleClassHover = (classIri: string, event: React.MouseEvent) => {
@@ -695,26 +767,13 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
   const styles = getStyles(isDark);
 
-  // Derived values for the UI
-  const displayStats = reasonerResults?.stats || stats || null;
-  const unsatList = reasonerResults?.unsatisfiableClasses || [];
-  const equivalentGroups = reasonerResults?.equivalentClasses || [];
-  const consistencyData = dashboardConsistencyResult || null;
-  const consistencyUnsat = consistencyData?.unsatisfiableClasses || [];
-  const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
-  const consistentFlag = (displayStats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
-  const unsatRaw = displayStats?.unsatisfiableClassesRaw;
-  const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1 || !!(
-    (displayStats && ((displayStats.unsatisfiableClasses ?? 0) > 0 || displayStats.isConsistent === false)) ||
-    combinedUnsat.length > 0
-  );
-  
   // Use inferred hierarchies if available, otherwise fall back to reasoner results
   const classHierarchyToRender = useMemo(() => {
-    const source = dashboardInferredHierarchy && dashboardInferredHierarchy.length > 0 
-      ? dashboardInferredHierarchy 
+    const source = dashboardInferredHierarchy && dashboardInferredHierarchy.length > 0
+      ? dashboardInferredHierarchy
       : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || []);
-    return ensureTree(source);
+    const tree = ensureTree(source);
+    return tree;
   }, [dashboardInferredHierarchy, reasonerResults]);
 
   const objectPropertyHierarchyToRender = useMemo(() => {
@@ -723,6 +782,13 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       : (reasonerResults?.objectPropertyHierarchy || reasonerResults?.objectPropertyHierarchyTree || reasonerResults?.objectProperties || objectPropertyHierarchy || []);
     return ensureTree(source);
   }, [dashboardInferredObjectPropertyHierarchy, reasonerResults, objectPropertyHierarchy]);
+
+  // Dashboard's own startReasoner() flow fetches inferred axioms itself (Start button
+  // always prefers dashboardStartReasoner when provided, so this plugin's own
+  // fetchInferredAxioms below never runs in that mode) — prefer that result when present.
+  const inferredAxiomsToRender = dashboardInferredAxioms && dashboardInferredAxioms.length > 0
+    ? dashboardInferredAxioms
+    : inferredAxioms;
 
   const dataPropertyHierarchyToRender = useMemo(() => {
     const source = dashboardInferredDataPropertyHierarchy && dashboardInferredDataPropertyHierarchy.length > 0
@@ -1005,7 +1071,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
   return (
     <div className={`flex flex-col h-full ${isDark ? 'bg-gray-900 text-gray-100' : 'bg-white text-gray-900'}`}>
-      {/* Protégé-style Toolbar */}
+      {/* Toolbar */}
       <div className={`flex items-center gap-2 px-3 py-2 border-b flex-shrink-0 ${
         isDark ? 'border-gray-700 bg-gray-800' : 'border-gray-300 bg-gray-50'
       }`}>
@@ -1222,13 +1288,13 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                 Select a reasoner from the dropdown menu above.
               </p>
             </div>
-            {consistencyData && (
+            {(consistencyData || displayStats) && (
               <div className={`mt-4 px-4 py-2 rounded-md text-sm border ${
-                (consistencyData.consistent === false || consistencyData.isConsistent === false)
+                isOntologyInconsistent
                   ? (isDark ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-red-50 border-red-200 text-red-700')
                   : (isDark ? 'bg-green-900/20 border-green-800 text-green-400' : 'bg-green-50 border-green-200 text-green-700')
               }`}>
-                {(consistencyData.consistent === false || consistencyData.isConsistent === false)
+                {isOntologyInconsistent
                   ? '⚠ Ontology is inconsistent'
                   : '✓ Ontology is consistent'}
               </div>
@@ -1246,7 +1312,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
             </div>
           </div>
         ) : (
-          /* Results View - Protégé Style Layout */
+          /* Results View Layout */
           <>
             {/* Left Panel - Consistency & Stats */}
             <div className={`w-80 border-r flex flex-col overflow-hidden ${
@@ -1345,7 +1411,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                       ⚠ Unsatisfiable Classes ({combinedUnsat.length})
                     </div>
                     <button
-                      onClick={() => setShowExplainDialog(true)}
+                      onClick={() => { setShowExplainDialog(true); fetchInconsistencyExplanation(); }}
                       className="text-[10px] px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700"
                       disabled={isLoading}
                     >
@@ -1406,7 +1472,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
               <div className={`px-4 py-3 border-t mt-auto ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-gray-50'}`}>
                 <div className="space-y-2">
                   <button
-                    onClick={() => setShowExplainDialog(true)}
+                    onClick={() => { setShowExplainDialog(true); fetchInconsistencyExplanation(); }}
                     disabled={!isOntologyInconsistent || isLoading}
                     className={`w-full px-3 py-2 text-xs font-medium border rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
                       isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600 text-gray-200' : 'bg-white border-gray-300 hover:bg-gray-50 text-gray-700'
@@ -1519,7 +1585,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                 )}
 
                 {activeTab === 'inferredAxioms' && (
-                  inferredAxioms.length > 0 ? (
+                  inferredAxiomsToRender.length > 0 ? (
                     <div className="space-y-3 text-sm">
                       <div className="flex items-center gap-2">
                         <input
@@ -1532,13 +1598,13 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                           }`}
                         />
                         <span className={`text-xs whitespace-nowrap ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                          {inferredAxiomsTotal > inferredAxioms.length
-                            ? `Showing ${inferredAxioms.length} of ${inferredAxiomsTotal}`
-                            : `${inferredAxioms.length} axioms`}
+                          {inferredAxiomsTotal > inferredAxiomsToRender.length
+                            ? `Showing ${inferredAxiomsToRender.length} of ${inferredAxiomsTotal}`
+                            : `${inferredAxiomsToRender.length} axioms`}
                         </span>
                       </div>
                       <div className="space-y-1">
-                        {inferredAxioms
+                        {inferredAxiomsToRender
                           .filter((ax) => {
                             const q = inferredAxiomsFilter.trim().toLowerCase();
                             if (!q) return true;
@@ -1599,10 +1665,78 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                     <div className="font-bold mb-1">Ontology is Inconsistent</div>
                     <div className="text-sm">The reasoner has detected logical contradictions in the ontology.</div>
                   </div>
-                  {/* Add more detailed explanation logic here if available */}
-                  <div className="text-sm opacity-80">
-                    Detailed explanation for inconsistency is being computed...
-                  </div>
+
+                  {isRunning && !inconsistencyExplanation ? (
+                    <div className="text-sm opacity-80 flex items-center gap-2">
+                      <RefreshCw size={14} className="animate-spin" />
+                      Computing explanation...
+                    </div>
+                  ) : inconsistencyExplanation?.causes?.length ? (
+                    inconsistencyExplanation.causes.map((cause: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-md border text-sm ${
+                          cause.severity === 'ERROR'
+                            ? (isDark ? 'bg-red-900/10 border-red-900/50' : 'bg-red-50 border-red-200')
+                            : cause.severity === 'INFO'
+                              ? (isDark ? 'bg-blue-900/10 border-blue-900/50' : 'bg-blue-50 border-blue-200')
+                              : (isDark ? 'bg-yellow-900/10 border-yellow-900/50' : 'bg-yellow-50 border-yellow-200')
+                        }`}
+                      >
+                        <div className="font-semibold mb-1">{cause.title}</div>
+                        {cause.description && <div className="opacity-80 mb-2">{cause.description}</div>}
+
+                        {Array.isArray(cause.classes) && cause.classes.length > 0 && (
+                          <ul className="space-y-1">
+                            {cause.classes.map((cls: any, i: number) => (
+                              <li key={i} className="text-xs">
+                                <span className="font-medium">{cls.label}</span>
+                                {cls.reason && <span className="opacity-70"> — {cls.reason}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {Array.isArray(cause.violations) && cause.violations.length > 0 && (
+                          <ul className="space-y-1">
+                            {cause.violations.map((v: any, i: number) => (
+                              <li key={i} className="text-xs">
+                                {v.individual ? (
+                                  <>
+                                    <span className="font-medium">{v.individual}</span> is asserted as{' '}
+                                    <span className="font-medium">{(v.disjointClasses || []).join(' AND ')}</span>,
+                                    which are declared disjoint.
+                                  </>
+                                ) : v.property ? (
+                                  <>
+                                    <span className="font-medium">{v.individual}</span> is the {v.constraintKind}{' '}
+                                    of <span className="font-medium">{v.property}</span>, which requires type{' '}
+                                    <span className="font-medium">{v.requiredClass}</span> — but it's already
+                                    asserted as <span className="font-medium">{v.conflictingClass}</span>, which is
+                                    declared disjoint with {v.requiredClass}.
+                                  </>
+                                ) : (
+                                  JSON.stringify(v)
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {Array.isArray(cause.tips) && cause.tips.length > 0 && (
+                          <ul className="list-disc list-inside space-y-1 text-xs opacity-80">
+                            {cause.tips.map((tip: string, i: number) => (
+                              <li key={i}>{tip}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm opacity-80">
+                      No further detail available for this inconsistency.
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-8 text-gray-500 italic">
@@ -1773,4 +1907,4 @@ const getStyles = (isDark: boolean): { [key: string]: React.CSSProperties } => (
   }
 });
 
-export default ProtegeReasonerPlugin;
+export default ReasonerPluginView;

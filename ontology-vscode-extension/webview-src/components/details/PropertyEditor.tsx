@@ -178,6 +178,30 @@ const PropertyEditor: React.FC<{
     const [isChainDialogOpen, setIsChainDialogOpen] = useState(false);
     const [inferredDetails, setInferredDetails] = useState<any>(null);
     const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
+    const [classLabelLookup, setClassLabelLookup] = useState<Map<string, string>>(new Map());
+
+    // Domain (and object-property Range) items are class IRIs — resolve them to labels for
+    // display, same as AnnotationPropertyEditor does for super-property IRIs. Without this,
+    // MultiSelectItem's fallback (getDisplayName) shows the raw IRI's last path segment.
+    useEffect(() => {
+        if (!projectId) return;
+        let alive = true;
+        (async () => {
+            try {
+                const resp = await apiClient.get<any>(`/api/ontology/classes/all/${projectId}?limit=5000`);
+                if (!alive) return;
+                const classes: any[] = resp?.data?.classes ?? resp?.data ?? resp?.classes ?? (Array.isArray(resp) ? resp : []);
+                const lookup = new Map<string, string>();
+                for (const c of classes) {
+                    if (c?.id && c?.label) lookup.set(c.id, c.label);
+                }
+                setClassLabelLookup(lookup);
+            } catch (error) {
+                console.warn('[PropertyEditor] Failed to load class label lookup:', error);
+            }
+        })();
+        return () => { alive = false; };
+    }, [projectId]);
 
     useEffect(() => {
         // Always reset previous entity's inferred details immediately so we
@@ -406,7 +430,7 @@ const PropertyEditor: React.FC<{
             </div>
             <CollaboratorPresenceBar entityId={item.id} />
 
-            {/* Tabs - Protégé style */}
+            {/* Tabs */}
             <div className="flex border-b border-gray-200 bg-gray-50">
                 <button 
                     onClick={() => setActiveTab('annotations')}
@@ -447,7 +471,7 @@ const PropertyEditor: React.FC<{
             <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
                 {activeTab === 'annotations' && (
                     <div className="space-y-0">
-                        {/* Annotations Panel Header - Protégé style */}
+                        {/* Annotations Panel Header */}
                         <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
                             <span className="text-sm font-semibold">Annotations: {item.label}</span>
                             <div className="flex items-center gap-1">
@@ -472,7 +496,7 @@ const PropertyEditor: React.FC<{
 
                 {activeTab === 'description' && (
                     <div className="space-y-0">
-                        {/* Description Panel Header - Protégé style */}
+                        {/* Description Panel Header */}
                         <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
                             <span className="text-sm font-semibold">Description: {item.label}</span>
                         </div>
@@ -566,6 +590,7 @@ const PropertyEditor: React.FC<{
                             onNavigate={onNavigate}
                             projectId={projectId}
                             parentEntityIri={item.id}
+                            labelLookup={classLabelLookup}
                         />
                         )}
 
@@ -582,6 +607,7 @@ const PropertyEditor: React.FC<{
                             onNavigate={onNavigate}
                             projectId={projectId}
                             parentEntityIri={item.id}
+                            labelLookup={isObjectProperty ? classLabelLookup : undefined}
                         />
                         )}
 

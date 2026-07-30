@@ -4,9 +4,9 @@ import type { TreeNode } from '../../types';
 import apiClient from '../../services/apiClient';
 
 /**
- * AnnotationPropertyDomainDialog - Protégé-style dialog for selecting annotation property domains
+ * AnnotationPropertyDomainDialog - dialog for selecting annotation property domains
  * 
- * Based on Protégé's OWLAnnotationPropertyDomainEditor.java:
+ * Annotation property domain selection:
  * - Two tabs: "Select Class" (class hierarchy selector) and "Edit raw IRI" (direct IRI input)
  * - Size: 500x500 in original
  * - Uses OWLClassSelectorWrapper for class selection
@@ -209,7 +209,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
               <span className="w-5 flex-shrink-0" />
             )}
 
-            {/* Class Icon (yellow circle like Protégé) */}
+            {/* Class Icon (yellow circle ) */}
             <span className={`w-3 h-3 rounded-full flex-shrink-0 ${
               isSelected ? 'bg-amber-300' : 'bg-amber-400'
             }`} />
@@ -239,7 +239,12 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={handleClose}>
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) handleClose();
+      }}
+    >
       <div 
         className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 flex flex-col" 
         style={{ height: '500px', maxHeight: '85vh' }}
@@ -259,7 +264,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
           </button>
         </div>
 
-        {/* Toolbar - Protégé style: Add subclass, Add sibling, Delete, Filter dropdown */}
+        {/* Toolbar: Add subclass, Add sibling, Delete, Filter dropdown */}
         {showToolbar && (
           <div className="flex items-center gap-1 px-2 py-1.5 border-b bg-gray-50">
             {/* Add Subclass Button */}
@@ -319,7 +324,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
           </div>
         )}
 
-        {/* Tabs - Protégé style */}
+        {/* Tabs */}
         <div className="flex border-b border-gray-200 bg-gray-50">
           <button
             onClick={() => setActiveTab('select-class')}

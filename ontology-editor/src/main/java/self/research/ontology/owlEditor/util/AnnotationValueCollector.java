@@ -5,7 +5,7 @@ import org.eclipse.rdf4j.model.Value;
 import java.util.*;
 
 /**
- * Collects multiple annotation values per property (Protégé parity).
+ * Collects multiple annotation values per property.
  */
 public final class AnnotationValueCollector {
 

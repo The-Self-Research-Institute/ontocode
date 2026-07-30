@@ -3,7 +3,7 @@ import { X, Plus, Trash2 } from 'lucide-react';
 import type { Datatype } from '../../types';
 
 /**
- * DataPropertyRangeDialog - Protégé-style dialog for selecting data property ranges
+ * DataPropertyRangeDialog - dialog for selecting data property ranges
  */
 
 interface DataPropertyRangeDialogProps {
@@ -140,7 +140,12 @@ const DataPropertyRangeDialog: React.FC<DataPropertyRangeDialogProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={handleClose}>
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) handleClose();
+      }}
+    >
       <div
         className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 flex flex-col max-h-[80vh]"
         onClick={(e) => e.stopPropagation()}

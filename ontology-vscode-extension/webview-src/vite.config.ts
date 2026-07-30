@@ -45,6 +45,14 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           ws: true,
         },
+        // The reasoner-plugin calls this alternate route (gateway rewrites
+        // /plugin-service/api/reasoner/** -> /api/reasoner/** on the plugin service) rather
+        // than /api/**. Without this entry Vite has no prefix match for it, serves its own
+        // 404 as a static-file miss, and the request never reaches the gateway at all.
+        '/plugin-service': {
+          target: env.VITE_API_PROXY_TARGET || 'http://localhost:80',
+          changeOrigin: true,
+        },
       },
     },
     plugins: [

@@ -34,9 +34,9 @@ export type LayoutAlgorithm =
 
 export type VisualizationType =
   | 'force'           // Force-directed graph (default)
-  | 'vowl'            // WebVOWL notation
+  | 'vowl'            // VOWL notation
   | 'ontograph'       // OntoGraph hierarchical view
-  | 'spatial3d';      // Obsidian-style spatial graph with projected depth
+  | 'spatial3d';      // OntoCode spatial graph with projected depth
 
 // Higher-order relationships (reification)
 export interface ReifiedRelation {

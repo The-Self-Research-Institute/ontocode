@@ -3,9 +3,9 @@ import { X } from 'lucide-react';
 import type { TreeNode, Datatype } from '../../types';
 
 /**
- * AnnotationPropertyRangeDialog - Protégé-style dialog for selecting annotation property ranges
+ * AnnotationPropertyRangeDialog - dialog for selecting annotation property ranges
  * 
- * Based on Protégé's OWLAnnotationPropertyRangeEditor.java:
+ * Based on 's OWLAnnotationPropertyRangeEditor.java:
  * - Two tabs: "Select Datatype" (for literal values) and "Edit raw IRI" (direct IRI input)
  * - Annotation property ranges can be:
  *   - Datatypes (xsd:string, xsd:integer, etc.) for literal values
@@ -104,7 +104,12 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={handleClose}>
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) handleClose();
+      }}
+    >
       <div 
         className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 flex flex-col" 
         style={{ height: '500px', maxHeight: '85vh' }}
@@ -124,7 +129,7 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
           </button>
         </div>
 
-        {/* Tabs - Protégé style */}
+        {/* Tabs */}
         <div className="flex border-b border-gray-200 bg-gray-50">
           <button
             onClick={() => setActiveTab('select-datatype')}
@@ -189,7 +194,7 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
                             }
                           }}
                         >
-                          {/* Datatype Icon (purple rectangle like Protégé) */}
+                          {/* Datatype Icon (purple rectangle ) */}
                           <span className={`w-3 h-3 rounded-sm flex-shrink-0 ${
                             isSelected ? 'bg-purple-300' : 'bg-purple-500'
                           }`} />

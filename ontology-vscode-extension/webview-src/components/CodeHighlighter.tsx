@@ -1701,7 +1701,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
           style={{ backgroundColor: "rgba(0,0,0,0.6)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setShowErrorDialog(false); }}
+          onClick={(e) => { if (e.target === e.currentTarget && e.button === 0) setShowErrorDialog(false); }}
         >
           <div className="bg-gray-900 border border-red-700 rounded-lg shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[70vh]">
             {/* Dialog header */}

@@ -254,7 +254,7 @@ const ObjectPropertyExpressionDialog: React.FC<ObjectPropertyExpressionDialogPro
               <span className="w-5 flex-shrink-0" />
             )}
             
-            {/* Property Icon (colored rectangle like Protégé) */}
+            {/* Property Icon (colored rectangle ) */}
             <span className={`w-3 h-3 rounded-sm flex-shrink-0 ${
               isSelected ? themeColors.primaryLight : themeColors.primary
             }`} />
@@ -285,7 +285,12 @@ const ObjectPropertyExpressionDialog: React.FC<ObjectPropertyExpressionDialogPro
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={handleClose}>
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && e.button === 0) handleClose();
+      }}
+    >
       <div 
         className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 flex flex-col max-h-[70vh]" 
         onClick={e => e.stopPropagation()}
