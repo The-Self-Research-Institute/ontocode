@@ -16,7 +16,7 @@
  *      download the official MongoDB Community Server release (checksum-verified)
  *      if not present. macOS/Linux still require the manual download — see the
  *      warning printed below.
- *   4. Bundle a minimal JRE via jlink (preferred) or download Temurin 17 JRE
+ *   4. Bundle a minimal JRE via jlink (preferred) or download Temurin 21 JRE
  *
  * Result layout inside electron-app/resources/backend/:
  *
@@ -45,6 +45,15 @@ const RESOURCES  = path.resolve(__dirname, '..', 'resources', 'backend');
 const JARS_DIR   = path.join(RESOURCES, 'jars');
 const JRE_DIR    = path.join(RESOURCES, 'jre');
 
+// Cross-building for a platform other than the one this script runs on (e.g.
+// preparing a Linux bundle from Windows for an electron-builder --linux run).
+// jlink can't cross-compile — it only ever produces a runtime for the host
+// it's invoked on — so when this differs from process.platform we skip jlink
+// entirely and go straight to downloading the prebuilt Temurin JRE, and fetch
+// mongod for the target platform instead of copying/downloading the host's.
+const TARGET_PLATFORM = process.env.TARGET_PLATFORM || process.platform;
+const CROSS_BUILDING = TARGET_PLATFORM !== process.platform;
+
 // ── Fuseki download (fallback when fuseki-docker/fuseki-server.jar is absent) ──
 // Same version + checksum pinned in fuseki-docker/Dockerfile — keep in sync.
 const FUSEKI_VERSION = '6.1.0';
@@ -58,6 +67,13 @@ const FUSEKI_ARCHIVE_URL = `https://archive.apache.org/dist/jena/binaries/apache
 const MONGODB_VERSION = '6.0.29';
 const MONGODB_WIN32_URL = `https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-${MONGODB_VERSION}.zip`;
 const MONGODB_WIN32_SHA256 = 'abfd03e5e02c962004e0b46d47777cdd3bca767b1a200dcafc2194cc5415cd55';
+
+// Linux builds are distro-specific (glibc/OpenSSL version dependent), unlike the
+// generic Windows/Mac builds — this one targets Ubuntu 22.04 (jammy), the default
+// WSL distro. Checksum pulled from the official .sha256 MongoDB publishes alongside
+// the release (fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-<ver>.tgz.sha256).
+const MONGODB_LINUX_UBUNTU2204_URL = `https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz`;
+const MONGODB_LINUX_UBUNTU2204_SHA256 = '46de5a28be8066e0c44b60e9919e5edd00c28f55fc187f8e0c60ab38dedc9054';
 
 // ── Minimal modules needed for Spring Boot + Jena Fuseki ────────────────────
 const JLINK_MODULES = [
@@ -85,11 +101,11 @@ const JLINK_MODULES = [
     'jdk.zipfs',
 ].join(',');
 
-// ── Temurin 17 JRE download URLs per platform ────────────────────────────────
+// ── Temurin 21 JRE download URLs per platform ────────────────────────────────
 const TEMURIN_URLS = {
-    win32:  'https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jre/hotspot/normal/eclipse',
-    darwin: 'https://api.adoptium.net/v3/binary/latest/17/ga/mac/x64/jre/hotspot/normal/eclipse',
-    linux:  'https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jre/hotspot/normal/eclipse',
+    win32:  'https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse',
+    darwin: 'https://api.adoptium.net/v3/binary/latest/21/ga/mac/x64/jre/hotspot/normal/eclipse',
+    linux:  'https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jre/hotspot/normal/eclipse',
 };
 
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); }
@@ -217,6 +233,10 @@ async function copyMongod() {
             console.log(`  → Not found locally — downloading MongoDB Community Server ${MONGODB_VERSION}…`);
             ok = await downloadMongodWin32(cachedSrc, dest);
         }
+        if (!ok && platform === 'linux' && (platform === TARGET_PLATFORM || CROSS_BUILDING)) {
+            console.log(`  → Not found locally — downloading MongoDB Community Server ${MONGODB_VERSION} (Ubuntu 22.04)…`);
+            ok = await downloadMongodLinuxUbuntu2204(cachedSrc, dest);
+        }
         if (!ok) anyMissing = true;
     }
     if (anyMissing) {
@@ -277,6 +297,58 @@ async function downloadMongodWin32(cachedSrc, dest) {
     }
 }
 
+/**
+ * Download the official MongoDB Community Server Linux build (checksum-verified),
+ * for cross-building a Linux bundle from a non-Linux host — see downloadMongodWin32
+ * for the same pattern. Ubuntu 22.04 specifically (Linux builds are distro-specific
+ * unlike Windows/Mac); tar preserves the executable bit through extraction, and we
+ * chmod it explicitly afterward since the host filesystem here may not honor it.
+ */
+async function downloadMongodLinuxUbuntu2204(cachedSrc, dest) {
+    const archivePath = path.join(RESOURCES, `mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz`);
+    ensureDir(RESOURCES);
+
+    try {
+        await downloadFile(MONGODB_LINUX_UBUNTU2204_URL, archivePath);
+
+        const actualSha256 = crypto.createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
+        if (actualSha256 !== MONGODB_LINUX_UBUNTU2204_SHA256) {
+            throw new Error(
+                `Checksum mismatch for mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz\n` +
+                `       expected: ${MONGODB_LINUX_UBUNTU2204_SHA256}\n       got:      ${actualSha256}`
+            );
+        }
+        console.log('  ✓  Checksum verified');
+
+        const extractDir = path.join(RESOURCES, `_mongodb-extract-linux-${MONGODB_VERSION}`);
+        fs.rmSync(extractDir, { recursive: true, force: true });
+        ensureDir(extractDir);
+        const tarArchivePath = archivePath.replace(/\\/g, '/');
+        const tarExtractDir = extractDir.replace(/\\/g, '/');
+        execSync(`tar --force-local -xzf "${tarArchivePath}" -C "${tarExtractDir}"`, { stdio: 'inherit', timeout: 120_000 });
+
+        const extractedBin = findFileRecursive(extractDir, 'mongod');
+        if (!extractedBin) throw new Error(`mongod not found anywhere inside the extracted archive`);
+
+        ensureDir(path.dirname(dest));
+        fs.copyFileSync(extractedBin, dest);
+        fs.chmodSync(dest, 0o755);
+        // Also cache it where copyMongod() checks first, so future runs skip the download.
+        ensureDir(path.dirname(cachedSrc));
+        fs.copyFileSync(extractedBin, cachedSrc);
+        fs.chmodSync(cachedSrc, 0o755);
+        console.log('  ✓  Downloaded and installed mongod (linux/ubuntu2204)');
+
+        fs.rmSync(extractDir, { recursive: true, force: true });
+        fs.rmSync(archivePath, { force: true });
+        return true;
+    } catch (err) {
+        console.error(`  ✗  MongoDB (Linux) download failed: ${err.message}`);
+        fs.rmSync(archivePath, { force: true });
+        return false;
+    }
+}
+
 /** Recursively search a directory tree for the first file matching `name`. */
 function findFileRecursive(dir, name) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -295,9 +367,12 @@ function findFileRecursive(dir, name) {
 async function bundleJre() {
     console.log('\n[4/4] JRE (bundled — no system Java required at runtime)');
 
-    // Already there?
-    const javaBin = path.join(JRE_DIR, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
-    if (fs.existsSync(javaBin)) {
+    // Already there? Check for the TARGET platform's binary name specifically — a
+    // java.exe left over from a prior Windows prepare must not be mistaken for a
+    // valid Linux JRE (it naturally won't exist under the "java" name we look for
+    // when cross-building, so this falls through to a fresh fetch correctly).
+    const javaBin = path.join(JRE_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java');
+    if (!CROSS_BUILDING && fs.existsSync(javaBin)) {
         try {
             const ver = execFileSync(javaBin, ['--version'], { encoding: 'utf8', timeout: 5000 });
             console.log(`  ✓  Bundled JRE already present: ${ver.split('\n')[0].trim()}`);
@@ -306,12 +381,18 @@ async function bundleJre() {
             console.warn('  ⚠  Existing JRE unreadable — re-creating');
             fs.rmSync(JRE_DIR, { recursive: true, force: true });
         }
+    } else if (CROSS_BUILDING && fs.existsSync(javaBin)) {
+        // Can't exec-verify a foreign-platform binary from here — but if the
+        // TARGET platform's own binary name is already present (not just any
+        // leftover JRE dir), trust it rather than re-fetching every single run.
+        console.log(`  ✓  Bundled JRE for ${TARGET_PLATFORM} already present (existence check only — can't exec-verify a foreign binary)`);
+        return;
     }
 
-    // Try jlink first (fastest, smallest — needs JDK on the build machine)
-    if (await tryJlink()) return;
+    // jlink can't cross-compile — only try it when building for the host's own platform.
+    if (!CROSS_BUILDING && await tryJlink()) return;
 
-    // Fall back to downloading Temurin JRE
+    // Fall back to downloading Temurin JRE (the only option when cross-building)
     await downloadTemurin();
 }
 
@@ -346,7 +427,7 @@ async function tryJlink() {
 }
 
 async function downloadTemurin() {
-    const platform = process.platform;
+    const platform = TARGET_PLATFORM;
     const url = TEMURIN_URLS[platform];
     if (!url) {
         console.error(`  ✗  No Temurin URL configured for platform "${platform}"`);
@@ -354,7 +435,7 @@ async function downloadTemurin() {
         return;
     }
 
-    console.log(`  → Downloading Temurin 17 JRE for ${platform}…`);
+    console.log(`  → Downloading Temurin 21 JRE for ${platform}…`);
     console.log(`     ${url}`);
 
     ensureDir(JRE_DIR);
@@ -367,10 +448,10 @@ async function downloadTemurin() {
         console.log('  → Extracting JRE…');
         extractJreArchive(archivePath, JRE_DIR, platform);
         fs.rmSync(archivePath, { force: true });
-        console.log('  ✓  Temurin 17 JRE extracted to resources/backend/jre/');
+        console.log('  ✓  Temurin 21 JRE extracted to resources/backend/jre/');
     } catch (err) {
         console.error(`  ✗  Download/extract failed: ${err.message}`);
-        console.error('     Manual option: download from https://adoptium.net/temurin/releases/?version=17');
+        console.error('     Manual option: download from https://adoptium.net/temurin/releases/?version=21');
         console.error(`     Extract to: electron-app/resources/backend/jre/`);
         console.error('     The jre/ folder must contain bin/java (or bin/java.exe on Windows)');
     }
@@ -429,12 +510,18 @@ function extractJreArchive(archivePath, targetDir, platform) {
             `powershell -NoProfile -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${targetDir}' -Force"`,
             { stdio: 'inherit', timeout: 120_000 },
         );
-        // Temurin extracts to jdk-17.x.x-jre\ — flatten it
+        // Temurin extracts to jdk-21.x.x-jre\ — flatten it
         flattenSingleSubdir(targetDir);
     } else {
-        // tar with strip-components to skip the top-level jdk-17.x.x-jre/ dir
+        // tar with strip-components to skip the top-level jdk-21.x.x-jre/ dir.
+        // --force-local + forward slashes: same Windows-bsdtar workaround as the
+        // Fuseki/Linux-mongo downloads above — without it, a Windows path like
+        // "E:\..." gets misread as a "host:path" remote-archive spec. Harmless
+        // no-ops on macOS/Linux tar, so this is safe regardless of the host.
+        const tarArchivePath = archivePath.replace(/\\/g, '/');
+        const tarTargetDir = targetDir.replace(/\\/g, '/');
         execSync(
-            `tar -xzf "${archivePath}" -C "${targetDir}" --strip-components=1`,
+            `tar --force-local -xzf "${tarArchivePath}" -C "${tarTargetDir}" --strip-components=1`,
             { stdio: 'inherit', timeout: 120_000 },
         );
     }
@@ -455,6 +542,9 @@ function flattenSingleSubdir(targetDir) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
     console.log('\n=== OntoCode Desktop — prepare-resources ===');
+    if (CROSS_BUILDING) {
+        console.log(`    Cross-building for TARGET_PLATFORM=${TARGET_PLATFORM} (host is ${process.platform})`);
+    }
     ensureDir(JARS_DIR);
 
     copyOwlEditorJar();
@@ -466,8 +556,8 @@ async function main() {
     const checks = {
         'desktop.jar':       path.join(JARS_DIR, 'desktop.jar'),
         'fuseki-server.jar': path.join(JARS_DIR, 'fuseki-server.jar'),
-        'mongod':            path.join(RESOURCES, 'mongodb', process.platform, `mongod${process.platform === 'win32' ? '.exe' : ''}`),
-        'JRE':               path.join(JRE_DIR, 'bin', process.platform === 'win32' ? 'java.exe' : 'java'),
+        'mongod':            path.join(RESOURCES, 'mongodb', TARGET_PLATFORM, `mongod${TARGET_PLATFORM === 'win32' ? '.exe' : ''}`),
+        'JRE':               path.join(JRE_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java'),
     };
     let allOk = true;
     for (const [label, p] of Object.entries(checks)) {

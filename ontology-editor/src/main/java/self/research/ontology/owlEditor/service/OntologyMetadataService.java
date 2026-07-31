@@ -32,16 +32,19 @@ public class OntologyMetadataService {
     private final ProjectMetadataService projectMetadataService;
     private final OntologyMutationService mutationService;
     private final GeneralClassAxiomService generalClassAxiomService;
+    private final ProjectImportService importService;
     private final Map<String, String> ontologyIriCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public OntologyMetadataService(SparqlDatasetService datasetService,
                                    ProjectMetadataService projectMetadataService,
                                    @Lazy OntologyMutationService mutationService,
-                                   GeneralClassAxiomService generalClassAxiomService) {
+                                   GeneralClassAxiomService generalClassAxiomService,
+                                   @Lazy ProjectImportService importService) {
         this.datasetService = datasetService;
         this.projectMetadataService = projectMetadataService;
         this.mutationService = mutationService;
         this.generalClassAxiomService = generalClassAxiomService;
+        this.importService = importService;
     }
 
     /**
@@ -91,7 +94,14 @@ public class OntologyMetadataService {
 
         // 2. Cache miss or incomplete - compute from GraphDB (slow path)
         log.info("📊 Computing fresh metadata for project {} (slow path, querying GraphDB)", projectId);
-        
+        // Desktop's Fuseki sync after a mutation is deferred — only pay for it here, on the
+        // actual SPARQL fallback, not on every call (this used to run unconditionally in the
+        // controller, forcing a Fuseki round-trip — and on desktop, a lazy Fuseki cold start —
+        // on every cache-hit call too, which is most of them).
+        if (importService != null) {
+            importService.syncProjectToFuseki(projectId);
+        }
+
         // Include filename and status from project metadata for UI context
         projectMetadataService.readStatus(projectId).ifPresent(status -> {
             metadata.put("filename", status.filename());
@@ -1167,6 +1177,10 @@ public class OntologyMetadataService {
         //    SPARQL namespace-usage query avoids running it twice during import.
         if (!hasCachedPrefixes) {
             log.debug("No cached prefixes in MongoDB, querying GraphDB for project {}", projectId);
+            // Same reasoning as getMetadata(): only sync on the actual SPARQL fallback.
+            if (importService != null) {
+                importService.syncProjectToFuseki(projectId);
+            }
             Map<String, String> graphdbPrefixes = datasetService.getPrefixes(projectId);
             prefixMap.putAll(graphdbPrefixes);
         } else {

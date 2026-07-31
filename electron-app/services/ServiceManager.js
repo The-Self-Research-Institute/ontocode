@@ -253,15 +253,41 @@ async function startFuseki() {
     log('info', 'Starting Apache Fuseki…');
 
     // Remove stale TDB2 lock files that cause Fuseki to open datasets read-only
-    // after an unclean shutdown.
+    // after an unclean shutdown (crash, force-quit, OS kill). Every project gets
+    // its own TDB2 dataset directory under fuseki-base/databases/{projectId}/ via
+    // the admin API (dbType=tdb2) — each with its own tdb.lock — so this must glob
+    // every project's database directory, not just the one legacy shared-dataset
+    // path. Missing this meant a single project with a stale lock would fail
+    // every sync attempt forever (no amount of "Try again" clears it), since
+    // nothing else ever removes that specific file.
     const lockPaths = [
         path.join(FUSEKI_DATA_DIR, 'tdb.lock'),
         path.join(FUSEKI_DATA_DIR, 'Data-0001', 'tdb.lock'),
     ];
+    const databasesDir = path.join(FUSEKI_BASE_DIR, 'databases');
+    try {
+        if (fs.existsSync(databasesDir)) {
+            fs.readdirSync(databasesDir, { withFileTypes: true })
+                .filter(entry => entry.isDirectory())
+                .forEach(entry => {
+                    const projectDbDir = path.join(databasesDir, entry.name);
+                    lockPaths.push(
+                        path.join(projectDbDir, 'tdb.lock'),
+                        path.join(projectDbDir, 'Data-0001', 'tdb.lock'),
+                    );
+                });
+        }
+    } catch (e) {
+        log('warn', `Could not enumerate per-project Fuseki databases for lock cleanup: ${e.message}`);
+    }
+    let removedLocks = 0;
     lockPaths.forEach(p => {
-        try { if (fs.existsSync(p)) { fs.unlinkSync(p); log('info', `Removed stale lock: ${p}`); } }
+        try { if (fs.existsSync(p)) { fs.unlinkSync(p); removedLocks++; log('info', `Removed stale lock: ${p}`); } }
         catch (_) {}
     });
+    if (removedLocks > 0) {
+        log('info', `Cleared ${removedLocks} stale TDB2 lock file(s) before starting Fuseki`);
+    }
 
     const jar     = path.join(RESOURCES_DIR, 'jars', 'fuseki-server.jar');
     const logFile = path.join(LOGS_DIR, 'fuseki.log');
@@ -411,11 +437,24 @@ async function startDesktop() {
         _JAVA_OPTIONS: '',
     }, logFile, { cwd: DATA_DIR });
 
-    await waitForHttp(
-        `http://127.0.0.1:${DESKTOP_PORT}/actuator/health`,
-        120000,
-        'Desktop',
-    );
+    // Spring context refresh across the merged auth+editor+plugin jar can run
+    // 15-25s with zero console output while classes load — without this the
+    // splash screen looks frozen. Heartbeat keeps the progress UI moving.
+    const startedAt = Date.now();
+    const heartbeat = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startedAt) / 1000);
+        log('info', `[Desktop] Still starting… (${elapsed}s)`);
+    }, 3000);
+
+    try {
+        await waitForHttp(
+            `http://127.0.0.1:${DESKTOP_PORT}/actuator/health`,
+            120000,
+            'Desktop',
+        );
+    } finally {
+        clearInterval(heartbeat);
+    }
     log('ok', `Desktop service ready on port ${DESKTOP_PORT}`);
 }
 
@@ -473,6 +512,14 @@ function spawnService(name, bin, args, extraEnv = {}, logFile = null, spawnOptio
         catch (e) { log('warn', `[${name}] Cannot open log file: ${e.message}`); }
     }
 
+    // Milestones that appear in a Spring Boot console during context refresh —
+    // forwarding these to the splash log keeps the progress UI moving during
+    // the ~20s of classloading/component-scan that produces no other output.
+    const PROGRESS_MARKERS = [
+        'Started', 'ERROR', 'Exception',
+        'Bootstrapping Spring Data', 'Tomcat initialized', 'Tomcat started',
+        'Root WebApplicationContext', 'Exposing', 'endpoints beneath',
+    ];
     child.stdout.on('data', (data) => {
         if (logStream) logStream.write(data);
         data.toString().split('\n').forEach(line => {
@@ -480,7 +527,7 @@ function spawnService(name, bin, args, extraEnv = {}, logFile = null, spawnOptio
             if (!t) return;
             if (outputBuffer.length >= 50) outputBuffer.shift();
             outputBuffer.push('[out] ' + t);
-            if (t.includes('Started') || t.includes('ERROR') || t.includes('Exception')) {
+            if (PROGRESS_MARKERS.some(marker => t.includes(marker))) {
                 log('info', `[${name}] ${t}`);
             }
         });

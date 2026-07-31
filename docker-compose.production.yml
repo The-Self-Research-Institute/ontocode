@@ -187,6 +187,7 @@ services:
       LOG_DIR: /app/logs
       ONTOLOGY_HTTP_TIMEOUT_MS: ${ONTOLOGY_HTTP_TIMEOUT_MS:-7200000}
       ONTOLOGY_HTTP_TIMEOUT_SECONDS: ${ONTOLOGY_HTTP_TIMEOUT_SECONDS:-7200s}
+      ONTOLOGY_PLUGIN_SERVICE_URL: http://plugin-service:8087
       JAVA_OPTS: >-
         -Xms512m -Xmx2g
         -Xss4m
