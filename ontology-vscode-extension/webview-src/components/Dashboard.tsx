@@ -3488,6 +3488,16 @@ const Dashboard: React.FC<DashboardProps> = ({
       const data = extractResponseData(resp);
       setExplanationState({ open: true, loading: false, data, error: null });
       notificationService.info("Explanation Ready", "Review the inconsistency report.");
+
+      // The explanation just re-ran the check fresh and found the ontology
+      // consistent — but the sidebar's consistency banner/stats are frozen
+      // React state from whatever the last classify/consistency run showed.
+      // Without this, the sidebar can keep saying "inconsistent" forever
+      // after the ontology was fixed, directly contradicting this dialog.
+      if (data?.isConsistent === true) {
+        setReasonerResults(null);
+        checkConsistency();
+      }
     } catch (error: any) {
       const backendData = error?.response?.data;
       console.error("[Dashboard] Explain inconsistency failed:", {
@@ -3506,7 +3516,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
       notificationService.error("Explain Inconsistency Failed", `${friendlyMessage}${suggestion}`);
     }
-  }, [projectId, selectedReasoner]);
+  }, [projectId, selectedReasoner, checkConsistency]);
 
   const clearReasonerCache = useCallback(async () => {
     // Uses the in-app toast (collaboration.addNotification) rather than
@@ -3525,6 +3535,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         userColor: "#22c55e",
         timestamp: Date.now(),
       });
+
+      // Drop the frozen classify/stats results (they reflect whatever the cached,
+      // possibly-stale ontology last showed) and re-run consistency fresh against
+      // the now-uncached ontology, so the sidebar can't keep showing "inconsistent"
+      // after the underlying reason for that has already been cleared/fixed.
+      setReasonerResults(null);
+      checkConsistency();
     } catch (error: any) {
       const friendlyMessage =
         error?.response?.data?.error || error?.message || "Failed to clear the reasoner cache.";
@@ -3537,7 +3554,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         timestamp: Date.now(),
       });
     }
-  }, [user, collaboration]);
+  }, [user, collaboration, checkConsistency]);
 
   const setCurrentHierarchyViewMode = (mode: "asserted" | "inferred") => {
     setHierarchyViewModes((prev) => ({ ...prev, [entitiesTab]: mode }));

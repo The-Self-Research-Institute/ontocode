@@ -85,9 +85,11 @@ public class OntologyMetadataController {
         try {
             // Not converted to owlapi-first: getMetadata() already serves from a MongoDB cache
             // kept in sync at mutation time in the common case, only falling through to a live
-            // SPARQL query on a cache miss (or for an active drafter). This sync only matters for
-            // that fallback path — the fast path never touches Fuseki either way.
-            projectImportService.syncProjectToFuseki(projectId);
+            // SPARQL query on a cache miss (or for an active drafter). The sync-before-SPARQL-
+            // fallback now happens inside getMetadata() itself, on the cache-miss branch only —
+            // calling it here unconditionally forced a Fuseki round-trip (and on desktop, a lazy
+            // Fuseki cold start) on every cache-hit call too, which is most of them, and this
+            // endpoint is fetched on every project open.
             Map<String, Object> metadata = metadataService.getMetadata(projectId);
             return ResponseEntity.ok(Map.of("success", true, "data", metadata));
         } catch (Exception e) {
@@ -408,9 +410,9 @@ public class OntologyMetadataController {
     public ResponseEntity<?> getPrefixes(@PathVariable String projectId) {
         try {
             // Not converted to owlapi-first: like getMetadata(), prefixes are served from a
-            // MongoDB cache kept in sync by every prefix mutation; Fuseki is only queried on a
-            // cache miss, which is what this sync is guarding.
-            projectImportService.syncProjectToFuseki(projectId);
+            // MongoDB cache kept in sync by every prefix mutation. The sync-before-SPARQL-
+            // fallback now happens inside getPrefixes() itself, on the cache-miss branch only —
+            // see getMetadata() above for why calling it here unconditionally was the bug.
             List<Map<String, String>> prefixes = metadataService.getPrefixes(projectId);
             return ResponseEntity.ok(Map.of("success", true, "data", prefixes));
         } catch (Exception e) {

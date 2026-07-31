@@ -122,6 +122,7 @@ linux:
         - x64
   icon: build-assets/icon.png
   category: Development
+  maintainer: "OntoCode <pranesh@coretopia.com>"
   description: "OntoCode — OWL Ontology Editor for Desktop"
   desktop:
     Name: OntoCode
