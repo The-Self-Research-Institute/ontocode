@@ -23,6 +23,15 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.1.0-beta.17",
+    date: "July 31, 2026",
+    title: "Startup Reliability & Reasoner Fixes",
+    highlights: [
+      "TSRI-227: Desktop — Fixed the reasoner's ontology failing to load on startup, which could prevent the app from starting at all.",
+    ],
+    videoUrl: ""
+  },
+  {
     version: "1.1.0-beta.16",
     date: "July 27, 2026",
     title: "Rename, Save & Export Reliability",
