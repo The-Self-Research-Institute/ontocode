@@ -31,7 +31,7 @@ public class DesktopDownloadService {
     public static final String BUCKET = "desktop-installers";
     private static final String WINDOWS_PLATFORM = "windows-x64";
     private static final String[] KNOWN_PLATFORMS = {
-        WINDOWS_PLATFORM, "linux-x64", "linux-deb", "mac-arm64",
+        WINDOWS_PLATFORM, "linux-x64", "linux-deb", "linux-arm64", "mac-arm64",
     };
 
     @Value("${ontocode.downloads.tracking-salt:ontocode-download-tracking}")
