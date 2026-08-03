@@ -83,7 +83,7 @@
       },
       {
         "command": "ontocode.insertCitation",
-        "title": "Insert Citation",
+        "title": "Insert Citation (Sci2Code)",
         "category": "OntoCode",
         "icon": "$(book)"
       },
@@ -94,12 +94,12 @@
       },
       {
         "command": "ontocode.configureZotero",
-        "title": "OntoCode: Configure Citation Library",
+        "title": "OntoCode: Configure Zotero API Key",
         "category": "OntoCode"
       },
       {
         "command": "ontocode.testZoteroConnection",
-        "title": "OntoCode: Test Citation Library Connection",
+        "title": "OntoCode: Test Zotero Connection",
         "category": "OntoCode"
       },
       {

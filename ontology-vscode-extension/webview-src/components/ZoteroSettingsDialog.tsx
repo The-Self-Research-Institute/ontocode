@@ -176,7 +176,10 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div className="flex items-center gap-2">
             <Settings className="text-blue-600" size={24} />
-            <h2 className="text-xl font-bold text-gray-800">Citation Library Settings</h2>
+            <div className="flex flex-col">
+              <h2 className="text-xl font-bold text-gray-800">Citation Library Settings</h2>
+              <span className="text-xs text-gray-400">Powered by Zotero</span>
+            </div>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition-colors">
             <X size={20} className="text-gray-500" />
@@ -208,13 +211,13 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
           {/* API Key */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              API Key <span className="text-red-500">*</span>
+              Configure Zotero API Key <span className="text-red-500">*</span>
             </label>
             <input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Enter your citation library API key"
+              placeholder="Enter your Zotero API key"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>

@@ -608,15 +608,18 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
       <div className="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <div className="flex items-center gap-2 flex-wrap">
-            <BookOpen className="text-purple-600" size={24} />
-            <h2 className="text-xl font-bold text-gray-800">Insert Citation</h2>
-            {librarySyncPending && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 text-amber-900 text-xs font-medium px-2.5 py-1 border border-amber-200/80">
-                <Loader2 size={12} className={loadingMore ? "animate-spin" : ""} />
-                {hasTypedSearch ? "Searching library" : "Syncing library"}
-              </span>
-            )}
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <BookOpen className="text-purple-600" size={24} />
+              <h2 className="text-xl font-bold text-gray-800">Insert Citation</h2>
+              {librarySyncPending && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 text-amber-900 text-xs font-medium px-2.5 py-1 border border-amber-200/80">
+                  <Loader2 size={12} className={loadingMore ? "animate-spin" : ""} />
+                  {hasTypedSearch ? "Searching library" : "Syncing library"}
+                </span>
+              )}
+            </div>
+            <span className="text-xs text-gray-400 pl-8">Powered by Sci2Code</span>
           </div>
           <div className="flex items-center gap-1">
             <button
