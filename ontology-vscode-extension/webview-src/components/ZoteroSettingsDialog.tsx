@@ -12,9 +12,12 @@ declare global {
 interface ZoteroSettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Renders inline as the host dialog's content (no backdrop/close-X/Cancel) — used for the
+   * first-run "not configured yet" state so it reads as onboarding, not a stacked modal. */
+  embedded?: boolean;
 }
 
-const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onClose }) => {
+const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onClose, embedded = false }) => {
   const [apiKey, setApiKey] = useState('');
   const [userId, setUserId] = useState('');
   const [libraryType, setLibraryType] = useState<'user' | 'group'>('user');
@@ -169,21 +172,21 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-      <div className="bg-white rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+  const dialog = (
+    <div className={embedded ? "w-full flex flex-col" : "bg-white rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col"}>
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div className="flex items-center gap-2">
             <Settings className="text-blue-600" size={24} />
-            <div className="flex flex-col">
-              <h2 className="text-xl font-bold text-gray-800">Citation Library Settings</h2>
-              <span className="text-xs text-gray-400">Powered by Zotero</span>
-            </div>
+            <h2 className="text-xl font-bold text-gray-800">
+              {embedded ? "Connect Your Zotero Library" : "Zotero API Key Settings"}
+            </h2>
           </div>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition-colors">
-            <X size={20} className="text-gray-500" />
-          </button>
+          {!embedded && (
+            <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition-colors">
+              <X size={20} className="text-gray-500" />
+            </button>
+          )}
         </div>
 
         {/* Content */}
@@ -289,12 +292,14 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
               {testing ? <Loader2 size={14} className="animate-spin" /> : null}
               Test Connection
             </button>
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
+            {!embedded && (
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
             <button
               onClick={handleSave}
               disabled={saving}
@@ -305,7 +310,14 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
             </button>
           </div>
         </div>
-      </div>
+    </div>
+  );
+
+  if (embedded) return dialog;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+      {dialog}
     </div>
   );
 };
