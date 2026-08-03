@@ -14945,10 +14945,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                       setShowCitationPicker(true);
                     }}
                     className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
-                    title={isViewOnlyMember ? "Pro feature: citations require a Pro plan" : "Insert citation"}
+                    title={isViewOnlyMember ? "Pro feature: citations require a Pro plan" : "Insert citation via Sci2Code"}
                   >
                     <BookOpen size={16} />
-                    Citation
+                    Citation (Sci2Code)
                   </button>
                   <button
                     onClick={() => {
