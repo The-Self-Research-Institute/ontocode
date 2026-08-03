@@ -754,7 +754,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
           onScroll={onListScroll}
           className="flex-1 overflow-y-auto p-4"
         >
-          {loading && (
+          {loading && !error && (
             <div className="flex items-center justify-center py-12">
               <div className="text-center">
                 <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mb-2"></div>
@@ -763,28 +763,21 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
             </div>
           )}
 
-          {error && (
+          {error === "ZOTERO_NOT_CONFIGURED" && (
+            <ZoteroSettingsDialog isOpen embedded onClose={reloadZotero} />
+          )}
+
+          {error && error !== "ZOTERO_NOT_CONFIGURED" && (
             <div className="flex items-center justify-center py-12">
               <div className="text-center">
                 <div className="text-red-500 mb-2">⚠️</div>
-                <p className="text-red-600">
-                  {error === "ZOTERO_NOT_CONFIGURED" ? "Citation library is not configured yet." : error}
-                </p>
-                {error === "ZOTERO_NOT_CONFIGURED" ? (
-                  <button
-                    onClick={() => setShowZoteroSettings(true)}
-                    className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 inline-flex items-center gap-2"
-                  >
-                    <Settings size={16} /> Configure library
-                  </button>
-                ) : (
-                  <button
-                    onClick={reloadZotero}
-                    className="mt-4 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
-                  >
-                    Retry
-                  </button>
-                )}
+                <p className="text-red-600">{error}</p>
+                <button
+                  onClick={reloadZotero}
+                  className="mt-4 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+                >
+                  Retry
+                </button>
               </div>
             </div>
           )}
