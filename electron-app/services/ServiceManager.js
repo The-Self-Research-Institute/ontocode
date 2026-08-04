@@ -442,9 +442,17 @@ async function startDesktop() {
     const heaps = jvmHeaps();
     log('info', `[Desktop] JVM heap: ${heaps.desktopXmx} (system RAM: ${heaps.totalGb} GB)`);
 
+    // AppCDS: cache verified/loaded classes from this exact jar+classpath so
+    // repeat launches skip re-verifying them — the Spring context refresh
+    // itself isn't sped up, but the classloading portion of startup is.
+    // Auto-created on first run (small one-time dump cost at JVM exit) and
+    // self-invalidates if the jar changes (e.g. after an app update).
+    const cdsArchive = path.join(DATA_DIR, 'desktop.jsa');
+
     const args = [
         `-Xmx${heaps.desktopXmx}`,
         '-XX:+UseG1GC', '-XX:MaxGCPauseMillis=200',
+        '-XX:+AutoCreateSharedArchive', `-XX:SharedArchiveFile=${cdsArchive}`,
         `-DLOG_DIR=${LOGS_DIR}`,
         '-jar', jar,
         `--server.port=${DESKTOP_PORT}`,
@@ -518,11 +526,13 @@ async function startSwrl() {
     }
 
     log('info', 'Starting SWRL reasoner service…');
-    const logFile  = path.join(LOGS_DIR, 'swrl.log');
-    const mongoUri = `mongodb://127.0.0.1:${MONGO_PORT}/ontocode-desktop`;
+    const logFile   = path.join(LOGS_DIR, 'swrl.log');
+    const mongoUri  = `mongodb://127.0.0.1:${MONGO_PORT}/ontocode-desktop`;
+    const cdsArchive = path.join(DATA_DIR, 'swrl.jsa');   // see startDesktop() for rationale
 
     swrlProcess = spawnService('SWRL', javaBin(), [
         '-Xmx512m',
+        '-XX:+AutoCreateSharedArchive', `-XX:SharedArchiveFile=${cdsArchive}`,
         `-DLOG_DIR=${LOGS_DIR}`,
         '-jar', jar,
         `--server.port=${SWRL_PORT}`,
