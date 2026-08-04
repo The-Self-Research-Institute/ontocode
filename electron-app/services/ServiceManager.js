@@ -8,8 +8,14 @@
  *   4. SWRL     (swrl.jar)       — SWRL reasoner (optional, separate JVM due to
  *                                   owlapi 4.x vs 5.x classpath conflict)
  *
- * All services are started sequentially (each waits for the previous to
- * pass a health check) then the Electron window is shown.
+ * Mongo starts first since Desktop depends on it being reachable. Fuseki and
+ * SWRL are both lazy by default — skipped at startup and started on demand
+ * the first time something actually needs them (Fuseki: a SPARQL/graph
+ * operation; SWRL: the first /api/swrl/** proxy request) — since most
+ * launches never touch either, and each is 10-30s of JVM startup that would
+ * otherwise be paid on every single cold start.
+ * Electron's window is shown once Mongo + Desktop (and Fuseki/SWRL, if not
+ * lazy) have passed their health checks.
  *
  * On quit, services are stopped in reverse order.
  */
@@ -69,7 +75,12 @@ const LAZY_FUSEKI = process.env.ONTOCODE_LAZY_FUSEKI !== '0';
 let fusekiProcess  = null;
 let fusekiStartPromise = null;
 let desktopProcess = null;
+// Lazy SWRL: skip at startup, same rationale as Fuseki — most launches never
+// touch the reasoner, so paying its ~10-30s JVM startup on every cold start
+// is pure waste. Started on demand by the first /api/swrl/** proxy request.
+const LAZY_SWRL = process.env.ONTOCODE_LAZY_SWRL !== '0';
 let swrlProcess    = null;
+let swrlStartPromise = null;
 let _logCallback   = null;
 
 // ── Port auto-detection ───────────────────────────────────────────────────────
@@ -125,8 +136,28 @@ module.exports = {
         } else {
             log('info', 'Fuseki deferred (OWLAPI-first desktop — starts when SPARQL/graph needs it)');
         }
-        await startDesktop();
-        await startSwrl();   // optional — skipped silently if swrl.jar absent
+        if (LAZY_SWRL) {
+            await startDesktop();
+            log('info', 'SWRL reasoner deferred — starts on the first /api/swrl/** request');
+        } else {
+            // Opt-out path (ONTOCODE_LAZY_SWRL=0): Desktop and SWRL are
+            // independent JVMs (split only due to an OWLAPI 4.x/5.x classpath
+            // conflict) — start them concurrently rather than back-to-back.
+            try {
+                await Promise.all([startDesktop(), startSwrl()]);   // SWRL optional — skipped silently if swrl.jar absent
+            } catch (err) {
+                // Promise.all rejects on the first failure while the other JVM may
+                // already be up or still starting — unlike a sequential await
+                // (Desktop failing would mean SWRL was never spawned at all), so
+                // clean up both here before propagating, or a Desktop-fails/
+                // SWRL-succeeds race leaks an orphaned JVM.
+                await Promise.all([
+                    stopProcess(desktopProcess, 'Desktop', 4000),
+                    stopProcess(swrlProcess, 'SWRL', 4000),
+                ]);
+                throw err;
+            }
+        }
     },
 
     async ensureFuseki() {
@@ -144,6 +175,27 @@ module.exports = {
             });
         }
         return fusekiStartPromise;
+    },
+
+    async ensureSwrl() {
+        // exitCode check: a crashed JVM is not `killed`, but it is not running either.
+        if (swrlProcess && !swrlProcess.killed && swrlProcess.exitCode === null) {
+            return { running: true, port: SWRL_PORT };
+        }
+        if (!swrlStartPromise) {
+            swrlStartPromise = startSwrl().then(() => {
+                swrlStartPromise = null;
+                // startSwrl() resolves without spawning anything if swrl.jar is
+                // missing — check the actual process state rather than assuming
+                // success just because the promise didn't reject.
+                const running = Boolean(swrlProcess && !swrlProcess.killed && swrlProcess.exitCode === null);
+                return { running, port: SWRL_PORT };
+            }).catch((err) => {
+                swrlStartPromise = null;
+                throw err;
+            });
+        }
+        return swrlStartPromise;
     },
 
     async stopAll() {
