@@ -236,15 +236,14 @@ public class ManchesterExpressionService {
         deleteAxioms(projectId, axioms, false, null);
     }
 
-    private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms, boolean draft, String userId)
-            throws Exception {
-        String sparql = OwlAxiomSparqlWriter.toDeleteData(axioms);
-        if (sparql.isBlank()) {
-            throw new IllegalStateException("Failed to serialize OWL axiom for deletion");
-        }
-        mutationService.applyRawUpdate(projectId, sparql, draft, userId);
+private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms, boolean draft, String userId)
+        throws Exception {
+    String sparql = OwlAxiomSparqlWriter.toDeleteWhere(axioms);
+    if (sparql.isBlank()) {
+        throw new IllegalStateException("Failed to serialize OWL axiom for deletion");
     }
-
+    mutationService.applyRawUpdate(projectId, sparql, draft, userId);
+}
     private OWLOntology loadOntology(String projectId) throws Exception {
         return loadOntology(projectId, false, null);
     }

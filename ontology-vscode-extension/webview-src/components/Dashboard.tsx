@@ -16841,81 +16841,73 @@ const Dashboard: React.FC<DashboardProps> = ({
     setIsObjectPropertyExpressionDialogOpen(true);
   };
 
-  const handleManchesterConfirm = async (expression: string, restrictionData?: any) => {
-    if (!selectedItem || !projectId || !selectorTarget) return;
-    const target = selectorTarget as "domain" | "range";
-    const editing = selectorEditingItem;
-    const isDataProperty = (selectedItem as any)?.type === "DatatypeProperty";
-    const relationType = target === "domain" ? "Domain" : "Range";
-    const userId = user?.email || "anonymous";
-    const username = user?.username || "Anonymous";
-    const useManchesterApi =
-      !restrictionData &&
-      (isManchesterClassExpression(expression) ||
-        (editing != null && isManchesterClassExpression(editing)));
+const handleManchesterConfirm = async (expression: string, restrictionData?: any) => {
+  if (!selectedItem || !projectId || !selectorTarget) return;
+  const target = selectorTarget as "domain" | "range";
+  const editing = selectorEditingItem;
+  const isDataProperty = (selectedItem as any)?.type === "DatatypeProperty";
+  const relationType = target === "domain" ? "Domain" : "Range";
+  const userId = user?.email || "anonymous";
+  const username = user?.username || "Anonymous";
 
-    try {
-      if (useManchesterApi) {
-        if (editing) {
-          if (isManchesterClassExpression(editing)) {
-            await expressionService.deletePropertyExpressionAxiom(
-              projectId, selectedItem.id, relationType, editing, isDataProperty, userId, username,
-            );
-          } else if (isSimpleOntologyIri(editing)) {
-            if (target === "domain") {
-              await ontologyMutationService.deletePropertyDomain(projectId, selectedItem.id, editing, userId, username);
-            } else {
-              await ontologyMutationService.deletePropertyRange(projectId, selectedItem.id, editing, userId, username);
-            }
-          }
-        }
-        await expressionService.addPropertyExpressionAxiom(
-          projectId, selectedItem.id, relationType, expression, isDataProperty, userId, username,
+  try {
+    // Remove the OLD value, based on what shape IT is — independent of the new value.
+    if (editing) {
+      if (isManchesterClassExpression(editing)) {
+        await expressionService.deletePropertyExpressionAxiom(
+          projectId, selectedItem.id, relationType, editing, isDataProperty, userId, username,
         );
-        const prop = selectedItem as Property;
-        if (editing) {
-          if (target === "domain") {
-            updateItemInState({ ...selectedItem, domains: (prop.domains || []).map((d) => (d === editing ? expression : d)) });
-          } else {
-            updateItemInState({ ...selectedItem, ranges: (prop.ranges || []).map((r) => (r === editing ? expression : r)) });
-          }
-        } else if (target === "domain") {
-          updateItemInState({ ...selectedItem, domains: [...(prop.domains || []), expression] });
-        } else {
-          updateItemInState({ ...selectedItem, ranges: [...(prop.ranges || []), expression] });
-        }
-      } else if (editing) {
-        await ontologyMutationService.editRelation(projectId, {
-          operation: 'edit',
-          entityIri: selectedItem.id,
-          relationshipType: target,
-          oldTargetIri: editing,
-          targetIri: expression,
-          userId,
-          username,
-        });
-        const prop = selectedItem as Property;
+      } else if (isSimpleOntologyIri(editing)) {
         if (target === "domain") {
-          updateItemInState({ ...selectedItem, domains: (prop.domains || []).map((d) => (d === editing ? expression : d)) });
+          await ontologyMutationService.deletePropertyDomain(projectId, selectedItem.id, editing, userId, username);
         } else {
-          updateItemInState({ ...selectedItem, ranges: (prop.ranges || []).map((r) => (r === editing ? expression : r)) });
+          await ontologyMutationService.deletePropertyRange(projectId, selectedItem.id, editing, userId, username);
         }
-      } else if (target === "domain") {
+      }
+    }
+
+    // Add the NEW value, based on what shape IT is.
+    if (restrictionData) {
+      if (target === "domain") {
         await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, userId, username, restrictionData);
-        updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
       } else {
         await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, userId, username, restrictionData);
-        updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
       }
-    } catch (error) {
-      console.error(`Failed to ${editing ? 'replace' : 'add'} ${selectorTarget}`, error);
-      notificationService.error("Property axiom", `Failed to ${editing ? 'update' : 'add'} ${target}`);
-    } finally {
-      setIsClassExpressionDialogOpen(false);
-      setSelectorTarget(null);
-      setSelectorEditingItem(null);
+    } else if (isManchesterClassExpression(expression)) {
+      await expressionService.addPropertyExpressionAxiom(
+        projectId, selectedItem.id, relationType, expression, isDataProperty, userId, username,
+      );
+    } else if (target === "domain") {
+      await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, userId, username);
+    } else {
+      await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, userId, username);
     }
-  };
+
+    const prop = selectedItem as Property;
+    if (target === "domain") {
+      updateItemInState({
+        ...selectedItem,
+        domains: editing
+          ? (prop.domains || []).map((d) => (d === editing ? expression : d))
+          : [...(prop.domains || []), expression],
+      });
+    } else {
+      updateItemInState({
+        ...selectedItem,
+        ranges: editing
+          ? (prop.ranges || []).map((r) => (r === editing ? expression : r))
+          : [...(prop.ranges || []), expression],
+      });
+    }
+  } catch (error) {
+    console.error(`Failed to ${editing ? 'replace' : 'add'} ${selectorTarget}`, error);
+    notificationService.error("Property axiom", `Failed to ${editing ? 'update' : 'add'} ${target}`);
+  } finally {
+    setIsClassExpressionDialogOpen(false);
+    setSelectorTarget(null);
+    setSelectorEditingItem(null);
+  }
+};
 
   // Handler for property selector (subProperty/inverse/disjoint/equivalent)
   const handlePropertySelected = async (expression: string) => {
