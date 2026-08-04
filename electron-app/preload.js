@@ -633,6 +633,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Service health
     getServiceStatus: ()             => ipcRenderer.invoke('services:status'),
     ensureFuseki: ()                 => ipcRenderer.invoke('services:ensureFuseki'),
+    ensureSwrl:   ()                 => ipcRenderer.invoke('services:ensureSwrl'),
 
     // Open log folder in file manager
     openLogs: ()                     => ipcRenderer.invoke('logs:open'),
