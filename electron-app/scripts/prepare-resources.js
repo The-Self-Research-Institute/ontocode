@@ -44,6 +44,12 @@ const REPO_ROOT  = path.resolve(__dirname, '..', '..');
 const RESOURCES  = path.resolve(__dirname, '..', 'resources', 'backend');
 const JARS_DIR   = path.join(RESOURCES, 'jars');
 const JRE_DIR    = path.join(RESOURCES, 'jre');
+// SWRL's dependencies (SWRLAPI's bundled Drools 7.x/MVEL 2.x engine) reference
+// java.lang.Compiler, removed in JDK 9, in a fallback code path that only
+// misfires under JDK 21's stricter internals — not JDK 17's (see
+// ontology-swrl/pom.xml's own "MUST run on Java 17" note). SWRL therefore
+// gets its own separate bundled JRE instead of sharing jre/ with Desktop/Fuseki.
+const JRE17_DIR  = path.join(RESOURCES, 'jre17');
 
 // Cross-building for a platform other than the one this script runs on (e.g.
 // preparing a Linux bundle from Windows for an electron-builder --linux run).
@@ -365,7 +371,7 @@ function findFileRecursive(dir, name) {
 
 // ── Step 4: JRE (jlink → download fallback) ──────────────────────────────────
 async function bundleJre() {
-    console.log('\n[4/4] JRE (bundled — no system Java required at runtime)');
+    console.log('\n[4/5] JRE (bundled — no system Java required at runtime)');
 
     // Already there? Check for the TARGET platform's binary name specifically — a
     // java.exe left over from a prior Windows prepare must not be mistaken for a
@@ -423,6 +429,72 @@ async function tryJlink() {
         console.warn(`  ⚠  jlink failed: ${err.message}`);
         if (fs.existsSync(JRE_DIR)) fs.rmSync(JRE_DIR, { recursive: true, force: true });
         return false;
+    }
+}
+
+// ── SWRL's dedicated JDK 17 JRE ──────────────────────────────────────────────
+function findJdk17Home() {
+    if (process.env.JAVA17_HOME && fs.existsSync(process.env.JAVA17_HOME)) {
+        return process.env.JAVA17_HOME;
+    }
+    // Common Windows install roots for Adoptium/Oracle JDK 17 — same pattern
+    // this build already assumes for JDK 21 (see the desktop build checklist).
+    const candidateRoots = [
+        'C:\\Program Files\\Eclipse Adoptium',
+        'C:\\Program Files\\Java',
+    ];
+    for (const root of candidateRoots) {
+        if (!fs.existsSync(root)) continue;
+        const match = fs.readdirSync(root).find(name => /^jdk-17/i.test(name));
+        if (match) return path.join(root, match);
+    }
+    return null;
+}
+
+async function bundleSwrlJre() {
+    const javaBin = path.join(JRE17_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java');
+    if (!CROSS_BUILDING && fs.existsSync(javaBin)) {
+        try {
+            const ver = execFileSync(javaBin, ['--version'], { encoding: 'utf8', timeout: 5000 });
+            console.log(`  ✓  Bundled SWRL JRE already present: ${ver.split('\n')[0].trim()}`);
+            return;
+        } catch (_) {
+            console.warn('  ⚠  Existing SWRL JRE unreadable — re-creating');
+            fs.rmSync(JRE17_DIR, { recursive: true, force: true });
+        }
+    }
+
+    if (CROSS_BUILDING) {
+        console.warn('  ⚠  Cross-building: jlink cannot produce a JDK 17 runtime for a foreign platform.');
+        console.warn('     Manually extract a Java 17 JRE (Temurin) to resources/backend/jre17/ for this platform.');
+        return;
+    }
+
+    const jdk17Home = findJdk17Home();
+    if (!jdk17Home) {
+        console.warn('  ⚠  No JDK 17 found (checked JAVA17_HOME, and common install roots).');
+        console.warn('     SWRL will fail at runtime with NoClassDefFoundError: java/lang/Compiler');
+        console.warn('     (Drools 7.x/MVEL 2.x are incompatible with JDK 21+ — see ontology-swrl/pom.xml).');
+        console.warn('     Install a JDK 17 (e.g. https://adoptium.net/temurin/releases/?version=17) and rebuild.');
+        return;
+    }
+
+    const jlinkBin = path.join(jdk17Home, 'bin', process.platform === 'win32' ? 'jlink.exe' : 'jlink');
+    if (!fs.existsSync(jlinkBin)) {
+        console.warn(`  ⚠  jlink not found under ${jdk17Home} — skipping SWRL JRE`);
+        return;
+    }
+
+    console.log(`  → Creating SWRL's dedicated JDK 17 JRE with jlink from ${jdk17Home} (this takes ~30 s)…`);
+    try {
+        execSync(
+            `"${jlinkBin}" --add-modules ${JLINK_MODULES} --output "${JRE17_DIR}" --strip-debug --no-man-pages --no-header-files --compress=2`,
+            { stdio: 'inherit', timeout: 120_000 },
+        );
+        console.log('  ✓  SWRL JDK 17 JRE created via jlink (~60-80 MB)');
+    } catch (err) {
+        console.warn(`  ⚠  jlink failed for SWRL JRE: ${err.message}`);
+        if (fs.existsSync(JRE17_DIR)) fs.rmSync(JRE17_DIR, { recursive: true, force: true });
     }
 }
 
@@ -551,6 +623,8 @@ async function main() {
     await copyFusekiJar();
     await copyMongod();
     await bundleJre();
+    console.log('\n[5/5] SWRL JRE (dedicated JDK 17 — Drools/MVEL incompatible with JDK 21+)');
+    await bundleSwrlJre();
 
     console.log('\n=== Summary ===');
     const checks = {
@@ -565,6 +639,11 @@ async function main() {
         console.log(`  ${ok ? '✓' : '✗'}  ${label}`);
         if (!ok) allOk = false;
     }
+    // SWRL JRE is checked separately and doesn't fail the build if missing —
+    // SWRL itself is already optional (startSwrl() no-ops without swrl.jar);
+    // missing its JRE just means it'll fail at runtime instead of build time.
+    const swrlJreOk = fs.existsSync(path.join(JRE17_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java'));
+    console.log(`  ${swrlJreOk ? '✓' : '⚠'}  SWRL JRE (JDK 17)${swrlJreOk ? '' : ' — missing, SWRL reasoning will fail at runtime'}`);
     if (!allOk) {
         console.error('\nERROR: Missing required files. Fix the warnings above before running electron-builder.\n');
         process.exit(1);
