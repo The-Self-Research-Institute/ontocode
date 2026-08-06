@@ -165,6 +165,91 @@ export const getChildren = (
 };
 
 /**
+ * Batched equivalent of calling getChildren()/getParents() once per node — same exact
+ * semantics as those two functions, but a single O(n+m) pass instead of O(n) calls that
+ * each re-scan every edge/node. Calling getChildren/getParents per node in a loop is
+ * O(n*m); on a large ontology (tens of thousands of nodes/edges) that reaches into the
+ * billions of operations and freezes the tab. Use this whenever relations are needed
+ * for every node at once (e.g. building a sidebar tree).
+ */
+export const buildChildrenParentsIndex = (
+  nodes: OntologyNode[],
+  edges: OntologyEdge[]
+): Map<string, { children: string[]; parents: string[] }> => {
+  const result = new Map<string, { children: string[]; parents: string[] }>();
+  const ensure = (id: string) => {
+    let entry = result.get(id);
+    if (!entry) {
+      entry = { children: [], parents: [] };
+      result.set(id, entry);
+    }
+    return entry;
+  };
+  nodes.forEach(node => ensure(node.id));
+
+  const hasParentField = nodesHaveParentField(nodes);
+
+  // Children: parent-field-derived AND edge-derived, unioned — mirrors getChildren().
+  const childSets = new Map<string, Set<string>>();
+  const addChild = (parentId: string, childId: string) => {
+    let set = childSets.get(parentId);
+    if (!set) {
+      set = new Set();
+      childSets.set(parentId, set);
+    }
+    set.add(childId);
+  };
+  if (hasParentField) {
+    for (const node of nodes) {
+      const parent = getParentField(node);
+      if (parent === undefined || parent === null) continue;
+      const parents = Array.isArray(parent) ? parent : [parent];
+      for (const p of parents) {
+        if (p) addChild(p, node.id);
+      }
+    }
+  }
+  for (const edge of edges) {
+    if (isHierarchyEdge(edge)) addChild(edge.to, edge.from);
+  }
+  childSets.forEach((set, parentId) => {
+    ensure(parentId).children = Array.from(set);
+  });
+
+  // Parents: parent-field wins when present for a node — mirrors getParents()'s
+  // early return; otherwise fall back to subClassOf/subPropertyOf edges only
+  // (not instanceOf, matching getParents()'s edge-fallback branch exactly).
+  if (hasParentField) {
+    for (const node of nodes) {
+      const parent = getParentField(node);
+      ensure(node.id).parents =
+        parent === null || parent === undefined || parent === ''
+          ? []
+          : Array.isArray(parent)
+            ? Array.from(new Set(parent.filter(Boolean)))
+            : [parent];
+    }
+  } else {
+    const parentSets = new Map<string, Set<string>>();
+    for (const edge of edges) {
+      if (edge.type === 'subClassOf' || edge.type === 'subPropertyOf') {
+        let set = parentSets.get(edge.from);
+        if (!set) {
+          set = new Set();
+          parentSets.set(edge.from, set);
+        }
+        set.add(edge.to);
+      }
+    }
+    parentSets.forEach((set, nodeId) => {
+      ensure(nodeId).parents = Array.from(set);
+    });
+  }
+
+  return result;
+};
+
+/**
  * Check if a node has any children (uses precomputed `hasChildren` field if present).
  */
 export const hasChildren = (
@@ -472,12 +557,25 @@ export const collapseAll = (
   newVisibleIds: Set<string>;
 } => {
   const visibleIds: string[] = [];
+  const expandedIds: string[] = [];
   for (const type of ['class', 'objectProperty', 'dataProperty', 'individual'] as const) {
     const subset = nodes.filter(n => n.type === type);
-    visibleIds.push(...getRootNodes(subset, edges));
+    const roots = getRootNodes(subset, edges);
+    visibleIds.push(...roots);
+    // Roots alone leave VOWL empty (property roots render as edges) — show
+    // each root class with its immediate children, as the toolbar promises.
+    if (type === 'class') {
+      for (const rootId of roots) {
+        const children = getChildren(rootId, edges, nodes);
+        if (children.length > 0) {
+          expandedIds.push(rootId);
+          visibleIds.push(...children);
+        }
+      }
+    }
   }
   return {
-    newExpandedIds: new Set<string>(),
+    newExpandedIds: new Set(expandedIds),
     newVisibleIds: new Set(visibleIds)
   };
 };

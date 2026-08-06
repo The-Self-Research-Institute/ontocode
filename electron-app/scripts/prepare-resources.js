@@ -60,6 +60,12 @@ const JRE17_DIR  = path.join(RESOURCES, 'jre17');
 const TARGET_PLATFORM = process.env.TARGET_PLATFORM || process.platform;
 const CROSS_BUILDING = TARGET_PLATFORM !== process.platform;
 
+// Node's arch values match what we need directly: 'x64' or 'arm64'. Only Linux
+// currently ships an arm64 electron-builder target (electron-builder.yml), so
+// this only actually changes behavior for TARGET_PLATFORM=linux today — but is
+// named generically in case Windows/Mac arm64 targets are added later.
+const TARGET_ARCH = process.env.TARGET_ARCH || process.arch;
+
 // ── Fuseki download (fallback when fuseki-docker/fuseki-server.jar is absent) ──
 // Same version + checksum pinned in fuseki-docker/Dockerfile — keep in sync.
 const FUSEKI_VERSION = '6.1.0';
@@ -80,6 +86,12 @@ const MONGODB_WIN32_SHA256 = 'abfd03e5e02c962004e0b46d47777cdd3bca767b1a200dcafc
 // the release (fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-<ver>.tgz.sha256).
 const MONGODB_LINUX_UBUNTU2204_URL = `https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz`;
 const MONGODB_LINUX_UBUNTU2204_SHA256 = '46de5a28be8066e0c44b60e9919e5edd00c28f55fc187f8e0c60ab38dedc9054';
+
+// ARM64 (aarch64) build for the electron-builder linux-arm64 target. Checksum
+// fetched fresh from fastdl.mongodb.org/linux/mongodb-linux-aarch64-ubuntu2204-<ver>.tgz.sha256
+// at the time this was added — keep in sync with MONGODB_VERSION above.
+const MONGODB_LINUX_ARM64_UBUNTU2204_URL = `https://fastdl.mongodb.org/linux/mongodb-linux-aarch64-ubuntu2204-${MONGODB_VERSION}.tgz`;
+const MONGODB_LINUX_ARM64_UBUNTU2204_SHA256 = '81003080fd01a95dc7bbc08a5e62c80d22b55df0ce5df6b674c2ec915a4b825b';
 
 // ── Minimal modules needed for Spring Boot + Jena Fuseki ────────────────────
 const JLINK_MODULES = [
@@ -107,12 +119,19 @@ const JLINK_MODULES = [
     'jdk.zipfs',
 ].join(',');
 
-// ── Temurin 21 JRE download URLs per platform ────────────────────────────────
+// ── Temurin 21 JRE download URLs per platform (x64 — the only arch built for
+// win32/darwin today) ────────────────────────────────────────────────────────
 const TEMURIN_URLS = {
     win32:  'https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse',
     darwin: 'https://api.adoptium.net/v3/binary/latest/21/ga/mac/x64/jre/hotspot/normal/eclipse',
     linux:  'https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jre/hotspot/normal/eclipse',
 };
+
+// Linux arm64 (electron-builder's linux-arm64 target) — Adoptium's arch
+// identifier for ARM64 is "aarch64", not "arm64". Without this, the
+// linux-arm64 build previously fell through to the x64 URL above (wrong
+// architecture — fails to execute on real ARM64 hardware).
+const TEMURIN_LINUX_ARM64_URL = 'https://api.adoptium.net/v3/binary/latest/21/ga/linux/aarch64/jre/hotspot/normal/eclipse';
 
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); }
 
@@ -232,7 +251,12 @@ async function copyMongod() {
     let anyMissing = false;
     for (const platform of ['win32', 'darwin', 'linux']) {
         const ext  = platform === 'win32' ? '.exe' : '';
-        const cachedSrc = path.join(REPO_ROOT, 'data', 'mongodb', 'bin', platform, `mongod${ext}`);
+        // Linux caches per-arch (linux-x64 / linux-arm64): the two binaries are
+        // NOT interchangeable, so a single "linux" cache slot would silently
+        // reuse the wrong-architecture mongod on an arch switch between builds.
+        const isLinuxArm64 = platform === 'linux' && TARGET_ARCH === 'arm64';
+        const cacheSubdir = platform === 'linux' ? (isLinuxArm64 ? 'linux-arm64' : 'linux-x64') : platform;
+        const cachedSrc = path.join(REPO_ROOT, 'data', 'mongodb', 'bin', cacheSubdir, `mongod${ext}`);
         const dest = path.join(RESOURCES, 'mongodb', platform, `mongod${ext}`);
         let ok = copyIfExists(cachedSrc, dest, `mongodb/${platform}/mongod${ext}`);
         if (!ok && platform === 'win32') {
@@ -240,8 +264,13 @@ async function copyMongod() {
             ok = await downloadMongodWin32(cachedSrc, dest);
         }
         if (!ok && platform === 'linux' && (platform === TARGET_PLATFORM || CROSS_BUILDING)) {
-            console.log(`  → Not found locally — downloading MongoDB Community Server ${MONGODB_VERSION} (Ubuntu 22.04)…`);
-            ok = await downloadMongodLinuxUbuntu2204(cachedSrc, dest);
+            if (isLinuxArm64) {
+                console.log(`  → Not found locally — downloading MongoDB Community Server ${MONGODB_VERSION} (Ubuntu 22.04, arm64)…`);
+                ok = await downloadMongodLinuxArm64Ubuntu2204(cachedSrc, dest);
+            } else {
+                console.log(`  → Not found locally — downloading MongoDB Community Server ${MONGODB_VERSION} (Ubuntu 22.04)…`);
+                ok = await downloadMongodLinuxUbuntu2204(cachedSrc, dest);
+            }
         }
         if (!ok) anyMissing = true;
     }
@@ -355,6 +384,59 @@ async function downloadMongodLinuxUbuntu2204(cachedSrc, dest) {
     }
 }
 
+/**
+ * Download the official MongoDB Community Server Linux ARM64 (aarch64) build —
+ * same pattern as downloadMongodLinuxUbuntu2204, for the electron-builder
+ * linux-arm64 target. Without this, the linux-arm64 AppImage/deb previously
+ * bundled the x64 mongod binary (wrong architecture — fails to execute on
+ * real ARM64 hardware) since this function didn't exist and copyMongod()
+ * always fell back to the x64 downloader regardless of TARGET_ARCH.
+ */
+async function downloadMongodLinuxArm64Ubuntu2204(cachedSrc, dest) {
+    const archivePath = path.join(RESOURCES, `mongodb-linux-aarch64-ubuntu2204-${MONGODB_VERSION}.tgz`);
+    ensureDir(RESOURCES);
+
+    try {
+        await downloadFile(MONGODB_LINUX_ARM64_UBUNTU2204_URL, archivePath);
+
+        const actualSha256 = crypto.createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
+        if (actualSha256 !== MONGODB_LINUX_ARM64_UBUNTU2204_SHA256) {
+            throw new Error(
+                `Checksum mismatch for mongodb-linux-aarch64-ubuntu2204-${MONGODB_VERSION}.tgz\n` +
+                `       expected: ${MONGODB_LINUX_ARM64_UBUNTU2204_SHA256}\n       got:      ${actualSha256}`
+            );
+        }
+        console.log('  ✓  Checksum verified');
+
+        const extractDir = path.join(RESOURCES, `_mongodb-extract-linux-arm64-${MONGODB_VERSION}`);
+        fs.rmSync(extractDir, { recursive: true, force: true });
+        ensureDir(extractDir);
+        const tarArchivePath = archivePath.replace(/\\/g, '/');
+        const tarExtractDir = extractDir.replace(/\\/g, '/');
+        execSync(`tar --force-local -xzf "${tarArchivePath}" -C "${tarExtractDir}"`, { stdio: 'inherit', timeout: 120_000 });
+
+        const extractedBin = findFileRecursive(extractDir, 'mongod');
+        if (!extractedBin) throw new Error(`mongod not found anywhere inside the extracted archive`);
+
+        ensureDir(path.dirname(dest));
+        fs.copyFileSync(extractedBin, dest);
+        fs.chmodSync(dest, 0o755);
+        // Also cache it where copyMongod() checks first, so future runs skip the download.
+        ensureDir(path.dirname(cachedSrc));
+        fs.copyFileSync(extractedBin, cachedSrc);
+        fs.chmodSync(cachedSrc, 0o755);
+        console.log('  ✓  Downloaded and installed mongod (linux-arm64/ubuntu2204)');
+
+        fs.rmSync(extractDir, { recursive: true, force: true });
+        fs.rmSync(archivePath, { force: true });
+        return true;
+    } catch (err) {
+        console.error(`  ✗  MongoDB (Linux arm64) download failed: ${err.message}`);
+        fs.rmSync(archivePath, { force: true });
+        return false;
+    }
+}
+
 /** Recursively search a directory tree for the first file matching `name`. */
 function findFileRecursive(dir, name) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -370,15 +452,26 @@ function findFileRecursive(dir, name) {
 }
 
 // ── Step 4: JRE (jlink → download fallback) ──────────────────────────────────
+// jlink can't cross-compile to a different arch any more than it can to a
+// different platform — its output always matches the arch it's invoked on.
+const CROSS_ARCH = TARGET_ARCH !== process.arch;
+const SKIP_JLINK = CROSS_BUILDING || CROSS_ARCH;
+
+// Tracks which (platform, arch) the JRE_DIR currently actually contains. The
+// binary name alone can't distinguish this — "java" is the same filename for
+// linux-x64 and linux-arm64 — so without this marker, switching TARGET_ARCH
+// between builds without clearing JRE_DIR first would silently keep serving
+// the wrong-architecture JRE (existence check would pass either way).
+const JRE_ARCH_MARKER = path.join(JRE_DIR, '.prepared-for');
+
 async function bundleJre() {
     console.log('\n[4/5] JRE (bundled — no system Java required at runtime)');
 
-    // Already there? Check for the TARGET platform's binary name specifically — a
-    // java.exe left over from a prior Windows prepare must not be mistaken for a
-    // valid Linux JRE (it naturally won't exist under the "java" name we look for
-    // when cross-building, so this falls through to a fresh fetch correctly).
     const javaBin = path.join(JRE_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java');
-    if (!CROSS_BUILDING && fs.existsSync(javaBin)) {
+    const expectedMarker = `${TARGET_PLATFORM}-${TARGET_ARCH}`;
+    const actualMarker = fs.existsSync(JRE_ARCH_MARKER) ? fs.readFileSync(JRE_ARCH_MARKER, 'utf8').trim() : null;
+
+    if (!SKIP_JLINK && fs.existsSync(javaBin) && actualMarker === expectedMarker) {
         try {
             const ver = execFileSync(javaBin, ['--version'], { encoding: 'utf8', timeout: 5000 });
             console.log(`  ✓  Bundled JRE already present: ${ver.split('\n')[0].trim()}`);
@@ -387,19 +480,29 @@ async function bundleJre() {
             console.warn('  ⚠  Existing JRE unreadable — re-creating');
             fs.rmSync(JRE_DIR, { recursive: true, force: true });
         }
-    } else if (CROSS_BUILDING && fs.existsSync(javaBin)) {
-        // Can't exec-verify a foreign-platform binary from here — but if the
-        // TARGET platform's own binary name is already present (not just any
-        // leftover JRE dir), trust it rather than re-fetching every single run.
-        console.log(`  ✓  Bundled JRE for ${TARGET_PLATFORM} already present (existence check only — can't exec-verify a foreign binary)`);
+    } else if (SKIP_JLINK && fs.existsSync(javaBin) && actualMarker === expectedMarker) {
+        // Can't exec-verify a foreign binary from here — but the marker confirms
+        // it was fetched for exactly this (platform, arch) pair, not just any
+        // leftover JRE dir, so trust it rather than re-fetching every run.
+        console.log(`  ✓  Bundled JRE for ${expectedMarker} already present (existence check only — can't exec-verify a foreign binary)`);
+        return;
+    } else if (fs.existsSync(JRE_DIR) && actualMarker !== expectedMarker) {
+        console.log(`  ℹ  Bundled JRE was prepared for ${actualMarker || 'an untracked build'}, need ${expectedMarker} — re-fetching`);
+        fs.rmSync(JRE_DIR, { recursive: true, force: true });
+    }
+
+    // jlink can't cross-compile — only try it when building for the host's own platform+arch.
+    if (!SKIP_JLINK && await tryJlink()) {
+        ensureDir(JRE_DIR);
+        fs.writeFileSync(JRE_ARCH_MARKER, expectedMarker);
         return;
     }
 
-    // jlink can't cross-compile — only try it when building for the host's own platform.
-    if (!CROSS_BUILDING && await tryJlink()) return;
-
     // Fall back to downloading Temurin JRE (the only option when cross-building)
     await downloadTemurin();
+    if (fs.existsSync(javaBin)) {
+        fs.writeFileSync(JRE_ARCH_MARKER, expectedMarker);
+    }
 }
 
 async function tryJlink() {
@@ -500,14 +603,16 @@ async function bundleSwrlJre() {
 
 async function downloadTemurin() {
     const platform = TARGET_PLATFORM;
-    const url = TEMURIN_URLS[platform];
+    const url = (platform === 'linux' && TARGET_ARCH === 'arm64')
+        ? TEMURIN_LINUX_ARM64_URL
+        : TEMURIN_URLS[platform];
     if (!url) {
-        console.error(`  ✗  No Temurin URL configured for platform "${platform}"`);
+        console.error(`  ✗  No Temurin URL configured for platform "${platform}" arch "${TARGET_ARCH}"`);
         console.error('     Add the URL to TEMURIN_URLS in prepare-resources.js');
         return;
     }
 
-    console.log(`  → Downloading Temurin 21 JRE for ${platform}…`);
+    console.log(`  → Downloading Temurin 21 JRE for ${platform}/${TARGET_ARCH}…`);
     console.log(`     ${url}`);
 
     ensureDir(JRE_DIR);

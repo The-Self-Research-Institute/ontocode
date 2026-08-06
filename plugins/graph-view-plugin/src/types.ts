@@ -33,10 +33,10 @@ export type LayoutAlgorithm =
   | 'tree';
 
 export type VisualizationType =
-  | 'force'           // Force-directed graph (default)
+  | 'force'           // Legacy — no longer selectable; Network preset now uses the WebGL engine
   | 'vowl'            // VOWL notation
   | 'ontograph'       // OntoGraph hierarchical view
-  | 'spatial3d';      // OntoCode spatial graph with projected depth
+  | 'spatial3d';      // Legacy — no longer selectable (2.5D depth illusion)
 
 // Higher-order relationships (reification)
 export interface ReifiedRelation {

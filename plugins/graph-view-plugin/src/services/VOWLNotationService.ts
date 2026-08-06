@@ -112,15 +112,17 @@ export class VOWLNotationService {
     let strokeDasharray: string | null = null;
     let strokeWidth = 2;
     
-    // SubClassOf: dashed line (inheritance hierarchy) - Dark gray
+    // SubClassOf: fine-dotted line per VOWL spec (WebVOWL uses 1/6 dots —
+    // heavy 5/3 dashes read as visual clutter at overview zoom)
     if (edge.type === 'subClassOf') {
-      stroke = '#374151'; // Dark gray
-      strokeDasharray = '5 3';
+      stroke = '#374151';
+      strokeDasharray = '1 6';
       strokeWidth = 2;
     }
-    // Object properties: solid cyan line
+    // Object properties: solid black line (WebVOWL convention — the colored
+    // property CHIP carries the identity; the line stays neutral and crisp)
     else if (edge.type === 'propertyRelation') {
-      stroke = '#0891b2'; // Cyan for object properties
+      stroke = '#1f2937';
       strokeDasharray = null;
       strokeWidth = 2;
     }

@@ -1,9 +1,10 @@
 import { VisualizationType } from './types';
 
-export type OntographLayoutType = 'vertical' | 'horizontal' | 'radial' | 'grid' | 'tree' | 'spring';
+export type OntographLayoutType = 'vertical' | 'horizontal' | 'radial' | 'grid' | 'tree' | 'spring' | 'cluster';
 
-const VISUALIZATION_TYPES: VisualizationType[] = ['force', 'vowl', 'ontograph', 'spatial3d'];
-const ONTOGRAPH_LAYOUT_TYPES: OntographLayoutType[] = ['vertical', 'horizontal', 'radial', 'grid', 'tree', 'spring'];
+// 'force' and 'spatial3d' intentionally absent: legacy saved views fall back to the default mode.
+const VISUALIZATION_TYPES: VisualizationType[] = ['vowl', 'ontograph'];
+const ONTOGRAPH_LAYOUT_TYPES: OntographLayoutType[] = ['vertical', 'horizontal', 'radial', 'grid', 'tree', 'spring', 'cluster'];
 
 export interface LastGraphView {
   version: 1;
@@ -31,6 +32,8 @@ export interface VowlDisplayOptions {
   showDisjointness: boolean;
   /** Show property self-loops (domain === range on the same class). */
   showPropertyLoops: boolean;
+  /** Clicking a class isolates it with its neighborhood instead of dimming the rest. */
+  isolateOnSelect: boolean;
   /** Multiplier on the base shape width (1 = default size). */
   nodeWidthScale: number;
   /** Multiplier on the base shape height (1 = default size). */
@@ -51,6 +54,7 @@ export const DEFAULT_VOWL_OPTIONS: VowlDisplayOptions = {
   mergeEquivalents: true,
   showDisjointness: true,
   showPropertyLoops: true,
+  isolateOnSelect: false,
   // Closer to VOWL proportions (less bulky than 1.15)
   nodeWidthScale: 1.0,
   nodeHeightScale: 1.0,

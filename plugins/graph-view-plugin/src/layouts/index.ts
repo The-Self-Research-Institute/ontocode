@@ -7,6 +7,7 @@ export { applyTreeLayout } from './TreeLayout';
 export { prepareMatrixData, generateMatrixVisualization } from './MatrixLayout';
 export { applyOntoGraphLayout, refineOntoGraphLayout } from './OntoGraphLayout';
 export { applyGridLayout } from './GridLayout';
+export { applyClusterLayout } from './ClusterLayout';
 
 export type {
   HierarchicalLayoutOptions,
@@ -36,3 +37,7 @@ export type {
 export type {
   OntoGraphLayoutOptions,
 } from './OntoGraphLayout';
+
+export type {
+  ClusterLayoutOptions,
+} from './ClusterLayout';
